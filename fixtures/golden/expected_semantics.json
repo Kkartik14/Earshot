@@ -1,0 +1,13 @@
+{
+  "core_operation_names": ["llm", "stt", "tts"],
+  "render_availability": "not_observed",
+  "provenance_available": true,
+  "capture_classes": ["metadata"],
+  "interruption_phases": { "accepted": 1, "detected": 0, "ignored": 0 },
+  "turn_correlated_response_operations": ["llm", "tts"],
+  "latency_bases": {
+    "first_token": "first_token",
+    "generated": "generated",
+    "response": "tts_estimate"
+  }
+}

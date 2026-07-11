@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "earshot"
+version = "0.1.0"
+description = "Portable, evidence-labelled incident artifacts for real-time voice sessions"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Earshot contributors" }]
+dependencies = [
+  "fastapi>=0.115,<1",
+  "pydantic>=2.9,<3",
+  "protobuf>=6.33.5,<7",
+  "rfc8785==0.1.4",
+  "uvicorn>=0.30,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "grpcio-tools==1.81.1",
+  "httpx>=0.27,<1",
+  "hypothesis>=6.120,<7",
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.24,<1",
+  "pytest-cov>=6,<7",
+  "pyyaml>=6,<7",
+  "ruff>=0.9,<1",
+]
+otel = ["opentelemetry-api>=1.30,<2", "opentelemetry-sdk>=1.30,<2"]
+pipecat = [
+  "opentelemetry-api>=1.30,<2",
+  "opentelemetry-sdk>=1.30,<2",
+  "pipecat-ai[tracing]>=1.5.0,<1.6",
+]
+livekit = [
+  "livekit-agents>=1.6.5,<1.7",
+  "opentelemetry-api>=1.30,<2",
+  "opentelemetry-sdk>=1.30,<2",
+]
+
+[project.scripts]
+earshot = "earshot.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["packages/sdk-python/src/earshot"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["packages/sdk-python/tests", "apps/ingest/tests"]
+markers = [
+  "unit: isolated contract or analysis tests",
+  "integration: tests crossing storage or HTTP boundaries",
+  "e2e: tests exercising a real server process and persistent database",
+  "property: generative/property-based tests",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["earshot"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+fail_under = 85
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["packages/sdk-python/src", "packages/sdk-python/tests", "apps/ingest/tests"]
+exclude = ["packages/sdk-python/src/earshot/generated"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

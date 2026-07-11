@@ -1,0 +1,527 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "input",
+        "format": {
+          "channels": 1,
+          "encoding": "pcm_s16le",
+          "sample_rate_hz": 16000
+        },
+        "media_kind": "audio",
+        "participant_id": "participant-user",
+        "session_id": "session-1",
+        "stream_id": "stream-input"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "output",
+        "format": {
+          "channels": 1,
+          "encoding": "pcm_s16le",
+          "sample_rate_hz": 24000
+        },
+        "media_kind": "audio",
+        "participant_id": "participant-agent",
+        "session_id": "session-1",
+        "stream_id": "stream-output"
+      }
+    ],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "server-clock",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "0",
+        "observer": "test",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1800000000000000000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "available",
+        "signal": "client.render"
+      }
+    ],
+    "events": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "evt-speech-end",
+        "event_name": "earshot.speech.ended",
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "session-1",
+        "stream_id": "stream-input",
+        "time": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "950000000",
+          "observed_time_unix_nano": "1800000000950000010",
+          "source_time_unix_nano": "1800000000950000000",
+          "uncertainty_nano": "0"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "evt-turn",
+        "event_name": "earshot.turn.committed",
+        "instrumentation_scope_attributes": {},
+        "operation_id": "op-turn",
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "session-1",
+        "stream_id": "stream-input",
+        "time": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1000000000",
+          "observed_time_unix_nano": "1800000001000000010",
+          "source_time_unix_nano": "1800000001000000000",
+          "uncertainty_nano": "0"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "evt-token",
+        "event_name": "earshot.response.first_token",
+        "instrumentation_scope_attributes": {},
+        "operation_id": "op-llm",
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "session-1",
+        "stream_id": "stream-input",
+        "time": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1150000000",
+          "observed_time_unix_nano": "1800000001150000010",
+          "source_time_unix_nano": "1800000001150000000",
+          "uncertainty_nano": "0"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "evt-generated",
+        "event_name": "earshot.response.first_audio_generated",
+        "instrumentation_scope_attributes": {},
+        "operation_id": "op-tts",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "session-1",
+        "stream_id": "stream-output",
+        "time": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1400000000",
+          "observed_time_unix_nano": "1800000001400000010",
+          "source_time_unix_nano": "1800000001400000000",
+          "uncertainty_nano": "0"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "evt-sent",
+        "event_name": "earshot.audio.first_byte_sent",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "write_callback",
+          "observer": "server",
+          "source": "websocket"
+        },
+        "instrumentation_scope_attributes": {},
+        "operation_id": "op-send",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "session-1",
+        "stream_id": "stream-output",
+        "time": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1520000000",
+          "observed_time_unix_nano": "1800000001520000010",
+          "source_time_unix_nano": "1800000001520000000",
+          "uncertainty_nano": "0"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "evt-render",
+        "event_name": "earshot.audio.render.started",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "estimated",
+          "method": "getOutputTimestamp",
+          "observer": "browser",
+          "source": "web_audio"
+        },
+        "instrumentation_scope_attributes": {},
+        "operation_id": "op-render",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "session-1",
+        "stream_id": "stream-output",
+        "time": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1720000000",
+          "observed_time_unix_nano": "1800000001720000010",
+          "source_time_unix_nano": "1800000001720000000",
+          "uncertainty_nano": "0"
+        },
+        "turn_id": "turn-1"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "pipecat",
+          "name": "pipecat",
+          "version": "1"
+        }
+      ],
+      "attributes": {},
+      "bundle_id": "bundle-1",
+      "completeness": "complete",
+      "created_at_unix_nano": "1800000000000000000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot-tests",
+        "version": "1.0.0"
+      },
+      "schema_version": "1.0.0",
+      "semantic_profile_version": "1.0.0",
+      "session_id": "session-1"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {
+          "earshot.turn.id": "turn-1"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1000000000",
+          "observed_time_unix_nano": "1800000001000000010",
+          "source_time_unix_nano": "1800000001000000000",
+          "uncertainty_nano": "0"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "observer": "server",
+          "source": "pipecat"
+        },
+        "instrumentation_scope_attributes": {
+          "earshot.framework.name": "fixture"
+        },
+        "instrumentation_scope_name": "earshot.fixture",
+        "instrumentation_scope_version": "1.0.0",
+        "links": [],
+        "operation_id": "op-turn",
+        "operation_name": "turn_detection",
+        "parent_scope": "external",
+        "participant_id": "participant-user",
+        "resource": {
+          "service.name": "fixture-voice-service"
+        },
+        "resource_schema_url": "https://opentelemetry.io/schemas/1.29.0",
+        "schema_url": "https://opentelemetry.io/schemas/1.30.0",
+        "session_id": "session-1",
+        "span_id": "1111111111111111",
+        "started_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "900000000",
+          "observed_time_unix_nano": "1800000000900000010",
+          "source_time_unix_nano": "1800000000900000000",
+          "uncertainty_nano": "0"
+        },
+        "status": "ok",
+        "stream_id": "stream-input",
+        "trace_id": "11111111111111111111111111111111",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {
+          "gen_ai.request.model": "test-model"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1300000000",
+          "observed_time_unix_nano": "1800000001300000010",
+          "source_time_unix_nano": "1800000001300000000",
+          "uncertainty_nano": "0"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "observer": "server",
+          "source": "pipecat"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "op-llm",
+        "operation_name": "llm",
+        "parent_scope": "internal",
+        "parent_span_id": "1111111111111111",
+        "resource": {},
+        "session_id": "session-1",
+        "span_id": "2222222222222222",
+        "started_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1050000000",
+          "observed_time_unix_nano": "1800000001050000010",
+          "source_time_unix_nano": "1800000001050000000",
+          "uncertainty_nano": "0"
+        },
+        "status": "ok",
+        "trace_id": "11111111111111111111111111111111",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1500000000",
+          "observed_time_unix_nano": "1800000001500000010",
+          "source_time_unix_nano": "1800000001500000000",
+          "uncertainty_nano": "0"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "observer": "server",
+          "source": "pipecat"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "op-tts",
+        "operation_name": "tts",
+        "parent_scope": "internal",
+        "parent_span_id": "2222222222222222",
+        "resource": {},
+        "session_id": "session-1",
+        "span_id": "3333333333333333",
+        "started_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1350000000",
+          "observed_time_unix_nano": "1800000001350000010",
+          "source_time_unix_nano": "1800000001350000000",
+          "uncertainty_nano": "0"
+        },
+        "status": "ok",
+        "stream_id": "stream-output",
+        "trace_id": "11111111111111111111111111111111",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1550000000",
+          "observed_time_unix_nano": "1800000001550000010",
+          "source_time_unix_nano": "1800000001550000000",
+          "uncertainty_nano": "0"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "write_callback",
+          "observer": "server",
+          "source": "websocket"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "op-send",
+        "operation_name": "transport_send",
+        "parent_scope": "internal",
+        "parent_span_id": "3333333333333333",
+        "resource": {},
+        "session_id": "session-1",
+        "span_id": "4444444444444444",
+        "started_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1510000000",
+          "observed_time_unix_nano": "1800000001510000010",
+          "source_time_unix_nano": "1800000001510000000",
+          "uncertainty_nano": "0"
+        },
+        "status": "ok",
+        "stream_id": "stream-output",
+        "trace_id": "11111111111111111111111111111111",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1900000000",
+          "observed_time_unix_nano": "1800000001900000010",
+          "source_time_unix_nano": "1800000001900000000",
+          "uncertainty_nano": "0"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "estimated",
+          "method": "getOutputTimestamp",
+          "observer": "browser",
+          "source": "web_audio"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "op-render",
+        "operation_name": "render",
+        "parent_scope": "internal",
+        "parent_span_id": "4444444444444444",
+        "resource": {},
+        "session_id": "session-1",
+        "span_id": "5555555555555555",
+        "started_at": {
+          "clock_domain_id": "server-clock",
+          "monotonic_time_nano": "1700000000",
+          "observed_time_unix_nano": "1800000001700000010",
+          "source_time_unix_nano": "1800000001700000000",
+          "uncertainty_nano": "0"
+        },
+        "status": "ok",
+        "stream_id": "stream-output",
+        "trace_id": "11111111111111111111111111111111",
+        "turn_id": "turn-1"
+      }
+    ],
+    "participants": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "browser",
+        "participant_id": "participant-user",
+        "role": "user",
+        "session_id": "session-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "server",
+        "participant_id": "participant-agent",
+        "role": "agent",
+        "session_id": "session-1"
+      }
+    ],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": true,
+          "decision": "allow"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [],
+      "policy_id": "test-metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "server-clock",
+        "monotonic_time_nano": "2000000000",
+        "observed_time_unix_nano": "1800000002000000010",
+        "source_time_unix_nano": "1800000002000000000",
+        "uncertainty_nano": "0"
+      },
+      "session_id": "session-1",
+      "started_at": {
+        "clock_domain_id": "server-clock",
+        "monotonic_time_nano": "0",
+        "observed_time_unix_nano": "1800000000000000010",
+        "source_time_unix_nano": "1800000000000000000",
+        "uncertainty_nano": "0"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": [
+    {
+      "chunk_id": "chunk-traces",
+      "compression": "identity",
+      "content_type": "application/x-protobuf",
+      "payload_base64": "CgA=",
+      "privacy_class": "raw_otlp",
+      "sha256": "102b51b9765a56a3e899f7cf0ee38e5251f9c503b357b330a49183eb7b155604",
+      "signal": "traces"
+    }
+  ]
+}

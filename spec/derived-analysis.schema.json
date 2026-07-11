@@ -1,0 +1,444 @@
+{
+  "$defs": {
+    "AnalysisMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Availability",
+          "type": "string"
+        },
+        "basis": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Basis",
+          "type": "string"
+        },
+        "confidence": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Confidence",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "limitation": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limitation"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "availability",
+        "basis",
+        "confidence"
+      ],
+      "title": "AnalysisMetric",
+      "type": "object"
+    },
+    "AnalysisProjections": {
+      "additionalProperties": false,
+      "properties": {
+        "limitations": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnalysisSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "turns": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TurnProjection"
+          },
+          "title": "Turns",
+          "type": "array"
+        },
+        "unassigned_provider_measurements": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "$ref": "#/$defs/AnalysisMetric"
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "maxLength": 256,
+            "minLength": 1
+          },
+          "title": "Unassigned Provider Measurements",
+          "type": "object"
+        }
+      },
+      "title": "AnalysisProjections",
+      "type": "object"
+    },
+    "AnalysisSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "event_count": {
+          "minimum": 0,
+          "title": "Event Count",
+          "type": "integer"
+        },
+        "failed_operation_count": {
+          "minimum": 0,
+          "title": "Failed Operation Count",
+          "type": "integer"
+        },
+        "operation_count": {
+          "minimum": 0,
+          "title": "Operation Count",
+          "type": "integer"
+        },
+        "quality_sample_count": {
+          "minimum": 0,
+          "title": "Quality Sample Count",
+          "type": "integer"
+        },
+        "turn_count": {
+          "minimum": 0,
+          "title": "Turn Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turn_count",
+        "operation_count",
+        "event_count",
+        "quality_sample_count",
+        "failed_operation_count"
+      ],
+      "title": "AnalysisSummary",
+      "type": "object"
+    },
+    "Diagnosis": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Code",
+          "type": "string"
+        },
+        "confidence": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Confidence",
+          "type": "string"
+        },
+        "diagnosis_id": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Diagnosis Id",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "limitations": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "summary": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "diagnosis_id",
+        "code",
+        "summary",
+        "confidence",
+        "evidence_refs"
+      ],
+      "title": "Diagnosis",
+      "type": "object"
+    },
+    "InterruptionProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "event_name": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Event Name",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event_name",
+        "evidence_ids"
+      ],
+      "title": "InterruptionProjection",
+      "type": "object"
+    },
+    "ToolAnalysis": {
+      "additionalProperties": false,
+      "properties": {
+        "elapsed_ms_by_clock_domain": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Elapsed Ms By Clock Domain",
+          "type": "object"
+        },
+        "evidence_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "operation_count": {
+          "minimum": 0,
+          "title": "Operation Count",
+          "type": "integer"
+        },
+        "total_work_ms": {
+          "minimum": 0,
+          "title": "Total Work Ms",
+          "type": "number"
+        }
+      },
+      "required": [
+        "operation_count",
+        "total_work_ms"
+      ],
+      "title": "ToolAnalysis",
+      "type": "object"
+    },
+    "TurnMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "first_token_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "generated_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "provider_measurements": {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnalysisMetric"
+          },
+          "title": "Provider Measurements",
+          "type": "object"
+        },
+        "received_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "render_start_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "sent_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolAnalysis"
+        }
+      },
+      "required": [
+        "first_token_latency",
+        "generated_response_latency",
+        "sent_response_latency",
+        "received_response_latency",
+        "render_start_response_latency",
+        "response_latency",
+        "tools"
+      ],
+      "title": "TurnMetrics",
+      "type": "object"
+    },
+    "TurnProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "event_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Event Ids",
+          "type": "array"
+        },
+        "interruptions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InterruptionProjection"
+          },
+          "title": "Interruptions",
+          "type": "array"
+        },
+        "metrics": {
+          "$ref": "#/$defs/TurnMetrics"
+        },
+        "operation_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Operation Ids",
+          "type": "array"
+        },
+        "turn_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "metrics"
+      ],
+      "title": "TurnProjection",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.earshot.dev/v1/derived-analysis.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "analyzer_name": {
+      "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+      "title": "Analyzer Name",
+      "type": "string"
+    },
+    "analyzer_version": {
+      "minLength": 1,
+      "title": "Analyzer Version",
+      "type": "string"
+    },
+    "capture_class": {
+      "const": "metadata",
+      "default": "metadata",
+      "title": "Capture Class",
+      "type": "string"
+    },
+    "diagnoses": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Diagnosis"
+      },
+      "title": "Diagnoses",
+      "type": "array"
+    },
+    "generated_at_unix_nano": {
+      "maxLength": 20,
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "title": "Generated At Unix Nano",
+      "type": "string"
+    },
+    "input_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Input Sha256",
+      "type": "string"
+    },
+    "projections": {
+      "$ref": "#/$defs/AnalysisProjections"
+    }
+  },
+  "required": [
+    "analyzer_name",
+    "analyzer_version",
+    "input_sha256",
+    "generated_at_unix_nano"
+  ],
+  "title": "DerivedAnalysis",
+  "type": "object"
+}

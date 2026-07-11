@@ -1,0 +1,109 @@
+{
+  "base": "../valid/complete.json",
+  "mutations": [
+    {
+      "name": "manifest_session_mismatch",
+      "pointer": "/profile/manifest/session_id",
+      "value": "other-session",
+      "expected_code": "EARSHOT_SESSION_MISMATCH"
+    },
+    {
+      "name": "dangling_operation_stream",
+      "pointer": "/profile/operations/0/stream_id",
+      "value": "missing-stream",
+      "expected_code": "EARSHOT_DANGLING_REF"
+    },
+    {
+      "name": "unknown_event_clock",
+      "pointer": "/profile/events/0/time/clock_domain_id",
+      "value": "missing-clock",
+      "expected_code": "EARSHOT_UNKNOWN_CLOCK_DOMAIN"
+    },
+    {
+      "name": "same_clock_reversed_operation",
+      "pointer": "/profile/operations/0/ended_at/monotonic_time_nano",
+      "value": "1",
+      "expected_code": "EARSHOT_TIME_RANGE_REVERSED"
+    },
+    {
+      "name": "internal_parent_missing",
+      "pointer": "/profile/operations/1/parent_span_id",
+      "value": "ffffffffffffffff",
+      "expected_code": "EARSHOT_INTERNAL_PARENT_MISSING"
+    },
+    {
+      "name": "transcript_smuggled_as_metadata",
+      "pointer": "/profile/operations/0/attributes",
+      "value": { "transcript": "DO_NOT_STORE" },
+      "expected_code": "EARSHOT_PRIVACY_PAYLOAD_SMUGGLED"
+    },
+    {
+      "name": "unobservable_heard_claim",
+      "pointer": "/profile/attributes",
+      "value": { "heard_at": "1800000000000000000" },
+      "expected_code": "EARSHOT_UNOBSERVABLE_HEARD_CLAIM"
+    },
+    {
+      "name": "error_message_self_classified_as_metadata",
+      "pointer": "/profile/operations/0/error",
+      "value": {
+        "code": "application.failure",
+        "category": "application",
+        "message": "DO_NOT_STORE",
+        "capture_class": "metadata"
+      },
+      "expected_code": "EARSHOT_PRIVACY_PAYLOAD_SMUGGLED"
+    },
+    {
+      "name": "operation_stream_owned_by_other_participant",
+      "pointer": "/profile/operations/0/stream_id",
+      "value": "stream-output",
+      "expected_code": "EARSHOT_STREAM_PARTICIPANT_MISMATCH"
+    },
+    {
+      "name": "event_stream_owned_by_other_participant",
+      "pointer": "/profile/events/0/stream_id",
+      "value": "stream-output",
+      "expected_code": "EARSHOT_STREAM_PARTICIPANT_MISMATCH"
+    },
+    {
+      "name": "mixed_clock_representation_reversed",
+      "pointer": "/profile/operations/0/ended_at",
+      "value": {
+        "source_time_unix_nano": "50",
+        "clock_domain_id": "server-clock"
+      },
+      "expected_code": "EARSHOT_TIME_RANGE_REVERSED"
+    },
+    {
+      "name": "unknown_numeric_metadata_without_extension_policy",
+      "pointer": "/profile/operations/0/attributes",
+      "value": { "customer.ssn": 123 },
+      "expected_code": "EARSHOT_PRIVACY_UNKNOWN_METADATA"
+    },
+    {
+      "name": "metadata_integer_outside_ijson_domain",
+      "pointer": "/profile/operations/0/attributes",
+      "value": { "lk.response.ttft": 9007199254740992 },
+      "expected_code": "EARSHOT_IJSON_INTEGER_DOMAIN"
+    },
+    {
+      "name": "metadata_decimal_nano_outside_uint64",
+      "pointer": "/profile/operations/0/attributes",
+      "value": { "earshot.time.monotonic_nano": "18446744073709551616" },
+      "expected_code": "EARSHOT_PRIVACY_UNKNOWN_METADATA"
+    },
+    {
+      "name": "third_party_schema_without_extension_policy",
+      "pointer": "/profile/operations/0/schema_url",
+      "value": "https://telemetry.example.com/schemas/1.2.3",
+      "expected_code": "EARSHOT_PRIVACY_UNKNOWN_METADATA"
+    },
+    {
+      "name": "explicit_registry_port_without_extension_policy",
+      "pointer": "/profile/operations/0/schema_url",
+      "value": "https://opentelemetry.io:443/schemas/1.30.0",
+      "expected_code": "EARSHOT_PRIVACY_UNKNOWN_METADATA"
+    }
+  ]
+}

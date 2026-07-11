@@ -1,0 +1,87 @@
+[
+  {
+    "metric": {
+      "metric_type": "EOUMetrics",
+      "speech_id": "speech_7",
+      "timestamp": 1800000001.0,
+      "end_of_utterance_delay": 0.2,
+      "transcription_delay": 0.05,
+      "on_user_turn_completed_delay": 0.01
+    },
+    "observed_at": {
+      "source_time_unix_nano": "1800000001000000000",
+      "monotonic_time_nano": "1000000000",
+      "clock_domain_id": "server-clock"
+    }
+  },
+  {
+    "metric": {
+      "metric_type": "STTMetrics",
+      "label": "golden-stt",
+      "request_id": "stt-request-1",
+      "timestamp": 1800000001.2,
+      "duration": 0.2,
+      "audio_duration": 0.2,
+      "streamed": false
+    },
+    "observed_at": {
+      "source_time_unix_nano": "1800000001200000000",
+      "monotonic_time_nano": "1200000000",
+      "clock_domain_id": "server-clock"
+    }
+  },
+  {
+    "metric": {
+      "metric_type": "LLMMetrics",
+      "label": "golden-llm",
+      "request_id": "llm-request-1",
+      "speech_id": "speech_7",
+      "timestamp": 1800000001.5,
+      "duration": 0.25,
+      "ttft": 0.1,
+      "cancelled": false,
+      "completion_tokens": 8,
+      "prompt_tokens": 12,
+      "prompt_cached_tokens": 0,
+      "total_tokens": 20,
+      "tokens_per_second": 32.0
+    },
+    "observed_at": {
+      "source_time_unix_nano": "1800000001500000000",
+      "monotonic_time_nano": "1500000000",
+      "clock_domain_id": "server-clock"
+    }
+  },
+  {
+    "metric": {
+      "metric_type": "TTSMetrics",
+      "label": "golden-tts",
+      "request_id": "tts-request-1",
+      "speech_id": "speech_7",
+      "timestamp": 1800000001.7,
+      "duration": 0.15,
+      "audio_duration": 0.15,
+      "ttfb": 0.05,
+      "cancelled": false,
+      "characters_count": 24,
+      "streamed": true
+    },
+    "observed_at": {
+      "source_time_unix_nano": "1800000001700000000",
+      "monotonic_time_nano": "1700000000",
+      "clock_domain_id": "server-clock"
+    }
+  },
+  {
+    "event": {
+      "type": "overlapping_speech",
+      "created_at": 1800000001.75,
+      "detected_at": 1800000001.75,
+      "is_interruption": true,
+      "total_duration": 0.05,
+      "prediction_duration": 0.02,
+      "detection_delay": 0.1,
+      "probability": 0.9
+    }
+  }
+]

@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package earshot.v1;
+
+// The durable Earshot artifact envelope.
+//
+// canonical_profile_json is RFC 8785/JCS JSON with snake_case field names.
+// Nanosecond values remain exact
+// canonical decimal strings and OTLP identifiers remain lowercase hexadecimal.
+// Keeping the normalized profile in canonical JSON makes the v1 contract easy to
+// reproduce in any language. Optional raw OTLP chunks preserve caller-supplied
+// export bytes byte-for-byte only under the explicit raw_otlp capture policy.
+message IncidentEnvelope {
+  string schema_version = 1;
+  string bundle_id = 2;
+  string session_id = 3;
+  bytes canonical_profile_json = 4;
+  repeated RawOtlpChunk raw_otlp_chunks = 5;
+  string profile_sha256 = 6;
+}
+
+// One exact OTLP export payload. Earshot does not decode and re-encode payload
+// here: payload is the exact sequence of bytes observed by the producer.
+// privacy_class MUST be "raw_otlp"; opaque bytes cannot be downgraded to metadata.
+message RawOtlpChunk {
+  string chunk_id = 1;
+  string signal = 2;
+  string content_type = 3;
+  string compression = 4;
+  bytes payload = 5;
+  string sha256 = 6;
+  string privacy_class = 7;
+}

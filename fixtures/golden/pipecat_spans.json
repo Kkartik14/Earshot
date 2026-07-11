@@ -1,0 +1,87 @@
+[
+  {
+    "name": "turn",
+    "operation_id": "pipecat-turn",
+    "trace_id": "11111111111111111111111111111111",
+    "span_id": "aaaaaaaaaaaaaaaa",
+    "parent_scope": "external",
+    "status": "ok",
+    "attributes": {
+      "turn.number": 7,
+      "turn.was_interrupted": true
+    },
+    "started_at": {
+      "source_time_unix_nano": "1800000000800000000",
+      "monotonic_time_nano": "800000000",
+      "clock_domain_id": "server-clock"
+    },
+    "ended_at": {
+      "source_time_unix_nano": "1800000001800000000",
+      "monotonic_time_nano": "1800000000",
+      "clock_domain_id": "server-clock"
+    }
+  },
+  {
+    "name": "stt processing",
+    "operation_id": "pipecat-stt",
+    "trace_id": "11111111111111111111111111111111",
+    "span_id": "1111111111111111",
+    "parent_span_id": "aaaaaaaaaaaaaaaa",
+    "parent_scope": "internal",
+    "status": "ok",
+    "started_at": {
+      "source_time_unix_nano": "1800000001000000000",
+      "monotonic_time_nano": "1000000000",
+      "clock_domain_id": "server-clock"
+    },
+    "ended_at": {
+      "source_time_unix_nano": "1800000001200000000",
+      "monotonic_time_nano": "1200000000",
+      "clock_domain_id": "server-clock"
+    }
+  },
+  {
+    "name": "llm generation",
+    "operation_id": "pipecat-llm",
+    "trace_id": "11111111111111111111111111111111",
+    "span_id": "2222222222222222",
+    "parent_span_id": "aaaaaaaaaaaaaaaa",
+    "parent_scope": "internal",
+    "status": "ok",
+    "attributes": {
+      "metrics.ttfb": 0.1
+    },
+    "started_at": {
+      "source_time_unix_nano": "1800000001250000000",
+      "monotonic_time_nano": "1250000000",
+      "clock_domain_id": "server-clock"
+    },
+    "ended_at": {
+      "source_time_unix_nano": "1800000001500000000",
+      "monotonic_time_nano": "1500000000",
+      "clock_domain_id": "server-clock"
+    }
+  },
+  {
+    "name": "tts synthesis",
+    "operation_id": "pipecat-tts",
+    "trace_id": "11111111111111111111111111111111",
+    "span_id": "3333333333333333",
+    "parent_span_id": "aaaaaaaaaaaaaaaa",
+    "parent_scope": "internal",
+    "status": "ok",
+    "attributes": {
+      "metrics.ttfb": 0.05
+    },
+    "started_at": {
+      "source_time_unix_nano": "1800000001550000000",
+      "monotonic_time_nano": "1550000000",
+      "clock_domain_id": "server-clock"
+    },
+    "ended_at": {
+      "source_time_unix_nano": "1800000001700000000",
+      "monotonic_time_nano": "1700000000",
+      "clock_domain_id": "server-clock"
+    }
+  }
+]

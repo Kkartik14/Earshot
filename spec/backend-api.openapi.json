@@ -1,0 +1,4097 @@
+{
+  "components": {
+    "schemas": {
+      "Adapter": {
+        "additionalProperties": true,
+        "properties": {
+          "framework": {
+            "minLength": 1,
+            "title": "Framework",
+            "type": "string"
+          },
+          "framework_version": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Framework Version"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "framework"
+        ],
+        "title": "Adapter",
+        "type": "object"
+      },
+      "AnalysisMetric": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Availability",
+            "type": "string"
+          },
+          "basis": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Basis",
+            "type": "string"
+          },
+          "confidence": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "default": [],
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "limitation": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Limitation"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Unit"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          }
+        },
+        "required": [
+          "availability",
+          "basis",
+          "confidence"
+        ],
+        "title": "AnalysisMetric",
+        "type": "object"
+      },
+      "AnalysisProjections": {
+        "additionalProperties": false,
+        "properties": {
+          "limitations": {
+            "default": [],
+            "items": {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "turns": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TurnProjection"
+            },
+            "title": "Turns",
+            "type": "array"
+          },
+          "unassigned_provider_measurements": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/AnalysisMetric"
+              },
+              "type": "object"
+            },
+            "propertyNames": {
+              "maxLength": 256,
+              "minLength": 1
+            },
+            "title": "Unassigned Provider Measurements",
+            "type": "object"
+          }
+        },
+        "title": "AnalysisProjections",
+        "type": "object"
+      },
+      "AnalysisSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "event_count": {
+            "minimum": 0,
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "failed_operation_count": {
+            "minimum": 0,
+            "title": "Failed Operation Count",
+            "type": "integer"
+          },
+          "operation_count": {
+            "minimum": 0,
+            "title": "Operation Count",
+            "type": "integer"
+          },
+          "quality_sample_count": {
+            "minimum": 0,
+            "title": "Quality Sample Count",
+            "type": "integer"
+          },
+          "turn_count": {
+            "minimum": 0,
+            "title": "Turn Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "turn_count",
+          "operation_count",
+          "event_count",
+          "quality_sample_count",
+          "failed_operation_count"
+        ],
+        "title": "AnalysisSummary",
+        "type": "object"
+      },
+      "ApiIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Path",
+            "type": "array"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "path",
+          "message",
+          "severity"
+        ],
+        "title": "ApiIssue",
+        "type": "object"
+      },
+      "AudioFormat": {
+        "additionalProperties": true,
+        "properties": {
+          "channels": {
+            "exclusiveMinimum": 0,
+            "title": "Channels",
+            "type": "integer"
+          },
+          "clock_rate_hz": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clock Rate Hz"
+          },
+          "encoding": {
+            "minLength": 1,
+            "title": "Encoding",
+            "type": "string"
+          },
+          "sample_rate_hz": {
+            "exclusiveMinimum": 0,
+            "title": "Sample Rate Hz",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "encoding",
+          "sample_rate_hz",
+          "channels"
+        ],
+        "title": "AudioFormat",
+        "type": "object"
+      },
+      "AudioStream": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "default": "metadata",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "direction": {
+            "minLength": 1,
+            "title": "Direction",
+            "type": "string"
+          },
+          "format": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AudioFormat"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "media_kind": {
+            "default": "audio",
+            "minLength": 1,
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "participant_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Participant Id",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "stream_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "transport_ref": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Transport Ref"
+          }
+        },
+        "required": [
+          "stream_id",
+          "session_id",
+          "participant_id",
+          "direction"
+        ],
+        "title": "AudioStream",
+        "type": "object"
+      },
+      "BundleManifest": {
+        "additionalProperties": true,
+        "properties": {
+          "adapters": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Adapter"
+            },
+            "title": "Adapters",
+            "type": "array"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "bundle_id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "completeness": {
+            "default": "complete",
+            "minLength": 1,
+            "title": "Completeness",
+            "type": "string"
+          },
+          "created_at_unix_nano": {
+            "maxLength": 20,
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Created At Unix Nano",
+            "type": "string"
+          },
+          "finality": {
+            "default": "final",
+            "minLength": 1,
+            "title": "Finality",
+            "type": "string"
+          },
+          "producer": {
+            "$ref": "#/components/schemas/Producer"
+          },
+          "schema_version": {
+            "default": "1.0.0",
+            "minLength": 1,
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "semantic_profile_version": {
+            "default": "1.0.0",
+            "minLength": 1,
+            "title": "Semantic Profile Version",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "session_id",
+          "created_at_unix_nano",
+          "producer"
+        ],
+        "title": "BundleManifest",
+        "type": "object"
+      },
+      "ByteRange": {
+        "additionalProperties": true,
+        "properties": {
+          "length": {
+            "exclusiveMinimum": 0,
+            "title": "Length",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "offset",
+          "length"
+        ],
+        "title": "ByteRange",
+        "type": "object"
+      },
+      "CaptureClassPolicy": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity",
+              "raw_otlp"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "captured": {
+            "title": "Captured",
+            "type": "boolean"
+          },
+          "consent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConsentRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "decision": {
+            "minLength": 1,
+            "title": "Decision",
+            "type": "string"
+          },
+          "export": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "redaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RedactionRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "retention": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "capture_class",
+          "decision",
+          "captured"
+        ],
+        "title": "CaptureClassPolicy",
+        "type": "object"
+      },
+      "CausalLink": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "relationship": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Relationship",
+            "type": "string"
+          },
+          "span_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Span Id"
+          },
+          "target_operation_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Operation Id"
+          },
+          "target_scope": {
+            "default": "unknown",
+            "enum": [
+              "internal",
+              "external",
+              "unknown"
+            ],
+            "title": "Target Scope",
+            "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "relationship"
+        ],
+        "title": "CausalLink",
+        "type": "object"
+      },
+      "ClockDomain": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "clock_domain_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Clock Domain Id",
+            "type": "string"
+          },
+          "kind": {
+            "minLength": 1,
+            "title": "Kind",
+            "type": "string"
+          },
+          "monotonic_origin_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Monotonic Origin Nano"
+          },
+          "observer": {
+            "minLength": 1,
+            "title": "Observer",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scope"
+          },
+          "synchronization_method": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Synchronization Method"
+          },
+          "uncertainty_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uncertainty Nano"
+          },
+          "wall_origin_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Wall Origin Unix Nano"
+          }
+        },
+        "required": [
+          "clock_domain_id",
+          "kind",
+          "observer"
+        ],
+        "title": "ClockDomain",
+        "type": "object"
+      },
+      "ConsentRecord": {
+        "additionalProperties": true,
+        "properties": {
+          "authority": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Authority"
+          },
+          "legal_basis": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legal Basis"
+          },
+          "recorded_at_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recorded At Unix Nano"
+          },
+          "status": {
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ConsentRecord",
+        "type": "object"
+      },
+      "Coverage": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "availability": {
+            "minLength": 1,
+            "title": "Availability",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Evidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "signal": {
+            "minLength": 1,
+            "title": "Signal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal",
+          "availability"
+        ],
+        "title": "Coverage",
+        "type": "object"
+      },
+      "DerivedAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "analyzer_name": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Analyzer Name",
+            "type": "string"
+          },
+          "analyzer_version": {
+            "minLength": 1,
+            "title": "Analyzer Version",
+            "type": "string"
+          },
+          "capture_class": {
+            "const": "metadata",
+            "default": "metadata",
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "diagnoses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Diagnosis"
+            },
+            "title": "Diagnoses",
+            "type": "array"
+          },
+          "generated_at_unix_nano": {
+            "maxLength": 20,
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Generated At Unix Nano",
+            "type": "string"
+          },
+          "input_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Input Sha256",
+            "type": "string"
+          },
+          "projections": {
+            "$ref": "#/components/schemas/AnalysisProjections"
+          }
+        },
+        "required": [
+          "analyzer_name",
+          "analyzer_version",
+          "input_sha256",
+          "generated_at_unix_nano"
+        ],
+        "title": "DerivedAnalysis",
+        "type": "object"
+      },
+      "Diagnosis": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Code",
+            "type": "string"
+          },
+          "confidence": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "diagnosis_id": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Diagnosis Id",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "limitations": {
+            "default": [],
+            "items": {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "summary": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "diagnosis_id",
+          "code",
+          "summary",
+          "confidence",
+          "evidence_refs"
+        ],
+        "title": "Diagnosis",
+        "type": "object"
+      },
+      "ErrorRecord": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "default": "diagnostic_payload",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "category": {
+            "minLength": 1,
+            "title": "Category",
+            "type": "string"
+          },
+          "code": {
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          }
+        },
+        "required": [
+          "code",
+          "category"
+        ],
+        "title": "ErrorRecord",
+        "type": "object"
+      },
+      "Event": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "default": "metadata",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "event_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_name": {
+            "minLength": 1,
+            "title": "Event Name",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Evidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "instrumentation_scope_attributes": {
+            "additionalProperties": true,
+            "title": "Instrumentation Scope Attributes",
+            "type": "object"
+          },
+          "instrumentation_scope_name": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instrumentation Scope Name"
+          },
+          "instrumentation_scope_version": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\\.[0-9]+)*(?:[-+][a-z0-9.-]+)?|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instrumentation Scope Version"
+          },
+          "operation_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operation Id"
+          },
+          "participant_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Participant Id"
+          },
+          "resource": {
+            "additionalProperties": true,
+            "title": "Resource",
+            "type": "object"
+          },
+          "resource_schema_url": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resource Schema Url"
+          },
+          "schema_url": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Url"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "span_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Span Id"
+          },
+          "stream_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stream Id"
+          },
+          "time": {
+            "$ref": "#/components/schemas/TimePoint"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "event_name",
+          "time"
+        ],
+        "title": "Event",
+        "type": "object"
+      },
+      "Evidence": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "availability": {
+            "minLength": 1,
+            "title": "Availability",
+            "type": "string"
+          },
+          "confidence": {
+            "minLength": 1,
+            "title": "Confidence",
+            "type": "string"
+          },
+          "method": {
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "method_version": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Method Version"
+          },
+          "observer": {
+            "minLength": 1,
+            "title": "Observer",
+            "type": "string"
+          },
+          "sample_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimeRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "source_field": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Field"
+          }
+        },
+        "required": [
+          "source",
+          "observer",
+          "method",
+          "confidence",
+          "availability"
+        ],
+        "title": "Evidence",
+        "type": "object"
+      },
+      "ExportPolicy": {
+        "additionalProperties": true,
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "destinations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Destinations",
+            "type": "array"
+          },
+          "policy_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Policy Id"
+          }
+        },
+        "required": [
+          "allowed"
+        ],
+        "title": "ExportPolicy",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "IncidentBundleJson": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/IncidentProfile"
+          },
+          "raw_otlp_chunks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/JsonRawOtlpChunk"
+            },
+            "title": "Raw Otlp Chunks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "title": "IncidentBundleJson",
+        "type": "object"
+      },
+      "IncidentPageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IncidentRecordResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "IncidentPageResponse",
+        "type": "object"
+      },
+      "IncidentProfile": {
+        "additionalProperties": true,
+        "properties": {
+          "analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DerivedAnalysis"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "deprecated": true,
+            "description": "Reserved for a future profile; v1 validation requires this to be absent."
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "audio_streams": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AudioStream"
+            },
+            "title": "Audio Streams",
+            "type": "array"
+          },
+          "clock_domains": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ClockDomain"
+            },
+            "title": "Clock Domains",
+            "type": "array"
+          },
+          "coverage": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Coverage"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/BundleManifest"
+          },
+          "media_refs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MediaRef"
+            },
+            "title": "Media Refs",
+            "type": "array"
+          },
+          "operations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Operation"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "participants": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Participant"
+            },
+            "title": "Participants",
+            "type": "array"
+          },
+          "privacy": {
+            "$ref": "#/components/schemas/PrivacyManifest"
+          },
+          "quality_samples": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QualitySample"
+            },
+            "title": "Quality Samples",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "required": [
+          "manifest",
+          "session",
+          "privacy"
+        ],
+        "title": "IncidentProfile",
+        "type": "object"
+      },
+      "IncidentRecordResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "completeness": {
+            "title": "Completeness",
+            "type": "string"
+          },
+          "created_at_unix_nano": {
+            "title": "Created At Unix Nano",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "finality": {
+            "title": "Finality",
+            "type": "string"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "ingested_at_unix_nano": {
+            "title": "Ingested At Unix Nano",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "session_id",
+          "schema_version",
+          "digest",
+          "size_bytes",
+          "status",
+          "finality",
+          "completeness",
+          "framework",
+          "created_at_unix_nano",
+          "ingested_at_unix_nano"
+        ],
+        "title": "IncidentRecordResponse",
+        "type": "object"
+      },
+      "IngestResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "completeness": {
+            "title": "Completeness",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "created_at_unix_nano": {
+            "title": "Created At Unix Nano",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "finality": {
+            "title": "Finality",
+            "type": "string"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "ingested_at_unix_nano": {
+            "title": "Ingested At Unix Nano",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ApiIssue"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "session_id",
+          "schema_version",
+          "digest",
+          "size_bytes",
+          "status",
+          "finality",
+          "completeness",
+          "framework",
+          "created_at_unix_nano",
+          "ingested_at_unix_nano",
+          "created",
+          "warnings"
+        ],
+        "title": "IngestResponse",
+        "type": "object"
+      },
+      "InterruptionProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "event_name": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Event Name",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Evidence Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "event_name",
+          "evidence_ids"
+        ],
+        "title": "InterruptionProjection",
+        "type": "object"
+      },
+      "JsonRawOtlpChunk": {
+        "additionalProperties": false,
+        "description": "Base64 form used only by the human-readable JSON contract.",
+        "properties": {
+          "chunk_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "compression": {
+            "default": "identity",
+            "minLength": 1,
+            "title": "Compression",
+            "type": "string"
+          },
+          "content_type": {
+            "default": "application/x-protobuf",
+            "minLength": 1,
+            "title": "Content Type",
+            "type": "string"
+          },
+          "payload_base64": {
+            "title": "Payload Base64",
+            "type": "string"
+          },
+          "privacy_class": {
+            "const": "raw_otlp",
+            "default": "raw_otlp",
+            "title": "Privacy Class",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "signal": {
+            "minLength": 1,
+            "title": "Signal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "signal",
+          "payload_base64",
+          "sha256"
+        ],
+        "title": "JsonRawOtlpChunk",
+        "type": "object"
+      },
+      "MediaLocator": {
+        "additionalProperties": true,
+        "properties": {
+          "access": {
+            "default": "governed",
+            "minLength": 1,
+            "title": "Access",
+            "type": "string"
+          },
+          "expires_at_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At Unix Nano"
+          },
+          "uri": {
+            "minLength": 1,
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri"
+        ],
+        "title": "MediaLocator",
+        "type": "object"
+      },
+      "MediaRef": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "byte_range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ByteRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "capture_class": {
+            "default": "audio",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "content_type": {
+            "minLength": 1,
+            "title": "Content Type",
+            "type": "string"
+          },
+          "locator": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MediaLocator"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "media_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Media Id",
+            "type": "string"
+          },
+          "media_kind": {
+            "minLength": 1,
+            "title": "Media Kind",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "size_bytes": {
+            "minimum": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "stream_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Stream Id",
+            "type": "string"
+          },
+          "time_range": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimeRange"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "media_id",
+          "session_id",
+          "stream_id",
+          "media_kind",
+          "content_type",
+          "sha256",
+          "size_bytes"
+        ],
+        "title": "MediaRef",
+        "type": "object"
+      },
+      "Omission": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity",
+              "raw_otlp"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Count"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Digest"
+          },
+          "omission_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Omission Id",
+            "type": "string"
+          },
+          "reason": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Reason",
+            "type": "string"
+          },
+          "source_refs": {
+            "default": [],
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Source Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "omission_id",
+          "capture_class",
+          "reason"
+        ],
+        "title": "Omission",
+        "type": "object"
+      },
+      "Operation": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "default": "metadata",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Evidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "instrumentation_scope_attributes": {
+            "additionalProperties": true,
+            "title": "Instrumentation Scope Attributes",
+            "type": "object"
+          },
+          "instrumentation_scope_name": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instrumentation Scope Name"
+          },
+          "instrumentation_scope_version": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\\.[0-9]+)*(?:[-+][a-z0-9.-]+)?|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instrumentation Scope Version"
+          },
+          "links": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CausalLink"
+            },
+            "title": "Links",
+            "type": "array"
+          },
+          "operation_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Operation Id",
+            "type": "string"
+          },
+          "operation_name": {
+            "minLength": 1,
+            "title": "Operation Name",
+            "type": "string"
+          },
+          "parent_scope": {
+            "default": "unknown",
+            "enum": [
+              "internal",
+              "external",
+              "unknown"
+            ],
+            "title": "Parent Scope",
+            "type": "string"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parent Span Id"
+          },
+          "participant_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Participant Id"
+          },
+          "resource": {
+            "additionalProperties": true,
+            "title": "Resource",
+            "type": "object"
+          },
+          "resource_schema_url": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resource Schema Url"
+          },
+          "schema_url": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Url"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "span_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{16}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Span Id"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/TimePoint"
+          },
+          "status": {
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          },
+          "stream_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stream Id"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Trace Id"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "operation_id",
+          "session_id",
+          "operation_name",
+          "status",
+          "started_at"
+        ],
+        "title": "Operation",
+        "type": "object"
+      },
+      "Participant": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "default": "metadata",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "endpoint_kind": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Endpoint Kind"
+          },
+          "participant_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Participant Id",
+            "type": "string"
+          },
+          "pseudonymous_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pseudonymous Id"
+          },
+          "role": {
+            "minLength": 1,
+            "title": "Role",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "participant_id",
+          "session_id",
+          "role"
+        ],
+        "title": "Participant",
+        "type": "object"
+      },
+      "PrivacyManifest": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_classes": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureClassPolicy"
+            },
+            "title": "Capture Classes",
+            "type": "array"
+          },
+          "default_capture_class": {
+            "default": "metadata",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Default Capture Class",
+            "type": "string"
+          },
+          "omissions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Omission"
+            },
+            "title": "Omissions",
+            "type": "array"
+          },
+          "policy_id": {
+            "minLength": 1,
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_version": {
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "policy_version"
+        ],
+        "title": "PrivacyManifest",
+        "type": "object"
+      },
+      "ProblemDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "issues": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ApiIssue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issues"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ProblemDetail",
+        "type": "object"
+      },
+      "ProblemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ProblemDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ProblemResponse",
+        "type": "object"
+      },
+      "Producer": {
+        "additionalProperties": true,
+        "properties": {
+          "language": {
+            "default": "python",
+            "minLength": 1,
+            "title": "Language",
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "sdk_version": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sdk Version"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "Producer",
+        "type": "object"
+      },
+      "QualityMeasurement": {
+        "additionalProperties": true,
+        "properties": {
+          "aggregation": {
+            "default": "instant",
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Aggregation",
+            "type": "string"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "raw_counter": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Raw Counter"
+          },
+          "unit": {
+            "minLength": 1,
+            "title": "Unit",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name",
+          "value",
+          "unit"
+        ],
+        "title": "QualityMeasurement",
+        "type": "object"
+      },
+      "QualitySample": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "capture_class": {
+            "default": "metadata",
+            "enum": [
+              "metadata",
+              "extension_payload",
+              "transcript",
+              "audio",
+              "tool_payload",
+              "model_payload",
+              "diagnostic_payload",
+              "identity"
+            ],
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Evidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "instrumentation_scope_attributes": {
+            "additionalProperties": true,
+            "title": "Instrumentation Scope Attributes",
+            "type": "object"
+          },
+          "instrumentation_scope_name": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instrumentation Scope Name"
+          },
+          "instrumentation_scope_version": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\\.[0-9]+)*(?:[-+][a-z0-9.-]+)?|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instrumentation Scope Version"
+          },
+          "measurements": {
+            "items": {
+              "$ref": "#/components/schemas/QualityMeasurement"
+            },
+            "title": "Measurements",
+            "type": "array"
+          },
+          "participant_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Participant Id"
+          },
+          "quality_kind": {
+            "minLength": 1,
+            "title": "Quality Kind",
+            "type": "string"
+          },
+          "resource": {
+            "additionalProperties": true,
+            "title": "Resource",
+            "type": "object"
+          },
+          "resource_schema_url": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Resource Schema Url"
+          },
+          "sample_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Sample Id",
+            "type": "string"
+          },
+          "sample_window": {
+            "$ref": "#/components/schemas/TimeRange"
+          },
+          "schema_url": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema Url"
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "stream_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stream Id"
+          }
+        },
+        "required": [
+          "sample_id",
+          "session_id",
+          "quality_kind",
+          "sample_window",
+          "measurements"
+        ],
+        "title": "QualitySample",
+        "type": "object"
+      },
+      "RedactionRecord": {
+        "additionalProperties": true,
+        "properties": {
+          "executed_at_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Executed At Unix Nano"
+          },
+          "findings_count": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Findings Count"
+          },
+          "policy_id": {
+            "minLength": 1,
+            "title": "Policy Id",
+            "type": "string"
+          },
+          "policy_version": {
+            "minLength": 1,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "redacted_count": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Redacted Count"
+          },
+          "status": {
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy_id",
+          "policy_version",
+          "status"
+        ],
+        "title": "RedactionRecord",
+        "type": "object"
+      },
+      "RetentionPolicy": {
+        "additionalProperties": true,
+        "properties": {
+          "expires_at_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expires At Unix Nano"
+          },
+          "policy_id": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Policy Id"
+          },
+          "ttl_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ttl Nano"
+          }
+        },
+        "title": "RetentionPolicy",
+        "type": "object"
+      },
+      "Session": {
+        "additionalProperties": true,
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "session_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/TimePoint"
+          },
+          "status": {
+            "minLength": 1,
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "status",
+          "started_at"
+        ],
+        "title": "Session",
+        "type": "object"
+      },
+      "StoredAnalysisResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "analysis": {
+            "$ref": "#/components/schemas/DerivedAnalysis"
+          },
+          "analyzer_version": {
+            "title": "Analyzer Version",
+            "type": "string"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "generated_at_unix_nano": {
+            "title": "Generated At Unix Nano",
+            "type": "string"
+          },
+          "input_digest": {
+            "title": "Input Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "analyzer_version",
+          "input_digest",
+          "generated_at_unix_nano",
+          "analysis"
+        ],
+        "title": "StoredAnalysisResponse",
+        "type": "object"
+      },
+      "TimePoint": {
+        "additionalProperties": true,
+        "description": "A timestamp without pretending distributed clocks are globally ordered.",
+        "properties": {
+          "clock_domain_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clock Domain Id"
+          },
+          "monotonic_time_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Monotonic Time Nano"
+          },
+          "observed_time_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Observed Time Unix Nano"
+          },
+          "source_time_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Time Unix Nano"
+          },
+          "uncertainty_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uncertainty Nano"
+          }
+        },
+        "title": "TimePoint",
+        "type": "object"
+      },
+      "TimeRange": {
+        "additionalProperties": true,
+        "properties": {
+          "end": {
+            "$ref": "#/components/schemas/TimePoint"
+          },
+          "start": {
+            "$ref": "#/components/schemas/TimePoint"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "TimeRange",
+        "type": "object"
+      },
+      "ToolAnalysis": {
+        "additionalProperties": false,
+        "properties": {
+          "elapsed_ms_by_clock_domain": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Elapsed Ms By Clock Domain",
+            "type": "object"
+          },
+          "evidence_ids": {
+            "default": [],
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "operation_count": {
+            "minimum": 0,
+            "title": "Operation Count",
+            "type": "integer"
+          },
+          "total_work_ms": {
+            "minimum": 0,
+            "title": "Total Work Ms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "operation_count",
+          "total_work_ms"
+        ],
+        "title": "ToolAnalysis",
+        "type": "object"
+      },
+      "TurnMetrics": {
+        "additionalProperties": false,
+        "properties": {
+          "first_token_latency": {
+            "$ref": "#/components/schemas/AnalysisMetric"
+          },
+          "generated_response_latency": {
+            "$ref": "#/components/schemas/AnalysisMetric"
+          },
+          "provider_measurements": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AnalysisMetric"
+            },
+            "title": "Provider Measurements",
+            "type": "object"
+          },
+          "received_response_latency": {
+            "$ref": "#/components/schemas/AnalysisMetric"
+          },
+          "render_start_response_latency": {
+            "$ref": "#/components/schemas/AnalysisMetric"
+          },
+          "response_latency": {
+            "$ref": "#/components/schemas/AnalysisMetric"
+          },
+          "sent_response_latency": {
+            "$ref": "#/components/schemas/AnalysisMetric"
+          },
+          "tools": {
+            "$ref": "#/components/schemas/ToolAnalysis"
+          }
+        },
+        "required": [
+          "first_token_latency",
+          "generated_response_latency",
+          "sent_response_latency",
+          "received_response_latency",
+          "render_start_response_latency",
+          "response_latency",
+          "tools"
+        ],
+        "title": "TurnMetrics",
+        "type": "object"
+      },
+      "TurnProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "event_ids": {
+            "default": [],
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Event Ids",
+            "type": "array"
+          },
+          "interruptions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/InterruptionProjection"
+            },
+            "title": "Interruptions",
+            "type": "array"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/TurnMetrics"
+          },
+          "operation_ids": {
+            "default": [],
+            "items": {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Operation Ids",
+            "type": "array"
+          },
+          "turn_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "metrics"
+        ],
+        "title": "TurnProjection",
+        "type": "object"
+      },
+      "ValidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "canonical_sha256": {
+            "title": "Canonical Sha256",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ApiIssue"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "valid",
+          "bundle_id",
+          "session_id",
+          "canonical_sha256",
+          "warnings"
+        ],
+        "title": "ValidateResponse",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1 incidents.",
+    "title": "Earshot local ingest",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "health_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "ready_readyz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Ready"
+      }
+    },
+    "/v1/incidents": {
+      "get": {
+        "operationId": "list_endpoint_v1_incidents_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
+        "summary": "List Endpoint"
+      },
+      "post": {
+        "operationId": "ingest_endpoint_v1_incidents_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentBundleJson"
+              }
+            },
+            "application/vnd.earshot.incident+json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentBundleJson"
+              }
+            },
+            "application/vnd.earshot.incident+protobuf": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "application/x-protobuf": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Ingest Endpoint"
+      }
+    },
+    "/v1/incidents/validate": {
+      "post": {
+        "operationId": "validate_endpoint_v1_incidents_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentBundleJson"
+              }
+            },
+            "application/vnd.earshot.incident+json": {
+              "schema": {
+                "$ref": "#/components/schemas/IncidentBundleJson"
+              }
+            },
+            "application/vnd.earshot.incident+protobuf": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "application/x-protobuf": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Validate Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}": {
+      "delete": {
+        "operationId": "delete_endpoint_v1_incidents__bundle_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Delete Endpoint"
+      },
+      "get": {
+        "operationId": "get_endpoint_v1_incidents__bundle_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/vnd.earshot.incident+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentBundleJson"
+                }
+              },
+              "application/vnd.earshot.incident+protobuf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Get Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}/analysis": {
+      "get": {
+        "operationId": "analysis_endpoint_v1_incidents__bundle_id__analysis_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Analysis Endpoint"
+      }
+    }
+  }
+}

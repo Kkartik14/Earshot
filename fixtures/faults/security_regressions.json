@@ -1,0 +1,57 @@
+[
+  {
+    "id": "error_message_metadata_smuggling",
+    "layer": "contract",
+    "expected": "EARSHOT_PRIVACY_PAYLOAD_SMUGGLED"
+  },
+  {
+    "id": "cas_cleanup_during_inflight_ingest",
+    "layer": "storage",
+    "expected": "committed artifact remains readable"
+  },
+  {
+    "id": "restricted_list_and_analysis_export",
+    "layer": "api",
+    "expected": "restricted evidence is denied or redacted"
+  },
+  {
+    "id": "cross_origin_bearer_redirect",
+    "layer": "exporter",
+    "expected": "redirect target receives no authorization"
+  },
+  {
+    "id": "reentrant_diagnostic_callback",
+    "layer": "exporter",
+    "expected": "callback cannot deadlock submit"
+  },
+  {
+    "id": "application_exception_masking",
+    "layer": "recorder",
+    "expected": "application exception remains primary"
+  },
+  {
+    "id": "protobuf_configured_depth_bypass",
+    "layer": "api",
+    "expected": "json and protobuf enforce identical configured depth"
+  },
+  {
+    "id": "negotiated_representation_etag",
+    "layer": "api",
+    "expected": "strong etag identifies bytes or shared tag is weak; vary accept"
+  },
+  {
+    "id": "secure_purge_residual_bytes",
+    "layer": "storage",
+    "expected": "live database, wal, shm, and cas contain no purged sentinel"
+  },
+  {
+    "id": "stream_participant_owner_mismatch",
+    "layer": "contract",
+    "expected": "EARSHOT_STREAM_PARTICIPANT_MISMATCH"
+  },
+  {
+    "id": "mixed_clock_representation_reversal",
+    "layer": "contract",
+    "expected": "EARSHOT_TIME_RANGE_REVERSED"
+  }
+]

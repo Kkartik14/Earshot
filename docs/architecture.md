@@ -1,0 +1,148 @@
+# Architecture
+
+## Product boundary
+
+Earshot records **real-time voice sessions**, not only phone calls. A session may run
+through a browser, mobile application, local device, WebRTC, raw WebSocket, SIP/PSTN,
+or a framework such as Pipecat or LiveKit.
+
+```text
+voice runtime / application
+  -> existing OTel + framework observer facts
+  -> Earshot capture-policy filter
+  -> Earshot profile enrichment (no second trace root)
+  -> immutable incident bundle
+       -> local ingest: validation -> content-addressed storage -> SQLite index
+       -> deterministic analysis: graph -> projections -> evidence-linked diagnosis
+       -> governed local API/CLI and portable artifact export
+```
+
+The canonical graph is evidence. Turns and waterfalls are replaceable projections.
+Analysis never mutates the immutable input artifact.
+
+## Why Python for the M1 backend
+
+The first two framework seams are Python. A single Python 3.11 implementation now
+owns SDK capture, privacy filtering, contract validation, analysis, SQLite storage,
+CLI, and the local API. This avoids two semantic authorities while the contract is
+still alpha. Browser/viewer clients consume generated JSON Schema/protobuf bindings
+and shared conformance fixtures.
+
+The earlier TypeScript packages remain an M0 prototype and are not the v1 authority.
+
+## Artifact versus telemetry export
+
+These are different operations:
+
+1. A standard OTLP exporter sends traces/logs/metrics to an existing observability
+   backend. This remains the application's parallel telemetry path.
+2. Earshot packages a final, portable evidence snapshot for one voice session.
+
+The incident endpoint is not a fake OTLP receiver. Streaming OTLP assembly requires
+cross-request finalization and is outside M1. M1 adapters normalize ended spans and
+callbacks into the profile; exact raw OTLP is retained only when a caller explicitly
+supplies filtered bytes through the SDK.
+
+## Trust boundaries
+
+### Framework/runtime process
+
+- May contain transcripts, prompts, tool payloads, identifiers, and credentials.
+- Applies capture policy **before** values enter a queue, log, or serialized bundle.
+- Preserves trace/span IDs and native parentage after filtering.
+- Never performs synchronous network I/O in a voice-processing callback.
+
+### Local ingest API
+
+- Treats every body as untrusted.
+- Enforces size, media type, JSON duplicate-key, nesting, shape, invariant, and
+  privacy-policy checks.
+- Never dereferences a submitted media locator.
+- Binds to loopback exclusively in M1. Remote access requires a same-host HTTPS proxy
+  to the loopback socket plus bearer authentication; a flag cannot authorize a
+  non-loopback cleartext listener.
+- Tokenless loopback requests require a loopback `Host` header, closing the local
+  DNS-rebinding boundary. Decode/canonicalization and fsync/SQLite ingest run in a
+  worker thread so storage contention cannot stall ASGI liveness.
+
+### Storage
+
+- Exact canonical protobuf bytes live in a content-addressed object store and own
+  evidence/graph content truth.
+- SQLite is the durable publication/catalog/tombstone authority and contains
+  privacy-safe indexes plus versioned derived analysis. CAS and SQLite are one backup
+  unit; neither is independently reconstructable in M1.
+- Operations, typed links, and events are transactionally projected into relational
+  graph indexes; the canonical protobuf remains the source of truth.
+- Evidence is immutable; legal/privacy deletion physically purges it and leaves a
+  content-free tombstone.
+- The earliest retention deadline of any captured class governs the immutable bundle
+  and is enforced on startup and every read/list boundary.
+- Object digests are rechecked on every read.
+
+## Time and causality
+
+There is no globally truthful distributed monotonic clock. Monotonic time is
+authoritative only inside its declared clock domain. Cross-domain alignment requires
+an explicit transform and uncertainty; without one, latency is unavailable.
+
+OTel parentage represents true nested work. Typed links represent causal
+relationships that are not a tree: retries, supersedes, produces/consumes,
+interruptions, handoffs, and duplicates. Missing external parents or links are valid
+in partial traces; missing targets declared `internal` are invalid.
+
+## Capture-to-render semantics
+
+The vocabulary covers:
+
+```text
+capture -> VAD -> turn detection -> STT? -> agent/LLM/tools? -> TTS?
+        -> encode -> transport send/receive -> decode -> render
+```
+
+Native speech-to-speech systems may not expose STT/LLM/TTS stages. Coverage states
+distinguish available, unsupported, not exposed, disabled, permission denied, and not
+applicable. Absence is never fabricated as a zero-duration operation.
+
+The strongest output facts are `generated`, `sent`, `received`, and `render_started`.
+Earshot never defines `heard_at`: device render does not prove human perception.
+
+The server pipeline is shared by in-app and telephony agents. Transport-specific
+facts are additive: WebRTC/browser render evidence for in-app sessions and SIP/PSTN
+gateway/carrier evidence for calls. Neither transport is required by the core model.
+
+## Repository map
+
+```text
+proto/earshot/v1/incident.proto       protobuf envelope
+semconv/earshot.yaml                  authoring vocabulary
+spec/incident-bundle.schema.json      generated debug-JSON schema
+spec/derived-analysis.schema.json     closed analysis-sidecar schema
+spec/backend-api.openapi.json         generated HTTP API contract
+packages/sdk-python/src/earshot/
+  contract.py                         Pydantic structural models
+  validation.py                       cross-record invariant validator
+  codec.py                            canonical JSON/protobuf codec
+  privacy.py                          metadata allowlist and omission ledger
+  recorder.py                         framework-neutral SDK recorder
+  exporter.py                         bounded fail-open exporter
+  adapters/                           Pipecat and LiveKit mappings
+  analysis.py                         deterministic projections/diagnoses
+  storage.py                          SQLite + content-addressed store
+  api.py / cli.py                     local backend surfaces
+apps/ingest/app.py                    ASGI deployment entry point
+fixtures/                             shared conformance and golden artifacts
+```
+
+## Failure model
+
+Recorder and adapter failures are observability failures, not application failures.
+Callbacks filter and enqueue without network I/O. Queue overflow returns a visible
+negative submission result and a non-sensitive diagnostic. User diagnostic callbacks
+run outside exporter locks, and recorder-finalization failures never replace an
+application exception already in flight.
+
+Storage has the opposite posture: it fails closed. An artifact is not reported as
+ingested until its fsynced CAS object, incident row, graph projection, retention
+deadline, and export projection are coherently published. Corruption, an incomplete
+purge, or a busy WAL scrub is explicit and retryable.

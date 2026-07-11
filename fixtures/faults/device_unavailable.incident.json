@@ -1,0 +1,230 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "input",
+        "media_kind": "audio",
+        "participant_id": "participant-user",
+        "session_id": "fixture-session",
+        "stream_id": "stream-input"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "output",
+        "media_kind": "audio",
+        "participant_id": "participant-agent",
+        "session_id": "fixture-session",
+        "stream_id": "stream-output"
+      }
+    ],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "fault-fixture-clock",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "0",
+        "observer": "fixture_harness",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1800000000000000000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "permission_denied",
+        "signal": "device.microphone"
+      },
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "device_unavailable",
+        "signal": "capture"
+      },
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "app_backgrounded",
+        "signal": "client.render"
+      }
+    ],
+    "events": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-permission-denied",
+        "event_name": "earshot.device.permission_denied",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "client_device"
+        },
+        "instrumentation_scope_attributes": {},
+        "resource": {},
+        "session_id": "fixture-session",
+        "time": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "100000000",
+          "source_time_unix_nano": "1800000000100000000"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-audio-context-suspended",
+        "event_name": "earshot.device.audio_context_suspended",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "client_device"
+        },
+        "instrumentation_scope_attributes": {},
+        "resource": {},
+        "session_id": "fixture-session",
+        "time": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "150000000",
+          "source_time_unix_nano": "1800000000150000000"
+        },
+        "turn_id": "turn-1"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "deterministic_harness",
+          "name": "earshot.fixture",
+          "version": "1.0.0"
+        }
+      ],
+      "attributes": {
+        "earshot.framework.name": "deterministic_harness"
+      },
+      "bundle_id": "fault-device-unavailable",
+      "completeness": "complete",
+      "created_at_unix_nano": "1800000000000000000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot-fault-corpus",
+        "version": "1.0.0"
+      },
+      "schema_version": "1.0.0",
+      "semantic_profile_version": "1.0.0",
+      "session_id": "fixture-session"
+    },
+    "media_refs": [],
+    "operations": [],
+    "participants": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "browser",
+        "participant_id": "participant-user",
+        "role": "user",
+        "session_id": "fixture-session"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "server",
+        "participant_id": "participant-agent",
+        "role": "agent",
+        "session_id": "fixture-session"
+      }
+    ],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [],
+      "policy_id": "fault-corpus-metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "fault-fixture-clock",
+        "monotonic_time_nano": "5000000000",
+        "source_time_unix_nano": "1800000005000000000"
+      },
+      "session_id": "fixture-session",
+      "started_at": {
+        "clock_domain_id": "fault-fixture-clock",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1800000000000000000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}

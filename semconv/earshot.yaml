@@ -1,0 +1,302 @@
+# Earshot semantic profile v1.
+#
+# This is the authoring source for the voice-specific vocabulary carried over
+# OTLP. Values intentionally remain open strings: adapters must preserve unknown
+# future operations, roles, event names, evidence sources, and availability
+# reasons. Existing gen_ai.* and OpenInference attributes should be retained and
+# reused where they already describe the underlying model/tool operation.
+# The general OpenTelemetry `session.id` convention is reused for telemetry
+# correlation rather than duplicated as `earshot.session.id`. Its Development
+# status means adapters must pin the semconv revision they implement. This file
+# vendors the session.id definition from OpenTelemetry semantic-conventions
+# v1.41.1 (git ead83b9b0fa36540c1642fce46e874f002ac23f1, verified 2026-07-11).
+# Earshot semantic profile version: 1.0.0
+groups:
+  - id: registry.earshot
+    type: attribute_group
+    brief: Common attributes for portable real-time voice-session evidence.
+    attributes:
+      - id: session.id
+        type: string
+        requirement_level: opt_in
+        brief: A unique session identifier, reused from the pinned OpenTelemetry semantic-conventions registry.
+      - id: earshot.turn.id
+        type: string
+        requirement_level: opt_in
+        brief: Opaque turn projection identifier; turns are not graph containers.
+      - id: earshot.turn.index
+        type: int
+        requirement_level: opt_in
+        brief: Producer-observed presentation order for a turn projection.
+      - id: earshot.operation.name
+        type: string
+        requirement_level: required
+        brief: Open voice operation name such as vad, turn_detection, stt, llm, tts, transport_send, or render.
+      - id: earshot.operation.id
+        type: string
+        requirement_level: opt_in
+        brief: Opaque incident operation referenced by a derived or provider quality sample.
+      - id: earshot.participant.id
+        type: string
+        requirement_level: opt_in
+        brief: Opaque participant reference from the incident profile.
+      - id: earshot.stream.id
+        type: string
+        requirement_level: opt_in
+        brief: Opaque audio-stream reference from the incident profile.
+      - id: earshot.framework.name
+        type: string
+        requirement_level: opt_in
+        brief: Framework that produced the source evidence.
+      - id: earshot.framework.version
+        type: string
+        requirement_level: opt_in
+        brief: Exact framework version observed by the adapter.
+      - id: earshot.framework.operation.name
+        type: string
+        requirement_level: opt_in
+        brief: Privacy-governed native framework operation label retained alongside Earshot classification.
+      - id: earshot.request.id
+        type: string
+        requirement_level: opt_in
+        brief: Opaque provider request identifier used only for evidence correlation.
+      - id: earshot.conversation.item.id
+        type: string
+        requirement_level: opt_in
+        brief: Opaque conversation-item identifier; it is not a turn identifier.
+      - id: earshot.conversation.role
+        type: string
+        requirement_level: opt_in
+        brief: Privacy-governed role attached to a conversation item.
+      - id: earshot.source.field
+        type: string
+        requirement_level: opt_in
+        brief: Original framework, provider, protocol, or SDK field mapped to this fact.
+      - id: earshot.source.event.name
+        type: string
+        requirement_level: opt_in
+        brief: Allowlisted native span-event name or its sha256-prefixed digest label.
+      - id: earshot.source.name_sha256
+        type: string
+        requirement_level: opt_in
+        brief: Lowercase hexadecimal SHA-256 of an unsafe source operation or event label.
+      - id: earshot.source.status_sha256
+        type: string
+        requirement_level: opt_in
+        brief: Lowercase hexadecimal SHA-256 of an unsafe source status label.
+      - id: earshot.source.schema_url_sha256
+        type: string
+        requirement_level: opt_in
+        brief: Lowercase hexadecimal SHA-256 of a dropped unsafe or noncanonical source schema URL.
+      - id: earshot.source.resource_schema_url_sha256
+        type: string
+        requirement_level: opt_in
+        brief: Lowercase hexadecimal SHA-256 of a dropped unsafe or noncanonical resource schema URL.
+      - id: earshot.analysis.synthetic_projection
+        type: boolean
+        requirement_level: opt_in
+        brief: Marks a private analysis-only point projected from an operation boundary.
+      - id: earshot.clock.domain.id
+        type: string
+        requirement_level: opt_in
+        brief: Clock domain in which a monotonic value is comparable.
+      - id: earshot.time.monotonic_nano
+        type: string
+        requirement_level: opt_in
+        brief: Exact non-negative decimal-string monotonic nanoseconds within the named clock domain.
+      - id: earshot.time.observed_unix_nano
+        type: string
+        requirement_level: opt_in
+        brief: Exact decimal-string collector observation time in Unix nanoseconds.
+      - id: earshot.time.uncertainty_nano
+        type: string
+        requirement_level: opt_in
+        brief: Exact decimal-string uncertainty bound for an aligned timestamp.
+      - id: earshot.event.id
+        type: string
+        requirement_level: opt_in
+        brief: Globally unique event identifier within an incident bundle.
+      - id: earshot.event.name
+        type: string
+        requirement_level: opt_in
+        brief: Open point-event name, normally prefixed with earshot.
+      - id: earshot.link.type
+        type: string
+        requirement_level: opt_in
+        brief: Open causal relationship such as produced_by, consumes, retries, supersedes, interrupts, handoff, or duplicates.
+      - id: earshot.link.target_scope
+        type: string
+        requirement_level: opt_in
+        brief: Whether a target is internal, external, or unknown to this artifact.
+      - id: earshot.evidence.source
+        type: string
+        requirement_level: opt_in
+        brief: App, provider, webrtc_stats, rtcp, carrier, audio inference, user feedback, or another open evidence source.
+      - id: earshot.evidence.observer
+        type: string
+        requirement_level: opt_in
+        brief: Component that observed the evidence, such as client, server, or gateway.
+      - id: earshot.evidence.method
+        type: string
+        requirement_level: opt_in
+        brief: Measurement, estimate, inference, or provider method name.
+      - id: earshot.evidence.method_version
+        type: string
+        requirement_level: opt_in
+        brief: Version of the evidence method when known.
+      - id: earshot.evidence.confidence
+        type: string
+        requirement_level: opt_in
+        brief: Open confidence classification; measured, estimated, and inferred are the standard values.
+      - id: earshot.evidence.availability
+        type: string
+        requirement_level: opt_in
+        brief: Open availability classification; unavailable evidence is never encoded as zero.
+      - id: earshot.privacy.capture_class
+        type: string
+        requirement_level: opt_in
+        brief: Privacy class governing this record or payload.
+      - id: earshot.quality.aggregation
+        type: string
+        requirement_level: opt_in
+        brief: Instant, delta, cumulative, or another explicitly named aggregation.
+      - id: earshot.duration.audio_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Provider-reported audio duration in seconds.
+      - id: earshot.duration.inference_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Provider-reported inference duration in seconds.
+      - id: earshot.duration.turn_callback_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Delay to invoke the application user-turn-completed callback, in seconds.
+      - id: earshot.duration.turn_detection.detection_delay_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Delay from the latest input audio to an end-of-turn inference response, in seconds.
+      - id: earshot.duration.turn_detection.prediction_seconds
+        type: double
+        requirement_level: opt_in
+        brief: End-of-turn model prediction duration, in seconds.
+      - id: earshot.duration.turn_detection.total_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Total end-of-turn inference duration from earliest input audio, in seconds.
+      - id: earshot.duration.avatar.playback_latency_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Avatar playback-start latency in seconds.
+      - id: earshot.duration.interruption.detection_delay_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Interruption detector delay in seconds.
+      - id: earshot.duration.interruption.prediction_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Interruption-model prediction duration in seconds.
+      - id: earshot.duration.interruption.total_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Total interruption-detection duration in seconds.
+      - id: earshot.metric.connection.reused
+        type: boolean
+        requirement_level: opt_in
+        brief: Whether a provider connection was reused.
+      - id: earshot.metric.inference.count
+        type: int
+        requirement_level: opt_in
+        brief: Count of provider inference operations.
+      - id: earshot.metric.interruption.accepted
+        type: boolean
+        requirement_level: opt_in
+        brief: Whether an interruption decision was accepted.
+      - id: earshot.metric.interruption.backchannel_count
+        type: int
+        requirement_level: opt_in
+        brief: Count of interruption-detector backchannels.
+      - id: earshot.metric.interruption.count
+        type: int
+        requirement_level: opt_in
+        brief: Count of interruption decisions reported by a provider.
+      - id: earshot.metric.interruption.probability
+        type: double
+        requirement_level: opt_in
+        brief: Provider-reported interruption probability.
+      - id: earshot.metric.interruption.request_count
+        type: int
+        requirement_level: opt_in
+        brief: Count of interruption-detector requests.
+      - id: earshot.metric.interruption.resumed
+        type: boolean
+        requirement_level: opt_in
+        brief: Whether output resumed after a false interruption.
+      - id: earshot.metric.model.total_tokens
+        type: int
+        requirement_level: opt_in
+        brief: Provider-reported total model tokens.
+      - id: earshot.metric.request.cancelled
+        type: boolean
+        requirement_level: opt_in
+        brief: Whether a provider request was cancelled.
+      - id: earshot.metric.request.streamed
+        type: boolean
+        requirement_level: opt_in
+        brief: Whether a provider request used streaming.
+      - id: earshot.metric.turn_detection.request_count
+        type: int
+        requirement_level: opt_in
+        brief: Count of provider requests made for one end-of-turn inference.
+
+  - id: span.earshot.voice_operation
+    type: span
+    span_kind: internal
+    brief: A source operation classified with the Earshot voice profile.
+    attributes:
+      - ref: session.id
+        requirement_level: required
+      - ref: earshot.operation.name
+        requirement_level: required
+      - ref: earshot.turn.id
+      - ref: earshot.participant.id
+      - ref: earshot.stream.id
+      - ref: earshot.framework.name
+      - ref: earshot.framework.version
+      - ref: earshot.source.field
+      - ref: earshot.clock.domain.id
+      - ref: earshot.time.monotonic_nano
+      - ref: earshot.time.observed_unix_nano
+      - ref: earshot.time.uncertainty_nano
+      - ref: earshot.evidence.source
+      - ref: earshot.evidence.observer
+      - ref: earshot.evidence.method
+      - ref: earshot.evidence.method_version
+      - ref: earshot.evidence.confidence
+      - ref: earshot.evidence.availability
+      - ref: earshot.privacy.capture_class
+
+  - id: event.earshot.voice_event
+    type: event
+    brief: An independently timestamped voice-session point event carried as an OTLP log record when authored by Earshot.
+    attributes:
+      - ref: session.id
+        requirement_level: required
+      - ref: earshot.event.id
+        requirement_level: required
+      - ref: earshot.event.name
+        requirement_level: required
+      - ref: earshot.turn.id
+      - ref: earshot.participant.id
+      - ref: earshot.stream.id
+      - ref: earshot.clock.domain.id
+      - ref: earshot.time.monotonic_nano
+      - ref: earshot.time.observed_unix_nano
+      - ref: earshot.time.uncertainty_nano
+      - ref: earshot.evidence.source
+      - ref: earshot.evidence.observer
+      - ref: earshot.evidence.method
+      - ref: earshot.evidence.method_version
+      - ref: earshot.evidence.confidence
+      - ref: earshot.evidence.availability
+      - ref: earshot.privacy.capture_class

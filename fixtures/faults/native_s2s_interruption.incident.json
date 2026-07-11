@@ -1,0 +1,235 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "input",
+        "media_kind": "audio",
+        "participant_id": "participant-user",
+        "session_id": "fixture-session",
+        "stream_id": "stream-input"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "output",
+        "media_kind": "audio",
+        "participant_id": "participant-agent",
+        "session_id": "fixture-session",
+        "stream_id": "stream-output"
+      }
+    ],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "fault-fixture-clock",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "0",
+        "observer": "fixture_harness",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1800000000000000000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "server_native_s2s_no_client_render_observer",
+        "signal": "render"
+      },
+      {
+        "attributes": {},
+        "availability": "not_applicable",
+        "reason": "native_s2s_no_cascaded_stages",
+        "signal": "stt.llm.tts"
+      }
+    ],
+    "events": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-native-interruption",
+        "event_name": "earshot.interruption.accepted",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "fixture_runtime"
+        },
+        "instrumentation_scope_attributes": {},
+        "resource": {},
+        "session_id": "fixture-session",
+        "time": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "1100000000",
+          "source_time_unix_nano": "1800000001100000000"
+        },
+        "turn_id": "turn-1"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "deterministic_harness",
+          "name": "earshot.fixture",
+          "version": "1.0.0"
+        }
+      ],
+      "attributes": {
+        "earshot.framework.name": "deterministic_harness"
+      },
+      "bundle_id": "fault-native-s2s-interruption",
+      "completeness": "complete",
+      "created_at_unix_nano": "1800000000000000000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot-fault-corpus",
+        "version": "1.0.0"
+      },
+      "schema_version": "1.0.0",
+      "semantic_profile_version": "1.0.0",
+      "session_id": "fixture-session"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "2000000000",
+          "source_time_unix_nano": "1800000002000000000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "fixture_runtime"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "op-native-agent",
+        "operation_name": "agent",
+        "parent_scope": "external",
+        "resource": {},
+        "session_id": "fixture-session",
+        "span_id": "1111111111111111",
+        "started_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "500000000",
+          "source_time_unix_nano": "1800000000500000000"
+        },
+        "status": "ok",
+        "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turn_id": "turn-1"
+      }
+    ],
+    "participants": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "browser",
+        "participant_id": "participant-user",
+        "role": "user",
+        "session_id": "fixture-session"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "server",
+        "participant_id": "participant-agent",
+        "role": "agent",
+        "session_id": "fixture-session"
+      }
+    ],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [],
+      "policy_id": "fault-corpus-metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "fault-fixture-clock",
+        "monotonic_time_nano": "5000000000",
+        "source_time_unix_nano": "1800000005000000000"
+      },
+      "session_id": "fixture-session",
+      "started_at": {
+        "clock_domain_id": "fault-fixture-clock",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1800000000000000000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}

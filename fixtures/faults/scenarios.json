@@ -1,0 +1,92 @@
+[
+  {
+    "id": "fast_endpointing",
+    "required_signals": ["vad", "turn_detection", "speech.ended", "turn.committed"]
+  },
+  {
+    "id": "slow_endpointing",
+    "required_signals": ["vad", "turn_detection", "speech.ended", "turn.committed"]
+  },
+  {
+    "id": "barge_in",
+    "required_signals": [
+      "interruption.detected",
+      "interruption.accepted",
+      "model.cancelled",
+      "audio.queued.discarded",
+      "audio.render.stopped"
+    ]
+  },
+  {
+    "id": "stt_delay",
+    "required_signals": [
+      "stt",
+      "response.first_audio_generated",
+      "audio.first_byte_sent",
+      "audio.first_packet_received",
+      "audio.render.started"
+    ]
+  },
+  {
+    "id": "llm_delay",
+    "required_signals": [
+      "llm",
+      "response.first_token",
+      "response.first_audio_generated",
+      "audio.first_byte_sent",
+      "audio.first_packet_received",
+      "audio.render.started"
+    ]
+  },
+  {
+    "id": "tts_delay",
+    "required_signals": [
+      "tts",
+      "response.first_audio_generated",
+      "audio.first_byte_sent",
+      "audio.first_packet_received",
+      "audio.render.started"
+    ]
+  },
+  {
+    "id": "tool_timeout_retry",
+    "required_signals": ["tool", "retries", "consumes", "tool.retry.downstream_resumed"]
+  },
+  {
+    "id": "webrtc_degradation",
+    "required_signals": ["transport.quality", "webrtc_stats", "round_trip_time"]
+  },
+  {
+    "id": "websocket_reconnect",
+    "required_signals": [
+      "transport.reconnecting",
+      "transport.message.duplicate",
+      "transport.message.out_of_order",
+      "duplicates",
+      "supersedes"
+    ]
+  },
+  {
+    "id": "device_unavailable",
+    "required_signals": [
+      "device.permission_denied",
+      "device.audio_context_suspended",
+      "capture",
+      "client.render",
+      "not_observed"
+    ]
+  },
+  {
+    "id": "native_s2s_interruption",
+    "required_signals": ["interruption.accepted", "render"]
+  },
+  { "id": "privacy_opt_out", "required_signals": ["omission", "metadata"] },
+  {
+    "id": "telephony_handoff",
+    "required_signals": [
+      "handoff",
+      "telephony.dtmf.received",
+      "telephony.voicemail.detected"
+    ]
+  }
+]

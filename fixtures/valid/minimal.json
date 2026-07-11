@@ -1,0 +1,33 @@
+{
+  "profile": {
+    "manifest": {
+      "schema_version": "1.0.0",
+      "bundle_id": "fixture-minimal",
+      "session_id": "fixture-session",
+      "created_at_unix_nano": "1800000000000000000",
+      "producer": {
+        "name": "earshot-conformance",
+        "version": "1.0.0"
+      }
+    },
+    "session": {
+      "session_id": "fixture-session",
+      "status": "completed",
+      "started_at": {
+        "source_time_unix_nano": "1800000000000000000"
+      }
+    },
+    "privacy": {
+      "policy_id": "metadata-only",
+      "policy_version": "1",
+      "capture_classes": [
+        {
+          "capture_class": "metadata",
+          "decision": "allow",
+          "captured": true
+        }
+      ]
+    }
+  },
+  "raw_otlp_chunks": []
+}

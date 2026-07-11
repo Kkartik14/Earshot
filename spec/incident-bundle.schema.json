@@ -1,0 +1,2737 @@
+{
+  "$defs": {
+    "Adapter": {
+      "additionalProperties": true,
+      "properties": {
+        "framework": {
+          "minLength": 1,
+          "title": "Framework",
+          "type": "string"
+        },
+        "framework_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Framework Version"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "framework"
+      ],
+      "title": "Adapter",
+      "type": "object"
+    },
+    "AnalysisMetric": {
+      "additionalProperties": false,
+      "properties": {
+        "availability": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Availability",
+          "type": "string"
+        },
+        "basis": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Basis",
+          "type": "string"
+        },
+        "confidence": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Confidence",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "limitation": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limitation"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "availability",
+        "basis",
+        "confidence"
+      ],
+      "title": "AnalysisMetric",
+      "type": "object"
+    },
+    "AnalysisProjections": {
+      "additionalProperties": false,
+      "properties": {
+        "limitations": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "session_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Session Id"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnalysisSummary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "turns": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TurnProjection"
+          },
+          "title": "Turns",
+          "type": "array"
+        },
+        "unassigned_provider_measurements": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "$ref": "#/$defs/AnalysisMetric"
+            },
+            "type": "object"
+          },
+          "propertyNames": {
+            "maxLength": 256,
+            "minLength": 1
+          },
+          "title": "Unassigned Provider Measurements",
+          "type": "object"
+        }
+      },
+      "title": "AnalysisProjections",
+      "type": "object"
+    },
+    "AnalysisSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "event_count": {
+          "minimum": 0,
+          "title": "Event Count",
+          "type": "integer"
+        },
+        "failed_operation_count": {
+          "minimum": 0,
+          "title": "Failed Operation Count",
+          "type": "integer"
+        },
+        "operation_count": {
+          "minimum": 0,
+          "title": "Operation Count",
+          "type": "integer"
+        },
+        "quality_sample_count": {
+          "minimum": 0,
+          "title": "Quality Sample Count",
+          "type": "integer"
+        },
+        "turn_count": {
+          "minimum": 0,
+          "title": "Turn Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "turn_count",
+        "operation_count",
+        "event_count",
+        "quality_sample_count",
+        "failed_operation_count"
+      ],
+      "title": "AnalysisSummary",
+      "type": "object"
+    },
+    "AudioFormat": {
+      "additionalProperties": true,
+      "properties": {
+        "channels": {
+          "exclusiveMinimum": 0,
+          "title": "Channels",
+          "type": "integer"
+        },
+        "clock_rate_hz": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clock Rate Hz"
+        },
+        "encoding": {
+          "minLength": 1,
+          "title": "Encoding",
+          "type": "string"
+        },
+        "sample_rate_hz": {
+          "exclusiveMinimum": 0,
+          "title": "Sample Rate Hz",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "encoding",
+        "sample_rate_hz",
+        "channels"
+      ],
+      "title": "AudioFormat",
+      "type": "object"
+    },
+    "AudioStream": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "default": "metadata",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "direction": {
+          "minLength": 1,
+          "title": "Direction",
+          "type": "string"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AudioFormat"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "media_kind": {
+          "default": "audio",
+          "minLength": 1,
+          "title": "Media Kind",
+          "type": "string"
+        },
+        "participant_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Participant Id",
+          "type": "string"
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "stream_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "transport_ref": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Transport Ref"
+        }
+      },
+      "required": [
+        "stream_id",
+        "session_id",
+        "participant_id",
+        "direction"
+      ],
+      "title": "AudioStream",
+      "type": "object"
+    },
+    "BundleManifest": {
+      "additionalProperties": true,
+      "properties": {
+        "adapters": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Adapter"
+          },
+          "title": "Adapters",
+          "type": "array"
+        },
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "bundle_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,255}$",
+          "title": "Bundle Id",
+          "type": "string"
+        },
+        "completeness": {
+          "default": "complete",
+          "minLength": 1,
+          "title": "Completeness",
+          "type": "string"
+        },
+        "created_at_unix_nano": {
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "title": "Created At Unix Nano",
+          "type": "string"
+        },
+        "finality": {
+          "default": "final",
+          "minLength": 1,
+          "title": "Finality",
+          "type": "string"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "schema_version": {
+          "default": "1.0.0",
+          "minLength": 1,
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "semantic_profile_version": {
+          "default": "1.0.0",
+          "minLength": 1,
+          "title": "Semantic Profile Version",
+          "type": "string"
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bundle_id",
+        "session_id",
+        "created_at_unix_nano",
+        "producer"
+      ],
+      "title": "BundleManifest",
+      "type": "object"
+    },
+    "ByteRange": {
+      "additionalProperties": true,
+      "properties": {
+        "length": {
+          "exclusiveMinimum": 0,
+          "title": "Length",
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "title": "Offset",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "offset",
+        "length"
+      ],
+      "title": "ByteRange",
+      "type": "object"
+    },
+    "CaptureClassPolicy": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity",
+            "raw_otlp"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "captured": {
+          "title": "Captured",
+          "type": "boolean"
+        },
+        "consent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsentRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decision": {
+          "minLength": 1,
+          "title": "Decision",
+          "type": "string"
+        },
+        "export": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExportPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "redaction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RedactionRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "retention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetentionPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "capture_class",
+        "decision",
+        "captured"
+      ],
+      "title": "CaptureClassPolicy",
+      "type": "object"
+    },
+    "CausalLink": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "relationship": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Relationship",
+          "type": "string"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
+        "target_operation_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Operation Id"
+        },
+        "target_scope": {
+          "default": "unknown",
+          "enum": [
+            "internal",
+            "external",
+            "unknown"
+          ],
+          "title": "Target Scope",
+          "type": "string"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Id"
+        }
+      },
+      "required": [
+        "relationship"
+      ],
+      "title": "CausalLink",
+      "type": "object"
+    },
+    "ClockDomain": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "clock_domain_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Clock Domain Id",
+          "type": "string"
+        },
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "monotonic_origin_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Monotonic Origin Nano"
+        },
+        "observer": {
+          "minLength": 1,
+          "title": "Observer",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "synchronization_method": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Synchronization Method"
+        },
+        "uncertainty_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uncertainty Nano"
+        },
+        "wall_origin_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Wall Origin Unix Nano"
+        }
+      },
+      "required": [
+        "clock_domain_id",
+        "kind",
+        "observer"
+      ],
+      "title": "ClockDomain",
+      "type": "object"
+    },
+    "ConsentRecord": {
+      "additionalProperties": true,
+      "properties": {
+        "authority": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Authority"
+        },
+        "legal_basis": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Legal Basis"
+        },
+        "recorded_at_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recorded At Unix Nano"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "ConsentRecord",
+      "type": "object"
+    },
+    "Coverage": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "availability": {
+          "minLength": 1,
+          "title": "Availability",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "signal": {
+          "minLength": 1,
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "signal",
+        "availability"
+      ],
+      "title": "Coverage",
+      "type": "object"
+    },
+    "DerivedAnalysis": {
+      "additionalProperties": false,
+      "properties": {
+        "analyzer_name": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Analyzer Name",
+          "type": "string"
+        },
+        "analyzer_version": {
+          "minLength": 1,
+          "title": "Analyzer Version",
+          "type": "string"
+        },
+        "capture_class": {
+          "const": "metadata",
+          "default": "metadata",
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "diagnoses": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Diagnosis"
+          },
+          "title": "Diagnoses",
+          "type": "array"
+        },
+        "generated_at_unix_nano": {
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "title": "Generated At Unix Nano",
+          "type": "string"
+        },
+        "input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Input Sha256",
+          "type": "string"
+        },
+        "projections": {
+          "$ref": "#/$defs/AnalysisProjections"
+        }
+      },
+      "required": [
+        "analyzer_name",
+        "analyzer_version",
+        "input_sha256",
+        "generated_at_unix_nano"
+      ],
+      "title": "DerivedAnalysis",
+      "type": "object"
+    },
+    "Diagnosis": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Code",
+          "type": "string"
+        },
+        "confidence": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Confidence",
+          "type": "string"
+        },
+        "diagnosis_id": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Diagnosis Id",
+          "type": "string"
+        },
+        "evidence_refs": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Refs",
+          "type": "array"
+        },
+        "limitations": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "type": "string"
+          },
+          "title": "Limitations",
+          "type": "array"
+        },
+        "summary": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "diagnosis_id",
+        "code",
+        "summary",
+        "confidence",
+        "evidence_refs"
+      ],
+      "title": "Diagnosis",
+      "type": "object"
+    },
+    "ErrorRecord": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "default": "diagnostic_payload",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "category": {
+          "minLength": 1,
+          "title": "Category",
+          "type": "string"
+        },
+        "code": {
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        }
+      },
+      "required": [
+        "code",
+        "category"
+      ],
+      "title": "ErrorRecord",
+      "type": "object"
+    },
+    "Event": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "default": "metadata",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "event_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Event Id",
+          "type": "string"
+        },
+        "event_name": {
+          "minLength": 1,
+          "title": "Event Name",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "instrumentation_scope_attributes": {
+          "additionalProperties": true,
+          "title": "Instrumentation Scope Attributes",
+          "type": "object"
+        },
+        "instrumentation_scope_name": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instrumentation Scope Name"
+        },
+        "instrumentation_scope_version": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\\.[0-9]+)*(?:[-+][a-z0-9.-]+)?|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instrumentation Scope Version"
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Operation Id"
+        },
+        "participant_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participant Id"
+        },
+        "resource": {
+          "additionalProperties": true,
+          "title": "Resource",
+          "type": "object"
+        },
+        "resource_schema_url": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource Schema Url"
+        },
+        "schema_url": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Url"
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
+        "stream_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stream Id"
+        },
+        "time": {
+          "$ref": "#/$defs/TimePoint"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Id"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "event_id",
+        "session_id",
+        "event_name",
+        "time"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "Evidence": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "availability": {
+          "minLength": 1,
+          "title": "Availability",
+          "type": "string"
+        },
+        "confidence": {
+          "minLength": 1,
+          "title": "Confidence",
+          "type": "string"
+        },
+        "method": {
+          "minLength": 1,
+          "title": "Method",
+          "type": "string"
+        },
+        "method_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method Version"
+        },
+        "observer": {
+          "minLength": 1,
+          "title": "Observer",
+          "type": "string"
+        },
+        "sample_window": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "source_field": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Field"
+        }
+      },
+      "required": [
+        "source",
+        "observer",
+        "method",
+        "confidence",
+        "availability"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "ExportPolicy": {
+      "additionalProperties": true,
+      "properties": {
+        "allowed": {
+          "title": "Allowed",
+          "type": "boolean"
+        },
+        "destinations": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Destinations",
+          "type": "array"
+        },
+        "policy_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Id"
+        }
+      },
+      "required": [
+        "allowed"
+      ],
+      "title": "ExportPolicy",
+      "type": "object"
+    },
+    "IncidentProfile": {
+      "additionalProperties": true,
+      "properties": {
+        "analysis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DerivedAnalysis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "deprecated": true,
+          "description": "Reserved for a future profile; v1 validation requires this to be absent."
+        },
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "audio_streams": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AudioStream"
+          },
+          "title": "Audio Streams",
+          "type": "array"
+        },
+        "clock_domains": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ClockDomain"
+          },
+          "title": "Clock Domains",
+          "type": "array"
+        },
+        "coverage": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Coverage"
+          },
+          "title": "Coverage",
+          "type": "array"
+        },
+        "events": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "manifest": {
+          "$ref": "#/$defs/BundleManifest"
+        },
+        "media_refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MediaRef"
+          },
+          "title": "Media Refs",
+          "type": "array"
+        },
+        "operations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Operation"
+          },
+          "title": "Operations",
+          "type": "array"
+        },
+        "participants": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Participant"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "privacy": {
+          "$ref": "#/$defs/PrivacyManifest"
+        },
+        "quality_samples": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/QualitySample"
+          },
+          "title": "Quality Samples",
+          "type": "array"
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        }
+      },
+      "required": [
+        "manifest",
+        "session",
+        "privacy"
+      ],
+      "title": "IncidentProfile",
+      "type": "object"
+    },
+    "InterruptionProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "event_name": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Event Name",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Evidence Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event_name",
+        "evidence_ids"
+      ],
+      "title": "InterruptionProjection",
+      "type": "object"
+    },
+    "JsonRawOtlpChunk": {
+      "additionalProperties": false,
+      "description": "Base64 form used only by the human-readable JSON contract.",
+      "properties": {
+        "chunk_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "compression": {
+          "default": "identity",
+          "minLength": 1,
+          "title": "Compression",
+          "type": "string"
+        },
+        "content_type": {
+          "default": "application/x-protobuf",
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "payload_base64": {
+          "title": "Payload Base64",
+          "type": "string"
+        },
+        "privacy_class": {
+          "const": "raw_otlp",
+          "default": "raw_otlp",
+          "title": "Privacy Class",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "signal": {
+          "minLength": 1,
+          "title": "Signal",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "signal",
+        "payload_base64",
+        "sha256"
+      ],
+      "title": "JsonRawOtlpChunk",
+      "type": "object"
+    },
+    "MediaLocator": {
+      "additionalProperties": true,
+      "properties": {
+        "access": {
+          "default": "governed",
+          "minLength": 1,
+          "title": "Access",
+          "type": "string"
+        },
+        "expires_at_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At Unix Nano"
+        },
+        "uri": {
+          "minLength": 1,
+          "title": "Uri",
+          "type": "string"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "title": "MediaLocator",
+      "type": "object"
+    },
+    "MediaRef": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "byte_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "capture_class": {
+          "default": "audio",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "content_type": {
+          "minLength": 1,
+          "title": "Content Type",
+          "type": "string"
+        },
+        "locator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MediaLocator"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "media_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Media Id",
+          "type": "string"
+        },
+        "media_kind": {
+          "minLength": 1,
+          "title": "Media Kind",
+          "type": "string"
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size_bytes": {
+          "minimum": 0,
+          "title": "Size Bytes",
+          "type": "integer"
+        },
+        "stream_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "time_range": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimeRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "media_id",
+        "session_id",
+        "stream_id",
+        "media_kind",
+        "content_type",
+        "sha256",
+        "size_bytes"
+      ],
+      "title": "MediaRef",
+      "type": "object"
+    },
+    "Omission": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity",
+            "raw_otlp"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Count"
+        },
+        "digest": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Digest"
+        },
+        "omission_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Omission Id",
+          "type": "string"
+        },
+        "reason": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Reason",
+          "type": "string"
+        },
+        "source_refs": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Source Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "omission_id",
+        "capture_class",
+        "reason"
+      ],
+      "title": "Omission",
+      "type": "object"
+    },
+    "Operation": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "default": "metadata",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimePoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "instrumentation_scope_attributes": {
+          "additionalProperties": true,
+          "title": "Instrumentation Scope Attributes",
+          "type": "object"
+        },
+        "instrumentation_scope_name": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instrumentation Scope Name"
+        },
+        "instrumentation_scope_version": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\\.[0-9]+)*(?:[-+][a-z0-9.-]+)?|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instrumentation Scope Version"
+        },
+        "links": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CausalLink"
+          },
+          "title": "Links",
+          "type": "array"
+        },
+        "operation_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Operation Id",
+          "type": "string"
+        },
+        "operation_name": {
+          "minLength": 1,
+          "title": "Operation Name",
+          "type": "string"
+        },
+        "parent_scope": {
+          "default": "unknown",
+          "enum": [
+            "internal",
+            "external",
+            "unknown"
+          ],
+          "title": "Parent Scope",
+          "type": "string"
+        },
+        "parent_span_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Span Id"
+        },
+        "participant_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participant Id"
+        },
+        "resource": {
+          "additionalProperties": true,
+          "title": "Resource",
+          "type": "object"
+        },
+        "resource_schema_url": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource Schema Url"
+        },
+        "schema_url": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Url"
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{16}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
+        "started_at": {
+          "$ref": "#/$defs/TimePoint"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        },
+        "stream_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stream Id"
+        },
+        "trace_id": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{32}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Trace Id"
+        },
+        "turn_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Turn Id"
+        }
+      },
+      "required": [
+        "operation_id",
+        "session_id",
+        "operation_name",
+        "status",
+        "started_at"
+      ],
+      "title": "Operation",
+      "type": "object"
+    },
+    "Participant": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "default": "metadata",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "endpoint_kind": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint Kind"
+        },
+        "participant_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Participant Id",
+          "type": "string"
+        },
+        "pseudonymous_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pseudonymous Id"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "participant_id",
+        "session_id",
+        "role"
+      ],
+      "title": "Participant",
+      "type": "object"
+    },
+    "PrivacyManifest": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_classes": {
+          "items": {
+            "$ref": "#/$defs/CaptureClassPolicy"
+          },
+          "title": "Capture Classes",
+          "type": "array"
+        },
+        "default_capture_class": {
+          "default": "metadata",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Default Capture Class",
+          "type": "string"
+        },
+        "omissions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Omission"
+          },
+          "title": "Omissions",
+          "type": "array"
+        },
+        "policy_id": {
+          "minLength": 1,
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy_id",
+        "policy_version"
+      ],
+      "title": "PrivacyManifest",
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": true,
+      "properties": {
+        "language": {
+          "default": "python",
+          "minLength": 1,
+          "title": "Language",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "sdk_version": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sdk Version"
+        },
+        "version": {
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Producer",
+      "type": "object"
+    },
+    "QualityMeasurement": {
+      "additionalProperties": true,
+      "properties": {
+        "aggregation": {
+          "default": "instant",
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Aggregation",
+          "type": "string"
+        },
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "raw_counter": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Counter"
+        },
+        "unit": {
+          "minLength": 1,
+          "title": "Unit",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "name",
+        "value",
+        "unit"
+      ],
+      "title": "QualityMeasurement",
+      "type": "object"
+    },
+    "QualitySample": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "capture_class": {
+          "default": "metadata",
+          "enum": [
+            "metadata",
+            "extension_payload",
+            "transcript",
+            "audio",
+            "tool_payload",
+            "model_payload",
+            "diagnostic_payload",
+            "identity"
+          ],
+          "title": "Capture Class",
+          "type": "string"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "instrumentation_scope_attributes": {
+          "additionalProperties": true,
+          "title": "Instrumentation Scope Attributes",
+          "type": "object"
+        },
+        "instrumentation_scope_name": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instrumentation Scope Name"
+        },
+        "instrumentation_scope_version": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\\.[0-9]+)*(?:[-+][a-z0-9.-]+)?|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instrumentation Scope Version"
+        },
+        "measurements": {
+          "items": {
+            "$ref": "#/$defs/QualityMeasurement"
+          },
+          "title": "Measurements",
+          "type": "array"
+        },
+        "participant_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participant Id"
+        },
+        "quality_kind": {
+          "minLength": 1,
+          "title": "Quality Kind",
+          "type": "string"
+        },
+        "resource": {
+          "additionalProperties": true,
+          "title": "Resource",
+          "type": "object"
+        },
+        "resource_schema_url": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resource Schema Url"
+        },
+        "sample_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Sample Id",
+          "type": "string"
+        },
+        "sample_window": {
+          "$ref": "#/$defs/TimeRange"
+        },
+        "schema_url": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Schema Url"
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "stream_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stream Id"
+        }
+      },
+      "required": [
+        "sample_id",
+        "session_id",
+        "quality_kind",
+        "sample_window",
+        "measurements"
+      ],
+      "title": "QualitySample",
+      "type": "object"
+    },
+    "RedactionRecord": {
+      "additionalProperties": true,
+      "properties": {
+        "executed_at_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Executed At Unix Nano"
+        },
+        "findings_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Findings Count"
+        },
+        "policy_id": {
+          "minLength": 1,
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "policy_version": {
+          "minLength": 1,
+          "title": "Policy Version",
+          "type": "string"
+        },
+        "redacted_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Redacted Count"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy_id",
+        "policy_version",
+        "status"
+      ],
+      "title": "RedactionRecord",
+      "type": "object"
+    },
+    "RetentionPolicy": {
+      "additionalProperties": true,
+      "properties": {
+        "expires_at_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At Unix Nano"
+        },
+        "policy_id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Id"
+        },
+        "ttl_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ttl Nano"
+        }
+      },
+      "title": "RetentionPolicy",
+      "type": "object"
+    },
+    "Session": {
+      "additionalProperties": true,
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimePoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "session_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Session Id",
+          "type": "string"
+        },
+        "started_at": {
+          "$ref": "#/$defs/TimePoint"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "status",
+        "started_at"
+      ],
+      "title": "Session",
+      "type": "object"
+    },
+    "TimePoint": {
+      "additionalProperties": true,
+      "description": "A timestamp without pretending distributed clocks are globally ordered.",
+      "properties": {
+        "clock_domain_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clock Domain Id"
+        },
+        "monotonic_time_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Monotonic Time Nano"
+        },
+        "observed_time_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Time Unix Nano"
+        },
+        "source_time_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Time Unix Nano"
+        },
+        "uncertainty_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uncertainty Nano"
+        }
+      },
+      "title": "TimePoint",
+      "type": "object"
+    },
+    "TimeRange": {
+      "additionalProperties": true,
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/TimePoint"
+        },
+        "start": {
+          "$ref": "#/$defs/TimePoint"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "title": "TimeRange",
+      "type": "object"
+    },
+    "ToolAnalysis": {
+      "additionalProperties": false,
+      "properties": {
+        "elapsed_ms_by_clock_domain": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Elapsed Ms By Clock Domain",
+          "type": "object"
+        },
+        "evidence_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Evidence Ids",
+          "type": "array"
+        },
+        "operation_count": {
+          "minimum": 0,
+          "title": "Operation Count",
+          "type": "integer"
+        },
+        "total_work_ms": {
+          "minimum": 0,
+          "title": "Total Work Ms",
+          "type": "number"
+        }
+      },
+      "required": [
+        "operation_count",
+        "total_work_ms"
+      ],
+      "title": "ToolAnalysis",
+      "type": "object"
+    },
+    "TurnMetrics": {
+      "additionalProperties": false,
+      "properties": {
+        "first_token_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "generated_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "provider_measurements": {
+          "additionalProperties": {
+            "$ref": "#/$defs/AnalysisMetric"
+          },
+          "title": "Provider Measurements",
+          "type": "object"
+        },
+        "received_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "render_start_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "sent_response_latency": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "tools": {
+          "$ref": "#/$defs/ToolAnalysis"
+        }
+      },
+      "required": [
+        "first_token_latency",
+        "generated_response_latency",
+        "sent_response_latency",
+        "received_response_latency",
+        "render_start_response_latency",
+        "response_latency",
+        "tools"
+      ],
+      "title": "TurnMetrics",
+      "type": "object"
+    },
+    "TurnProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "event_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Event Ids",
+          "type": "array"
+        },
+        "interruptions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InterruptionProjection"
+          },
+          "title": "Interruptions",
+          "type": "array"
+        },
+        "metrics": {
+          "$ref": "#/$defs/TurnMetrics"
+        },
+        "operation_ids": {
+          "default": [],
+          "items": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": "Operation Ids",
+          "type": "array"
+        },
+        "turn_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "metrics"
+      ],
+      "title": "TurnProjection",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.earshot.dev/v1/incident-bundle.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "profile": {
+      "$ref": "#/$defs/IncidentProfile"
+    },
+    "raw_otlp_chunks": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/JsonRawOtlpChunk"
+      },
+      "title": "Raw Otlp Chunks",
+      "type": "array"
+    }
+  },
+  "required": [
+    "profile"
+  ],
+  "title": "IncidentBundleJson",
+  "type": "object"
+}

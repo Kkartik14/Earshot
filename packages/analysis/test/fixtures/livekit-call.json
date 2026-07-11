@@ -1,0 +1,195 @@
+{
+  "schemaVersion": "0.1",
+  "session": {
+    "schemaVersion": "0.1",
+    "sessionId": "sess_demo1",
+    "agent": { "id": "agent_reservations", "name": "Reservations Bot", "version": "1" },
+    "source": { "framework": "livekit", "sdkVersion": "0.1.0" },
+    "providers": {
+      "transport": "livekit",
+      "stt": "deepgram",
+      "llm": "openai:gpt-realtime",
+      "tts": "cartesia"
+    },
+    "participant": { "role": "caller", "channel": "sip" },
+    "startedAt": "2026-07-09T18:00:00.000Z",
+    "endedAt": "2026-07-09T18:00:11.000Z",
+    "durationMs": 11000,
+    "status": "completed",
+    "consent": { "recording": true, "piiRedacted": false },
+    "metadata": {}
+  },
+  "turns": [
+    {
+      "turnId": "turn_0",
+      "sessionId": "sess_demo1",
+      "index": 0,
+      "user": {
+        "transcript": "I'd like to book a table for tomorrow",
+        "startMs": 1000,
+        "endMs": 3200
+      },
+      "agent": {
+        "transcript": "Of course — what time works for you?",
+        "startMs": 3700,
+        "endMs": 5400
+      },
+      "status": "completed",
+      "interruption": null,
+      "error": null,
+      "audio": { "inputRef": "aud_in_0", "outputRef": "aud_out_0" }
+    },
+    {
+      "turnId": "turn_1",
+      "sessionId": "sess_demo1",
+      "index": 1,
+      "user": {
+        "transcript": "Actually, make it 7pm for four",
+        "startMs": 5800,
+        "endMs": 7600
+      },
+      "agent": {
+        "transcript": "Let me check availability for",
+        "startMs": 8800,
+        "endMs": 9300
+      },
+      "status": "interrupted",
+      "interruption": { "type": "barge_in", "atMs": 9300, "wasSpeaking": true },
+      "error": null,
+      "audio": { "inputRef": "aud_in_1", "outputRef": "aud_out_1" }
+    }
+  ],
+  "spans": [
+    {
+      "spanId": "s0_stt",
+      "turnId": "turn_0",
+      "type": "stt",
+      "name": "deepgram",
+      "provider": "deepgram",
+      "startMs": 1000,
+      "endMs": 3250,
+      "status": "ok",
+      "attributes": { "isFinal": true, "confidence": 0.95, "eouDelayMs": 120 },
+      "error": null
+    },
+    {
+      "spanId": "s0_llm",
+      "turnId": "turn_0",
+      "type": "llm",
+      "name": "openai:gpt-realtime",
+      "provider": "openai",
+      "startMs": 3300,
+      "endMs": 3680,
+      "status": "ok",
+      "attributes": { "firstTokenMs": 280, "promptTokens": 210, "completionTokens": 16 },
+      "error": null
+    },
+    {
+      "spanId": "s0_tts",
+      "turnId": "turn_0",
+      "type": "tts",
+      "name": "cartesia",
+      "provider": "cartesia",
+      "startMs": 3700,
+      "endMs": 4100,
+      "status": "ok",
+      "attributes": { "firstByteMs": 150, "chars": 34 },
+      "error": null
+    },
+    {
+      "spanId": "s0_playout",
+      "turnId": "turn_0",
+      "type": "playout",
+      "provider": "livekit",
+      "startMs": 3700,
+      "endMs": 5400,
+      "status": "ok",
+      "attributes": { "framesSent": 85, "confirmed": true, "playedMs": 1700 },
+      "error": null
+    },
+    {
+      "spanId": "s1_stt",
+      "turnId": "turn_1",
+      "type": "stt",
+      "name": "deepgram",
+      "provider": "deepgram",
+      "startMs": 5800,
+      "endMs": 7650,
+      "status": "ok",
+      "attributes": { "isFinal": true, "confidence": 0.92, "eouDelayMs": 100 },
+      "error": null
+    },
+    {
+      "spanId": "s1_llm",
+      "turnId": "turn_1",
+      "type": "llm",
+      "name": "openai:gpt-realtime",
+      "provider": "openai",
+      "startMs": 7700,
+      "endMs": 8050,
+      "status": "ok",
+      "attributes": { "firstTokenMs": 240, "toolCalls": 1 },
+      "error": null
+    },
+    {
+      "spanId": "s1_tool",
+      "turnId": "turn_1",
+      "type": "tool",
+      "name": "check_availability",
+      "provider": "internal",
+      "startMs": 8050,
+      "endMs": 8480,
+      "status": "ok",
+      "attributes": { "attempts": 1, "idempotent": true },
+      "error": null
+    },
+    {
+      "spanId": "s1_llm2",
+      "turnId": "turn_1",
+      "type": "llm",
+      "name": "openai:gpt-realtime",
+      "provider": "openai",
+      "startMs": 8480,
+      "endMs": 8760,
+      "status": "ok",
+      "attributes": { "firstTokenMs": 160 },
+      "error": null
+    },
+    {
+      "spanId": "s1_tts",
+      "turnId": "turn_1",
+      "type": "tts",
+      "name": "cartesia",
+      "provider": "cartesia",
+      "startMs": 8800,
+      "endMs": 9100,
+      "status": "ok",
+      "attributes": { "firstByteMs": 170, "chars": 28 },
+      "error": null
+    },
+    {
+      "spanId": "s1_playout",
+      "turnId": "turn_1",
+      "type": "playout",
+      "provider": "livekit",
+      "startMs": 8800,
+      "endMs": 9300,
+      "status": "cancelled",
+      "attributes": { "framesSent": 20, "confirmed": false, "playedMs": 500 },
+      "error": null
+    }
+  ],
+  "events": [],
+  "audio": [
+    {
+      "ref": "aud_out_0",
+      "kind": "output",
+      "turnId": "turn_0",
+      "uri": "calls/sess_demo1/output.pcm",
+      "format": { "encoding": "pcm_s16le", "sampleRate": 16000, "channels": 1 },
+      "startMs": 3700,
+      "durationMs": 1700,
+      "byteRange": [0, 54400]
+    }
+  ]
+}

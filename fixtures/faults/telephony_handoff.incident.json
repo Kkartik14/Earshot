@@ -1,0 +1,349 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "input",
+        "media_kind": "audio",
+        "participant_id": "participant-caller",
+        "session_id": "fixture-session",
+        "stream_id": "stream-caller-inbound",
+        "transport_ref": "sip-leg-inbound"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "output",
+        "media_kind": "audio",
+        "participant_id": "participant-bot",
+        "session_id": "fixture-session",
+        "stream_id": "stream-bot-outbound",
+        "transport_ref": "sip-leg-bot"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "direction": "output",
+        "media_kind": "audio",
+        "participant_id": "participant-human",
+        "session_id": "fixture-session",
+        "stream_id": "stream-human-outbound",
+        "transport_ref": "sip-leg-human"
+      }
+    ],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "fault-fixture-clock",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "0",
+        "observer": "fixture_harness",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1800000000000000000"
+      }
+    ],
+    "coverage": [],
+    "events": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-dtmf",
+        "event_name": "earshot.telephony.dtmf.received",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "carrier_gateway"
+        },
+        "instrumentation_scope_attributes": {},
+        "operation_id": "op-inbound-leg",
+        "resource": {},
+        "session_id": "fixture-session",
+        "time": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "500000000",
+          "source_time_unix_nano": "1800000000500000000"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-voicemail",
+        "event_name": "earshot.telephony.voicemail.detected",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "carrier_gateway"
+        },
+        "instrumentation_scope_attributes": {},
+        "operation_id": "op-bot-leg",
+        "resource": {},
+        "session_id": "fixture-session",
+        "time": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "700000000",
+          "source_time_unix_nano": "1800000000700000000"
+        },
+        "turn_id": "turn-1"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "deterministic_harness",
+          "name": "earshot.fixture",
+          "version": "1.0.0"
+        }
+      ],
+      "attributes": {
+        "earshot.framework.name": "deterministic_harness"
+      },
+      "bundle_id": "fault-telephony-handoff",
+      "completeness": "complete",
+      "created_at_unix_nano": "1800000000000000000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot-fault-corpus",
+        "version": "1.0.0"
+      },
+      "schema_version": "1.0.0",
+      "semantic_profile_version": "1.0.0",
+      "session_id": "fixture-session"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "1800000000",
+          "source_time_unix_nano": "1800000001800000000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "fixture_runtime"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "op-inbound-leg",
+        "operation_name": "transport_receive",
+        "parent_scope": "external",
+        "participant_id": "participant-caller",
+        "resource": {},
+        "session_id": "fixture-session",
+        "span_id": "5555555555555555",
+        "started_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "100000000",
+          "source_time_unix_nano": "1800000000100000000"
+        },
+        "status": "ok",
+        "stream_id": "stream-caller-inbound",
+        "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "900000000",
+          "source_time_unix_nano": "1800000000900000000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "fixture_runtime"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "op-bot-leg",
+        "operation_name": "transport_send",
+        "parent_scope": "external",
+        "participant_id": "participant-bot",
+        "resource": {},
+        "session_id": "fixture-session",
+        "span_id": "6666666666666666",
+        "started_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "300000000",
+          "source_time_unix_nano": "1800000000300000000"
+        },
+        "status": "ok",
+        "stream_id": "stream-bot-outbound",
+        "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "1800000000",
+          "source_time_unix_nano": "1800000001800000000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "deterministic_fault_injection",
+          "method_version": "1",
+          "observer": "test_harness",
+          "source": "fixture_runtime"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [
+          {
+            "attributes": {},
+            "relationship": "handoff",
+            "target_operation_id": "op-bot-leg",
+            "target_scope": "internal"
+          }
+        ],
+        "operation_id": "op-human-leg",
+        "operation_name": "transport_send",
+        "parent_scope": "external",
+        "participant_id": "participant-human",
+        "resource": {},
+        "session_id": "fixture-session",
+        "span_id": "7777777777777777",
+        "started_at": {
+          "clock_domain_id": "fault-fixture-clock",
+          "monotonic_time_nano": "950000000",
+          "source_time_unix_nano": "1800000000950000000"
+        },
+        "status": "ok",
+        "stream_id": "stream-human-outbound",
+        "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "turn_id": "turn-1"
+      }
+    ],
+    "participants": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "pstn",
+        "participant_id": "participant-caller",
+        "role": "user",
+        "session_id": "fixture-session"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "sip",
+        "participant_id": "participant-bot",
+        "role": "agent",
+        "session_id": "fixture-session"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "pstn",
+        "participant_id": "participant-human",
+        "role": "human_operator",
+        "session_id": "fixture-session"
+      }
+    ],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [],
+      "policy_id": "fault-corpus-metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "fault-fixture-clock",
+        "monotonic_time_nano": "5000000000",
+        "source_time_unix_nano": "1800000005000000000"
+      },
+      "session_id": "fixture-session",
+      "started_at": {
+        "clock_domain_id": "fault-fixture-clock",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1800000000000000000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}
