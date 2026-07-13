@@ -18,6 +18,10 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
+The current deterministic analyzer identity is `earshot.deterministic@1.0.1`.
+Analyzer version is part of the storage cache key; behavior changes such as delta-window
+aggregation therefore cannot reuse a projection produced by an older analyzer.
+
 ## Turn projection
 
 Turns are a presentation projection, not graph containers. Ownership is resolved from
@@ -25,6 +29,12 @@ an explicit `turn_id` and then inherited through native OTel parentage. ChatMess
 IDs are not treated as turns. Provider measurements without explicit or graph-derived
 ownership remain under `unassigned_provider_measurements` with their real quality
 sample ID.
+
+Repeated measurements marked `delta` are summed only inside the same owned analysis
+group, cite every contributing sample, and become unavailable when units or
+aggregation modes conflict or the finite sum overflows. Instant and cumulative
+observations remain snapshots. Unassigned provider samples stay separate: analysis
+does not manufacture session or turn correlation merely to aggregate them.
 
 The response anchor preference is:
 

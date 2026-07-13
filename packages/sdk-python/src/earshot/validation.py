@@ -40,6 +40,7 @@ from .privacy import (
     is_safe_provenance_label,
     is_safe_semantic_label,
     is_safe_version_label,
+    is_unobservable_heard_key,
     locator_has_credentials,
     metadata_value_allowed,
     sanitize_source_label,
@@ -490,7 +491,6 @@ def _check_governed_value(
     *,
     requires_extension: bool = False,
 ) -> None:
-    normalized_key = key.lower().replace("-", "_")
     if not is_safe_semantic_label(key):
         issues.append(
             ValidationIssue(
@@ -499,7 +499,7 @@ def _check_governed_value(
                 message="attribute and extension keys must use governed semantic identifiers",
             )
         )
-    if "heard_at" in normalized_key or normalized_key.endswith(".heard"):
+    if is_unobservable_heard_key(key):
         issues.append(
             ValidationIssue(
                 code="EARSHOT_UNOBSERVABLE_HEARD_CLAIM",

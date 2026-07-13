@@ -18,23 +18,44 @@ range is `>=1.6.5,<1.7`.
 - Treat `user_turn`/generic `turn` spans as lifecycle containers; only
   `eou_detection`/EOU metrics are endpoint-detector evidence.
 
-With a metrics-only listener, the normalizer maps metrics to open operations:
+With a metrics-only listener, the normalizer maps callback objects to these facts:
 
-| LiveKit metric         | Earshot operation        |
-| ---------------------- | ------------------------ |
-| `VADMetrics`           | `vad`                    |
-| `EOUMetrics`           | `turn_detection`         |
-| `STTMetrics`           | `stt`                    |
-| `LLMMetrics`           | `llm`                    |
-| `RealtimeModelMetrics` | `agent`                  |
-| `TTSMetrics`           | `tts`                    |
-| `InterruptionMetrics`  | `interruption_detection` |
-| `EOTInferenceMetrics`  | `turn_detection`         |
-| `AvatarMetrics`        | `avatar`                 |
+| LiveKit metric         | Earshot fact                       |
+| ---------------------- | ---------------------------------- |
+| `VADMetrics`           | `pipeline.metric` quality sample   |
+| `EOUMetrics`           | `turn_detection` operation         |
+| `STTMetrics`           | `stt` operation                    |
+| `LLMMetrics`           | `llm` operation                    |
+| `RealtimeModelMetrics` | `agent` operation                  |
+| `TTSMetrics`           | `tts` operation                    |
+| `InterruptionMetrics`  | `interruption_detection` operation |
+| `EOTInferenceMetrics`  | `turn_detection` operation         |
+| `AvatarMetrics`        | `avatar` operation                 |
+
+`VADMetrics` is an aggregate callback window, not one discrete invocation. Its
+`inference_duration_total` and `inference_count` reset after each LiveKit emission,
+so Earshot records them as `delta` measurements. `idle_time` is an `instant`
+measurement. Repeated turn-correlated delta windows are summed by analysis and cite
+every contributing quality-sample ID; instant values are never summed.
+LiveKit Agents 1.6 `VADMetrics` does not expose a request, speech, or turn ID, so
+real callback windows normally remain session-level
+`unassigned_provider_measurements`. Earshot preserves every raw delta window but
+does not invent turn ownership or silently combine unassigned callbacks. A runtime
+that supplies explicit correlation can use the turn-level delta aggregation.
+
+The quality-sample point uses the provider timestamp when it is present, then the
+explicit `observed_at` supplied by the caller, and only then the recorder clock.
+Window identity includes correlation IDs, the explicit time, and safe framework,
+metric-label, model, and provider dimensions. This makes an identical callback
+idempotent while preserving successive windows. Exact timestamp-less callbacks with
+no `observed_at` collapse by content because no stronger window identity exists.
+Unsafe metric labels are hashed by the metadata policy.
 
 `LiveKitAdapter.consume_metric()` is duck typed so mapping and privacy behavior can
-be tested without installing LiveKit. `attach_metrics_listener()` registers a
-fail-open metrics callback and never installs a new tracer provider.
+be tested without installing LiveKit. It returns the retained fact ID, or `None` when
+a VAD callback contains no numeric measurements and therefore authors no quality
+sample. `attach_metrics_listener()` registers a fail-open metrics callback and never
+installs a new tracer provider.
 
 The real-package integration lane constructs the required 1.6.5 metric fields
 (`label`, request IDs, cancellation/token/audio/streaming fields) rather than relying
@@ -61,13 +82,15 @@ and adaptive-interruption callbacks become correlated Earshot point events.
 
 When both documented surfaces are attached, ownership is type-selective. Native spans
 own LLM, TTS, and realtime operations plus their embedded metric samples. EOU/EOT
-callbacks add supplementary quality and commitment evidence. STT, VAD, interruption,
-and avatar callbacks still create operations because LiveKit 1.6 does not guarantee an
-equivalent native operation span for those metric types. This prevents duplicate
-LLM/TTS/realtime work without erasing metric-only stages. Nested node/request/attempt
-spans keep their native name in `earshot.framework.operation.name`; literal operation
-counts are not used as cross-runtime equivalence. Session listeners use current 1.6.5
-event types `overlapping_speech` and `agent_false_interruption`.
+callbacks add supplementary quality and commitment evidence. Because LiveKit 1.6 does
+not guarantee equivalent native operation spans for the remaining metric types, STT,
+interruption, and avatar callbacks create operations, while callback VAD aggregate
+windows create quality samples. An ended native `vad` span is still a real `vad`
+operation. This prevents duplicate LLM/TTS/realtime work without erasing metric-only
+stages. Nested node/request/attempt spans keep their native name in
+`earshot.framework.operation.name`; literal operation counts are not used as
+cross-runtime equivalence. Session listeners use current 1.6.5 event types
+`overlapping_speech` and `agent_false_interruption`.
 
 Current `ChatMessage.metrics` is retained without message content. A ChatMessage item
 ID is not a turn ID; only explicit `turn_id`/`speech_id` correlates it. An interrupted

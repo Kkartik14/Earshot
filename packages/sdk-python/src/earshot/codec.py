@@ -6,11 +6,12 @@ import base64
 import binascii
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import rfc8785
 from google.protobuf.message import DecodeError
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .contract import IncidentBundle, IncidentBundleJson, IncidentProfile, RawOtlpChunk
 from .generated.earshot.v1.incident_pb2 import IncidentEnvelope as _IncidentEnvelopeMessage
@@ -44,13 +45,23 @@ def _reject_json_constant(value: str) -> None:
 
 def _assert_profile_depth(value: Any, maximum: int = MAX_PROFILE_DEPTH) -> None:
     stack: list[tuple[Any, int]] = [(value, 1)]
+    deepest_seen: dict[int, int] = {}
     while stack:
         current, depth = stack.pop()
         if depth > maximum:
             raise IncidentDepthError("incident profile exceeds maximum nesting depth")
-        if isinstance(current, dict):
+        if isinstance(current, (BaseModel, Mapping, list, tuple)):
+            identity = id(current)
+            if deepest_seen.get(identity, 0) >= depth:
+                continue
+            deepest_seen[identity] = depth
+        if isinstance(current, BaseModel):
+            children = [getattr(current, field_name) for field_name in type(current).model_fields]
+            children.extend((current.model_extra or {}).values())
+            stack.extend((child, depth + 1) for child in children if child is not None)
+        elif isinstance(current, Mapping):
             stack.extend((child, depth + 1) for child in current.values())
-        elif isinstance(current, list):
+        elif isinstance(current, (list, tuple)):
             stack.extend((child, depth + 1) for child in current)
 
 
@@ -81,7 +92,10 @@ def canonical_profile_json(profile: IncidentProfile) -> bytes:
     """Return RFC 8785/JCS snake_case JSON bytes embedded in protobuf."""
 
     try:
-        return rfc8785.dumps(profile.model_dump(mode="json", exclude_none=True))
+        _assert_profile_depth(profile)
+        value = profile.model_dump(mode="json", exclude_none=True)
+        _assert_profile_depth(value)
+        return rfc8785.dumps(value)
     except (rfc8785.CanonicalizationError, UnicodeEncodeError) as error:
         raise IncidentCodecError("incident profile is outside the RFC 8785 domain") from error
 
@@ -108,11 +122,13 @@ def encode_incident_json(bundle: IncidentBundle, *, indent: int | None = None) -
     are recovered on decode; the protobuf representation stores them directly.
     """
 
+    _assert_profile_depth(bundle.profile)
     assert_valid_incident(bundle)
     value = {
         "profile": bundle.profile.model_dump(mode="json", exclude_none=True),
         "raw_otlp_chunks": [_chunk_dict(chunk) for chunk in bundle.raw_otlp_chunks],
     }
+    _assert_profile_depth(value["profile"])
     return _json_bytes(value, indent=indent)
 
 
@@ -131,10 +147,8 @@ def decode_incident_json(
         )
     except IncidentCodecError:
         raise
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
         raise IncidentCodecError("invalid incident JSON") from error
-
-    _assert_profile_depth(value, max_profile_depth)
 
     if not isinstance(value, dict):
         raise IncidentCodecError("incident JSON root must be an object")
@@ -147,6 +161,7 @@ def decode_incident_json(
         raise IncidentCodecError("incident JSON requires an object at profile")
     if not isinstance(chunks_value, list):
         raise IncidentCodecError("raw_otlp_chunks must be an array")
+    _assert_profile_depth(profile_value, max_profile_depth)
 
     try:
         json_bundle = IncidentBundleJson.model_validate(value)
@@ -218,6 +233,7 @@ def analysis_input_sha256(bundle: IncidentBundle) -> str:
 def encode_incident_protobuf(bundle: IncidentBundle) -> bytes:
     """Encode a deterministic protobuf envelope with exact OTLP payload bytes."""
 
+    _assert_profile_depth(bundle.profile)
     assert_valid_incident(bundle)
     return _encode_incident_protobuf_unchecked(bundle)
 
@@ -250,7 +266,7 @@ def decode_incident_protobuf(
         raise
     except ValidationError as error:
         raise IncidentCodecError("invalid canonical profile structure") from error
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
         raise IncidentCodecError("invalid canonical profile JSON") from error
 
     if canonical_profile_json(profile) != profile_json:

@@ -6,7 +6,15 @@ import pytest
 
 from earshot.analysis import analyze_incident, comparable_delta
 from earshot.codec import analysis_input_sha256
-from earshot.contract import ClockDomain, Event, Operation
+from earshot.contract import (
+    ClockDomain,
+    Event,
+    Evidence,
+    Operation,
+    QualityMeasurement,
+    QualitySample,
+    TimeRange,
+)
 from earshot.validation import validate_derived_analysis
 from incident_factory import point
 from test_contract_validation import replace_profile
@@ -368,6 +376,124 @@ def test_analysis_is_invariant_to_operation_and_event_arrival_order(valid_bundle
     )
     for variant in variants:
         assert analyze(variant).model_dump(mode="python") == expected
+
+
+def test_turn_delta_quality_windows_are_summed_with_all_evidence(valid_bundle) -> None:
+    samples = (
+        QualitySample(
+            sample_id="vad-window-b",
+            session_id="session-1",
+            quality_kind="pipeline.metric",
+            sample_window=TimeRange(start=point(20), end=point(20)),
+            measurements=(
+                QualityMeasurement(
+                    name="earshot.duration.inference_seconds",
+                    value=0.02,
+                    unit="s",
+                    aggregation="delta",
+                ),
+            ),
+            evidence=Evidence(
+                source="livekit",
+                observer="server",
+                method="metrics_listener",
+                confidence="measured",
+                availability="available",
+            ),
+            attributes={"earshot.turn.id": "turn-1"},
+        ),
+        QualitySample(
+            sample_id="vad-window-a",
+            session_id="session-1",
+            quality_kind="pipeline.metric",
+            sample_window=TimeRange(start=point(10), end=point(10)),
+            measurements=(
+                QualityMeasurement(
+                    name="earshot.duration.inference_seconds",
+                    value=0.01,
+                    unit="s",
+                    aggregation="delta",
+                ),
+            ),
+            evidence=Evidence(
+                source="livekit",
+                observer="server",
+                method="metrics_listener",
+                confidence="measured",
+                availability="available",
+            ),
+            attributes={"earshot.turn.id": "turn-1"},
+        ),
+    )
+    bundle = replace_profile(valid_bundle, quality_samples=samples)
+    result = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    provider = metric(result, "provider_measurements")
+    inference = provider["earshot.duration.inference_seconds"]
+    assert inference == {
+        "availability": "available",
+        "basis": "provider_delta_sum",
+        "confidence": "measured",
+        "value": 30.0,
+        "unit": "ms",
+        "evidence_ids": ["vad-window-a", "vad-window-b"],
+    }
+    assert validate_derived_analysis(bundle, result).ok
+
+    reversed_bundle = replace_profile(valid_bundle, quality_samples=tuple(reversed(samples)))
+    reversed_result = analyze_incident(
+        reversed_bundle,
+        input_sha256=analysis_input_sha256(reversed_bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    assert metric(reversed_result, "provider_measurements") == provider
+
+
+def test_turn_delta_quality_overflow_is_unavailable_not_analyzer_failure(valid_bundle) -> None:
+    samples = tuple(
+        QualitySample(
+            sample_id=f"huge-delta-{suffix}",
+            session_id="session-1",
+            quality_kind="pipeline.metric",
+            sample_window=TimeRange(start=point(index), end=point(index)),
+            measurements=(
+                QualityMeasurement(
+                    name="earshot.metric.future_total",
+                    value=1e308,
+                    unit="1",
+                    aggregation="delta",
+                ),
+            ),
+            evidence=Evidence(
+                source="provider",
+                observer="server",
+                method="metrics_listener",
+                confidence="measured",
+                availability="available",
+            ),
+            attributes={"earshot.turn.id": "turn-1"},
+        )
+        for index, suffix in enumerate(("a", "b"), start=1)
+    )
+    bundle = replace_profile(valid_bundle, quality_samples=samples)
+
+    result = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+
+    assert metric(result, "provider_measurements")["earshot.metric.future_total"] == {
+        "availability": "unavailable",
+        "basis": "provider_delta_sum",
+        "confidence": "unavailable",
+        "limitation": "delta_sum_not_finite",
+        "evidence_ids": ["huge-delta-a", "huge-delta-b"],
+    }
+    assert validate_derived_analysis(bundle, result).ok
 
 
 def test_equal_timestamps_use_stable_event_id_tiebreaker(valid_bundle) -> None:

@@ -26,7 +26,7 @@ already contains it.
 One `IncidentRecorder` produces one immutable final bundle:
 
 ```text
-open -> record facts -> close(status) -> same cached bundle on repeated close
+open -> record facts -> close(status) -> equivalent detached snapshot on repeated close
 ```
 
 The recorder owns bundle/session identity, a process clock domain, capture policy,
@@ -34,6 +34,12 @@ adapter manifest, omission ledger, and optional bounded exporter. Explicit `clos
 validates the complete graph before returning. Used as a context manager, close/export
 failures are captured in `last_export_error` and never replace an application
 exception.
+
+Accepted models and nested attribute/extension containers are detached from caller
+ownership before commit. Each `close()` result is also detached from the recorder's
+cached bundle, so mutating a nested Python dictionary in supplied data or a returned
+snapshot cannot rewrite finalized evidence. Capture-governance mappings are likewise
+snapshotted when the recorder is constructed.
 
 `export_accepted` is `True` when the final artifact entered the bounded queue, `False`
 when it was dropped because the queue/exporter was closed or full, and `None` when no
@@ -64,9 +70,15 @@ export was attempted. This makes fail-open evidence loss observable.
 
 Participant/stream ownership, session references, graph identity, clocks, evidence,
 privacy classes, and hashes are checked again when the bundle closes.
-Pydantic model extras are rejected at the recording call unless
-`extension_payload` is enabled, so an invalid forward extension cannot first surface
-after the recorder has closed.
+Pydantic model extras are recursively preflighted at recorder construction, adapter
+registration, or the recording call. They are rejected unless `extension_payload` is
+enabled, and non-portable values are rejected even when it is enabled, so an invalid
+forward extension cannot first surface after the recorder has closed.
+Existing Pydantic instances are serialized and revalidated at that boundary rather
+than trusted merely because their outer type matches; this closes `model_copy()` and
+nested-instance validation bypasses. Retained attribute maps receive the same strict
+JSON, recursive privacy, credential, and unobservable-claim checks. A prospective
+record must also fit the codec's 64-level profile depth before recorder state changes.
 
 ## Capture policy
 
@@ -161,9 +173,14 @@ attaches metrics/interruption listeners. Neither installs a second trace root.
 The supported integration ranges are Pipecat `>=1.5.0,<1.6` and LiveKit Agents
 `>=1.6.5,<1.7`. When LiveKit native spans and listeners are both attached, ownership is
 type-selective: native spans own LLM, TTS, and realtime operations and embedded
-metrics; EOU/EOT callbacks add quality/commit evidence; STT, VAD, interruption, and
+metrics; EOU/EOT callbacks add quality/commit evidence; and STT, interruption, and
 avatar callbacks remain operation sources because LiveKit 1.6 does not guarantee
-equivalent native spans for them. Current LiveKit participant SID/kind become typed
+equivalent native spans for them. A `VADMetrics` callback instead records one
+`pipeline.metric` quality sample: per-emission inference duration/count are `delta`
+measurements and idle time is an `instant` measurement. A native ended `vad` span
+remains a `vad` operation. `LiveKitAdapter.consume_metric()` returns `None` only when
+a VAD callback has no numeric measurement to retain; callback listeners stay
+fail-open. Current LiveKit participant SID/kind become typed
 participant ownership; identity remains governed payload. Pipecat's full `turn` span
 remains a lifecycle container and is never mislabeled as endpoint detection.
 

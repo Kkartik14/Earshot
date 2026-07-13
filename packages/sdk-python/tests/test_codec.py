@@ -12,6 +12,7 @@ import pytest
 import earshot.codec as codec
 from earshot.codec import (
     IncidentCodecError,
+    IncidentDepthError,
     canonical_profile_json,
     decode_incident_json,
     decode_incident_protobuf,
@@ -172,6 +173,47 @@ def test_json_decoder_rejects_nonfinite_constants(constant: str) -> None:
 def test_json_decoder_rejects_invalid_utf8() -> None:
     with pytest.raises(IncidentCodecError, match="invalid incident JSON"):
         decode_incident_json(b"\xff\xfe")
+
+
+def test_json_decoder_normalizes_oversized_integer_parse_failure() -> None:
+    payload = '{"profile":{"future":' + ("1" * 5_000) + "}}"
+
+    with pytest.raises(IncidentCodecError, match="invalid incident JSON") as caught:
+        decode_incident_json(payload)
+
+    assert type(caught.value.__cause__) is ValueError
+
+
+def test_protobuf_decoder_normalizes_oversized_integer_parse_failure(valid_bundle) -> None:
+    def mutate(envelope) -> None:
+        envelope.canonical_profile_json = b'{"future":' + (b"1" * 5_000) + b"}"
+        envelope.profile_sha256 = hashlib.sha256(envelope.canonical_profile_json).hexdigest()
+
+    with pytest.raises(IncidentCodecError, match="invalid canonical profile JSON") as caught:
+        decode_incident_protobuf(_mutated_envelope(valid_bundle, mutate))
+
+    assert type(caught.value.__cause__) is ValueError
+
+
+@pytest.mark.parametrize("depth", [codec.MAX_PROFILE_DEPTH + 1, 500, 1_000])
+def test_both_encoders_reject_profiles_their_decoders_cannot_read(valid_bundle, depth: int) -> None:
+    value: object = True
+    for _ in range(depth):
+        value = {"next": value}
+    policies = tuple(
+        policy.model_copy(update={"decision": "allow", "captured": True})
+        if policy.capture_class == "extension_payload"
+        else policy
+        for policy in valid_bundle.profile.privacy.capture_classes
+    )
+    privacy = valid_bundle.profile.privacy.model_copy(update={"capture_classes": policies})
+    profile = valid_bundle.profile.model_copy(update={"privacy": privacy, "vendor.deep": value})
+    bundle = valid_bundle.model_copy(update={"profile": profile})
+
+    with pytest.raises(IncidentDepthError):
+        encode_incident_json(bundle)
+    with pytest.raises(IncidentDepthError):
+        encode_incident_protobuf(bundle)
 
 
 def test_json_decoder_rejects_invalid_base64_without_echoing_value(valid_bundle) -> None:

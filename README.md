@@ -47,6 +47,10 @@ earshot serve --data-dir .earshot
 
 The API starts at `http://127.0.0.1:4319`.
 
+The Python distribution is named `earshot-observability`; the import package and
+CLI remain `earshot`. The plain PyPI distribution name `earshot` belongs to an
+unrelated VAD project and must not be used for this repository.
+
 ```bash
 curl http://127.0.0.1:4319/healthz
 earshot validate fixtures/valid/minimal.json

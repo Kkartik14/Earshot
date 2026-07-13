@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterator, Mapping
+from types import MappingProxyType
 
 import pytest
 
-from earshot.codec import IncidentCodecError, decode_incident_json, encode_incident_json
+from earshot.codec import (
+    IncidentCodecError,
+    decode_incident_json,
+    decode_incident_protobuf,
+    encode_incident_json,
+    encode_incident_protobuf,
+)
 from earshot.contract import (
+    Adapter,
     ByteRange,
     CaptureClassPolicy,
+    CausalLink,
     Coverage,
     ErrorRecord,
     Evidence,
@@ -21,13 +31,15 @@ from earshot.contract import (
 from earshot.contract import Omission as ContractOmission
 from earshot.privacy import (
     CaptureClass,
+    CaptureGovernance,
     CapturePolicy,
+    ExportConfig,
     classify_attribute,
     contains_secret_sentinel,
     sanitize_attributes,
 )
 from earshot.recorder import IncidentRecorder, RecorderConfig
-from earshot.validation import validate_incident
+from earshot.validation import IncidentValidationError, validate_incident
 from incident_factory import SECRET_SENTINEL, evidence, point
 from test_contract_validation import issue_codes, replace_profile
 
@@ -52,6 +64,25 @@ def test_metadata_only_omits_each_sensitive_payload_class(
     assert [(item.field_key_sha256, item.capture_class) for item in omissions] == [
         (hashlib.sha256(key.encode()).hexdigest(), capture_class)
     ]
+
+
+def test_framework_metric_name_requires_a_governed_semantic_value() -> None:
+    secret = "customer said my account password is swordfish"
+    recorder = IncidentRecorder()
+    recorder.record_operation(
+        operation_id="unsafe-framework-metric-label",
+        operation_name="agent",
+        status="ok",
+        started_at=recorder._time(),
+        attributes={"earshot.framework.metric.name": secret},
+    )
+
+    bundle = recorder.close()
+
+    assert "earshot.framework.metric.name" not in bundle.profile.operations[0].attributes
+    assert secret not in bundle.model_dump_json()
+    assert len(bundle.profile.privacy.omissions) == 1
+    assert validate_incident(bundle).ok
 
 
 def test_metadata_only_is_allowlist_based_for_unknown_keys() -> None:
@@ -170,9 +201,7 @@ def test_unknown_semantic_looking_numeric_fields_still_require_extension_policy(
             "customer.ssn": 123,
         }
     )
-    assert validate_incident(
-        valid_bundle.model_copy(update={"profile": allowed_profile})
-    ).ok
+    assert validate_incident(valid_bundle.model_copy(update={"profile": allowed_profile})).ok
 
 
 def test_nonmetadata_records_and_model_extras_cannot_bypass_extension_policy(
@@ -202,7 +231,11 @@ def test_nonmetadata_records_and_model_extras_cannot_bypass_extension_policy(
 
 
 def test_recorder_rejects_model_extras_before_close_and_allows_explicit_extension() -> None:
-    extended_evidence = evidence().model_copy(update={"customer.ssn": 123})
+    extension_payload = {
+        "customer.ssn": 123,
+        "vendor.future": {"enabled": True, "levels": [1, 2, 3]},
+    }
+    extended_evidence = evidence().model_copy(update=extension_payload)
     recorder = IncidentRecorder()
     with pytest.raises(ValueError, match="require extension_payload"):
         recorder.record_operation(
@@ -227,7 +260,7 @@ def test_recorder_rejects_model_extras_before_close_and_allows_explicit_extensio
     )
     bundle = allowed.close()
     assert bundle.profile.operations[0].evidence is not None
-    assert bundle.profile.operations[0].evidence.model_extra == {"customer.ssn": 123}
+    assert bundle.profile.operations[0].evidence.model_extra == extension_payload
     extension = next(
         item
         for item in bundle.profile.privacy.capture_classes
@@ -235,6 +268,589 @@ def test_recorder_rejects_model_extras_before_close_and_allows_explicit_extensio
     )
     assert extension.captured and extension.decision == "allow"
     assert validate_incident(bundle).ok
+
+
+@pytest.mark.parametrize(
+    "extension_value",
+    (
+        None,
+        object(),
+        {"nested": None},
+        {"nested": object()},
+        {"nested": [{"deeper": object()}]},
+        {"nested": float("nan")},
+        {"nested": 10**100},
+        {"nested": {1: "non-string-key"}},
+        {"callback.url": "https://service.example/hook?token=secret"},
+    ),
+    ids=(
+        "null",
+        "object",
+        "nested-null",
+        "nested-object",
+        "deep-object",
+        "nested-nonfinite",
+        "nested-non-ijson-integer",
+        "nested-non-string-key",
+        "nested-credential-url",
+    ),
+)
+def test_recorder_rejects_nonportable_model_extensions_before_mutation(
+    extension_value: object,
+) -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    extended_evidence = evidence().model_copy(update={"vendor.future": extension_value})
+
+    with pytest.raises(ValueError, match="unsafe key or value"):
+        recorder.record_operation(
+            operation_id="rejected-nonportable-extension",
+            operation_name="agent",
+            status="ok",
+            started_at=recorder._time(),
+            evidence=extended_evidence,
+        )
+
+    bundle = recorder.close()
+    extension = next(
+        item
+        for item in bundle.profile.privacy.capture_classes
+        if item.capture_class == "extension_payload"
+    )
+    assert bundle.profile.operations == ()
+    assert extension.decision == "allow"
+    assert not extension.captured
+
+
+def test_recorder_rejects_cyclic_model_extension_before_mutation() -> None:
+    cyclic: dict[str, object] = {}
+    cyclic["nested"] = cyclic
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    extended_evidence = evidence().model_copy(update={"vendor.future": cyclic})
+
+    with pytest.raises(ValueError, match="unsafe key or value"):
+        recorder.record_operation(
+            operation_id="rejected-cyclic-extension",
+            operation_name="agent",
+            status="ok",
+            started_at=recorder._time(),
+            evidence=extended_evidence,
+        )
+
+    bundle = recorder.close()
+    extension = next(
+        item
+        for item in bundle.profile.privacy.capture_classes
+        if item.capture_class == "extension_payload"
+    )
+    assert bundle.profile.operations == ()
+    assert not extension.captured
+
+
+def test_extension_attribute_preflight_filters_nonportable_and_smuggled_values() -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    retained = recorder.record_operation(
+        operation_id="governed-extension-attributes",
+        operation_name="agent",
+        status="ok",
+        started_at=recorder._time(),
+        attributes={
+            "vendor.object": object(),
+            "vendor.identity": {"participant.name": SECRET_SENTINEL},
+            "vendor.heard_at": 123,
+            "vendor.safe": {"enabled": True, "label": SECRET_SENTINEL},
+        },
+    )
+
+    assert retained.attributes == {"vendor.safe": {"enabled": True, "label": SECRET_SENTINEL}}
+    bundle = recorder.close()
+    assert validate_incident(bundle).ok
+    assert len(bundle.profile.privacy.omissions) == 3
+
+
+def test_mapping_views_are_normalized_to_owned_portable_containers() -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    source = {"enabled": True, "nested": MappingProxyType({"count": 1})}
+    view = MappingProxyType(source)
+    kept, omissions = sanitize_attributes({"vendor.future": view}, policy)
+    assert omissions == []
+    assert kept == {"vendor.future": {"enabled": True, "nested": {"count": 1}}}
+    assert type(kept["vendor.future"]) is dict
+
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    extended = evidence().model_copy(update={"vendor.future": view})
+    recorder.record_operation(
+        operation_id="mapping-view-extension",
+        operation_name="agent",
+        status="ok",
+        started_at=recorder._time(),
+        evidence=extended,
+        attributes={"vendor.future": view},
+    )
+    source["after_record"] = True
+    bundle = recorder.close()
+    operation = bundle.profile.operations[0]
+    assert operation.attributes == {"vendor.future": {"enabled": True, "nested": {"count": 1}}}
+    assert operation.evidence is not None
+    assert operation.evidence.model_extra == {
+        "vendor.future": {"enabled": True, "nested": {"count": 1}}
+    }
+    assert validate_incident(bundle).ok
+
+
+class _ChangingMapping(Mapping[str, object]):
+    def __init__(self, *views: Mapping[str, object]) -> None:
+        self._views = views
+        self._reads = 0
+
+    def _view(self) -> Mapping[str, object]:
+        return self._views[min(self._reads, len(self._views) - 1)]
+
+    def items(self):  # type: ignore[override]
+        view = self._view()
+        self._reads += 1
+        return view.items()
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._view())
+
+    def __len__(self) -> int:
+        return len(self._view())
+
+    def __getitem__(self, key: str) -> object:
+        return self._view()[key]
+
+
+def test_attribute_snapshot_is_the_exact_view_that_privacy_validates() -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    changing = _ChangingMapping(
+        {"safe": 1},
+        {"speech.text": SECRET_SENTINEL},
+    )
+    kept, omissions = sanitize_attributes({"vendor.future": changing}, policy)
+    assert omissions == []
+    assert kept == {"vendor.future": {"safe": 1}}
+    assert not contains_secret_sentinel(kept, [SECRET_SENTINEL])
+
+    model_mapping = _ChangingMapping(
+        {"safe": 1},
+        {"safe": 1},
+        {"speech.text": SECRET_SENTINEL},
+    )
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    extended = evidence().model_copy(update={"vendor.future": model_mapping})
+    with pytest.raises(ValueError):
+        recorder.record_operation(
+            operation_id="changing-model-extension",
+            operation_name="agent",
+            status="ok",
+            started_at=recorder._time(),
+            evidence=extended,
+        )
+    bundle = recorder.close()
+    assert bundle.profile.operations == ()
+    assert not contains_secret_sentinel(bundle.model_dump(mode="python"), [SECRET_SENTINEL])
+
+
+def test_unobservable_heard_model_extra_is_rejected_transactionally() -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    extended = evidence().model_copy(update={"vendor.heard_at": 123})
+
+    with pytest.raises(ValueError, match="unsafe key or value"):
+        recorder.record_operation(
+            operation_id="rejected-heard-extension",
+            operation_name="agent",
+            status="ok",
+            started_at=recorder._time(),
+            evidence=extended,
+        )
+
+    assert recorder.close().profile.operations == ()
+
+
+def test_recorder_snapshots_inputs_records_and_closed_bundle() -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    source_extension: dict[str, object] = {"enabled": True}
+    supplied_evidence = evidence().model_copy(update={"vendor.future": source_extension})
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    returned = recorder.record_operation(
+        operation_id="snapshotted-extension",
+        operation_name="agent",
+        status="ok",
+        started_at=recorder._time(),
+        evidence=supplied_evidence,
+    )
+
+    source_extension["vendor.heard_at"] = 123
+    assert returned.evidence is not None
+    returned.evidence.model_extra["vendor.future"]["caller_mutation"] = True
+    first = recorder.close()
+    operation = first.profile.operations[0]
+    assert operation.evidence is not None
+    assert operation.evidence.model_extra == {"vendor.future": {"enabled": True}}
+
+    first.profile.operations[0].evidence.model_extra["vendor.future"]["after_close"] = True
+    second = recorder.close()
+    assert second.profile.operations[0].evidence is not None
+    assert second.profile.operations[0].evidence.model_extra == {"vendor.future": {"enabled": True}}
+    assert validate_incident(second).ok
+
+
+def test_recorder_snapshots_mutable_capture_governance_configuration() -> None:
+    governance: dict[CaptureClass, CaptureGovernance] = {}
+    policy = CapturePolicy(governance=governance)
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+
+    governance[CaptureClass.METADATA] = CaptureGovernance(
+        export=ExportConfig(allowed=False, policy_id="late-mutation")
+    )
+    bundle = recorder.close()
+    metadata = next(
+        item for item in bundle.profile.privacy.capture_classes if item.capture_class == "metadata"
+    )
+    assert metadata.export is None
+    assert recorder.config.capture_policy.governance == {}
+
+
+@pytest.mark.parametrize(
+    "governance",
+    [
+        object(),
+        CaptureGovernance(consent=object()),  # type: ignore[arg-type]
+        CaptureGovernance(export=ExportConfig(allowed="yes")),  # type: ignore[arg-type]
+    ],
+)
+def test_invalid_capture_governance_is_rejected_at_construction(governance: object) -> None:
+    policy = CapturePolicy(
+        governance={CaptureClass.METADATA: governance},  # type: ignore[dict-item]
+    )
+    with pytest.raises(ValueError, match="capture governance configuration is invalid"):
+        IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+
+
+def _nested_extension(levels: int) -> dict[str, object]:
+    value: dict[str, object] = {"leaf": True}
+    for _ in range(levels):
+        value = {"next": value}
+    return value
+
+
+def test_recorder_depth_preflight_matches_both_codec_decoders() -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    portable = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    portable.record_operation(
+        operation_id="depth-at-limit",
+        operation_name="agent",
+        status="ok",
+        started_at=portable._time(),
+        evidence=evidence().model_copy(update={"vendor.future": _nested_extension(58)}),
+    )
+    bundle = portable.close()
+    assert decode_incident_json(encode_incident_json(bundle)) == bundle
+    assert decode_incident_protobuf(encode_incident_protobuf(bundle)) == bundle
+
+    rejected = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    with pytest.raises(ValueError, match="maximum profile nesting depth"):
+        rejected.record_operation(
+            operation_id="depth-over-limit",
+            operation_name="agent",
+            status="ok",
+            started_at=rejected._time(),
+            evidence=evidence().model_copy(update={"vendor.future": _nested_extension(59)}),
+        )
+    assert rejected.close().profile.operations == ()
+
+
+def test_model_copy_cannot_bypass_recorder_structural_preflight() -> None:
+    recorder = IncidentRecorder()
+    poisoned_time = recorder._time().model_copy(update={"source_time_unix_nano": object()})
+    with pytest.raises(ValueError, match="structurally invalid"):
+        recorder.record_operation(
+            operation_id="poisoned-time",
+            operation_name="agent",
+            status="ok",
+            started_at=poisoned_time,
+        )
+    assert recorder.close().profile.operations == ()
+
+    deep_recorder = IncidentRecorder()
+    deeply_poisoned_time = deep_recorder._time().model_copy(
+        update={"source_time_unix_nano": _nested_extension(1_000)}
+    )
+    with pytest.raises(ValueError, match="structurally invalid"):
+        deep_recorder.record_operation(
+            operation_id="deeply-poisoned-time",
+            operation_name="agent",
+            status="ok",
+            started_at=deeply_poisoned_time,
+        )
+    assert deep_recorder.close().profile.operations == ()
+
+    poisoned_adapter = Adapter(
+        name="custom",
+        version="1",
+        framework="custom",
+    ).model_copy(update={"version": object()})
+    with pytest.raises(ValueError, match="structurally invalid"):
+        IncidentRecorder(config=RecorderConfig(adapters=(poisoned_adapter,)))
+
+    quality_recorder = IncidentRecorder(session_id="quality-structural-preflight")
+    now = quality_recorder._time()
+    poisoned_measurement = QualityMeasurement(
+        name="jitter",
+        value=1,
+        unit="ms",
+    ).model_copy(update={"value": object()})
+    poisoned_sample = QualitySample(
+        sample_id="poisoned-quality",
+        session_id="quality-structural-preflight",
+        quality_kind="transport",
+        sample_window=TimeRange(start=now, end=now),
+        measurements=(poisoned_measurement,),
+    )
+    with pytest.raises(ValueError, match="structurally invalid"):
+        quality_recorder.record_quality_sample(poisoned_sample)
+    assert quality_recorder.close().profile.quality_samples == ()
+
+    for index, invalid_value in enumerate((float("nan"), float("inf"), 10**100)):
+        scalar_recorder = IncidentRecorder(session_id=f"quality-scalar-{index}")
+        point = scalar_recorder._time()
+        invalid_sample = QualitySample(
+            sample_id=f"invalid-quality-scalar-{index}",
+            session_id=f"quality-scalar-{index}",
+            quality_kind="transport",
+            sample_window=TimeRange(start=point, end=point),
+            measurements=(
+                QualityMeasurement(
+                    name="jitter",
+                    value=invalid_value,
+                    unit="ms",
+                ),
+            ),
+        )
+        with pytest.raises(ValueError, match="structurally invalid"):
+            scalar_recorder.record_quality_sample(invalid_sample)
+        assert scalar_recorder.close().profile.quality_samples == ()
+
+    media_policy = CapturePolicy(enabled=frozenset({CaptureClass.METADATA, CaptureClass.AUDIO}))
+    media_recorder = IncidentRecorder(
+        session_id="media-structural-preflight",
+        config=RecorderConfig(capture_policy=media_policy),
+    )
+    poisoned_media = MediaRef(
+        media_id="poisoned-media",
+        session_id="media-structural-preflight",
+        stream_id="stream-input",
+        media_kind="audio",
+        content_type="audio/wav",
+        sha256="a" * 64,
+        size_bytes=1,
+    ).model_copy(update={"size_bytes": object()})
+    with pytest.raises(ValueError, match="structurally invalid"):
+        media_recorder.add_media_ref(poisoned_media)
+    assert media_recorder.close().profile.media_refs == ()
+
+
+def test_failed_structural_record_does_not_commit_extension_capture() -> None:
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    recorder = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    extended_evidence = evidence().model_copy(
+        update={"vendor.future": {"enabled": True, "levels": [1, 2, 3]}}
+    )
+
+    with pytest.raises(ValueError, match="trace_id"):
+        recorder.record_operation(
+            operation_id="structurally-invalid",
+            operation_name="agent",
+            status="ok",
+            started_at=recorder._time(),
+            trace_id="not-an-otel-trace-id",
+            span_id="1" * 16,
+            evidence=extended_evidence,
+        )
+
+    bundle = recorder.close()
+    extension = next(
+        item
+        for item in bundle.profile.privacy.capture_classes
+        if item.capture_class == "extension_payload"
+    )
+    assert bundle.profile.operations == ()
+    assert not extension.captured
+    assert validate_incident(bundle).ok
+
+
+def test_operation_and_event_time_extensions_are_preflighted_transactionally() -> None:
+    extension = {"vendor.future": {"enabled": True}}
+
+    denied = IncidentRecorder()
+    denied_time = denied._time().model_copy(update=extension)
+    with pytest.raises(ValueError, match="require extension_payload"):
+        denied.record_operation(
+            operation_id="denied-time-extension",
+            operation_name="agent",
+            status="ok",
+            started_at=denied_time,
+        )
+    with pytest.raises(ValueError, match="require extension_payload"):
+        denied.record_event(
+            "earshot.turn.committed",
+            event_id="denied-event-time-extension",
+            time=denied_time,
+        )
+    denied_bundle = denied.close()
+    assert denied_bundle.profile.operations == ()
+    assert denied_bundle.profile.events == ()
+
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    allowed = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    allowed_start = allowed._time().model_copy(update=extension)
+    allowed_end = allowed._time().model_copy(update=extension)
+    allowed.record_operation(
+        operation_id="allowed-time-extension",
+        operation_name="agent",
+        status="ok",
+        started_at=allowed_start,
+        ended_at=allowed_end,
+    )
+    allowed.record_event(
+        "earshot.turn.committed",
+        event_id="allowed-event-time-extension",
+        time=allowed_start,
+    )
+    allowed_bundle = allowed.close()
+    assert allowed_bundle.profile.operations[0].started_at.model_extra == extension
+    assert allowed_bundle.profile.operations[0].ended_at is not None
+    assert allowed_bundle.profile.operations[0].ended_at.model_extra == extension
+    assert allowed_bundle.profile.events[0].time.model_extra == extension
+    captured = next(
+        item
+        for item in allowed_bundle.profile.privacy.capture_classes
+        if item.capture_class == "extension_payload"
+    )
+    assert captured.captured
+    assert validate_incident(allowed_bundle).ok
+
+
+def test_registered_and_configured_adapter_extensions_are_preflighted() -> None:
+    extension = {"vendor.future": {"enabled": True}}
+    extended_adapter = Adapter(
+        name="custom",
+        version="1",
+        framework="custom",
+    ).model_copy(update=extension)
+
+    denied = IncidentRecorder()
+    with pytest.raises(ValueError, match="require extension_payload"):
+        denied.register_adapter(extended_adapter)
+    assert denied.close().profile.manifest.adapters == ()
+    with pytest.raises(ValueError, match="require extension_payload"):
+        IncidentRecorder(config=RecorderConfig(adapters=(extended_adapter,)))
+
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
+    )
+    registered = IncidentRecorder(config=RecorderConfig(capture_policy=policy))
+    registered.register_adapter(extended_adapter)
+    registered_bundle = registered.close()
+    assert registered_bundle.profile.manifest.adapters[0].model_extra == extension
+    registered_capture = next(
+        item
+        for item in registered_bundle.profile.privacy.capture_classes
+        if item.capture_class == "extension_payload"
+    )
+    assert registered_capture.captured
+    assert validate_incident(registered_bundle).ok
+
+    configured = IncidentRecorder(
+        config=RecorderConfig(
+            capture_policy=policy,
+            adapters=(extended_adapter,),
+        )
+    ).close()
+    assert configured.profile.manifest.adapters[0].model_extra == extension
+    configured_capture = next(
+        item
+        for item in configured.profile.privacy.capture_classes
+        if item.capture_class == "extension_payload"
+    )
+    assert configured_capture.captured
+    assert validate_incident(configured).ok
+
+    unsafe_second_adapter = Adapter(
+        name="unsafe",
+        version="1",
+        framework="custom",
+    ).model_copy(update={"vendor.future": None})
+    with pytest.raises(ValueError, match="unsafe key or value"):
+        IncidentRecorder(
+            config=RecorderConfig(
+                capture_policy=policy,
+                adapters=(extended_adapter, unsafe_second_adapter),
+            )
+        )
+
+
+def test_close_validation_failure_leaves_recorder_recoverable() -> None:
+    recorder = IncidentRecorder()
+    recorder.record_operation(
+        operation_id="before-validation-failure",
+        operation_name="agent",
+        status="ok",
+        started_at=recorder._time(),
+        links=(
+            CausalLink(
+                relationship="retries",
+                target_scope="internal",
+                target_operation_id="missing-target",
+            ),
+        ),
+    )
+
+    with pytest.raises(IncidentValidationError) as caught:
+        recorder.close()
+    assert {issue.code for issue in caught.value.report.errors} >= {
+        "EARSHOT_DANGLING_REF",
+        "EARSHOT_INTERNAL_LINK_MISSING",
+    }
+
+    # Supplying the previously missing target proves the failed close did not seal
+    # the recorder or discard the source operation.
+    recorder.record_operation(
+        operation_id="missing-target",
+        operation_name="agent",
+        status="ok",
+        started_at=recorder._time(),
+    )
+    recovered = recorder.close()
+    assert [item.operation_id for item in recovered.profile.operations] == [
+        "before-validation-failure",
+        "missing-target",
+    ]
+    assert validate_incident(recovered).ok
 
 
 def test_metadata_numeric_and_decimal_values_are_bounded_without_overflow() -> None:
@@ -269,9 +885,10 @@ def test_schema_url_port_is_digested_and_third_party_urls_require_extension_poli
         sanitized = recorder.close()
         operation = sanitized.profile.operations[0]
         assert operation.schema_url is None
-        assert operation.attributes["earshot.source.schema_url_sha256"] == hashlib.sha256(
-            unsafe.encode()
-        ).hexdigest()
+        assert (
+            operation.attributes["earshot.source.schema_url_sha256"]
+            == hashlib.sha256(unsafe.encode()).hexdigest()
+        )
         assert SECRET_SENTINEL not in encode_incident_json(sanitized).decode()
         assert validate_incident(sanitized).ok
 
@@ -296,9 +913,7 @@ def test_schema_url_port_is_digested_and_third_party_urls_require_extension_poli
     extension_policy = CapturePolicy(
         enabled=frozenset({CaptureClass.METADATA, CaptureClass.EXTENSION_PAYLOAD})
     )
-    extension_recorder = IncidentRecorder(
-        config=RecorderConfig(capture_policy=extension_policy)
-    )
+    extension_recorder = IncidentRecorder(config=RecorderConfig(capture_policy=extension_policy))
     extension_recorder.record_operation(
         operation_id="third-party-schema",
         operation_name="agent",

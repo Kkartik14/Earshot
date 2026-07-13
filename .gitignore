@@ -23,6 +23,10 @@ data/
 *.sqlite3-wal
 .earshot/
 
+# Legacy root-level outputs from early LiveKit example runs.
+/earshot_incident.json
+/user_utterance.wav
+
 # Python / build artifacts
 *.egg-info/
 build/

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import sqlite3
 import threading
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import earshot.storage as storage_module
 from earshot.codec import encode_incident_protobuf
 from earshot.contract import AnalysisProjections, DerivedAnalysis, ExportPolicy, RetentionPolicy
 from earshot.storage import (
@@ -199,12 +201,25 @@ def test_analysis_storage_preserves_full_uint64_generation_time(tmp_path, valid_
     assert store.get_analysis("bundle-1", "max").generated_at_unix_nano == maximum
 
 
-def test_corrupt_analysis_json_is_detected(tmp_path, valid_bundle) -> None:
+@pytest.mark.parametrize(
+    "corrupt_output",
+    (
+        b"{not-json",
+        b'{"future":' + (b"1" * 5_000) + b"}",
+        (b"[" * 2_000) + b"0" + (b"]" * 2_000),
+    ),
+    ids=("malformed", "oversized-integer", "recursive"),
+)
+def test_corrupt_analysis_json_is_detected(
+    tmp_path,
+    valid_bundle,
+    corrupt_output: bytes,
+) -> None:
     store = IncidentStore(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.put_analysis("bundle-1", "1", analysis_value(store, "bundle-1", "1", "ok"))
     with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
-        connection.execute("UPDATE analyses SET output_json = ?", (b"{not-json",))
+        connection.execute("UPDATE analyses SET output_json = ?", (corrupt_output,))
     with pytest.raises(ArtifactCorruptionError):
         store.get_analysis("bundle-1", "1")
 
@@ -231,6 +246,42 @@ def test_invalid_pagination_cursor_is_rejected(tmp_path, cursor: str) -> None:
     store = IncidentStore(tmp_path)
     with pytest.raises(InvalidCursorError):
         store.list_incidents(cursor=cursor)
+
+
+def test_oversized_cursor_is_rejected_before_json_parsing(tmp_path, monkeypatch) -> None:
+    store = IncidentStore(tmp_path)
+    raw = b"[" + (b" " * 600) + b"]"
+    cursor = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    def fail_if_parsed(_value: object) -> object:
+        pytest.fail("oversized cursor reached json.loads")
+
+    monkeypatch.setattr(storage_module.json, "loads", fail_if_parsed)
+    with pytest.raises(InvalidCursorError):
+        store.list_incidents(cursor=cursor)
+
+
+def test_cursor_recursion_error_is_normalized(tmp_path, monkeypatch) -> None:
+    store = IncidentStore(tmp_path)
+    small_cursor = base64.urlsafe_b64encode(b'["1","bundle-1"]').rstrip(b"=").decode("ascii")
+
+    def recurse(_value: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr(storage_module.json, "loads", recurse)
+    with pytest.raises(InvalidCursorError):
+        store.list_incidents(cursor=small_cursor)
+
+
+def test_oversized_cursor_timestamp_is_rejected(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    oversized_time = (
+        base64.urlsafe_b64encode(('["' + ("9" * 100) + '","bundle-1"]').encode("utf-8"))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    with pytest.raises(InvalidCursorError):
+        store.list_incidents(cursor=oversized_time)
 
 
 @pytest.mark.parametrize("limit", [0, 101, -1])

@@ -122,6 +122,9 @@ class StoredAnalysis:
 
 
 _SCHEMA_VERSION = 4
+_MAX_CURSOR_ENCODED_CHARS = 4096
+_MAX_CURSOR_DECODED_BYTES = 512
+_SQLITE_INT64_MAX = (1 << 63) - 1
 
 _SCHEMA = """
 
@@ -337,19 +340,36 @@ def _encode_cursor(record: IncidentRecord) -> str:
 
 def _decode_cursor(cursor: str) -> tuple[int, str]:
     try:
+        if not isinstance(cursor, str) or not cursor or len(cursor) > _MAX_CURSOR_ENCODED_CHARS:
+            raise ValueError
         padding = "=" * (-len(cursor) % 4)
-        value = json.loads(base64.urlsafe_b64decode(cursor + padding))
+        decoded = base64.urlsafe_b64decode(cursor + padding)
+        if len(decoded) > _MAX_CURSOR_DECODED_BYTES:
+            raise ValueError
+        value = json.loads(decoded.decode("utf-8"))
         if (
             not isinstance(value, list)
             or len(value) != 2
             or not isinstance(value[0], str)
             or not value[0].isdigit()
+            or (len(value[0]) > 1 and value[0].startswith("0"))
             or not isinstance(value[1], str)
             or not value[1]
+            or len(value[1]) > 256
         ):
             raise ValueError
-        return int(value[0]), value[1]
-    except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        cursor_time = int(value[0])
+        if cursor_time > _SQLITE_INT64_MAX:
+            raise ValueError
+        return cursor_time, value[1]
+    except (
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        UnicodeEncodeError,
+        RecursionError,
+    ) as error:
         raise InvalidCursorError("invalid incident pagination cursor") from error
 
 
@@ -1113,7 +1133,13 @@ class IncidentStore:
                 return None
             try:
                 value = json.loads(row["output_json"])
-            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            except (
+                json.JSONDecodeError,
+                UnicodeDecodeError,
+                ValueError,
+                TypeError,
+                RecursionError,
+            ) as error:
                 raise ArtifactCorruptionError("stored analysis is corrupt") from error
             try:
                 analysis = DerivedAnalysis.model_validate(value)

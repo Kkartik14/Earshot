@@ -538,6 +538,7 @@ class LiveKitAdapter:
         *,
         turn_id: str | None = None,
         operation_id: str | None = None,
+        observed_at: TimePoint | None = None,
         method: str = "metrics_listener",
         resource: Mapping[str, Any] | None = None,
         resource_schema_url: str | None = None,
@@ -548,6 +549,7 @@ class LiveKitAdapter:
     ) -> str | None:
         metric_type = _metric_type(metric)
         attributes = self._metric_attributes(metric)
+        attributes["earshot.framework.version"] = self.framework_version
         request_id = value(metric, "request_id") or value(metric, "segment_id")
         speech_id = value(metric, "speech_id") or value(metric, "sequence_id")
         resolved_turn = turn_id or (str(speech_id) if speech_id is not None else None)
@@ -600,30 +602,78 @@ class LiveKitAdapter:
                 )
                 else ("count" if isinstance(raw, int) and not isinstance(raw, bool) else "1")
             )
-            measurements.append(QualityMeasurement(name=name, value=raw, unit=unit))
+            aggregation = (
+                "delta"
+                if metric_type in {"vadmetrics", "vad_metrics"}
+                and name
+                in {
+                    "earshot.duration.inference_seconds",
+                    "earshot.metric.inference.count",
+                }
+                else "instant"
+            )
+            measurements.append(
+                QualityMeasurement(
+                    name=name,
+                    value=raw,
+                    unit=unit,
+                    aggregation=aggregation,
+                )
+            )
         if not measurements:
             return None
 
         provider_time = self._seconds_time_point(value(metric, "timestamp"))
-        observed = provider_time or self.recorder._time()
+        explicit_time = provider_time or observed_at
+        observed = explicit_time or self.recorder._time()
+        dimensions = {
+            name: raw
+            for name, raw in attributes.items()
+            if isinstance(raw, str)
+        }
+        time_identity = (
+            explicit_time.model_dump(mode="json", exclude_none=True)
+            if explicit_time is not None
+            else None
+        )
         fingerprint = hashlib.sha256(
             json.dumps(
                 {
                     "type": metric_type,
                     "request_id": request_id,
-                    "timestamp": value(metric, "timestamp"),
+                    "speech_id": speech_id,
+                    "turn_id": resolved_turn,
+                    "operation_id": operation_id,
+                    "time": time_identity,
+                    "dimensions": dimensions,
                     "measurements": [item.model_dump(mode="json") for item in measurements],
+                    "resource": dict(resource or {}),
+                    "resource_schema_url": resource_schema_url,
+                    "scope_name": scope_name,
+                    "scope_version": scope_version,
+                    "scope_attributes": dict(scope_attributes or {}),
+                    "schema_url": schema_url,
                 },
                 sort_keys=True,
                 default=str,
             ).encode()
         ).hexdigest()
+        identity_time = (
+            json.dumps(time_identity, sort_keys=True)
+            if time_identity is not None
+            else fingerprint
+        )
         sample_id = stable_id(
             "livekit-provider-metric",
             metric_type,
-            request_id or speech_id or value(metric, "timestamp") or fingerprint,
+            request_id or "",
+            speech_id or "",
+            operation_id or "",
+            resolved_turn or "",
+            json.dumps(dimensions, sort_keys=True),
+            identity_time,
         )
-        sample_attributes: dict[str, Any] = {}
+        sample_attributes: dict[str, Any] = dict(dimensions)
         if resolved_turn is not None:
             sample_attributes["earshot.turn.id"] = resolved_turn
         if operation_id is not None:
@@ -865,9 +915,27 @@ class LiveKitAdapter:
         self._seen_events.add(event_id)
         return event_id
 
-    def consume_metric(self, metric: object, *, observed_at: TimePoint | None = None) -> str:
+    def consume_metric(
+        self,
+        metric: object,
+        *,
+        observed_at: TimePoint | None = None,
+    ) -> str | None:
         metric_type = _metric_type(metric)
         operation_name = _METRIC_TYPES.get(metric_type, "framework_metric")
+        if operation_name == "vad":
+            # Voice activity detection is a continuous background signal, not a
+            # discrete sub-step. Emitting one operation per callback floods the
+            # incident (dozens per turn); record it as a pipeline quality sample
+            # instead so the waterfall and turn analysis stay clean.
+            try:
+                return self._record_metric_quality(
+                    metric,
+                    observed_at=observed_at,
+                    method="metrics_listener",
+                )
+            finally:
+                self._mark_render_unobserved()
         observed = observed_at or self.recorder._time()  # adapter shares recorder clock
         duration_value = value(metric, "duration")
         if duration_value is None:
@@ -1598,6 +1666,7 @@ class LiveKitAdapter:
             "output_tokens": "gen_ai.usage.output_tokens",
             "total_tokens": "earshot.metric.model.total_tokens",
             "audio_duration": "earshot.duration.audio_seconds",
+            "idle_time": "earshot.duration.vad.idle_seconds",
             "inference_duration_total": "earshot.duration.inference_seconds",
             "inference_count": "earshot.metric.inference.count",
             "num_interruptions": "earshot.metric.interruption.count",
@@ -1643,6 +1712,11 @@ class LiveKitAdapter:
             attributes["gen_ai.request.model"] = model
         if isinstance(provider, str) and provider:
             attributes["gen_ai.provider.name"] = provider
+        label = value(metric, "label")
+        if label is not None:
+            safe_label = sanitize_semantic_label(str(label))
+            if safe_label is not None:
+                attributes["earshot.framework.metric.name"] = safe_label
         return attributes
 
     @staticmethod

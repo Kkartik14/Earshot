@@ -24,7 +24,9 @@ from .contract import (
 )
 
 ANALYZER_NAME = "earshot.deterministic"
-ANALYZER_VERSION = "1.0.0"
+# Delta-window aggregation changed the deterministic projection. Bump the cache
+# identity so stores never return a pre-aggregation result for the same artifact.
+ANALYZER_VERSION = "1.0.1"
 
 
 @dataclass(frozen=True)
@@ -204,11 +206,9 @@ def _first_provider_latency_event(
 
 
 def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[str, object]]:
-    projected: dict[str, dict[str, object]] = {}
+    grouped: dict[str, list[tuple[str, float, str, str, str]]] = defaultdict(list)
     for sample in sorted(samples, key=lambda item: item.sample_id):
         for measurement in sample.measurements:
-            if measurement.name in projected:
-                continue
             if not isinstance(measurement.value, (int, float)) or isinstance(
                 measurement.value, bool
             ):
@@ -221,16 +221,86 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
                 unit = "ms"
             else:
                 unit = measurement.unit
-            projected[measurement.name] = {
+            grouped[measurement.name].append(
+                (
+                    sample.sample_id,
+                    value,
+                    unit,
+                    measurement.aggregation,
+                    (sample.evidence.confidence if sample.evidence is not None else "unavailable"),
+                )
+            )
+
+    projected: dict[str, dict[str, object]] = {}
+    confidence_rank = {
+        "measured": 0,
+        "estimated": 1,
+        "inferred": 2,
+        "unavailable": 3,
+    }
+    for name, entries in sorted(grouped.items()):
+        aggregations = {entry[3] for entry in entries}
+        evidence_ids = sorted({entry[0] for entry in entries})
+        if aggregations == {"delta"}:
+            units = {entry[2] for entry in entries}
+            if len(units) != 1:
+                projected[name] = {
+                    "availability": "unavailable",
+                    "basis": "provider_delta_sum",
+                    "confidence": "unavailable",
+                    "limitation": "incompatible_delta_units",
+                    "evidence_ids": evidence_ids,
+                }
+                continue
+            confidences = {entry[4] for entry in entries}
+            confidence = max(
+                confidences,
+                key=lambda item: (confidence_rank.get(item, len(confidence_rank)), item),
+            )
+            try:
+                total = math.fsum(entry[1] for entry in entries)
+            except OverflowError:
+                total = None
+            if total is None or not math.isfinite(total):
+                projected[name] = {
+                    "availability": "unavailable",
+                    "basis": "provider_delta_sum",
+                    "confidence": "unavailable",
+                    "limitation": "delta_sum_not_finite",
+                    "evidence_ids": evidence_ids,
+                }
+                continue
+            projected[name] = {
                 "availability": "available",
-                "basis": "provider_direct",
-                "confidence": (
-                    sample.evidence.confidence if sample.evidence is not None else "unavailable"
-                ),
-                "value": value,
-                "unit": unit,
-                "evidence_ids": [sample.sample_id],
+                "basis": "provider_delta_sum",
+                "confidence": confidence,
+                "value": total,
+                "unit": next(iter(units)),
+                "evidence_ids": evidence_ids,
             }
+            continue
+        if "delta" in aggregations:
+            projected[name] = {
+                "availability": "unavailable",
+                "basis": "provider_measurement",
+                "confidence": "unavailable",
+                "limitation": "mixed_measurement_aggregation",
+                "evidence_ids": evidence_ids,
+            }
+            continue
+
+        # Instant/cumulative observations are snapshots, not additive windows.
+        # Retain the existing deterministic first-sample projection until the
+        # contract defines a selection policy for those aggregation modes.
+        sample_id, value, unit, _aggregation, confidence = entries[0]
+        projected[name] = {
+            "availability": "available",
+            "basis": "provider_direct",
+            "confidence": confidence,
+            "value": value,
+            "unit": unit,
+            "evidence_ids": [sample_id],
+        }
     return projected
 
 

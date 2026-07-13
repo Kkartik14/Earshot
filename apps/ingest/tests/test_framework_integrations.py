@@ -323,7 +323,7 @@ def test_livekit_eot_inference_metrics_are_not_interruption_metrics() -> None:
     assert not any("interruption" in key for key in operation.attributes)
 
 
-def test_livekit_dual_attach_keeps_metric_only_vad_stt_and_interruption_operations() -> None:
+def test_livekit_dual_attach_keeps_stt_interruption_operations_with_vad_quality() -> None:
     pytest.importorskip("livekit.agents")
     sdk_trace = pytest.importorskip("opentelemetry.sdk.trace")
     from livekit.agents.metrics import InterruptionMetrics, STTMetrics, VADMetrics
@@ -369,9 +369,19 @@ def test_livekit_dual_attach_keeps_metric_only_vad_stt_and_interruption_operatio
         provider.shutdown()
 
     bundle = adapter.recorder.close()
+    # VAD is a continuous background signal -> a quality sample, not an operation.
+    # STT and interruption remain metric-only operations (no native LiveKit span).
     assert [item.operation_name for item in bundle.profile.operations] == [
-        "vad",
         "stt",
         "interruption_detection",
     ]
+    assert [s.quality_kind for s in bundle.profile.quality_samples] == ["pipeline.metric"]
+    vad = bundle.profile.quality_samples[0]
+    vad_measurements = {measurement.name: measurement for measurement in vad.measurements}
+    assert vad_measurements["earshot.metric.inference.count"].aggregation == "delta"
+    assert vad_measurements["earshot.duration.inference_seconds"].aggregation == "delta"
+    assert vad_measurements["earshot.duration.vad.idle_seconds"].aggregation == "instant"
+    assert vad.attributes["earshot.framework.name"] == "livekit"
+    assert vad.attributes["earshot.framework.metric.name"] == "vad"
+    assert vad.attributes["earshot.framework.version"] == version("livekit-agents")
     assert validate_incident(bundle).ok

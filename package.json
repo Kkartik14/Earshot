@@ -14,7 +14,7 @@
     "test": "turbo run test",
     "test:python": ".venv/bin/python -m pytest",
     "test:all": "pnpm test && pnpm test:python",
-    "lint:python": ".venv/bin/ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts",
+    "lint:python": ".venv/bin/ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples/livekit_console",
     "generate:contract": ".venv/bin/python scripts/generate_contract.py",
     "serve": ".venv/bin/earshot serve --data-dir .earshot",
     "format": "prettier --write \"**/*.{ts,tsx,md,json,yaml}\"",

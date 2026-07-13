@@ -56,6 +56,10 @@ groups:
         type: string
         requirement_level: opt_in
         brief: Privacy-governed native framework operation label retained alongside Earshot classification.
+      - id: earshot.framework.metric.name
+        type: string
+        requirement_level: opt_in
+        brief: Governed source-framework label identifying a metric producer or component.
       - id: earshot.request.id
         type: string
         requirement_level: opt_in
@@ -168,6 +172,10 @@ groups:
         type: double
         requirement_level: opt_in
         brief: Provider-reported inference duration in seconds.
+      - id: earshot.duration.vad.idle_seconds
+        type: double
+        requirement_level: opt_in
+        brief: Time since the VAD stream last observed a speech-boundary activity, in seconds.
       - id: earshot.duration.turn_callback_seconds
         type: double
         requirement_level: opt_in

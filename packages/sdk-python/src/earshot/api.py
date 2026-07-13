@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.concurrency import run_in_threadpool
 
+from .analysis import ANALYZER_VERSION
 from .codec import (
     JSON_MEDIA_TYPE,
     PROTOBUF_MEDIA_TYPE,
@@ -142,7 +143,7 @@ class ApiConfig:
     max_body_bytes: int = 16 * 1024 * 1024
     max_json_depth: int = 64
     default_page_size: int = 50
-    analyzer_version: str = "1.0.0"
+    analyzer_version: str = ANALYZER_VERSION
     behind_tls_proxy: bool = False
 
     def __post_init__(self) -> None:

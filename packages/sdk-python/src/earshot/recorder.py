@@ -8,17 +8,21 @@ exists. Manual operations are provided as an escape hatch for raw pipelines.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
+import math
 import secrets
 import threading
 import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from types import MappingProxyType
+from typing import Any, TypeVar, overload
 
 from pydantic import BaseModel
 
 from .clock import Clock, SystemClock
+from .codec import MAX_PROFILE_DEPTH
 from .contract import (
     Adapter,
     AudioStream,
@@ -52,6 +56,7 @@ from .contract import (
 from .exporter import BoundedAsyncExporter, ExportItem
 from .privacy import (
     CaptureClass,
+    CaptureGovernance,
     CapturePolicy,
     Omission,
     classify_attribute,
@@ -68,7 +73,10 @@ from .privacy import (
     sanitize_semantic_label,
     sanitize_source_label,
     sanitize_version_label,
+    snapshot_portable_value,
 )
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
 @dataclass(frozen=True)
@@ -90,7 +98,22 @@ class IncidentRecorder:
         clock: Clock | None = None,
         exporter: BoundedAsyncExporter | None = None,
     ) -> None:
-        self.config = config or RecorderConfig()
+        source_config = config or RecorderConfig()
+        source_policy = source_config.capture_policy
+        policy_snapshot = CapturePolicy(
+            enabled=frozenset(source_policy.enabled),
+            policy_id=source_policy.policy_id,
+            policy_version=source_policy.policy_version,
+            governance=MappingProxyType(copy.deepcopy(dict(source_policy.governance))),
+        )
+        self.config = RecorderConfig(
+            producer_name=source_config.producer_name,
+            producer_version=source_config.producer_version,
+            clock_domain_id=source_config.clock_domain_id,
+            capture_policy=policy_snapshot,
+            adapters=source_config.adapters,
+        )
+        self._validate_capture_policy_config()
         self.clock = clock or SystemClock()
         self.session_id = session_id or f"session-{uuid.uuid4().hex}"
         self.bundle_id = bundle_id or f"bundle-{uuid.uuid4().hex}"
@@ -105,10 +128,25 @@ class IncidentRecorder:
         self._events: list[Event] = []
         self._quality_samples: list[QualitySample] = []
         self._media_refs: list[MediaRef] = []
-        self._adapters: list[Adapter] = list(self.config.adapters)
+        self._adapters: list[Adapter] = []
         self._raw_otlp_chunks: list[RawOtlpChunk] = []
         self._omissions: list[Omission] = []
         self._retained_classes: set[CaptureClass] = {CaptureClass.METADATA}
+        initial_adapter_extensions: list[bool] = []
+        for configured_adapter in self.config.adapters:
+            adapter, has_extensions = self._prepare_model(configured_adapter)
+            self._assert_profile_record_depth(adapter, root_depth=4)
+            self._adapters.append(adapter)
+            initial_adapter_extensions.append(has_extensions)
+        if any(initial_adapter_extensions):
+            self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+        self.config = RecorderConfig(
+            producer_name=self.config.producer_name,
+            producer_version=self.config.producer_version,
+            clock_domain_id=self.config.clock_domain_id,
+            capture_policy=self.config.capture_policy,
+            adapters=tuple(self._adapters),
+        )
         self._status = "running"
         self._closed = False
         self._bundle: IncidentBundle | None = None
@@ -143,6 +181,7 @@ class IncidentRecorder:
             capture_class=record_class,
             attributes=safe,
         )
+        self._assert_profile_record_depth(participant, root_depth=3)
         with self._lock:
             self._require_open()
             for existing in self._participants:
@@ -150,8 +189,8 @@ class IncidentRecorder:
                     continue
                 if existing != participant:
                     raise ValueError("conflicting duplicate participant identity")
-                return existing
-            self._participants.append(participant)
+                return existing.model_copy(deep=True)
+            self._participants.append(participant.model_copy(deep=True))
             self._omissions.extend(omitted)
             self._track_retained_classes(safe)
             self._retained_classes.add(CaptureClass(record_class))
@@ -179,6 +218,7 @@ class IncidentRecorder:
             capture_class=record_class,
             attributes=safe,
         )
+        self._assert_profile_record_depth(stream, root_depth=3)
         with self._lock:
             self._require_open()
             for existing in self._streams:
@@ -186,8 +226,8 @@ class IncidentRecorder:
                     continue
                 if existing != stream:
                     raise ValueError("conflicting duplicate stream identity")
-                return existing
-            self._streams.append(stream)
+                return existing.model_copy(deep=True)
+            self._streams.append(stream.model_copy(deep=True))
             self._omissions.extend(omitted)
             self._track_retained_classes(safe)
             self._retained_classes.add(CaptureClass(record_class))
@@ -220,10 +260,14 @@ class IncidentRecorder:
             )
 
     def register_adapter(self, adapter: Adapter) -> None:
+        adapter, has_model_extensions = self._prepare_model(adapter)
+        self._assert_profile_record_depth(adapter, root_depth=4)
         with self._lock:
             self._require_open()
             if adapter not in self._adapters:
                 self._adapters.append(adapter)
+            if has_model_extensions:
+                self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
 
     def add_raw_otlp_chunk(
         self,
@@ -286,9 +330,26 @@ class IncidentRecorder:
         error: ErrorRecord | None = None,
         capture_class: str | None = None,
     ) -> Operation:
-        self._authorize_model_extensions(evidence)
-        self._authorize_model_extensions(links)
-        self._authorize_model_extensions(error)
+        started_at, started_extensions = self._prepare_model(started_at)
+        ended_at, ended_extensions = self._prepare_model(ended_at)
+        evidence, evidence_extensions = self._prepare_model(evidence)
+        error, error_extensions = self._prepare_model(error)
+        prepared_links: list[CausalLink] = []
+        link_extensions = False
+        for link in links:
+            prepared_link, has_extensions = self._prepare_model(link)
+            prepared_links.append(prepared_link)
+            link_extensions = link_extensions or has_extensions
+        links = tuple(prepared_links)
+        has_model_extensions = any(
+            (
+                started_extensions,
+                ended_extensions,
+                evidence_extensions,
+                link_extensions,
+                error_extensions,
+            )
+        )
         operation_name, source_name_digest = normalize_operation_name(operation_name)
         source_attributes = dict(attributes or {})
         if source_name_digest is not None:
@@ -310,9 +371,9 @@ class IncidentRecorder:
             allow_extension=self.config.capture_policy.allows(CaptureClass.EXTENSION_PAYLOAD),
         )
         if resource_schema_url_digest is not None:
-            source_attributes[
-                "earshot.source.resource_schema_url_sha256"
-            ] = resource_schema_url_digest
+            source_attributes["earshot.source.resource_schema_url_sha256"] = (
+                resource_schema_url_digest
+            )
         safe_parent_scope = (
             parent_scope if parent_scope in {"internal", "external", "unknown"} else "unknown"
         )
@@ -363,9 +424,10 @@ class IncidentRecorder:
             attributes=safe,
             error=safe_error,
         )
+        self._assert_profile_record_depth(operation, root_depth=3)
         with self._lock:
             self._require_open()
-            self._operations.append(operation)
+            self._operations.append(operation.model_copy(deep=True))
             self._omissions.extend(omitted)
             self._omissions.extend(resource_omitted)
             self._omissions.extend(scope_omitted)
@@ -389,6 +451,8 @@ class IncidentRecorder:
             if safe_error is not None:
                 self._retained_classes.add(CaptureClass(safe_error.capture_class))
                 self._track_retained_classes(safe_error.attributes)
+            if has_model_extensions:
+                self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
         return operation
 
     @contextlib.contextmanager
@@ -469,7 +533,10 @@ class IncidentRecorder:
         attributes: Mapping[str, Any] | None = None,
         capture_class: str | None = None,
     ) -> Event:
-        self._authorize_model_extensions(evidence)
+        event_time = time or self._time()
+        event_time, time_extensions = self._prepare_model(event_time)
+        evidence, evidence_extensions = self._prepare_model(evidence)
+        has_model_extensions = time_extensions or evidence_extensions
         event_name, source_name_digest = normalize_event_name(event_name)
         source_attributes = dict(attributes or {})
         if source_name_digest is not None:
@@ -487,9 +554,9 @@ class IncidentRecorder:
             allow_extension=self.config.capture_policy.allows(CaptureClass.EXTENSION_PAYLOAD),
         )
         if resource_schema_url_digest is not None:
-            source_attributes[
-                "earshot.source.resource_schema_url_sha256"
-            ] = resource_schema_url_digest
+            source_attributes["earshot.source.resource_schema_url_sha256"] = (
+                resource_schema_url_digest
+            )
         safe, omitted = sanitize_attributes(source_attributes, self.config.capture_policy)
         safe_resource, resource_omitted = sanitize_attributes(
             resource or {}, self.config.capture_policy
@@ -512,7 +579,7 @@ class IncidentRecorder:
             event_id=event_id or f"event-{uuid.uuid4().hex}",
             session_id=self.session_id,
             event_name=event_name,
-            time=time or self._time(),
+            time=event_time,
             operation_id=operation_id,
             participant_id=participant_id,
             stream_id=stream_id,
@@ -529,9 +596,10 @@ class IncidentRecorder:
             capture_class=record_class,
             attributes=safe,
         )
+        self._assert_profile_record_depth(event, root_depth=3)
         with self._lock:
             self._require_open()
-            self._events.append(event)
+            self._events.append(event.model_copy(deep=True))
             self._omissions.extend(omitted)
             self._omissions.extend(resource_omitted)
             self._omissions.extend(scope_omitted)
@@ -548,6 +616,8 @@ class IncidentRecorder:
                 safe_resource_schema_url
             ):
                 self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+            if has_model_extensions:
+                self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
         return event
 
     def record_quality_sample(
@@ -558,7 +628,7 @@ class IncidentRecorder:
     ) -> QualitySample:
         """Retain a provider/transport sample after recursively filtering it."""
 
-        self._authorize_model_extensions(sample)
+        sample, has_model_extensions = self._prepare_model(sample)
         if sample.session_id != self.session_id:
             raise ValueError("quality sample belongs to a different session")
         source_attributes = dict(sample.attributes)
@@ -573,9 +643,9 @@ class IncidentRecorder:
             allow_extension=self.config.capture_policy.allows(CaptureClass.EXTENSION_PAYLOAD),
         )
         if resource_schema_url_digest is not None:
-            source_attributes[
-                "earshot.source.resource_schema_url_sha256"
-            ] = resource_schema_url_digest
+            source_attributes["earshot.source.resource_schema_url_sha256"] = (
+                resource_schema_url_digest
+            )
         safe, omitted = sanitize_attributes(source_attributes, self.config.capture_policy)
         safe_resource, resource_omitted = sanitize_attributes(
             sample.resource,
@@ -631,9 +701,11 @@ class IncidentRecorder:
                 "capture_class": record_class,
             }
         )
+        sanitized, _ = self._prepare_model(sanitized)
+        self._assert_profile_record_depth(sanitized, root_depth=3)
         with self._lock:
             self._require_open()
-            self._quality_samples.append(sanitized)
+            self._quality_samples.append(sanitized.model_copy(deep=True))
             self._omissions.extend(omitted)
             self._omissions.extend(resource_omitted)
             self._omissions.extend(scope_omitted)
@@ -648,6 +720,8 @@ class IncidentRecorder:
                 safe_resource_schema_url
             ):
                 self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+            if has_model_extensions:
+                self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
         return sanitized
 
     def add_media_ref(self, media: MediaRef) -> bool:
@@ -655,7 +729,7 @@ class IncidentRecorder:
 
         from .privacy import locator_has_credentials
 
-        self._authorize_model_extensions(media)
+        media, has_model_extensions = self._prepare_model(media)
         if media.session_id != self.session_id:
             raise ValueError("media reference belongs to a different session")
         if media.capture_class != CaptureClass.AUDIO.value:
@@ -682,18 +756,22 @@ class IncidentRecorder:
             )
             locator = None
         sanitized = media.model_copy(update={"attributes": safe, "locator": locator})
+        sanitized, _ = self._prepare_model(sanitized)
+        self._assert_profile_record_depth(sanitized, root_depth=3)
         with self._lock:
             self._require_open()
-            self._media_refs.append(sanitized)
+            self._media_refs.append(sanitized.model_copy(deep=True))
             self._omissions.extend(omitted)
             self._retained_classes.add(CaptureClass.AUDIO)
             self._track_retained_classes(safe)
+            if has_model_extensions:
+                self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
         return True
 
     def close(self, status: str = "completed") -> IncidentBundle:
         with self._lock:
             if self._bundle is not None:
-                return self._bundle
+                return self._bundle.model_copy(deep=True)
             safe_status = sanitize_semantic_label(status) or "unknown"
             status_attributes: dict[str, str] = {}
             if safe_status.startswith("sha256:"):
@@ -701,8 +779,6 @@ class IncidentRecorder:
                     "sha256:"
                 )
                 safe_status = "unknown"
-            self._status = safe_status
-            self._closed = True
             ended = self._time()
             privacy_omissions = tuple(
                 ContractOmission(
@@ -820,18 +896,23 @@ class IncidentRecorder:
             from .validation import assert_valid_incident  # imported lazily
 
             assert_valid_incident(bundle)
-            self._bundle = bundle
+            self._status = safe_status
+            self._closed = True
+            # Keep an internal immutable-by-ownership snapshot. Contract models are
+            # frozen, but nested dict/list extras are mutable Python containers.
+            self._bundle = bundle.model_copy(deep=True)
+            export_bundle = self._bundle
 
         if self.exporter is not None:
             try:
                 from .codec import encode_incident_protobuf  # imported lazily
                 from .privacy import assert_export_allowed
 
-                assert_export_allowed(self._bundle, "sdk_http")
+                assert_export_allowed(export_bundle, "sdk_http")
                 self.export_accepted = self.exporter.submit(
                     ExportItem(
                         bundle_id=self.bundle_id,
-                        payload=encode_incident_protobuf(self._bundle),
+                        payload=encode_incident_protobuf(export_bundle),
                     )
                 )
             except Exception as error:
@@ -840,13 +921,98 @@ class IncidentRecorder:
                 if isinstance(error, ExportPolicyError):
                     self.export_accepted = False
                 self.last_export_error = error
-        return self._bundle
+        return export_bundle.model_copy(deep=True)
 
     def _require_open(self) -> None:
         if self._closed:
             raise RuntimeError("incident recorder is closed")
 
-    def _authorize_model_extensions(self, value: Any) -> None:
+    def _validate_capture_policy_config(self) -> None:
+        """Fail before recording when governance cannot form contract records."""
+
+        try:
+            for governance in self.config.capture_policy.governance.values():
+                if not isinstance(governance, CaptureGovernance):
+                    raise TypeError("governance values must be CaptureGovernance")
+                if governance.consent is not None:
+                    ConsentRecord(
+                        status=governance.consent.status,
+                        legal_basis=governance.consent.legal_basis,
+                        recorded_at_unix_nano=governance.consent.recorded_at_unix_nano,
+                        authority=governance.consent.authority,
+                    )
+                if governance.redaction is not None:
+                    RedactionRecord(
+                        policy_id=governance.redaction.policy_id,
+                        policy_version=governance.redaction.policy_version,
+                        status=governance.redaction.status,
+                        findings_count=governance.redaction.findings_count,
+                        redacted_count=governance.redaction.redacted_count,
+                        executed_at_unix_nano=governance.redaction.executed_at_unix_nano,
+                    )
+                if governance.retention is not None:
+                    RetentionPolicy(
+                        expires_at_unix_nano=governance.retention.expires_at_unix_nano,
+                        ttl_nano=governance.retention.ttl_nano,
+                        policy_id=governance.retention.policy_id,
+                    )
+                if governance.export is not None:
+                    ExportPolicy(
+                        allowed=governance.export.allowed,
+                        destinations=governance.export.destinations,
+                        policy_id=governance.export.policy_id,
+                    )
+            PrivacyManifest(
+                policy_id=self.config.capture_policy.policy_id,
+                policy_version=self.config.capture_policy.policy_version,
+            )
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ValueError("capture governance configuration is invalid") from error
+
+    @overload
+    def _prepare_model(self, value: _ModelT) -> tuple[_ModelT, bool]: ...
+
+    @overload
+    def _prepare_model(self, value: None) -> tuple[None, bool]: ...
+
+    def _prepare_model(self, value: BaseModel | None) -> tuple[BaseModel | None, bool]:
+        """Revalidate and detach a caller-supplied contract model."""
+
+        if value is None:
+            return None, False
+        # Preflight the source to stop cycles/depth before Pydantic serialization.
+        self._authorize_model_extensions(value)
+        try:
+            dumped = value.model_dump(mode="python", round_trip=True, warnings=False)
+            dumped = snapshot_portable_value(dumped)
+            validated = type(value).model_validate(dumped)
+            snapshot = validated.model_copy(deep=True)
+            # Authorize the exact detached object that will be committed. Custom
+            # Mapping implementations may expose a different view across reads.
+            has_extensions = self._authorize_model_extensions(snapshot)
+            return snapshot, has_extensions
+        except Exception as error:
+            raise ValueError("contract model input is structurally invalid") from error
+
+    @staticmethod
+    def _assert_profile_record_depth(model: BaseModel, *, root_depth: int) -> None:
+        """Apply the codec's profile-depth definition before recorder mutation."""
+
+        try:
+            value = model.model_dump(mode="python", exclude_none=True, warnings=False)
+        except Exception as error:
+            raise ValueError("contract record is not portable") from error
+        stack: list[tuple[Any, int]] = [(value, root_depth)]
+        while stack:
+            current, depth = stack.pop()
+            if depth > MAX_PROFILE_DEPTH:
+                raise ValueError("contract record exceeds maximum profile nesting depth")
+            if isinstance(current, Mapping):
+                stack.extend((child, depth + 1) for child in current.values())
+            elif isinstance(current, (list, tuple)):
+                stack.extend((child, depth + 1) for child in current)
+
+    def _authorize_model_extensions(self, value: Any) -> bool:
         """Reject model extras before a record mutates recorder state.
 
         Attribute maps have their own capture-class filtering. Pydantic model extras
@@ -854,31 +1020,118 @@ class IncidentRecorder:
         extension-payload grant.
         """
 
-        if isinstance(value, BaseModel):
-            extras = value.model_extra or {}
-            if extras:
-                if not self.config.capture_policy.allows(CaptureClass.EXTENSION_PAYLOAD):
-                    raise ValueError("model extensions require extension_payload capture")
-                if any(
-                    classify_attribute(str(key)) is not CaptureClass.METADATA for key in extras
-                ):
-                    raise ValueError("sensitive model extensions must use governed attributes")
-                kept, omitted = sanitize_attributes(extras, self.config.capture_policy)
-                if omitted or kept != extras:
+        found_extension = False
+        active_containers: set[int] = set()
+
+        def validate_extension_payload(candidate: Any, depth: int = 0) -> None:
+            if depth > 64:
+                raise ValueError("model extensions contain an unsafe key or value")
+            if candidate is None:
+                # Null extras are ambiguous across forward-compatible decoders. The
+                # contract requires producers to omit an unsupported field instead.
+                raise ValueError("model extensions contain an unsafe key or value")
+            if isinstance(candidate, bool):
+                return
+            if isinstance(candidate, int):
+                if abs(candidate) > 9_007_199_254_740_991:
                     raise ValueError("model extensions contain an unsafe key or value")
-                with self._lock:
-                    self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
-            for field_name in type(value).model_fields:
-                if field_name != "payload":
-                    self._authorize_model_extensions(getattr(value, field_name))
-            return
-        if isinstance(value, Mapping):
-            for child in value.values():
-                self._authorize_model_extensions(child)
-            return
-        if isinstance(value, (list, tuple)):
-            for child in value:
-                self._authorize_model_extensions(child)
+                return
+            if isinstance(candidate, float):
+                if not math.isfinite(candidate):
+                    raise ValueError("model extensions contain an unsafe key or value")
+                return
+            if isinstance(candidate, str):
+                try:
+                    candidate.encode("utf-8")
+                except UnicodeEncodeError as error:
+                    raise ValueError("model extensions contain an unsafe key or value") from error
+                return
+            if isinstance(candidate, BaseModel):
+                # Arbitrary model instances are not JSON values. Producers must
+                # explicitly author their portable extension representation.
+                raise ValueError("model extensions contain an unsafe key or value")
+            if isinstance(candidate, Mapping):
+                identity = id(candidate)
+                if identity in active_containers:
+                    raise ValueError("model extensions contain an unsafe key or value")
+                active_containers.add(identity)
+                try:
+                    for key, child in candidate.items():
+                        if not isinstance(key, str):
+                            raise ValueError("model extensions contain an unsafe key or value")
+                        if classify_attribute(key) is not CaptureClass.METADATA:
+                            raise ValueError(
+                                "sensitive model extensions must use governed attributes"
+                            )
+                        kept, omitted = sanitize_attributes(
+                            {key: child}, self.config.capture_policy
+                        )
+                        if omitted or key not in kept:
+                            raise ValueError("model extensions contain an unsafe key or value")
+                        validate_extension_payload(child, depth + 1)
+                finally:
+                    active_containers.remove(identity)
+                return
+            if isinstance(candidate, (list, tuple)):
+                identity = id(candidate)
+                if identity in active_containers:
+                    raise ValueError("model extensions contain an unsafe key or value")
+                active_containers.add(identity)
+                try:
+                    for child in candidate:
+                        validate_extension_payload(child, depth + 1)
+                finally:
+                    active_containers.remove(identity)
+                return
+            raise ValueError("model extensions contain an unsafe key or value")
+
+        def inspect(candidate: Any, depth: int = 0) -> None:
+            nonlocal found_extension
+
+            if depth > MAX_PROFILE_DEPTH:
+                raise ValueError("contract model input is structurally invalid")
+            if isinstance(candidate, BaseModel):
+                identity = id(candidate)
+                if identity in active_containers:
+                    raise ValueError("model extensions contain an unsafe key or value")
+                active_containers.add(identity)
+                try:
+                    extras = candidate.model_extra or {}
+                    if extras:
+                        if not self.config.capture_policy.allows(CaptureClass.EXTENSION_PAYLOAD):
+                            raise ValueError("model extensions require extension_payload capture")
+                        validate_extension_payload(extras)
+                        found_extension = True
+                    for field_name in type(candidate).model_fields:
+                        if field_name != "payload":
+                            inspect(getattr(candidate, field_name), depth + 1)
+                finally:
+                    active_containers.remove(identity)
+                return
+            if isinstance(candidate, Mapping):
+                identity = id(candidate)
+                if identity in active_containers:
+                    raise ValueError("model extensions contain an unsafe key or value")
+                active_containers.add(identity)
+                try:
+                    for child in candidate.values():
+                        inspect(child, depth + 1)
+                finally:
+                    active_containers.remove(identity)
+                return
+            if isinstance(candidate, (list, tuple)):
+                identity = id(candidate)
+                if identity in active_containers:
+                    raise ValueError("model extensions contain an unsafe key or value")
+                active_containers.add(identity)
+                try:
+                    for child in candidate:
+                        inspect(child, depth + 1)
+                finally:
+                    active_containers.remove(identity)
+
+        inspect(value)
+        return found_extension
 
     @staticmethod
     def _capture_class_for(attributes: Mapping[str, Any]) -> str:

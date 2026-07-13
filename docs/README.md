@@ -21,6 +21,8 @@ to implement another producer or consumer without access to `docs/private`.
   projections, expiry, reconciliation, and erasure limits.
 - [Conformance](./conformance.md) — required fixtures and release gates.
 - [Development](./development.md) — setup, regeneration, tests, and local operation.
+- [Release packaging](./release.md) — distribution identity, build verification, and
+  publication guardrails.
 - [Pipecat adapter](./adapters/pipecat.md) and
   [LiveKit adapter](./adapters/livekit.md) — adapter contracts and limitations.
 

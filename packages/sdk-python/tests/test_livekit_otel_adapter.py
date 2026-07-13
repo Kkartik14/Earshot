@@ -825,14 +825,33 @@ def test_attach_session_listeners_supports_decorator_api() -> None:
         "agent_false_interruption",
     }
     listeners["metrics_collected"](  # type: ignore[operator]
-        {"metrics": {"type": "vad_metrics", "timestamp": 1_800_000_000}}
+        {
+            "metrics": {
+                "type": "vad_metrics",
+                "timestamp": 1_800_000_000,
+                "inference_count": 12,
+                "inference_duration_total": 0.4,
+            }
+        }
     )
     listeners["agent_false_interruption"](  # type: ignore[operator]
         {"type": "agent_false_interruption", "created_at": 1_800_000_001, "resumed": True}
     )
     bundle = adapter.recorder.close()
-    assert [item.operation_name for item in bundle.profile.operations] == ["vad"]
+    # VAD is a continuous background signal: it is recorded as a pipeline quality
+    # sample, not one operation per callback (which floods the incident).
+    assert [item.operation_name for item in bundle.profile.operations] == []
+    assert [sample.quality_kind for sample in bundle.profile.quality_samples] == ["pipeline.metric"]
+    vad = bundle.profile.quality_samples[0]
+    vad_measurements = {measurement.name: measurement for measurement in vad.measurements}
+    assert vad_measurements["earshot.metric.inference.count"].aggregation == "delta"
+    assert vad_measurements["earshot.duration.inference_seconds"].aggregation == "delta"
+    assert vad.attributes["earshot.framework.name"] == "livekit"
+    assert vad.attributes["earshot.framework.version"] == "unknown"
     assert [item.event_name for item in bundle.profile.events] == ["earshot.interruption.ignored"]
+    assert [(item.signal, item.availability) for item in bundle.profile.coverage] == [
+        ("client.render", "not_observed")
+    ]
 
 
 def test_span_processor_attach_is_additive_and_validates_provider(monkeypatch) -> None:

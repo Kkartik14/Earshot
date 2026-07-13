@@ -137,6 +137,7 @@ _SAFE_EXACT = {
     "earshot.operation.id",
     "earshot.request.id",
     "earshot.framework.name",
+    "earshot.framework.metric.name",
     "earshot.framework.operation.name",
     "earshot.framework.version",
     "earshot.participant.id",
@@ -257,6 +258,7 @@ _SEMANTIC_METADATA_KEYS = frozenset(
     {
         "earshot.operation.name",
         "earshot.framework.name",
+        "earshot.framework.metric.name",
         "earshot.framework.operation.name",
         "earshot.link.type",
         "earshot.link.target_scope",
@@ -550,6 +552,13 @@ def classify_attribute(key: str) -> CaptureClass:
     return CaptureClass.METADATA
 
 
+def is_unobservable_heard_key(key: str) -> bool:
+    """Return whether a field name claims an unobservable human-hearing fact."""
+
+    normalized = key.lower().replace("-", "_")
+    return "heard_at" in normalized or normalized.endswith(".heard")
+
+
 def is_safe_metadata_key(key: str) -> bool:
     return key in _SAFE_EXACT or key.startswith(_SAFE_PREFIXES)
 
@@ -635,6 +644,150 @@ def metadata_value_allowed(key: str, value: Any) -> bool:
     return is_safe_unknown_metadata_value(value)
 
 
+def _is_portable_attribute_value(
+    value: Any,
+    *,
+    govern_nested_metadata: bool,
+    depth: int = 0,
+    active_containers: set[int] | None = None,
+) -> bool:
+    """Check retained attribute payloads before they enter recorder state.
+
+    Unknown metadata maps are the forward-extension channel, so every nested key
+    must remain metadata-governed. Sensitive top-level payload classes still accept
+    arbitrary strict-JSON shapes, but never arbitrary Python objects or cycles.
+    """
+
+    if depth > 64:
+        return False
+    if value is None or isinstance(value, bool):
+        return True
+    if isinstance(value, int):
+        return abs(value) <= _IJSON_INTEGER_MAX
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        return True
+    if not isinstance(value, (Mapping, list, tuple)):
+        return False
+
+    active = active_containers if active_containers is not None else set()
+    identity = id(value)
+    if identity in active:
+        return False
+    active.add(identity)
+    try:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if not isinstance(key, str):
+                    return False
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError:
+                    return False
+                if govern_nested_metadata:
+                    if (
+                        not is_safe_semantic_label(key)
+                        or is_unobservable_heard_key(key)
+                        or classify_attribute(key) is not CaptureClass.METADATA
+                    ):
+                        return False
+                    if is_safe_metadata_key(key) and not metadata_value_allowed(key, child):
+                        return False
+                    if (
+                        isinstance(child, str)
+                        and ("uri" in key.lower() or "url" in key.lower())
+                        and locator_has_credentials(child)
+                    ):
+                        return False
+                if not _is_portable_attribute_value(
+                    child,
+                    govern_nested_metadata=govern_nested_metadata,
+                    depth=depth + 1,
+                    active_containers=active,
+                ):
+                    return False
+            return True
+        return all(
+            _is_portable_attribute_value(
+                child,
+                govern_nested_metadata=govern_nested_metadata,
+                depth=depth + 1,
+                active_containers=active,
+            )
+            for child in value
+        )
+    finally:
+        active.remove(identity)
+
+
+def snapshot_portable_value(
+    value: Any,
+    *,
+    depth: int = 0,
+    active_containers: set[int] | None = None,
+) -> Any:
+    """Detach a checked strict-JSON value into ordinary owned containers."""
+
+    if depth > 64:
+        raise ValueError("value exceeds maximum portable nesting depth")
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if abs(value) > _IJSON_INTEGER_MAX:
+            raise ValueError("integer is outside the I-JSON domain")
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("non-finite numbers are not strict JSON")
+        return value
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as error:
+            raise ValueError("string is outside the Unicode scalar domain") from error
+        return value
+    if not isinstance(value, (Mapping, list, tuple)):
+        raise TypeError("value is not strict JSON")
+
+    active = active_containers if active_containers is not None else set()
+    identity = id(value)
+    if identity in active:
+        raise ValueError("value contains a container cycle")
+    active.add(identity)
+    try:
+        if isinstance(value, Mapping):
+            converted: dict[str, Any] = {}
+            for key, child in value.items():
+                if not isinstance(key, str):
+                    raise TypeError("strict JSON object keys must be strings")
+                try:
+                    key.encode("utf-8")
+                except UnicodeEncodeError as error:
+                    raise ValueError("object key is outside the Unicode scalar domain") from error
+                converted[key] = snapshot_portable_value(
+                    child,
+                    depth=depth + 1,
+                    active_containers=active,
+                )
+            return converted
+        converted = [
+            snapshot_portable_value(
+                child,
+                depth=depth + 1,
+                active_containers=active,
+            )
+            for child in value
+        ]
+        return tuple(converted) if isinstance(value, tuple) else converted
+    finally:
+        active.remove(identity)
+
+
 def locator_has_credentials(value: str) -> bool:
     parsed = urlsplit(value)
     query_names = {name.lower() for name, _ in parse_qsl(parsed.query, keep_blank_values=True)}
@@ -675,9 +828,7 @@ def _schema_url_properties(value: str) -> tuple[bool, bool]:
             and not parsed.query
             and not parsed.fragment
             and parsed.path.startswith("/")
-            and not any(
-                ord(character) <= 0x20 or ord(character) == 0x7F for character in value
-            )
+            and not any(ord(character) <= 0x20 or ord(character) == 0x7F for character in value)
         )
         canonical = (
             portable
@@ -732,26 +883,57 @@ def sanitize_attributes(
     omissions: list[Omission] = []
 
     for key, value in attributes.items():
+        if not isinstance(key, str):
+            omissions.append(
+                Omission(
+                    field_key_sha256=hashlib.sha256(b"<non-string-key>").hexdigest(),
+                    capture_class=CaptureClass.METADATA,
+                    reason="unsafe_attribute_key_or_value",
+                )
+            )
+            continue
         capture_class = classify_attribute(key)
         allowed = selected.allows(capture_class) and is_safe_semantic_label(key)
         if capture_class is CaptureClass.METADATA:
             allowed = allowed and (
                 is_safe_metadata_key(key) or selected.allows(CaptureClass.EXTENSION_PAYLOAD)
             )
-            allowed = allowed and (
-                metadata_value_allowed(key, value)
-                if is_safe_metadata_key(key)
-                else selected.allows(CaptureClass.EXTENSION_PAYLOAD)
-            )
-        credential_locator = (
-            isinstance(value, str)
-            and ("uri" in key.lower() or "url" in key.lower())
-            and locator_has_credentials(value)
-        )
-        if credential_locator:
+        unobservable_claim = is_unobservable_heard_key(key)
+        if unobservable_claim:
             allowed = False
+        unsafe_value = False
+        credential_locator = False
+        snapshot: Any = None
         if allowed:
-            kept[key] = value
+            try:
+                snapshot = snapshot_portable_value(value)
+            except (RuntimeError, TypeError, ValueError, RecursionError):
+                unsafe_value = True
+                allowed = False
+        if allowed and capture_class is CaptureClass.METADATA and is_safe_metadata_key(key):
+            allowed = metadata_value_allowed(key, snapshot)
+            unsafe_value = not allowed
+        if allowed:
+            credential_locator = (
+                isinstance(snapshot, str)
+                and ("uri" in key.lower() or "url" in key.lower())
+                and locator_has_credentials(snapshot)
+            )
+            if credential_locator:
+                allowed = False
+        if allowed:
+            portable_value = _is_portable_attribute_value(
+                snapshot,
+                govern_nested_metadata=(
+                    capture_class is CaptureClass.METADATA and not is_safe_metadata_key(key)
+                ),
+            )
+            unsafe_value = not portable_value
+            allowed = portable_value
+        if allowed:
+            # Pydantic's frozen models are only shallowly immutable. Snapshot every
+            # retained container so later caller mutation cannot rewrite evidence.
+            kept[key] = snapshot
         else:
             omissions.append(
                 Omission(
@@ -760,7 +942,15 @@ def sanitize_attributes(
                     reason=(
                         "credential_bearing_locator"
                         if credential_locator
-                        else "capture_class_disabled"
+                        else (
+                            "unobservable_claim"
+                            if unobservable_claim
+                            else (
+                                "unsafe_attribute_key_or_value"
+                                if unsafe_value
+                                else "capture_class_disabled"
+                            )
+                        )
                     ),
                 )
             )

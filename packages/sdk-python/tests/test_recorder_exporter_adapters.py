@@ -232,7 +232,8 @@ def test_recorder_uses_injected_monotonic_clock_and_closes_once() -> None:
         clock.advance(250_000_000)
     first = recorder.close()
     second = recorder.close("failed")
-    assert first is second
+    assert first == second
+    assert first is not second
     assert first.profile.session.status == "completed"
     operation = first.profile.operations[0]
     assert operation.started_at.monotonic_time_nano == "0"
@@ -684,9 +685,7 @@ def test_pipecat_native_objects_preserve_resource_scope_links_and_integer_ids() 
     assert operation.resource_schema_url == "https://opentelemetry.io/schemas/1.29.0"
     assert operation.instrumentation_scope_name == "pipecat.telemetry"
     assert operation.instrumentation_scope_version == "1"
-    assert operation.instrumentation_scope_attributes == {
-        "earshot.framework.name": "pipecat"
-    }
+    assert operation.instrumentation_scope_attributes == {"earshot.framework.name": "pipecat"}
     assert operation.schema_url == "https://opentelemetry.io/schemas/1.30.0"
     assert operation.links[0].trace_id == "5" * 32
     assert operation.links[0].span_id == "6" * 16
@@ -711,9 +710,7 @@ def test_pipecat_source_controlled_scope_link_and_schema_labels_cannot_leak() ->
             attributes={},
             resource=SimpleNamespace(
                 attributes={},
-                schema_url=(
-                    f"https://opentelemetry.io:{SECRET_SENTINEL}/schemas/1.30.0"
-                ),
+                schema_url=(f"https://opentelemetry.io:{SECRET_SENTINEL}/schemas/1.30.0"),
             ),
             instrumentation_scope=SimpleNamespace(
                 name=SECRET_SENTINEL,
@@ -859,22 +856,138 @@ def test_pipecat_rejects_unsupported_or_missing_timestamp_shape() -> None:
 def test_livekit_adapter_keeps_vad_and_turn_detection_distinct() -> None:
     recorder = _pipecat_recorder()
     adapter = LiveKitAdapter(recorder, framework_version="1.6.5")
+    observed = point(200_000_000)
     adapter.consume_metric(
-        {"metric_type": "VADMetrics", "speech_id": "turn-1", "duration": 0.1},
-        observed_at=point(200_000_000),
+        {
+            "metric_type": "VADMetrics",
+            "speech_id": "turn-1",
+            "label": "vad_primary",
+            "idle_time": 0.1,
+            "inference_duration_total": 0.04,
+            "inference_count": 8,
+            "metadata": {"model_name": "silero", "model_provider": "livekit"},
+        },
+        observed_at=observed,
     )
     adapter.consume_metric(
         {"metric_type": "EOUMetrics", "speech_id": "turn-1", "duration": 0.2},
         observed_at=point(500_000_000),
     )
     bundle = recorder.close()
-    assert [item.operation_name for item in bundle.profile.operations] == ["vad", "turn_detection"]
+    # VAD (a continuous background signal) is a quality sample; turn detection (a
+    # discrete commitment decision) remains an operation. They stay distinct.
+    assert [item.operation_name for item in bundle.profile.operations] == ["turn_detection"]
+    assert [s.quality_kind for s in bundle.profile.quality_samples] == ["pipeline.metric"]
+    vad = bundle.profile.quality_samples[0]
+    assert vad.sample_window.start == observed
+    assert vad.sample_window.end == observed
+    assert vad.attributes == {
+        "earshot.framework.name": "livekit",
+        "earshot.framework.metric.name": "vad_primary",
+        "earshot.framework.version": "1.6.5",
+        "earshot.turn.id": "turn-1",
+        "gen_ai.provider.name": "livekit",
+        "gen_ai.request.model": "silero",
+    }
+    measurements = {item.name: item for item in vad.measurements}
+    assert measurements["earshot.duration.inference_seconds"].aggregation == "delta"
+    assert measurements["earshot.metric.inference.count"].aggregation == "delta"
+    assert measurements["earshot.duration.vad.idle_seconds"].aggregation == "instant"
     assert bundle.profile.operations[0].evidence is not None
     assert bundle.profile.operations[0].evidence.confidence == "estimated"
     assert len(bundle.profile.coverage) == 1
     assert bundle.profile.coverage[0].signal == "client.render"
     assert bundle.profile.coverage[0].availability == "not_observed"
     assert validate_incident(bundle).ok
+
+
+def test_livekit_vad_window_identity_deduplicates_and_detects_conflicts() -> None:
+    recorder = _pipecat_recorder()
+    adapter = LiveKitAdapter(recorder)
+    metric = {
+        "metric_type": "VADMetrics",
+        "speech_id": "turn-1",
+        "label": "vad",
+        "inference_duration_total": 0.02,
+        "inference_count": 2,
+    }
+    first_time = point(200_000_000)
+    second_time = point(300_000_000)
+    first = adapter.consume_metric(metric, observed_at=first_time)
+    duplicate = adapter.consume_metric(metric, observed_at=first_time)
+    second = adapter.consume_metric(metric, observed_at=second_time)
+    different_dimension = adapter.consume_metric(
+        {**metric, "label": "vad_backup"},
+        observed_at=first_time,
+    )
+
+    assert first is not None
+    assert first == duplicate
+    assert second is not None and second != first
+    assert different_dimension is not None and different_dimension != first
+    with pytest.raises(ValueError, match="conflicting duplicate"):
+        adapter.consume_metric(
+            {**metric, "inference_count": 3},
+            observed_at=first_time,
+        )
+
+    bundle = recorder.close()
+    assert len(bundle.profile.quality_samples) == 3
+    assert validate_incident(bundle).ok
+
+
+def test_livekit_vad_without_measurements_returns_no_phantom_id() -> None:
+    recorder = _pipecat_recorder()
+    adapter = LiveKitAdapter(recorder)
+    result = adapter.consume_metric(
+        {"metric_type": "VADMetrics", "label": SECRET_SENTINEL},
+        observed_at=point(200_000_000),
+    )
+    bundle = recorder.close()
+
+    assert result is None
+    assert bundle.profile.quality_samples == ()
+    assert [(item.signal, item.availability) for item in bundle.profile.coverage] == [
+        ("client.render", "not_observed")
+    ]
+    assert SECRET_SENTINEL not in bundle.model_dump_json()
+    assert validate_incident(bundle).ok
+
+
+def test_livekit_vad_free_form_metric_label_is_hashed() -> None:
+    recorder = _pipecat_recorder()
+    adapter = LiveKitAdapter(recorder)
+    adapter.consume_metric(
+        {
+            "metric_type": "VADMetrics",
+            "label": SECRET_SENTINEL,
+            "inference_count": 2,
+        },
+        observed_at=point(200_000_000),
+    )
+
+    bundle = recorder.close()
+
+    retained_label = bundle.profile.quality_samples[0].attributes["earshot.framework.metric.name"]
+    assert retained_label.startswith("sha256:")
+    assert SECRET_SENTINEL not in bundle.model_dump_json()
+    assert validate_incident(bundle).ok
+
+
+def test_livekit_timestamp_less_identical_vad_callbacks_collapse_by_content() -> None:
+    recorder = _pipecat_recorder()
+    adapter = LiveKitAdapter(recorder)
+    metric = {
+        "metric_type": "VADMetrics",
+        "label": "vad",
+        "inference_count": 2,
+    }
+    first = adapter.consume_metric(metric)
+    second = adapter.consume_metric(metric)
+
+    assert first is not None
+    assert second == first
+    assert len(recorder.close().profile.quality_samples) == 1
 
 
 def test_livekit_duplicate_metric_callback_is_idempotent() -> None:

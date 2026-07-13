@@ -24,6 +24,11 @@ pip install -e '.[otel]'
 
 Importing `earshot` must work without either runtime installed.
 
+Editable installs use the repository path, but built/published package metadata uses
+the collision-free distribution name `earshot-observability`. See
+[release packaging](./release.md); `pip install earshot` installs an unrelated VAD
+project even though this repository also uses `import earshot`.
+
 The compatibility lane is bounded to Pipecat `>=1.5.0,<1.6` and LiveKit Agents
 `>=1.6.5,<1.7`. Unit tests remain duck typed; installing both extras activates the
 real-package integration tests in `apps/ingest/tests/test_framework_integrations.py`.
@@ -53,7 +58,7 @@ for every plan scenario. The fixture test verifies both validity and required si
 ```bash
 pytest
 pytest --cov=earshot --cov-report=term-missing
-ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest
+ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples/livekit_console
 pnpm test
 pnpm typecheck
 pnpm format:check

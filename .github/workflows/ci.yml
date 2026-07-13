@@ -30,7 +30,9 @@ jobs:
           python scripts/generate_openapi.py --check
           python scripts/check_semconv.py
       - name: Lint
-        run: ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts
+        run: >-
+          ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts
+          examples/livekit_console
       - name: Test with branch coverage
         run: pytest --cov=earshot --cov-report=term-missing -q
       - name: Build installable wheel

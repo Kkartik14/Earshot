@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "earshot"
+name = "earshot-observability"
 version = "0.1.0"
 description = "Portable, evidence-labelled incident artifacts for real-time voice sessions"
 readme = "README.md"
