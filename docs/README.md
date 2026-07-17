@@ -12,7 +12,9 @@ to implement another producer or consumer without access to `docs/private`.
   links, coverage, and evidence vocabulary.
 - [Privacy](./privacy.md) — metadata-only default, filtering, omissions, retention,
   and safe export.
-- [Backend API](./backend-api.md) — local ingest, retrieval, analysis, and purge.
+- [Backend API](./backend-api.md) — project-scoped ingest, retrieval, metrics, and purge.
+- [Hosted-provider connectors](./connectors.md) — trust, replay, normalization, and
+  provider-specific evidence limits.
 - [Deterministic analysis](./analysis.md) — projection algorithm, evidence binding,
   and current diagnosis boundary.
 - [SDK and recorder](./sdk.md) — one-line setup, recorder lifecycle, adapters, and

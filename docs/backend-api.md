@@ -1,4 +1,4 @@
-# Local backend API
+# Backend API
 
 Default address: `http://127.0.0.1:4319`. Port 4318 is intentionally left available
 for a standard OTLP/HTTP receiver.
@@ -8,12 +8,20 @@ The reproducible machine contract is
 bodies reference the generated incident schema; analysis responses reference
 [`spec/derived-analysis.schema.json`](../spec/derived-analysis.schema.json).
 
-The M1 server only binds to loopback. For remote use, a reverse proxy on the same host
-must terminate HTTPS and connect to the loopback socket; configure a bearer token and
-`--behind-tls-proxy`. Earshot rejects `0.0.0.0`/other non-loopback configurations, so
-the assertion flag can never turn its own cleartext listener into a remotely reachable
-one. Tokenless loopback deployments also reject non-loopback `Host` headers to prevent
-a DNS-rebinding origin from reaching local incident data.
+Tokenless development is loopback-only and rejects non-loopback `Host` headers. Remote
+deployments must explicitly declare a trusted TLS proxy and authenticate `/v1/*` with a
+project API key or the legacy default-project bearer token. Every repository call is
+scoped from that principal; an unknown incident in another Project is indistinguishable
+from a missing incident. The request middleware checks the actual ASGI listener as well
+as declared configuration and refuses both `/v1/*` and `/hooks/v1/*` on an unexpected
+non-loopback plaintext bind.
+
+Bundle identifiers occupy one installation-wide namespace. Producers should use UUIDv4,
+UUIDv7, or Connector-generated collision-resistant IDs. Projects are single-organization
+authorization scopes in v1, not hostile SaaS tenant boundaries.
+
+Provider `/hooks/*` routes are a separate trust boundary. They do not accept Earshot
+bearer credentials as provider proof and do not return Project identifiers.
 
 ## Media types
 
@@ -34,6 +42,16 @@ Process liveness. It does not imply storage is writable.
 ### `GET /readyz`
 
 Checks SQLite and object-store readiness. Returns 503 when unavailable.
+
+### `POST /hooks/v1/connectors/{endpoint_id}`
+
+Accepts a bounded `application/json` Provider Delivery. The configured Connector verifies
+the provider credential/signature over the exact body before strict JSON parsing. A
+durable Receipt provides replay, conflict, processing-lease, and retry behavior. Success
+returns `applied`, `replayed`, or `ignored`; error bodies are stable and non-reflective.
+
+The in-process, process-local authenticated-delivery rate limit defaults to 120 deliveries
+per Connector per minute. Rate-limit and active-lease responses include `Retry-After`.
 
 ### `POST /v1/incidents/validate`
 
@@ -57,6 +75,14 @@ incident transactionally.
 Stable cursor pagination, optionally filtered by `session_id`. `limit` is 1–100.
 Incidents denied for the `local_api` destination are removed in the indexed SQL query
 before pagination, including from cursor material.
+
+### `GET /v1/metrics/turns`
+
+Returns project-scoped fleet summaries for STT finalization, EOU, first-token/first-audio,
+send/receive/render response, overall response, or explicit native turn duration, grouped
+by framework, provider, model, or status. Percentiles are stratified by availability,
+basis, confidence, and limitation; unlike evidence is never blended. Missing evidence is
+not converted to zero. The projection is rebuilt from canonical Incidents on startup.
 
 ### `GET /v1/incidents/{bundle_id}`
 
@@ -105,6 +131,7 @@ therefore does not block `/healthz`.
 ```text
 .earshot/
   earshot.sqlite3
+  instance-correlation.key
   objects/sha256/ab/<remaining digest>
   tmp/
 ```

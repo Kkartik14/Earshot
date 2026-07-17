@@ -30,9 +30,13 @@ generation are later product milestones, not current implementation claims.
 - Deterministic analysis separating generated/sent/received/render timing, cross-clock
   uncertainty, parallel tool work, provider measurements, and measured failed-operation
   diagnoses. Broader fault explanation remains roadmap work.
-- Local FastAPI backend with immutable SQLite/content-addressed storage, JSON/protobuf
-  negotiation, idempotency/conflict behavior, analysis caching, corruption checks,
-  and privacy purge/tombstones.
+- FastAPI backend with project-scoped API keys, immutable SQLite/content-addressed
+  storage, JSON/protobuf negotiation, fleet Turn Facts, analysis caching, corruption
+  checks, and privacy purge/tombstones.
+- Signed finalized-delivery Connectors for ElevenLabs Agents (JSON and OTLP-shaped),
+  Vapi, and Retell. Provider transcript/tool/dynamic-variable bodies are not retained.
+- A non-root single-image deployment with a persistent `/data` volume and hardened
+  Compose example.
 - Unit, property, integration, smoke, and end-to-end conformance tests.
 
 ## Quick start
@@ -46,6 +50,16 @@ earshot serve --data-dir .earshot
 ```
 
 The API starts at `http://127.0.0.1:4319`.
+
+For the container path:
+
+```bash
+export EARSHOT_TOKEN="$(openssl rand -hex 32)"
+docker compose up --build
+```
+
+Compose publishes only to `127.0.0.1:4319` and persists the catalog and evidence in the
+named `earshot-data` volume.
 
 The Python distribution is named `earshot-observability`; the import package and
 CLI remain `earshot`. The plain PyPI distribution name `earshot` belongs to an
@@ -70,8 +84,9 @@ framework/runtime facts
 ```
 
 The application's normal OpenTelemetry exporter may continue sending telemetry to an
-existing backend in parallel. Earshot does not currently expose a standard OTLP
-receiver/exporter or an incident-to-regression converter.
+existing backend in parallel. Earshot accepts ElevenLabs' bounded, finalized OTLP-shaped
+webhook, but does not expose a generic live OTLP receiver: OTLP alone does not define
+voice-session completion, late-span revision, or multi-trace correlation.
 
 The voice boundary is capture through render. Transport is optional evidence—not the
 data-model center. Native speech-to-speech can legitimately omit STT/LLM/TTS stages.

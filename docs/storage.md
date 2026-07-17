@@ -10,8 +10,10 @@ derived/index state: earshot.sqlite3
 The canonical deterministic protobuf is the source of truth for evidence content and
 graph facts. SQLite is the durable authority for publication, bundle identity,
 ingest order, retention/export decisions, and purge tombstones. The two stores form
-one persistence unit and must be backed up and restored together; CAS bytes alone
-cannot reconstruct deleted-ID tombstones or original ingest ordering.
+one persistence unit together with `instance-correlation.key` and must be backed up and
+restored together; CAS bytes alone cannot reconstruct deleted-ID tombstones or original
+ingest ordering, while a missing correlation key changes webhook Receipt and External
+Identity fingerprints.
 
 ## Ingest publication order
 
@@ -26,8 +28,8 @@ An ingest does the following inside that mutation boundary:
 4. Atomically hard-link it to its SHA-256 path and fsync the containing directories.
 5. Begin an immediate SQLite transaction.
 6. Reject tombstone reuse or a same-ID/different-digest conflict.
-7. Insert the incident row, graph projections, earliest expiry, and destination export
-   decisions.
+7. Insert the project-scoped incident row, graph and Turn Fact projections, earliest
+   expiry, and destination export decisions.
 8. Commit before returning `created=true`.
 
 The CAS object remains inside the same cross-process critical section until the index
@@ -38,28 +40,44 @@ unreferenced CAS object is disposable.
 
 ## Relational projections
 
-Schema version 4 indexes:
+Schema version 9 indexes:
 
-- `incidents`: identity, digest, status, finality/completeness, framework, creation and
-  ingest times, earliest expiry, and `local_api`/`local_cli` export decisions;
+- `projects` and `api_keys`: authorization scope and memory-hard credential hashes;
+- `incidents`: project, identity, digest, status, finality/completeness, framework,
+  creation/ingest times, earliest expiry, and destination export decisions;
 - `operations`: normalized OTel identity, parentage, participant/stream/turn, source
   and monotonic boundaries, evidence summary, and capture class;
 - `causal_links`: ordered typed edges from an operation to internal/external targets;
 - `events`: point identity, operation/trace correlation, participant/stream/turn,
   timestamps, evidence summary, and capture class;
+- `turn_metrics`: rebuildable wide Turn Facts with per-measurement availability, basis,
+  confidence, limitation, and a dedicated projection version. Common fields include STT
+  finalization, EOU, first token/audio, transport/render response, explicit native turn
+  duration, tools, and evidence-qualified accepted-interruption count;
+- `connectors`, `delivery_receipts`, and `external_identities`: provider trust
+  configuration, replay/content-digest state, and instance-keyed HMAC correlation;
 - `analyses`: analyzer version + exact input digest + strict JSON output; full uint64
   generation times are canonical decimal `TEXT`, not signed SQLite integers; and
 - `tombstones`: only `SHA-256(bundle_id)` and the purge-operation time.
 
 Foreign keys cascade graph and analysis rows when an incident is deleted. Graph rows
-are derived and rebuilt on startup, which also backfills retention/export projections
-when an older database is migrated.
+and Turn Facts are derived and rebuilt on startup, which also backfills retention/export
+projections when an older database is migrated. Existing stores migrate into the
+`default` Project. A legacy session index is explicitly rebuilt with `project_id` so
+schema upgrades do not silently retain a cross-project query plan.
 
 ## Idempotency and concurrency
 
 The tuple `(bundle_id, canonical_digest)` defines an exact retry. The same pair returns
 the existing row. Reusing a bundle ID with different content is a conflict. A purged
 bundle ID can never be reused.
+
+Provider Deliveries use a separate durable Receipt keyed by Connector plus an HMAC of
+the provider delivery identity. Same identity and same body digest is a replay; the same
+identity with a different body is a conflict. A processing lease makes concurrent
+duplicates retryable without publishing twice. Completion/failure compares the current
+attempt token, so a worker whose lease expired cannot overwrite its successor. Raw
+provider bodies are not retained.
 
 Reads verify CAS bytes against the indexed digest. Artifact read and concurrent purge
 share the mutation boundary, so a successful read cannot race an unlink into a false
@@ -112,6 +130,6 @@ from the same backup set before reopening. A valid catalog may still have a cras
 unreferenced object; it is preserved until an operator explicitly invokes the
 maintenance cleanup after investigating it.
 
-The store is single-node and local. Advisory locking and SQLite are not a distributed
+The store is single-node. Advisory locking and SQLite are not a distributed
 consensus protocol; a multi-node service should preserve these publication and erasure
 semantics using its own transactional object/index infrastructure.

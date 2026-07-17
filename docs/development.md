@@ -87,9 +87,10 @@ earshot serve --data-dir .earshot
 curl http://127.0.0.1:4319/healthz
 ```
 
-For remote access, terminate HTTPS in a same-host proxy that connects to Earshot's
-loopback socket, then set a bearer token and `--behind-tls-proxy`. M1 rejects a
-non-loopback listener instead of trusting forwarded headers.
+For remote access, terminate HTTPS in a trusted proxy and set `--behind-tls-proxy`.
+Provision a project API key (preferred) or set the legacy default-project bearer token.
+Server startup prints the resolved active data path so operators can verify that the
+intended persistent volume is in use without exposing host paths on the public health API.
 
 CLI workflows:
 
@@ -99,7 +100,43 @@ earshot ingest fixtures/valid/minimal.json --data-dir .earshot
 earshot list --data-dir .earshot
 earshot show <bundle-id> --data-dir .earshot --format json
 earshot purge <bundle-id> --data-dir .earshot
+
+earshot project create support --display-name "Support Voice" --data-dir .earshot
+earshot api-key issue --project support --label production --data-dir .earshot
+earshot connector create --project support --provider elevenlabs \
+  --secret-env ELEVENLABS_WEBHOOK_SECRET --data-dir .earshot
 ```
+
+The API-key credential is printed once; only its scrypt hash and salt are stored. A
+Connector stores an environment-variable reference, never the provider secret.
+
+## Run the single image
+
+```bash
+export EARSHOT_TOKEN="$(openssl rand -hex 32)"
+docker compose up --build
+curl http://127.0.0.1:4319/readyz
+```
+
+The named `earshot-data` volume owns `/data`. Recreating the container preserves data;
+removing the named volume removes it. The container runs as an unprivileged user with a
+read-only root filesystem, no Linux capabilities, and a small writable `/tmp` tmpfs.
+The image itself defaults to container-loopback and does not assert trusted TLS proxying;
+Compose explicitly opts into the container-network bind while publishing only on host
+loopback. Do not copy that proxy assertion into a public port mapping without real TLS
+termination.
+
+For a public hostname, keep Compose bound to loopback and terminate TLS on the host:
+
+```caddyfile
+earshot.example.com {
+  reverse_proxy 127.0.0.1:4319
+}
+```
+
+Exercise the same build/auth path used by CI with `sh scripts/smoke-container.sh`. The
+smoke ingests a canonical fixture, replaces the container while retaining the named
+volume, and proves the fixture remains readable under the non-root/read-only hardening.
 
 The roomless Pipecat smoke driver uses macOS `say` for its local microphone-side input
 and Groq for STT, LLM, and TTS. Usage may be billed or rate-limited according to the
@@ -140,9 +177,10 @@ server-side output evidence; client render remains explicitly unobserved.
 - M1 bundles are final post-session snapshots, not streaming assembly.
 - M1 automatic capture is the normalized profile. Exact raw OTLP chunks are supported
   only through explicit caller-supplied, policy-enabled SDK input.
-- The server is local/single-node and does not implement multi-tenant authorization.
+- The server is single-node; Project scoping is an authorization boundary, not a
+  distributed multi-organization control plane.
 - Media upload/replay, browser collection, additional provider-specific native S2S
-  adapters, P.563 processing, and standard OTLP receiving are later milestones.
+  adapters, P.563 processing, and generic live OTLP receiving are later milestones.
 - Broad automatic failure explanation and incident-to-regression conversion are later
   milestones; the current analyzer provides deterministic projections and measured
   failed-operation diagnoses.
