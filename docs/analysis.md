@@ -18,7 +18,7 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
-The current deterministic analyzer identity is `earshot.deterministic@1.0.1`.
+The current deterministic analyzer identity is `earshot.deterministic@1.0.2`.
 Analyzer version is part of the storage cache key; behavior changes such as delta-window
 aggregation therefore cannot reuse a projection produced by an older analyzer.
 
@@ -32,9 +32,11 @@ sample ID.
 
 Repeated measurements marked `delta` are summed only inside the same owned analysis
 group, cite every contributing sample, and become unavailable when units or
-aggregation modes conflict or the finite sum overflows. Instant and cumulative
-observations remain snapshots. Unassigned provider samples stay separate: analysis
-does not manufacture session or turn correlation merely to aggregate them.
+aggregation modes conflict or the finite sum overflows. Integer counters are summed
+without float coercion; a total outside the interoperable I-JSON integer domain is
+unavailable instead of rounded. Instant and cumulative observations remain snapshots.
+Unassigned provider samples stay separate: analysis does not manufacture session or
+turn correlation merely to aggregate them.
 
 The response anchor preference is:
 
@@ -58,6 +60,11 @@ Provider TTFT/TTFB can project a point only when its semantics are known. LiveKi
 RealtimeModelMetrics TTFT is first audio token, so it authors first-audio-generated and
 never a text-token fact. The response metric uses the strongest available boundary and
 labels a fallback `receive_estimate`, `transport_estimate`, or `tts_estimate`.
+Native user-stop-to-bot-start measurements (`livekit.e2e_latency` and
+`pipecat.turn.user_bot_latency`) outrank a derived TTS estimate, but never outrank
+observed send, receive, or render evidence. Their projection carries
+`server_output_excludes_delivery_and_render` so server playout cannot be mistaken for
+client render or human perception.
 
 Cross-clock subtraction requires the same explicit clock domain. Reversed comparable
 time is `inconsistent`; missing/incomparable time is unavailable, never clamped to

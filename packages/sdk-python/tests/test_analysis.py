@@ -153,6 +153,28 @@ def test_provider_ttfb_and_turn_end_create_explicitly_estimated_projection(
     assert metric(result, "response_latency")["confidence"] == "estimated"
 
 
+@pytest.mark.parametrize("raw_ttfb", [1e308, 10**1000])
+def test_untrusted_provider_duration_cannot_overflow_analysis(
+    bundle_factory,
+    raw_ttfb: float | int,
+) -> None:
+    bundle = bundle_factory(include_render=False)
+    operations = tuple(
+        operation.model_copy(
+            update={"attributes": {**operation.attributes, "metrics.ttfb": raw_ttfb}}
+        )
+        if operation.operation_name == "llm"
+        else operation
+        for operation in bundle.profile.operations
+    )
+    bundle = replace_profile(bundle, operations=operations, events=())
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+    assert "value" not in metric(result, "first_token_latency")
+
+
 def test_turn_id_propagates_through_complete_otel_parent_graph() -> None:
     from earshot.contract import IncidentProfile
 
@@ -494,6 +516,92 @@ def test_turn_delta_quality_overflow_is_unavailable_not_analyzer_failure(valid_b
         "evidence_ids": ["huge-delta-a", "huge-delta-b"],
     }
     assert validate_derived_analysis(bundle, result).ok
+
+
+def test_integer_delta_quality_is_exact_and_rejects_out_of_i_json_domain(valid_bundle) -> None:
+    maximum = 9_007_199_254_740_991
+    samples = tuple(
+        QualitySample(
+            sample_id=f"{name}-{index}",
+            session_id="session-1",
+            quality_kind="pipeline.metric",
+            sample_window=TimeRange(start=point(index), end=point(index)),
+            measurements=(
+                QualityMeasurement(
+                    name=name,
+                    value=value,
+                    unit="count",
+                    aggregation="delta",
+                ),
+            ),
+            evidence=Evidence(
+                source="provider",
+                observer="server",
+                method="metrics_listener",
+                confidence="measured",
+                availability="available",
+            ),
+            attributes={"earshot.turn.id": "turn-1"},
+        )
+        for name, values in (
+            ("earshot.metric.exact_counter", (maximum - 1, 1)),
+            ("earshot.metric.overflow_counter", (maximum, 2)),
+        )
+        for index, value in enumerate(values, start=1)
+    )
+    bundle = replace_profile(valid_bundle, quality_samples=samples)
+
+    result = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+
+    provider = metric(result, "provider_measurements")
+    exact = provider["earshot.metric.exact_counter"]
+    assert exact["value"] == maximum
+    assert isinstance(exact["value"], int)
+    assert provider["earshot.metric.overflow_counter"] == {
+        "availability": "unavailable",
+        "basis": "provider_delta_sum",
+        "confidence": "unavailable",
+        "limitation": "delta_sum_outside_i_json_domain",
+        "evidence_ids": [
+            "earshot.metric.overflow_counter-1",
+            "earshot.metric.overflow_counter-2",
+        ],
+    }
+    assert validate_derived_analysis(bundle, result).ok
+
+
+def test_direct_analysis_ignores_an_oversized_quality_integer(valid_bundle) -> None:
+    sample = QualitySample(
+        sample_id="oversized-quality-integer",
+        session_id="session-1",
+        quality_kind="pipeline.metric",
+        sample_window=TimeRange(start=point(1), end=point(1)),
+        measurements=(
+            QualityMeasurement(
+                name="earshot.metric.oversized_counter",
+                value=10**1_000,
+                unit="count",
+                aggregation="delta",
+            ),
+        ),
+        attributes={"earshot.turn.id": "turn-1"},
+    )
+    bundle = replace_profile(valid_bundle, quality_samples=(sample,))
+
+    result = analyze_incident(
+        bundle,
+        input_sha256="a" * 64,
+        generated_at_unix_nano="1800000005000000000",
+    )
+
+    assert "earshot.metric.oversized_counter" not in metric(
+        result,
+        "provider_measurements",
+    )
 
 
 def test_equal_timestamps_use_stable_event_id_tiebreaker(valid_bundle) -> None:
