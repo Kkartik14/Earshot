@@ -59,10 +59,10 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
     started = threading.Event()
     release = threading.Event()
 
-    def blocked_ingest(bundle, payload):
+    def blocked_ingest(bundle, payload, **kwargs):
         started.set()
         assert release.wait(2)
-        return original_ingest(bundle, payload)
+        return original_ingest(bundle, payload, **kwargs)
 
     monkeypatch.setattr(store, "ingest", blocked_ingest)
     app = create_app(store=store, analyzer=analyze_incident)
@@ -88,26 +88,27 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
     ("host", "allowed"),
     [("127.0.0.1", True), ("::1", True), ("localhost", True), ("0.0.0.0", False)],
 )
-def test_m1_configuration_rejects_non_loopback_binding(host: str, allowed: bool) -> None:
+def test_remote_binding_requires_an_explicit_tls_proxy(host: str, allowed: bool) -> None:
     if allowed:
         assert ApiConfig(host=host).host == host
     else:
-        with pytest.raises(ValueError, match="must bind to loopback"):
+        with pytest.raises(ValueError, match="requires an explicitly trusted TLS proxy"):
             ApiConfig(host=host)
 
 
-def test_tls_proxy_assertion_cannot_authorize_a_non_loopback_socket() -> None:
-    with pytest.raises(ValueError, match="must bind to loopback"):
-        ApiConfig(
-            host="0.0.0.0",
-            token="secret-token",
-            behind_tls_proxy=True,
-        )
+def test_tls_proxy_allows_an_authenticated_non_loopback_socket() -> None:
+    config = ApiConfig(
+        host="0.0.0.0",
+        token="secret-token",
+        behind_tls_proxy=True,
+    )
+    assert config.host == "0.0.0.0"
 
 
-def test_loopback_tls_proxy_configuration_requires_bearer_authentication() -> None:
-    with pytest.raises(ValueError, match="bearer token"):
-        ApiConfig(host="127.0.0.1", behind_tls_proxy=True)
+def test_tls_proxy_application_requires_a_configured_credential(tmp_path) -> None:
+    config = ApiConfig(host="127.0.0.1", behind_tls_proxy=True)
+    with pytest.raises(ValueError, match="requires a bearer token or an active project API key"):
+        create_app(store=IncidentStore(tmp_path), config=config)
 
 
 def test_actual_asgi_listener_cannot_bypass_declared_loopback_security(tmp_path) -> None:
@@ -117,6 +118,20 @@ def test_actual_asgi_listener_cannot_bypass_declared_loopback_security(tmp_path)
         response = client.get("/v1/incidents")
     assert response.status_code == 503
     assert code(response) == "EARSHOT_REMOTE_BINDING_UNSAFE"
+
+
+def test_actual_asgi_listener_guard_also_protects_provider_hooks(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    app = create_app(store=store, config=ApiConfig(), analyzer=analyze_incident)
+    with TestClient(app, base_url="http://0.0.0.0") as client:
+        response = client.post(
+            "/hooks/v1/connectors/opaque_connector_0001",
+            content=b'{"transcript":"must-not-cross-plaintext"}',
+            headers={"content-type": "application/json"},
+        )
+    assert response.status_code == 503
+    assert code(response) == "EARSHOT_REMOTE_BINDING_UNSAFE"
+    assert "must-not-cross-plaintext" not in response.text
 
 
 def test_tokenless_loopback_api_rejects_dns_rebinding_host_header(tmp_path) -> None:
@@ -527,6 +542,30 @@ def test_openapi_marks_bearer_auth_mandatory_when_server_has_a_token(tmp_path) -
     _, client = app_client(tmp_path, config=ApiConfig(token="test-token"))
     schema = client.get("/openapi.json").json()
     assert schema["paths"]["/v1/incidents"]["post"]["security"] == [{"BearerAuth": []}]
+
+
+def test_openapi_keeps_connector_trust_separate_and_documents_retryable_errors(
+    tmp_path,
+) -> None:
+    client = TestClient(create_app(store=IncidentStore(tmp_path)))
+
+    operation = client.get("/openapi.json").json()["paths"][
+        "/hooks/v1/connectors/{endpoint_id}"
+    ]["post"]
+
+    assert "security" not in operation
+    expected = {
+        "#/components/schemas/ProblemResponse",
+        "#/components/schemas/ConnectorProblemResponse",
+    }
+    for status in ("429", "503"):
+        response = operation["responses"][status]
+        response_schema = response["content"]["application/json"]["schema"]
+        assert {item["$ref"] for item in response_schema["anyOf"]} == expected
+        assert response["headers"]["Retry-After"]["schema"] == {
+            "type": "integer",
+            "minimum": 1,
+        }
 
 
 def test_analysis_absence_is_explicit_when_no_analyzer_configured(tmp_path, valid_bundle) -> None:

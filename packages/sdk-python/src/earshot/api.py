@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import FastAPI, Query, Request
@@ -32,9 +32,16 @@ from .codec import (
     encode_incident_json,
     encode_incident_protobuf,
 )
+from .connectors import (
+    DeliveryError,
+    DeliveryTooLargeError,
+    HostedProviderIngestion,
+    RawProviderDelivery,
+)
 from .contract import DerivedAnalysis, IncidentBundle, IncidentBundleJson
 from .privacy import ExportPolicyError, assert_export_allowed
 from .storage import (
+    DEFAULT_PROJECT_ID,
     ArtifactCorruptionError,
     IncidentConflictError,
     IncidentNotFoundError,
@@ -74,6 +81,14 @@ class ProblemResponse(ApiModel):
     error: ProblemDetail
 
 
+class ConnectorProblemDetail(ProblemDetail):
+    retryable: bool
+
+
+class ConnectorProblemResponse(ApiModel):
+    error: ConnectorProblemDetail
+
+
 class HealthResponse(ApiModel):
     status: str
 
@@ -87,6 +102,7 @@ class ValidateResponse(ApiModel):
 
 
 class IncidentRecordResponse(ApiModel):
+    project_id: str
     bundle_id: str
     session_id: str
     schema_version: str
@@ -118,9 +134,56 @@ class StoredAnalysisResponse(ApiModel):
     analysis: DerivedAnalysis
 
 
+class TurnMetricGroupResponse(ApiModel):
+    group: str
+    availability: str
+    basis: str
+    confidence: str
+    limitation: str | None
+    turn_count: int
+    available_count: int
+    average_ms: float | None
+    minimum_ms: float | None
+    maximum_ms: float | None
+    p50_ms: float | None
+    p95_ms: float | None
+
+
+class TurnMetricSummaryResponse(ApiModel):
+    metric: str
+    group_by: str
+    groups: list[TurnMetricGroupResponse]
+
+
+class ConnectorDeliveryResponse(ApiModel):
+    receipt_id: str
+    disposition: Literal["applied", "replayed", "ignored"]
+    bundle_id: str | None
+    canonical_sha256: str | None
+
+
 _ERROR_RESPONSES = {
     status: {"model": ProblemResponse}
-    for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 500, 503)
+    for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 503)
+}
+
+_CONNECTOR_ERROR_RESPONSES = {
+    status: {
+        "model": ProblemResponse | ConnectorProblemResponse,
+        **(
+            {
+                "headers": {
+                    "Retry-After": {
+                        "description": "Whole seconds before the delivery should be retried.",
+                        "schema": {"type": "integer", "minimum": 1},
+                    }
+                }
+            }
+            if status in {429, 503}
+            else {}
+        ),
+    }
+    for status in (400, 401, 404, 409, 413, 415, 429, 500, 503)
 }
 
 _INCIDENT_REQUEST_BODY = {
@@ -141,6 +204,8 @@ class ApiConfig:
     host: str = "127.0.0.1"
     token: str | None = None
     max_body_bytes: int = 16 * 1024 * 1024
+    max_connector_body_bytes: int = 2 * 1024 * 1024
+    max_connector_deliveries_per_minute: int = 120
     max_json_depth: int = 64
     default_page_size: int = 50
     analyzer_version: str = ANALYZER_VERSION
@@ -149,14 +214,16 @@ class ApiConfig:
     def __post_init__(self) -> None:
         if self.max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
+        if self.max_connector_body_bytes < 1:
+            raise ValueError("max_connector_body_bytes must be positive")
+        if self.max_connector_deliveries_per_minute < 1:
+            raise ValueError("max_connector_deliveries_per_minute must be positive")
         if self.max_json_depth < 1:
             raise ValueError("max_json_depth must be positive")
-        if not _is_loopback(self.host):
+        if not _is_loopback(self.host) and not self.behind_tls_proxy:
             raise ValueError(
-                "the M1 API must bind to loopback; terminate remote TLS in a local proxy"
+                "a non-loopback listener requires an explicitly trusted TLS proxy"
             )
-        if self.behind_tls_proxy and not self.token:
-            raise ValueError("a bearer token is required behind a TLS proxy")
 
 
 class ApiProblem(Exception):
@@ -237,6 +304,29 @@ async def _read_body(request: Request, maximum: int) -> bytes:
             raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", "incident body exceeds limit")
     if not body:
         raise ApiProblem(400, "EARSHOT_EMPTY_BODY", "incident body is empty")
+    return bytes(body)
+
+
+async def _read_connector_body(request: Request, maximum: int) -> bytes:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > maximum:
+                raise DeliveryTooLargeError
+        except ValueError as error:
+            raise ApiProblem(
+                400,
+                "EARSHOT_INVALID_CONTENT_LENGTH",
+                "invalid Content-Length header",
+            ) from error
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > maximum:
+            raise DeliveryTooLargeError
+    if not body:
+        raise ApiProblem(400, "EARSHOT_EMPTY_BODY", "connector body is empty")
     return bytes(body)
 
 
@@ -336,9 +426,13 @@ def create_app(
     data_dir: str | Path = ".earshot",
     analyzer: Analyzer | None = None,
     config: ApiConfig | None = None,
+    connector_ingestion: HostedProviderIngestion | None = None,
 ) -> FastAPI:
     settings = config or ApiConfig()
     repository = store or IncidentStore(data_dir)
+    remote_access = not _is_loopback(settings.host) or settings.behind_tls_proxy
+    if remote_access and not settings.token and not repository.has_active_api_keys():
+        raise ValueError("remote access requires a bearer token or an active project API key")
     app = FastAPI(
         title="Earshot local ingest",
         version="1.0.0",
@@ -348,6 +442,12 @@ def create_app(
     app.state.store = repository
     app.state.config = settings
     app.state.analyzer = analyzer
+    app.state.connector_ingestion = connector_ingestion or HostedProviderIngestion(
+        repository,
+        max_body_bytes=settings.max_connector_body_bytes,
+        max_json_depth=settings.max_json_depth,
+        max_deliveries_per_minute=settings.max_connector_deliveries_per_minute,
+    )
 
     def openapi_schema() -> dict[str, Any]:
         if app.openapi_schema is not None:
@@ -380,7 +480,9 @@ def create_app(
                     # Loopback deployments may omit a token; remote deployments
                     # require BearerAuth behind a trusted TLS proxy.
                     operation["security"] = (
-                        [{"BearerAuth": []}] if settings.token else [{"BearerAuth": []}, {}]
+                        [{"BearerAuth": []}]
+                        if remote_access or settings.token
+                        else [{"BearerAuth": []}, {}]
                     )
         app.openapi_schema = schema
         return schema
@@ -467,6 +569,25 @@ def create_app(
             status_code=503,
         )
 
+    @app.exception_handler(DeliveryError)
+    async def handle_delivery_error(_: Request, error: DeliveryError) -> JSONResponse:
+        headers = (
+            {"Retry-After": str(error.retry_after_seconds)}
+            if error.retry_after_seconds is not None
+            else None
+        )
+        return JSONResponse(
+            {
+                "error": {
+                    "code": error.code,
+                    "message": error.public_message,
+                    "retryable": error.retryable,
+                }
+            },
+            status_code=error.http_status,
+            headers=headers,
+        )
+
     @app.exception_handler(ExportPolicyError)
     async def handle_export_policy(_: Request, __: ExportPolicyError) -> JSONResponse:
         return JSONResponse(
@@ -500,14 +621,21 @@ def create_app(
         unsafe_runtime_binding = (
             runtime_host and not test_transport and not _is_loopback(runtime_host)
         )
-        if unsafe_runtime_binding and request.url.path.startswith("/v1/"):
+        transport_protected_path = request.url.path.startswith(
+            ("/v1/", "/hooks/v1/")
+        )
+        if (
+            unsafe_runtime_binding
+            and transport_protected_path
+            and not settings.behind_tls_proxy
+        ):
             return JSONResponse(
                 {
                     "error": {
                         "code": "EARSHOT_REMOTE_BINDING_UNSAFE",
                         "message": (
-                            "runtime listener is non-loopback; the M1 API permits only "
-                            "a loopback listener behind any remote TLS proxy"
+                            "runtime listener is non-loopback; the backend permits only "
+                            "a loopback listener unless a remote TLS proxy is trusted"
                         ),
                     }
                 },
@@ -528,11 +656,19 @@ def create_app(
                 },
                 status_code=400,
             )
-        if settings.token and request.url.path.startswith("/v1/"):
+        if request.url.path.startswith("/v1/"):
             authorization = request.headers.get("authorization", "")
             scheme, separator, credential = authorization.partition(" ")
             supplied = credential if separator and scheme.lower() == "bearer" else ""
-            if not supplied or not hmac.compare_digest(supplied, settings.token):
+            principal = repository.authenticate_api_key(supplied) if supplied else None
+            legacy_valid = bool(
+                supplied
+                and settings.token
+                and hmac.compare_digest(supplied, settings.token)
+            )
+            auth_required = remote_access or settings.token is not None
+            invalid_supplied = bool(authorization) and principal is None and not legacy_valid
+            if (auth_required and principal is None and not legacy_valid) or invalid_supplied:
                 return JSONResponse(
                     {
                         "error": {
@@ -543,6 +679,9 @@ def create_app(
                     status_code=401,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            request.state.project_id = (
+                principal.project_id if principal is not None else DEFAULT_PROJECT_ID
+            )
         return await call_next(request)
 
     @app.get("/healthz", response_model=HealthResponse)
@@ -559,6 +698,85 @@ def create_app(
         return JSONResponse(
             {"status": "ready" if is_ready else "unavailable"},
             status_code=200 if is_ready else 503,
+        )
+
+    @app.post(
+        "/hooks/v1/connectors/{endpoint_id}",
+        response_model=ConnectorDeliveryResponse,
+        responses=_CONNECTOR_ERROR_RESPONSES,
+    )
+    async def connector_delivery_endpoint(endpoint_id: str, request: Request) -> JSONResponse:
+        if _content_type(request) != "application/json":
+            raise ApiProblem(
+                415,
+                "EARSHOT_UNSUPPORTED_MEDIA_TYPE",
+                "connector delivery requires application/json",
+            )
+        payload = await _read_connector_body(request, settings.max_connector_body_bytes)
+        raw = RawProviderDelivery(
+            endpoint_id=endpoint_id,
+            headers=tuple(request.headers.raw),
+            body=payload,
+        )
+        outcome = await run_in_threadpool(app.state.connector_ingestion.receive, raw)
+        return JSONResponse(
+            {
+                "receipt_id": outcome.receipt_id,
+                "disposition": outcome.disposition,
+                "bundle_id": outcome.bundle_id,
+                "canonical_sha256": outcome.canonical_sha256,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/metrics/turns",
+        response_model=TurnMetricSummaryResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def turn_metrics_endpoint(
+        request: Request,
+        metric: Literal[
+            "stt_finalization_ms",
+            "eou_ms",
+            "first_token_ms",
+            "generated_response_ms",
+            "sent_response_ms",
+            "received_response_ms",
+            "render_start_response_ms",
+            "response_ms",
+            "turn_duration_ms",
+        ] = "response_ms",
+        group_by: Literal["framework", "provider", "model", "status"] = "framework",
+    ) -> JSONResponse:
+        groups = repository.summarize_turn_metric(
+            metric,
+            project_id=request.state.project_id,
+            group_by=group_by,
+        )
+        return JSONResponse(
+            {
+                "metric": metric,
+                "group_by": group_by,
+                "groups": [
+                    {
+                        "group": group.group,
+                        "availability": group.availability,
+                        "basis": group.basis,
+                        "confidence": group.confidence,
+                        "limitation": group.limitation,
+                        "turn_count": group.turn_count,
+                        "available_count": group.available_count,
+                        "average_ms": group.average_ms,
+                        "minimum_ms": group.minimum_ms,
+                        "maximum_ms": group.maximum_ms,
+                        "p50_ms": group.p50_ms,
+                        "p95_ms": group.p95_ms,
+                    }
+                    for group in groups
+                ],
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     async def decode_and_validate(
@@ -624,7 +842,12 @@ def create_app(
                 "EARSHOT_IDEMPOTENCY_KEY_MISMATCH",
                 "Idempotency-Key must match the incident bundle identifier",
             )
-        result = await run_in_threadpool(repository.ingest, bundle, canonical)
+        result = await run_in_threadpool(
+            repository.ingest,
+            bundle,
+            canonical,
+            project_id=request.state.project_id,
+        )
         value = result.record.as_dict()
         value["created"] = result.created
         value["warnings"] = warnings
@@ -643,12 +866,14 @@ def create_app(
         responses=_ERROR_RESPONSES,
     )
     def list_endpoint(
+        request: Request,
         session_id: str | None = None,
         limit: int = Query(default=settings.default_page_size, ge=1, le=100),
         cursor: str | None = None,
     ) -> JSONResponse:
         try:
             page = repository.list_incidents(
+                project_id=request.state.project_id,
                 session_id=session_id,
                 limit=limit,
                 cursor=cursor,
@@ -662,7 +887,9 @@ def create_app(
             ) from error
         visible = []
         for item in page.items:
-            _, payload = repository.get_artifact(item.bundle_id)
+            _, payload = repository.get_artifact(
+                item.bundle_id, project_id=request.state.project_id
+            )
             try:
                 bundle = decode_incident_protobuf(payload)
             except IncidentCodecError as error:
@@ -695,7 +922,9 @@ def create_app(
         },
     )
     def get_endpoint(bundle_id: str, request: Request) -> Response:
-        record, payload = repository.get_artifact(bundle_id)
+        record, payload = repository.get_artifact(
+            bundle_id, project_id=request.state.project_id
+        )
         try:
             bundle = decode_incident_protobuf(payload)
         except IncidentCodecError as error:
@@ -720,14 +949,20 @@ def create_app(
         response_model=StoredAnalysisResponse,
         responses=_ERROR_RESPONSES,
     )
-    def analysis_endpoint(bundle_id: str) -> JSONResponse:
-        record, payload = repository.get_artifact(bundle_id)
+    def analysis_endpoint(bundle_id: str, request: Request) -> JSONResponse:
+        record, payload = repository.get_artifact(
+            bundle_id, project_id=request.state.project_id
+        )
         try:
             bundle = decode_incident_protobuf(payload)
         except IncidentCodecError as error:
             raise ArtifactCorruptionError("stored incident cannot be decoded") from error
         assert_export_allowed(bundle, "local_api")
-        stored = repository.get_analysis(bundle_id, settings.analyzer_version)
+        stored = repository.get_analysis(
+            bundle_id,
+            settings.analyzer_version,
+            project_id=request.state.project_id,
+        )
         if stored is not None:
             return JSONResponse(
                 stored.as_dict(),
@@ -776,6 +1011,7 @@ def create_app(
             bundle_id,
             settings.analyzer_version,
             bound_analysis,
+            project_id=request.state.project_id,
         )
         return JSONResponse(
             stored.as_dict(),
@@ -787,8 +1023,8 @@ def create_app(
         status_code=204,
         responses=_ERROR_RESPONSES,
     )
-    def delete_endpoint(bundle_id: str) -> Response:
-        repository.purge(bundle_id)
+    def delete_endpoint(bundle_id: str, request: Request) -> Response:
+        repository.purge(bundle_id, project_id=request.state.project_id)
         return Response(status_code=204)
 
     return app

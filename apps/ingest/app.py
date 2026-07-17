@@ -30,6 +30,12 @@ app = create_app(
         host=HOST,
         token=TOKEN,
         max_body_bytes=_integer_environment("EARSHOT_MAX_BODY_BYTES", 16 * 1024 * 1024),
+        max_connector_body_bytes=_integer_environment(
+            "EARSHOT_MAX_CONNECTOR_BODY_BYTES", 2 * 1024 * 1024
+        ),
+        max_connector_deliveries_per_minute=_integer_environment(
+            "EARSHOT_MAX_CONNECTOR_DELIVERIES_PER_MINUTE", 120
+        ),
         analyzer_version=ANALYZER_VERSION,
         behind_tls_proxy=BEHIND_TLS_PROXY,
     ),
