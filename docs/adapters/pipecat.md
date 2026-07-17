@@ -44,6 +44,9 @@ upstream/downstream sibling pair. Observer-authored events use Earshot's recorde
 receipt time; Pipecat frame timestamps have a separate monotonic origin and are never
 mislabeled as recorder-clock coordinates.
 
+The [headless Pipecat example](../../examples/pipecat_headless/README.md) is the
+roomless, non-telephony proof path for real cascaded STT → LLM → TTS evidence.
+
 ## Provider metrics
 
 Pipecat reports per-stage metrics as span attributes rather than through a metrics
