@@ -10,6 +10,7 @@ coverage/
 __pycache__/
 *.pyc
 .venv/
+.venv2/
 .pytest_cache/
 .hypothesis/
 .ruff_cache/

@@ -42,9 +42,7 @@ def test_metadata_only_sentinel_never_reaches_artifact_index_analysis_or_files(t
         instrumentation_scope_version=SECRET_SENTINEL,
         instrumentation_scope_attributes={"vendor.scope.secret": SECRET_SENTINEL},
         schema_url=f"https://opentelemetry.io/schemas/{SECRET_SENTINEL}",
-        resource_schema_url=(
-            f"https://opentelemetry.io:{SECRET_SENTINEL}/schemas/1.30.0"
-        ),
+        resource_schema_url=(f"https://opentelemetry.io:{SECRET_SENTINEL}/schemas/1.30.0"),
         attributes={
             "transcript": SECRET_SENTINEL,
             "audio.bytes": SECRET_SENTINEL.encode(),
