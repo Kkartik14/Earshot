@@ -8,6 +8,6 @@
   "latency_bases": {
     "first_token": "first_token",
     "generated": "generated",
-    "response": "tts_estimate"
+    "response": "provider_direct"
   }
 }

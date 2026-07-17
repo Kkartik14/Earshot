@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import textwrap
 import time
 from importlib.metadata import version
 
@@ -128,6 +131,84 @@ def test_pipecat_1_5_real_readable_spans_have_lifecycle_root_and_sibling_stages(
     assert {operation.parent_span_id for operation in children} == {root.span_id}
     assert {operation.operation_name for operation in children} == {"stt", "llm", "tts"}
     assert validate_incident(bundle).ok
+
+
+def test_pipecat_real_pipeline_normal_end_frame_does_not_create_interruption() -> None:
+    pytest.importorskip("pipecat")
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import json
+
+        from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider
+        from pipecat.pipeline.pipeline import Pipeline
+        from pipecat.pipeline.worker import PipelineWorker
+        from pipecat.processors.filters.identity_filter import IdentityFilter
+        from pipecat.workers.runner import WorkerRunner
+
+        from earshot.adapters import PipecatAdapter
+        from earshot.recorder import IncidentRecorder, RecorderConfig
+
+        provider = TracerProvider()
+        trace.set_tracer_provider(provider)
+        recorder = IncidentRecorder(config=RecorderConfig(clock_domain_id="server-clock"))
+        adapter = PipecatAdapter(recorder, framework_version="1.5.0")
+        adapter.attach(provider)
+        worker = PipelineWorker(
+            Pipeline([IdentityFilter()]),
+            observers=[adapter.create_observer()],
+            enable_tracing=True,
+            enable_turn_tracking=True,
+            enable_rtvi=False,
+            conversation_id="normal-end-frame",
+            idle_timeout_secs=None,
+        )
+
+        async def run():
+            runner = WorkerRunner(handle_sigint=False)
+            running = asyncio.create_task(runner.run(worker))
+            await asyncio.sleep(0.05)
+            await worker.stop_when_done()
+            await asyncio.wait_for(running, 3)
+
+        asyncio.run(run())
+        provider.shutdown()
+        bundle = recorder.close()
+        turn = next(
+            operation
+            for operation in bundle.profile.operations
+            if operation.attributes.get("earshot.framework.operation.name") == "turn"
+        )
+        print(
+            "EARSHOT_RESULT="
+            + json.dumps(
+                {
+                    "was_interrupted": turn.attributes.get("turn.was_interrupted"),
+                    "accepted": sum(
+                        event.event_name == "earshot.interruption.accepted"
+                        for event in bundle.profile.events
+                    ),
+                },
+                sort_keys=True,
+            )
+        )
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    result_line = next(
+        line for line in completed.stdout.splitlines() if line.startswith("EARSHOT_RESULT=")
+    )
+    assert json.loads(result_line.removeprefix("EARSHOT_RESULT=")) == {
+        "accepted": 0,
+        "was_interrupted": True,
+    }
 
 
 def test_livekit_dual_surface_correlates_real_eou_metric_to_sibling_agent_turn() -> None:
@@ -375,8 +456,17 @@ def test_livekit_dual_attach_keeps_stt_interruption_operations_with_vad_quality(
         "stt",
         "interruption_detection",
     ]
-    assert [s.quality_kind for s in bundle.profile.quality_samples] == ["pipeline.metric"]
-    vad = bundle.profile.quality_samples[0]
+    # Every listener-only operation now retains the provider measurements that
+    # substantiate it, while VAD remains a standalone continuous signal.
+    assert {sample.quality_kind for sample in bundle.profile.quality_samples} == {"pipeline.metric"}
+    named_quality = {
+        sample.attributes.get("earshot.framework.metric.name"): sample
+        for sample in bundle.profile.quality_samples
+        if "earshot.framework.metric.name" in sample.attributes
+    }
+    assert set(named_quality) == {"stt", "vad"}
+
+    vad = named_quality["vad"]
     vad_measurements = {measurement.name: measurement for measurement in vad.measurements}
     assert vad_measurements["earshot.metric.inference.count"].aggregation == "delta"
     assert vad_measurements["earshot.duration.inference_seconds"].aggregation == "delta"
@@ -384,4 +474,32 @@ def test_livekit_dual_attach_keeps_stt_interruption_operations_with_vad_quality(
     assert vad.attributes["earshot.framework.name"] == "livekit"
     assert vad.attributes["earshot.framework.metric.name"] == "vad"
     assert vad.attributes["earshot.framework.version"] == version("livekit-agents")
+
+    stt = named_quality["stt"]
+    stt_measurements = {measurement.name: measurement for measurement in stt.measurements}
+    assert stt_measurements["livekit.stt.audio_duration"].aggregation == "delta"
+    assert stt_measurements["livekit.stt.audio_duration"].value == 0.5
+    assert stt.attributes["earshot.request.id"] == "stt-metric-only"
+
+    interruption_samples = [
+        sample
+        for sample in bundle.profile.quality_samples
+        if any(
+            measurement.name == "earshot.metric.interruption.count"
+            for measurement in sample.measurements
+        )
+    ]
+    assert len(interruption_samples) == 1
+    interruption_measurements = {
+        measurement.name: measurement for measurement in interruption_samples[0].measurements
+    }
+    assert interruption_measurements["earshot.metric.interruption.count"].aggregation == "delta"
+    assert (
+        interruption_measurements["earshot.metric.interruption.request_count"].aggregation
+        == "delta"
+    )
+    assert (
+        interruption_measurements["earshot.duration.interruption.total_seconds"].aggregation
+        == "instant"
+    )
     assert validate_incident(bundle).ok

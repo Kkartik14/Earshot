@@ -73,6 +73,19 @@
     }
   },
   {
+    "conversation_item": {
+      "turn_id": "speech_7",
+      "item": {
+        "id": "assistant-response-7",
+        "role": "assistant",
+        "metrics": {
+          "speech_id": "speech_7",
+          "e2e_latency": 0.7
+        }
+      }
+    }
+  },
+  {
     "event": {
       "type": "overlapping_speech",
       "created_at": 1800000001.75,
