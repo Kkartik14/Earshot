@@ -27,7 +27,7 @@ from .contract import (
 ANALYZER_NAME = "earshot.deterministic"
 # Provider-stage latency aliases changed the deterministic projection. Bump the
 # cache identity so stores never return the older runtime-specific result.
-ANALYZER_VERSION = "1.0.3"
+ANALYZER_VERSION = "1.0.4"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
 
 
@@ -605,7 +605,7 @@ def _turn_projection(
     first_token_latency = _provider_stage_latency_fallback(
         _latency_metric(anchor, first_token, "first_token"),
         provider_measurements,
-        ("livekit.llm_node_ttft", "pipecat.llm.ttfb"),
+        ("earshot.llm.ttft", "livekit.llm_node_ttft", "pipecat.llm.ttfb"),
         target=first_token,
         target_is_provider_projection=first_token_is_provider_projection,
         operations=operations,
@@ -614,14 +614,16 @@ def _turn_projection(
     generated_response_latency = _provider_stage_latency_fallback(
         _latency_metric(anchor, generated, "generated"),
         provider_measurements,
-        ("livekit.tts_node_ttfb", "pipecat.tts.ttfb"),
+        ("earshot.tts.ttfb", "livekit.tts_node_ttfb", "pipecat.tts.ttfb"),
         target=generated,
         target_is_provider_projection=generated_is_provider_projection,
         operations=operations,
         attribute_names=("lk.response.ttfb", "metrics.ttfb"),
     )
     response_latency = _latency_metric(anchor, response_target, response_basis)
-    direct_e2e = provider_measurements.get("livekit.e2e_latency")
+    direct_e2e = provider_measurements.get("earshot.turn.response_latency")
+    if direct_e2e is None:
+        direct_e2e = provider_measurements.get("livekit.e2e_latency")
     if direct_e2e is None:
         direct_e2e = provider_measurements.get("pipecat.turn.user_bot_latency")
     if (

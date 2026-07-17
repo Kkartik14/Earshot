@@ -166,6 +166,9 @@ _SAFE_EXACT = {
     "earshot.event.name",
     "earshot.privacy.capture_class",
     "earshot.quality.aggregation",
+    "earshot.correlation",
+    "earshot.chronology",
+    "earshot.unit_basis",
     # LiveKit source-native numeric facts. These keys are metadata-safe; other
     # unknown lk.* attributes remain denied by default.
     "lk.response.ttft",
@@ -277,6 +280,9 @@ _SEMANTIC_METADATA_KEYS = frozenset(
         "earshot.event.name",
         "earshot.privacy.capture_class",
         "earshot.quality.aggregation",
+        "earshot.correlation",
+        "earshot.chronology",
+        "earshot.unit_basis",
         "gen_ai.operation.name",
         "gen_ai.output.type",
         "conversation.type",

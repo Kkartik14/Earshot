@@ -164,6 +164,18 @@ groups:
         type: string
         requirement_level: opt_in
         brief: Instant, delta, cumulative, or another explicitly named aggregation.
+      - id: earshot.correlation
+        type: string
+        requirement_level: opt_in
+        brief: Correlation strength or scope, such as provider-turn scalar, ordered-index inference, or session-only.
+      - id: earshot.chronology
+        type: string
+        requirement_level: opt_in
+        brief: Whether the provider exposes timing boundaries that can author chronology.
+      - id: earshot.unit_basis
+        type: string
+        requirement_level: opt_in
+        brief: Provider-unit provenance when an official schema does not define a normalizable unit.
       - id: earshot.duration.audio_seconds
         type: double
         requirement_level: opt_in

@@ -641,11 +641,13 @@ def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
                 created_at_unix_nano TEXT NOT NULL,
                 ingested_at_unix_nano INTEGER NOT NULL
             );
+            CREATE INDEX incidents_session_idx
+                ON incidents(session_id, ingested_at_unix_nano DESC, bundle_id DESC);
             """
         )
     store = IncidentStore(tmp_path)
     with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
         columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
         assert {
             "expires_at_unix_nano",
@@ -659,6 +661,10 @@ def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
             ).fetchone()[0]
             == 3
         )
+        session_index_sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='incidents_session_idx'"
+        ).fetchone()[0]
+        assert "project_id" in session_index_sql
 
 
 def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid_bundle) -> None:
@@ -699,7 +705,7 @@ def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid
     assert restored.value == original.value
     assert restored.generated_at_unix_nano == original.generated_at_unix_nano
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
         column = next(
             row
             for row in connection.execute("PRAGMA table_info(analyses)")
@@ -710,14 +716,11 @@ def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid
 
 
 def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
-    store.close()
     database = tmp_path / "earshot.sqlite3"
     sensitive_id = "alice.example.com"
     with sqlite3.connect(database) as connection:
         connection.executescript(
             """
-            DROP TABLE tombstones;
             CREATE TABLE tombstones (
                 bundle_id TEXT PRIMARY KEY,
                 purged_at_unix_nano INTEGER NOT NULL
@@ -733,7 +736,24 @@ def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
     migrated = IncidentStore(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
         row = connection.execute(
-            "SELECT bundle_id_sha256, purged_at_unix_nano FROM tombstones"
+            "SELECT bundle_id_sha256, project_id, purged_at_unix_nano FROM tombstones"
         ).fetchone()
-        assert row == (hashlib.sha256(sensitive_id.encode()).hexdigest(), 123)
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert row == (
+            hashlib.sha256(sensitive_id.encode()).hexdigest(),
+            "default",
+            123,
+        )
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+
+
+def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    before = store.fingerprint("test", "provider-value")
+    store.close()
+
+    restarted = IncidentStore(tmp_path)
+
+    assert restarted.fingerprint("test", "provider-value") == before
+    key_path = tmp_path / "instance-correlation.key"
+    assert key_path.stat().st_mode & 0o777 == 0o600
+    assert len(key_path.read_bytes()) == 32
