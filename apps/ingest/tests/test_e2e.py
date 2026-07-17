@@ -153,11 +153,12 @@ def _semantic_projection(bundle) -> dict[str, object]:
                 if operations[operation_id].operation_name in {"llm", "tts"}
             }
         ),
-        "latency_bases": {
-            "first_token": turn["metrics"]["first_token_latency"]["basis"],
-            "generated": turn["metrics"]["generated_response_latency"]["basis"],
-            "response": turn["metrics"]["response_latency"]["basis"],
+        "latency_availability": {
+            "first_token": turn["metrics"]["first_token_latency"]["availability"],
+            "generated": turn["metrics"]["generated_response_latency"]["availability"],
+            "response": turn["metrics"]["response_latency"]["availability"],
         },
+        "response_basis": turn["metrics"]["response_latency"]["basis"],
     }
 
 
@@ -283,14 +284,12 @@ def test_pipecat_and_livekit_goldens_normalize_to_equivalent_voice_semantics() -
         == livekit_response.limitation
         == "server_output_excludes_delivery_and_render"
     )
-    assert (
-        pipecat_analysis.projections["turns"][0]["metrics"]["first_token_latency"]["availability"]
-        == "not_observed"
-    )
-    assert (
-        livekit_analysis.projections["turns"][0]["metrics"]["first_token_latency"]["availability"]
-        == "available"
-    )
+    pipecat_first_token = pipecat_analysis.projections.turns[0].metrics.first_token_latency
+    livekit_first_token = livekit_analysis.projections.turns[0].metrics.first_token_latency
+    assert pipecat_first_token.availability == livekit_first_token.availability == "available"
+    assert pipecat_first_token.basis == "provider_stage_direct"
+    assert pipecat_first_token.limitation == "stage_local_excludes_turn_scheduling"
+    assert livekit_first_token.basis == "first_token"
     assert (
         next(
             operation

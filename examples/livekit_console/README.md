@@ -6,10 +6,10 @@ the installed distribution version for artifact provenance; no version string
 is hard-coded into captured evidence. Earshot adds a span processor and metrics
 listeners; it does not replace LiveKit's trace root.
 
-The examples use explicit `whisper-1`, `gpt-4o-mini`, and `tts-1` model names
-for reproducibility. They are example choices, not a claim that newer model
-families are unavailable. Check the current OpenAI and LiveKit model
-documentation before choosing production models.
+The console and text drivers use explicit OpenAI models for reproducibility. The
+full-audio driver is provider-agnostic and defaults each STT/LLM/TTS stage to Groq;
+provider and model choices come from environment variables described below. These
+are example defaults, not production recommendations.
 
 ## Setup
 
@@ -17,13 +17,16 @@ documentation before choosing production models.
 python -m venv .venv
 source .venv/bin/activate
 pip install -e '.[dev,livekit]'
-pip install 'livekit-agents[openai,silero,turn-detector]~=1.6.5'
+pip install 'livekit-agents[groq,openai,silero,turn-detector]~=1.6.5'
 python examples/livekit_console/agent.py download-files
+export GROQ_API_KEY=gsk_...
 export OPENAI_API_KEY=sk-...
 ```
 
 The `download-files` step fetches the Silero VAD and optional multilingual turn
-detector assets.
+detector assets. `GROQ_API_KEY` is used by the default full-audio stack;
+`OPENAI_API_KEY` is needed only by the console and text drivers unless an OpenAI
+stage is selected explicitly.
 
 ## Choose a driver
 
@@ -68,9 +71,20 @@ The artifact is written to:
 python examples/livekit_console/drive_audio.py
 ```
 
-This first synthesizes a WAV utterance, then sends its audio frames through a
-roomless AgentSession. It exercises VAD, real STT, endpointing, LLM, and TTS
-without a microphone. The generated files are:
+This uses macOS `say` to synthesize the local input WAV, then sends its audio frames
+through a roomless AgentSession. It exercises VAD, real STT, endpointing, LLM, and
+TTS without a microphone or an input-synthesis API call. By default all three model
+stages use Groq. Override any stage independently with:
+
+```text
+EARSHOT_STT_PROVIDER / EARSHOT_STT_MODEL
+EARSHOT_LLM_PROVIDER / EARSHOT_LLM_MODEL
+EARSHOT_TTS_PROVIDER / EARSHOT_TTS_MODEL / EARSHOT_TTS_VOICE
+```
+
+The selected LiveKit provider plugin and its API key must be installed/configured.
+For example, setting both `EARSHOT_LLM_PROVIDER=openai` and an OpenAI LLM model swaps
+only the LLM while STT/TTS retain their defaults. The generated files are:
 
 ```text
 .earshot/livekit_console/user_utterance.wav
@@ -135,8 +149,9 @@ curl -s -X POST localhost:4319/v1/incidents \
   `server_cannot_observe_client_render` until a browser or mobile collector
   supplies it.
 
-Every run makes billable model API calls. Review provider pricing and use a
-dedicated development project or spending limit when experimenting.
+Every run uses external model APIs that may be billed or rate-limited under the
+selected provider's current plan. Review provider terms and use a dedicated
+development project or spending limit when experimenting.
 
 The headless drivers write an incident even when model startup, synthesis,
 session shutdown, or trace flushing fails. Their session status is then

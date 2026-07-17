@@ -18,7 +18,7 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
-The current deterministic analyzer identity is `earshot.deterministic@1.0.2`.
+The current deterministic analyzer identity is `earshot.deterministic@1.0.3`.
 Analyzer version is part of the storage cache key; behavior changes such as delta-window
 aggregation therefore cannot reuse a projection produced by an older analyzer.
 
@@ -60,6 +60,11 @@ Provider TTFT/TTFB can project a point only when its semantics are known. LiveKi
 RealtimeModelMetrics TTFT is first audio token, so it authors first-audio-generated and
 never a text-token fact. The response metric uses the strongest available boundary and
 labels a fallback `receive_estimate`, `transport_estimate`, or `tts_estimate`.
+When a turn anchor is absent, or preemptive generation makes a same-clock point precede
+turn commitment, equivalent LiveKit/Pipecat LLM TTFT and TTS TTFB measurements feed the
+same derived first-token/first-audio projections. Their native measurement names remain
+unchanged for provenance, and the projection is explicitly limited as
+`stage_local_excludes_turn_scheduling` rather than presented as turn-relative latency.
 Native user-stop-to-bot-start measurements (`livekit.e2e_latency` and
 `pipecat.turn.user_bot_latency`) outrank a derived TTS estimate, but never outrank
 observed send, receive, or render evidence. Their projection carries

@@ -25,9 +25,9 @@ from .contract import (
 )
 
 ANALYZER_NAME = "earshot.deterministic"
-# Exact integer delta aggregation changed the deterministic projection. Bump the
-# cache identity so stores never return a float-rounded counter for the same artifact.
-ANALYZER_VERSION = "1.0.2"
+# Provider-stage latency aliases changed the deterministic projection. Bump the
+# cache identity so stores never return the older runtime-specific result.
+ANALYZER_VERSION = "1.0.3"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
 
 
@@ -458,6 +458,63 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
     }
 
 
+def _provider_stage_latency_fallback(
+    current: dict[str, object],
+    provider_measurements: dict[str, dict[str, object]],
+    measurement_names: Sequence[str],
+    *,
+    target: Event | None,
+    target_is_provider_projection: bool,
+    operations: Sequence[Operation],
+    attribute_names: Sequence[str],
+) -> dict[str, object]:
+    """Use a measured stage duration when turn-relative timing cannot be derived."""
+
+    if current.get("availability") not in {"not_observed", "inconsistent"}:
+        return current
+    direct = next(
+        (
+            provider_measurements[name]
+            for name in measurement_names
+            if provider_measurements.get(name, {}).get("availability") == "available"
+        ),
+        None,
+    )
+    if direct is not None:
+        return {
+            **direct,
+            "basis": "provider_stage_direct",
+            "limitation": "stage_local_excludes_turn_scheduling",
+        }
+
+    # Native span attributes can be turn-owned even when a separate framework
+    # metrics callback has no safe turn identifier. Only reuse a duration that
+    # authored this analyzer's synthetic point; never reinterpret an explicit
+    # source event that happens to precede the turn anchor.
+    if target is None or not target_is_provider_projection:
+        return current
+    operation = next(
+        (item for item in operations if item.operation_id == target.operation_id),
+        None,
+    )
+    if operation is None:
+        return current
+    for attribute_name in attribute_names:
+        raw = operation.attributes.get(attribute_name)
+        if _shift_time_point(operation.started_at, raw) is None:
+            continue
+        return {
+            "availability": "available",
+            "basis": "provider_stage_direct",
+            "confidence": operation.evidence.confidence if operation.evidence else "estimated",
+            "value": float(raw) * 1_000,
+            "unit": "ms",
+            "limitation": "stage_local_excludes_turn_scheduling",
+            "evidence_ids": [operation.operation_id],
+        }
+    return current
+
+
 def _turn_projection(
     turn_id: str,
     operations: Sequence[Operation],
@@ -481,6 +538,7 @@ def _turn_projection(
     # Explicit events are highest fidelity. A provider TTFT/TTFB duration can be
     # projected from operation start, but operation start alone is never treated
     # as first output: that would systematically understate latency.
+    first_token_is_provider_projection = False
     if first_token is None:
         first_token = _first_provider_latency_event(
             operations,
@@ -488,6 +546,8 @@ def _turn_projection(
             "earshot.response.first_token",
             ("lk.response.ttft", "metrics.ttfb"),
         )
+        first_token_is_provider_projection = first_token is not None
+    generated_is_provider_projection = False
     if generated is None:
         generated = _first_provider_latency_event(
             operations,
@@ -495,6 +555,7 @@ def _turn_projection(
             "earshot.response.first_audio_generated",
             ("lk.response.ttfb", "metrics.ttfb"),
         )
+        generated_is_provider_projection = generated is not None
     if sent is None:
         transport = _first_operation(operations, {"transport_send"})
         sent = (
@@ -541,15 +602,24 @@ def _turn_projection(
     )
 
     provider_measurements = _quality_measurements(quality_samples)
-    first_token_latency = _latency_metric(anchor, first_token, "first_token")
-    if first_token_latency["availability"] == "not_observed":
-        direct_llm_ttft = provider_measurements.get("livekit.llm_node_ttft")
-        if direct_llm_ttft is not None:
-            first_token_latency = {
-                **direct_llm_ttft,
-                "basis": "provider_stage_direct",
-                "limitation": "stage_local_excludes_turn_scheduling",
-            }
+    first_token_latency = _provider_stage_latency_fallback(
+        _latency_metric(anchor, first_token, "first_token"),
+        provider_measurements,
+        ("livekit.llm_node_ttft", "pipecat.llm.ttfb"),
+        target=first_token,
+        target_is_provider_projection=first_token_is_provider_projection,
+        operations=operations,
+        attribute_names=("lk.response.ttft", "metrics.ttfb"),
+    )
+    generated_response_latency = _provider_stage_latency_fallback(
+        _latency_metric(anchor, generated, "generated"),
+        provider_measurements,
+        ("livekit.tts_node_ttfb", "pipecat.tts.ttfb"),
+        target=generated,
+        target_is_provider_projection=generated_is_provider_projection,
+        operations=operations,
+        attribute_names=("lk.response.ttfb", "metrics.ttfb"),
+    )
     response_latency = _latency_metric(anchor, response_target, response_basis)
     direct_e2e = provider_measurements.get("livekit.e2e_latency")
     if direct_e2e is None:
@@ -573,7 +643,7 @@ def _turn_projection(
         "event_ids": sorted(item.event_id for item in events),
         "metrics": {
             "first_token_latency": first_token_latency,
-            "generated_response_latency": _latency_metric(anchor, generated, "generated"),
+            "generated_response_latency": generated_response_latency,
             "sent_response_latency": _latency_metric(anchor, sent, "sent"),
             "received_response_latency": _latency_metric(anchor, received, "received"),
             "render_start_response_latency": _latency_metric(anchor, rendered, "render"),

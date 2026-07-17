@@ -236,9 +236,104 @@ def test_combined_livekit_span_and_metric_uses_the_operation_with_provider_ttft(
         }
     )
     bundle = replace_profile(bundle, operations=(turn, agent_turn, llm), events=())
-    first_token = metric(analyze(bundle), "first_token_latency")
+    result = analyze(bundle)
+    first_token = metric(result, "first_token_latency")
     assert first_token["value"] == 150.0
     assert first_token["evidence_ids"] == ["op-turn", "op-llm"]
+
+
+def test_preemptive_livekit_first_token_uses_direct_stage_metric_when_delta_reversed(
+    valid_bundle,
+) -> None:
+    events = tuple(
+        event.model_copy(update={"time": point(1_200_000_000)})
+        if event.event_name == "earshot.turn.committed"
+        else event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.response.first_token"
+    )
+    operations = tuple(
+        operation.model_copy(
+            update={"attributes": {**operation.attributes, "lk.response.ttft": 0.1}}
+        )
+        if operation.operation_name == "llm"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+
+    result = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    first_token = metric(result, "first_token_latency")
+
+    assert first_token == {
+        "availability": "available",
+        "basis": "provider_stage_direct",
+        "confidence": "measured",
+        "value": 100.0,
+        "unit": "ms",
+        "limitation": "stage_local_excludes_turn_scheduling",
+        "evidence_ids": ["op-llm"],
+    }
+    assert validate_derived_analysis(bundle, result).ok
+
+
+@pytest.mark.parametrize(
+    ("llm_name", "tts_name"),
+    [
+        ("livekit.llm_node_ttft", "livekit.tts_node_ttfb"),
+        ("pipecat.llm.ttfb", "pipecat.tts.ttfb"),
+    ],
+)
+def test_provider_stage_latency_aliases_share_projections_without_turn_anchor(
+    valid_bundle,
+    llm_name: str,
+    tts_name: str,
+) -> None:
+    samples = tuple(
+        QualitySample(
+            sample_id=f"provider-stage-{stage}",
+            session_id="session-1",
+            quality_kind="pipeline.latency",
+            sample_window=TimeRange(start=point(index), end=point(index)),
+            measurements=(QualityMeasurement(name=name, value=value, unit="s"),),
+            evidence=Evidence(
+                source="provider",
+                observer="server",
+                method="native_metric",
+                confidence="measured",
+                availability="available",
+            ),
+            attributes={"earshot.turn.id": "turn-1"},
+        )
+        for index, (stage, name, value) in enumerate(
+            (("llm", llm_name, 0.12), ("tts", tts_name, 0.23)),
+            start=1,
+        )
+    )
+    bundle = replace_profile(valid_bundle, events=(), quality_samples=samples)
+
+    result = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    metrics = turn(result)["metrics"]
+
+    assert metrics["first_token_latency"]["value"] == 120.0
+    assert metrics["generated_response_latency"]["value"] == 230.0
+    for name in ("first_token_latency", "generated_response_latency"):
+        assert metrics[name]["basis"] == "provider_stage_direct"
+        assert metrics[name]["limitation"] == "stage_local_excludes_turn_scheduling"
+    assert validate_derived_analysis(bundle, result).ok
 
 
 def test_cross_domain_render_does_not_create_false_exact_response_latency(valid_bundle) -> None:
