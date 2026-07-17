@@ -105,6 +105,8 @@ def test_metadata_only_is_allowlist_based_for_unknown_keys() -> None:
         ("lk.response.ttft", SECRET_SENTINEL),
         ("lk.interrupted", SECRET_SENTINEL),
         ("turn.was_interrupted", SECRET_SENTINEL),
+        ("turn.ended_by_conversation_end", SECRET_SENTINEL),
+        ("turn.user_bot_latency_seconds", SECRET_SENTINEL),
         ("earshot.link.type", SECRET_SENTINEL),
         ("earshot.turn.id", [SECRET_SENTINEL]),
         ("service.name", [SECRET_SENTINEL]),
@@ -114,6 +116,39 @@ def test_known_metadata_keys_enforce_field_specific_value_shapes(key: str, value
     kept, omissions = sanitize_attributes({key: value})
     assert kept == {}
     assert len(omissions) == 1
+
+
+@pytest.mark.parametrize(
+    "key",
+    (
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.cache_creation.input_tokens",
+        "gen_ai.usage.reasoning_tokens",
+    ),
+)
+@pytest.mark.parametrize("invalid", (-1, 1.5, True, 9_007_199_254_740_992))
+def test_gen_ai_usage_counters_require_portable_nonnegative_integers(
+    key: str,
+    invalid: object,
+) -> None:
+    kept, omissions = sanitize_attributes({key: invalid})
+    assert kept == {}
+    assert len(omissions) == 1
+
+
+def test_all_native_pipecat_usage_counters_survive_with_valid_integer_values() -> None:
+    expected = {
+        "gen_ai.usage.input_tokens": 11,
+        "gen_ai.usage.output_tokens": 7,
+        "gen_ai.usage.cache_read.input_tokens": 3,
+        "gen_ai.usage.cache_creation.input_tokens": 2,
+        "gen_ai.usage.reasoning_tokens": 5,
+    }
+    kept, omissions = sanitize_attributes(expected)
+    assert kept == expected
+    assert omissions == []
 
 
 def test_raw_otlp_grant_does_not_authorize_unknown_normalized_attributes() -> None:

@@ -55,9 +55,86 @@ _NATIVE_METRIC_ATTRIBUTES = {
     "lk.realtime_model_metrics": "realtime_model_metrics",
 }
 
+_PER_REQUEST_DELTA_MEASUREMENTS = frozenset(
+    {
+        "earshot.metric.interruption.backchannel_count",
+        "earshot.metric.interruption.count",
+        "earshot.metric.interruption.request_count",
+        "earshot.metric.model.total_tokens",
+        "earshot.metric.turn_detection.request_count",
+        "gen_ai.usage.input_audio_tokens",
+        "gen_ai.usage.input_cached_tokens",
+        "gen_ai.usage.input_cached_audio_tokens",
+        "gen_ai.usage.input_cached_image_tokens",
+        "gen_ai.usage.input_cached_text_tokens",
+        "gen_ai.usage.input_image_tokens",
+        "gen_ai.usage.input_text_tokens",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_audio_tokens",
+        "gen_ai.usage.output_image_tokens",
+        "gen_ai.usage.output_text_tokens",
+        "gen_ai.usage.output_tokens",
+        "livekit.realtime.session_duration",
+        "livekit.stt.audio_duration",
+        "livekit.stt.input_tokens",
+        "livekit.stt.output_tokens",
+        "livekit.tts.character_count",
+        "livekit.tts.audio_duration",
+        "livekit.tts.input_tokens",
+        "livekit.tts.output_tokens",
+    }
+)
+
+_METRIC_COUNTER_FIELDS = frozenset(
+    {
+        "characters_count",
+        "completion_tokens",
+        "inference_count",
+        "input_tokens",
+        "num_backchannels",
+        "num_interruptions",
+        "num_requests",
+        "output_tokens",
+        "prompt_cached_tokens",
+        "prompt_tokens",
+        "total_tokens",
+    }
+)
+_IJSON_INTEGER_MAX = 9_007_199_254_740_991
+
+
+def _is_i_json_counter(raw: object) -> bool:
+    return isinstance(raw, int) and not isinstance(raw, bool) and 0 <= raw <= _IJSON_INTEGER_MAX
+
+
+def _is_non_negative_finite_number(raw: object) -> bool:
+    if isinstance(raw, bool):
+        return False
+    if isinstance(raw, int):
+        return 0 <= raw <= _IJSON_INTEGER_MAX
+    return isinstance(raw, float) and math.isfinite(raw) and raw >= 0
+
+
+def _is_unit_interval_number(raw: object) -> bool:
+    return _is_non_negative_finite_number(raw) and isinstance(raw, (int, float)) and raw <= 1
+
+
+def _is_zero_number(raw: object) -> bool:
+    return (
+        isinstance(raw, (int, float))
+        and not isinstance(raw, bool)
+        and math.isfinite(float(raw))
+        and raw == 0
+    )
+
+
 _SPAN_NAMES = {
     "function_tool": "tool",
     "tool": "tool",
+    # LiveKit wraps pipeline and realtime generation work in agent_turn. It is the
+    # agent's own generation scope and is NOT equivalent to Pipecat's
+    # conversation-wide `turn` container, so the two runtimes classify differently
+    # on purpose; do not collapse it to framework_operation for symmetry.
     "agent_turn": "agent",
     "eou_detection": "turn_detection",
     # These spans contain whole turn lifecycles. Only eou_detection is a
@@ -92,6 +169,74 @@ def _metric_type(metric: object) -> str:
         fallback = metric.get("metric_type", "Metric")
         return str(fallback).lower()
     return type(metric).__name__.lower()
+
+
+def _is_connection_acquisition_metric(metric: object) -> bool:
+    """Identify LiveKit's zero-usage connection timing callback.
+
+    LiveKit 1.6 emits STT and realtime connection acquisition as the ordinary
+    metric class with an empty request ID. No operation request exists for that
+    callback; ``acquire_time`` is the only timing fact it represents.
+    """
+
+    metric_type = _metric_type(metric)
+    if metric_type not in {
+        "sttmetrics",
+        "stt_metrics",
+        "realtimemodelmetrics",
+        "realtime_model_metrics",
+    }:
+        return False
+    acquire_time = value(metric, "acquire_time")
+    if not (
+        value(metric, "request_id") == ""
+        and _is_non_negative_finite_number(acquire_time)
+        and isinstance(acquire_time, (int, float))
+    ):
+        return False
+    if metric_type in {"sttmetrics", "stt_metrics"}:
+        return value(metric, "streamed") is True and all(
+            _is_zero_number(value(metric, field))
+            for field in ("duration", "audio_duration", "input_tokens", "output_tokens")
+        )
+
+    ttft = value(metric, "ttft")
+    if (
+        not isinstance(ttft, (int, float))
+        or isinstance(ttft, bool)
+        or not math.isfinite(float(ttft))
+        or ttft >= 0
+        or value(metric, "cancelled") is not False
+        or not all(
+            _is_zero_number(value(metric, field))
+            for field in (
+                "duration",
+                "session_duration",
+                "input_tokens",
+                "output_tokens",
+                "total_tokens",
+                "tokens_per_second",
+            )
+        )
+    ):
+        return False
+    input_details = value(metric, "input_token_details")
+    output_details = value(metric, "output_token_details")
+    if input_details is not None and not all(
+        _is_zero_number(value(input_details, field, 0))
+        for field in ("audio_tokens", "text_tokens", "image_tokens", "cached_tokens")
+    ):
+        return False
+    cached_details = value(input_details, "cached_tokens_details")
+    if cached_details is not None and not all(
+        _is_zero_number(value(cached_details, field, 0))
+        for field in ("audio_tokens", "text_tokens", "image_tokens")
+    ):
+        return False
+    return output_details is None or all(
+        _is_zero_number(value(output_details, field, 0))
+        for field in ("audio_tokens", "text_tokens", "image_tokens")
+    )
 
 
 def _normalize_native_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
@@ -160,6 +305,7 @@ class LiveKitAdapter:
         self._render_coverage_written = False
         self._native_spans_enabled = False
         self._session_listeners_enabled = False
+        self._interruption_listeners_enabled = False
         self._seen_operations: dict[str, str] = {}
         self._seen_spans: dict[tuple[str, str], str] = {}
         self._seen_events: set[str] = set()
@@ -363,9 +509,7 @@ class LiveKitAdapter:
                 parent_scope=parent_scope,
                 links=tuple(links),
                 resource=resource,
-                resource_schema_url=(
-                    str(resource_schema_url) if resource_schema_url else None
-                ),
+                resource_schema_url=(str(resource_schema_url) if resource_schema_url else None),
                 instrumentation_scope_name=str(scope_name) if scope_name else None,
                 instrumentation_scope_version=str(scope_version) if scope_version else None,
                 instrumentation_scope_attributes=scope_attributes,
@@ -382,9 +526,7 @@ class LiveKitAdapter:
                 turn_id=turn_id,
                 default_time=end or start,
                 resource=resource,
-                resource_schema_url=(
-                    str(resource_schema_url) if resource_schema_url else None
-                ),
+                resource_schema_url=(str(resource_schema_url) if resource_schema_url else None),
                 scope_name=str(scope_name) if scope_name else None,
                 scope_version=str(scope_version) if scope_version else None,
                 scope_attributes=scope_attributes,
@@ -398,9 +540,7 @@ class LiveKitAdapter:
                 turn_id=turn_id,
                 default_time=end or start,
                 resource=resource,
-                resource_schema_url=(
-                    str(resource_schema_url) if resource_schema_url else None
-                ),
+                resource_schema_url=(str(resource_schema_url) if resource_schema_url else None),
                 scope_name=str(scope_name) if scope_name else None,
                 scope_version=str(scope_version) if scope_version else None,
                 scope_attributes=scope_attributes,
@@ -413,9 +553,7 @@ class LiveKitAdapter:
                 turn_id=turn_id,
                 time=end or start,
                 resource=resource,
-                resource_schema_url=(
-                    str(resource_schema_url) if resource_schema_url else None
-                ),
+                resource_schema_url=(str(resource_schema_url) if resource_schema_url else None),
                 scope_name=str(scope_name) if scope_name else None,
                 scope_version=str(scope_version) if scope_version else None,
                 scope_attributes=scope_attributes,
@@ -428,9 +566,7 @@ class LiveKitAdapter:
                     operation_id=operation_id,
                     method="native_otel_attribute",
                     resource=resource,
-                    resource_schema_url=(
-                        str(resource_schema_url) if resource_schema_url else None
-                    ),
+                    resource_schema_url=(str(resource_schema_url) if resource_schema_url else None),
                     scope_name=str(scope_name) if scope_name else None,
                     scope_version=str(scope_version) if scope_version else None,
                     scope_attributes=scope_attributes,
@@ -443,9 +579,7 @@ class LiveKitAdapter:
                     trace_id=trace_id,
                     span_id=span_id,
                     resource=resource,
-                    resource_schema_url=(
-                        str(resource_schema_url) if resource_schema_url else None
-                    ),
+                    resource_schema_url=(str(resource_schema_url) if resource_schema_url else None),
                     scope_name=str(scope_name) if scope_name else None,
                     scope_version=str(scope_version) if scope_version else None,
                     scope_attributes=scope_attributes,
@@ -567,6 +701,7 @@ class LiveKitAdapter:
         ttft = value(metric, "ttft")
         if (
             metric_type in {"realtimemodelmetrics", "realtime_model_metrics"}
+            and not _is_connection_acquisition_metric(metric)
             and isinstance(ttft, (int, float))
             and not isinstance(ttft, bool)
             and math.isfinite(float(ttft))
@@ -598,18 +733,30 @@ class LiveKitAdapter:
                 "s"
                 if any(
                     token in name
-                    for token in ("ttf", "duration", "delay", "latency", "transcription")
+                    for token in (
+                        "ttf",
+                        "duration",
+                        "delay",
+                        "latency",
+                        "transcription",
+                        "acquire_time",
+                    )
                 )
                 else ("count" if isinstance(raw, int) and not isinstance(raw, bool) else "1")
             )
             aggregation = (
                 "delta"
-                if metric_type in {"vadmetrics", "vad_metrics"}
-                and name
-                in {
-                    "earshot.duration.inference_seconds",
-                    "earshot.metric.inference.count",
-                }
+                if (
+                    name in _PER_REQUEST_DELTA_MEASUREMENTS
+                    or (
+                        metric_type in {"vadmetrics", "vad_metrics"}
+                        and name
+                        in {
+                            "earshot.duration.inference_seconds",
+                            "earshot.metric.inference.count",
+                        }
+                    )
+                )
                 else "instant"
             )
             measurements.append(
@@ -626,11 +773,7 @@ class LiveKitAdapter:
         provider_time = self._seconds_time_point(value(metric, "timestamp"))
         explicit_time = provider_time or observed_at
         observed = explicit_time or self.recorder._time()
-        dimensions = {
-            name: raw
-            for name, raw in attributes.items()
-            if isinstance(raw, str)
-        }
+        dimensions = {name: raw for name, raw in attributes.items() if isinstance(raw, str)}
         time_identity = (
             explicit_time.model_dump(mode="json", exclude_none=True)
             if explicit_time is not None
@@ -659,9 +802,7 @@ class LiveKitAdapter:
             ).encode()
         ).hexdigest()
         identity_time = (
-            json.dumps(time_identity, sort_keys=True)
-            if time_identity is not None
-            else fingerprint
+            json.dumps(time_identity, sort_keys=True) if time_identity is not None else fingerprint
         )
         sample_id = stable_id(
             "livekit-provider-metric",
@@ -856,6 +997,8 @@ class LiveKitAdapter:
     ) -> str | None:
         if _metric_type(metric) not in {"realtimemodelmetrics", "realtime_model_metrics"}:
             return None
+        if _is_connection_acquisition_metric(metric):
+            return None
         ttft = value(metric, "ttft")
         timestamp = self._seconds_time_point(value(metric, "timestamp"))
         if (
@@ -923,6 +1066,18 @@ class LiveKitAdapter:
     ) -> str | None:
         metric_type = _metric_type(metric)
         operation_name = _METRIC_TYPES.get(metric_type, "framework_metric")
+        if _is_connection_acquisition_metric(metric):
+            # LiveKit emits connection establishment as a zero-usage metric with
+            # an empty request ID. It is a quality point, not an STT/TTS/agent
+            # operation, and must not synthesize zero token/audio deltas.
+            try:
+                return self._record_metric_quality(
+                    metric,
+                    observed_at=observed_at,
+                    method="metrics_listener",
+                )
+            finally:
+                self._mark_render_unobserved()
         if operation_name == "vad":
             # Voice activity detection is a continuous background signal, not a
             # discrete sub-step. Emitting one operation per callback floods the
@@ -1077,13 +1232,12 @@ class LiveKitAdapter:
                     "not_observed",
                     duration_unavailable_reason,
                 )
-            interruption_count = value(metric, "num_interruptions", 0)
+            interruption_count = attributes.get("earshot.metric.interruption.count", 0)
             if (
                 operation_name == "interruption_detection"
-                and isinstance(interruption_count, (int, float))
-                and not isinstance(interruption_count, bool)
-                and math.isfinite(float(interruption_count))
+                and _is_i_json_counter(interruption_count)
                 and interruption_count > 0
+                and not self._interruption_listeners_enabled
             ):
                 self._record_interruption_fact(
                     event_name="earshot.interruption.detected",
@@ -1094,6 +1248,13 @@ class LiveKitAdapter:
                     attributes=attributes,
                     confidence="measured",
                 )
+            self._record_metric_quality(
+                metric,
+                turn_id=str(speech_id) if speech_id is not None else None,
+                operation_id=operation_id,
+                observed_at=observed_at,
+                method="metrics_listener",
+            )
             self._mark_render_unobserved()
         return operation_id
 
@@ -1116,7 +1277,11 @@ class LiveKitAdapter:
             accepted = self._boolean_decision(value(event, "is_interruption", False))
             if not accepted:
                 event_name = "earshot.interruption.ignored"
-            elif self._session_listeners_enabled or self._native_spans_enabled:
+            elif (
+                self._interruption_listeners_enabled
+                or self._session_listeners_enabled
+                or self._native_spans_enabled
+            ):
                 # Attached sessions also expose the eventual interrupted output
                 # through ChatMessage or agent_turn. Preserve overlap as detector
                 # evidence so the accepted outcome is not counted twice.
@@ -1314,7 +1479,11 @@ class LiveKitAdapter:
                     # byte-identical nor safely correlatable. Native spans own these
                     # types and attach an operation identity to their quality sample.
                     metric_type = _metric_type(metric)
-                    if metric_type in {
+                    if _is_connection_acquisition_metric(metric):
+                        # Connection-only callbacks have no owning operation span;
+                        # retain the acquisition point even in native-span mode.
+                        self.consume_metric(metric)
+                    elif metric_type in {
                         "eoumetrics",
                         "eou_metrics",
                         "eotinferencemetrics",
@@ -1360,6 +1529,10 @@ class LiveKitAdapter:
     def attach_interruption_listeners(self, session: object) -> None:
         """Attach adaptive-interruption callbacks when the session exposes them."""
 
+        # LiveKit 1.6 derives InterruptionMetrics from the same
+        # OverlappingSpeechEvent but provides no shared request/speech ID. Once
+        # this event surface is attached it exclusively owns interruption point
+        # facts; metrics continue to own operations and aggregate quality.
         def listener(event: object) -> None:
             try:
                 self.consume_interruption_event(event)
@@ -1371,6 +1544,7 @@ class LiveKitAdapter:
 
         self._attach_listener(session, "overlapping_speech", listener)
         self._attach_listener(session, "agent_false_interruption", listener)
+        self._interruption_listeners_enabled = True
 
     def attach_session_listeners(self, session: object) -> None:
         """Attach both metric and interruption listeners to a LiveKit session."""
@@ -1653,27 +1827,78 @@ class LiveKitAdapter:
     def _metric_attributes(metric: object) -> dict[str, Any]:
         metric_type = _metric_type(metric)
         attributes: dict[str, Any] = {"earshot.framework.name": "livekit"}
-        mappings = {
-            "ttft": "lk.response.ttft",
-            "ttfb": "lk.response.ttfb",
-            "end_of_utterance_delay": "lk.eou.endpointing_delay",
-            "transcription_delay": "lk.eou.transcription_delay",
-            "on_user_turn_completed_delay": "earshot.duration.turn_callback_seconds",
-            "prompt_tokens": "gen_ai.usage.input_tokens",
-            "completion_tokens": "gen_ai.usage.output_tokens",
-            "prompt_cached_tokens": "gen_ai.usage.input_cached_tokens",
-            "input_tokens": "gen_ai.usage.input_tokens",
-            "output_tokens": "gen_ai.usage.output_tokens",
-            "total_tokens": "earshot.metric.model.total_tokens",
-            "audio_duration": "earshot.duration.audio_seconds",
-            "idle_time": "earshot.duration.vad.idle_seconds",
-            "inference_duration_total": "earshot.duration.inference_seconds",
-            "inference_count": "earshot.metric.inference.count",
-            "num_interruptions": "earshot.metric.interruption.count",
-            "num_backchannels": "earshot.metric.interruption.backchannel_count",
-            "playback_latency": "earshot.duration.avatar.playback_latency_seconds",
-        }
-        if metric_type in {"interruptionmetrics", "interruption_metrics"}:
+        connection_only = _is_connection_acquisition_metric(metric)
+        mappings: dict[str, str] = {}
+        if not connection_only:
+            mappings.update(
+                {
+                    "ttft": "lk.response.ttft",
+                    "ttfb": "lk.response.ttfb",
+                    "end_of_utterance_delay": "lk.eou.endpointing_delay",
+                    "transcription_delay": "lk.eou.transcription_delay",
+                    "on_user_turn_completed_delay": "earshot.duration.turn_callback_seconds",
+                    "prompt_tokens": "gen_ai.usage.input_tokens",
+                    "completion_tokens": "gen_ai.usage.output_tokens",
+                    "prompt_cached_tokens": "gen_ai.usage.input_cached_tokens",
+                    "total_tokens": "earshot.metric.model.total_tokens",
+                    "idle_time": "earshot.duration.vad.idle_seconds",
+                    "inference_duration_total": "earshot.duration.inference_seconds",
+                    "inference_count": "earshot.metric.inference.count",
+                    "num_interruptions": "earshot.metric.interruption.count",
+                    "num_backchannels": "earshot.metric.interruption.backchannel_count",
+                    "playback_latency": "earshot.duration.avatar.playback_latency_seconds",
+                }
+            )
+        if metric_type in {"realtimemodelmetrics", "realtime_model_metrics"}:
+            mappings.update(
+                {
+                    "acquire_time": "livekit.realtime.connection_acquire_time",
+                    **(
+                        {
+                            "input_tokens": "gen_ai.usage.input_tokens",
+                            "output_tokens": "gen_ai.usage.output_tokens",
+                            "session_duration": "livekit.realtime.session_duration",
+                        }
+                        if not connection_only
+                        else {}
+                    ),
+                }
+            )
+        elif metric_type in {"sttmetrics", "stt_metrics"}:
+            mappings.update(
+                {
+                    "acquire_time": "livekit.stt.connection_acquire_time",
+                    **(
+                        {
+                            "audio_duration": "livekit.stt.audio_duration",
+                            "input_tokens": "livekit.stt.input_tokens",
+                            "output_tokens": "livekit.stt.output_tokens",
+                        }
+                        if not connection_only
+                        else {}
+                    ),
+                }
+            )
+        elif metric_type in {"ttsmetrics", "tts_metrics"}:
+            mappings.update(
+                {
+                    "acquire_time": "livekit.tts.connection_acquire_time",
+                    **(
+                        {
+                            "audio_duration": "livekit.tts.audio_duration",
+                            "characters_count": "livekit.tts.character_count",
+                            "input_tokens": "livekit.tts.input_tokens",
+                            "output_tokens": "livekit.tts.output_tokens",
+                        }
+                        if not connection_only
+                        else {}
+                    ),
+                }
+            )
+        if not connection_only and metric_type in {
+            "interruptionmetrics",
+            "interruption_metrics",
+        }:
             mappings.update(
                 {
                     "detection_delay": ("earshot.duration.interruption.detection_delay_seconds"),
@@ -1682,7 +1907,10 @@ class LiveKitAdapter:
                     "num_requests": "earshot.metric.interruption.request_count",
                 }
             )
-        elif metric_type in {"eotinferencemetrics", "eot_inference_metrics"}:
+        elif not connection_only and metric_type in {
+            "eotinferencemetrics",
+            "eot_inference_metrics",
+        }:
             mappings.update(
                 {
                     "detection_delay": ("earshot.duration.turn_detection.detection_delay_seconds"),
@@ -1693,15 +1921,61 @@ class LiveKitAdapter:
             )
         for source, target in mappings.items():
             raw = value(metric, source)
-            if isinstance(raw, bool) or (
-                isinstance(raw, (int, float)) and math.isfinite(float(raw)) and float(raw) >= 0
-            ):
+            if source in _METRIC_COUNTER_FIELDS:
+                valid = _is_i_json_counter(raw)
+            elif source == "acquire_time":
+                valid = (
+                    _is_non_negative_finite_number(raw)
+                    and isinstance(raw, (int, float))
+                    and raw > 0
+                )
+            else:
+                valid = _is_non_negative_finite_number(raw)
+            if valid:
                 attributes[target] = raw
+
+        if not connection_only and metric_type in {
+            "realtimemodelmetrics",
+            "realtime_model_metrics",
+        }:
+            input_details = value(metric, "input_token_details")
+            cached_details = value(input_details, "cached_tokens_details")
+            output_details = value(metric, "output_token_details")
+            nested_counters = (
+                (input_details, "audio_tokens", "gen_ai.usage.input_audio_tokens"),
+                (input_details, "text_tokens", "gen_ai.usage.input_text_tokens"),
+                (input_details, "image_tokens", "gen_ai.usage.input_image_tokens"),
+                (input_details, "cached_tokens", "gen_ai.usage.input_cached_tokens"),
+                (
+                    cached_details,
+                    "audio_tokens",
+                    "gen_ai.usage.input_cached_audio_tokens",
+                ),
+                (
+                    cached_details,
+                    "text_tokens",
+                    "gen_ai.usage.input_cached_text_tokens",
+                ),
+                (
+                    cached_details,
+                    "image_tokens",
+                    "gen_ai.usage.input_cached_image_tokens",
+                ),
+                (output_details, "audio_tokens", "gen_ai.usage.output_audio_tokens"),
+                (output_details, "text_tokens", "gen_ai.usage.output_text_tokens"),
+                (output_details, "image_tokens", "gen_ai.usage.output_image_tokens"),
+            )
+            for container, source, target in nested_counters:
+                raw = value(container, source)
+                if _is_i_json_counter(raw):
+                    attributes[target] = raw
         for source, target in (
             ("cancelled", "earshot.metric.request.cancelled"),
             ("streamed", "earshot.metric.request.streamed"),
             ("connection_reused", "earshot.metric.connection.reused"),
         ):
+            if connection_only and source != "connection_reused":
+                continue
             raw = value(metric, source)
             if isinstance(raw, bool):
                 attributes[target] = raw
@@ -1741,9 +2015,27 @@ class LiveKitAdapter:
                 "earshot.duration.interruption.detection_delay_seconds"
             ),
         }
+        boolean_fields = {
+            "is_interruption",
+            "resumed",
+            "lk.is_interruption",
+            "lk.interrupted",
+        }
+        probability_fields = {
+            "probability",
+            "lk.interruption.probability",
+        }
         for source_key, target in mappings.items():
             raw = value(source, source_key)
-            if isinstance(raw, (bool, int)) or (isinstance(raw, float) and math.isfinite(raw)):
+            if source_key == "num_requests":
+                valid = _is_i_json_counter(raw)
+            elif source_key in boolean_fields:
+                valid = isinstance(raw, bool)
+            elif source_key in probability_fields:
+                valid = _is_unit_interval_number(raw)
+            else:
+                valid = _is_non_negative_finite_number(raw)
+            if valid:
                 attributes[target] = raw
         return attributes
 
