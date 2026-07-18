@@ -33,7 +33,7 @@ a fresh environment:
 python scripts/generate_contract.py --check
 python scripts/generate_openapi.py --check
 python scripts/check_semconv.py
-ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples/livekit_console
+ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples
 pytest --cov=earshot --cov-report=term-missing -q
 pnpm test
 pnpm typecheck

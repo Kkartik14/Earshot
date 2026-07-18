@@ -90,6 +90,7 @@ a system can prove a human **heard** the audio.
 | `packages/sdk-python`                  | Contract, SDK, adapters, analysis, storage, and API.              |
 | `apps/ingest`                          | ASGI deployment entry point.                                      |
 | `fixtures/`                            | Shared valid/invalid/golden/fault artifacts.                      |
+| `examples/pipecat_headless`            | Roomless real STT → LLM → TTS evidence harness.                   |
 | `docs/`                                | Public, self-reproducing architecture and contract documentation. |
 | `packages/schema`, `packages/analysis` | Superseded M0 TypeScript prototype.                               |
 

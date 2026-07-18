@@ -5,9 +5,10 @@
   "capture_classes": ["metadata"],
   "interruption_phases": { "accepted": 1, "detected": 0, "ignored": 0 },
   "turn_correlated_response_operations": ["llm", "tts"],
-  "latency_bases": {
-    "first_token": "first_token",
-    "generated": "generated",
-    "response": "tts_estimate"
-  }
+  "latency_availability": {
+    "first_token": "available",
+    "generated": "available",
+    "response": "available"
+  },
+  "response_basis": "provider_direct"
 }

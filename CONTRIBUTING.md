@@ -12,7 +12,7 @@ python3.11 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 pytest
-ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples/livekit_console
+ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples
 ```
 
 Node/pnpm are needed for the TypeScript compatibility packages and their CI gates.

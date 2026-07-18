@@ -17,7 +17,12 @@ import pathlib
 import sys
 import time
 
-from _runtime import LIVEKIT_AGENTS_VERSION, NullAudioOutput
+from _runtime import (
+    LIVEKIT_AGENTS_VERSION,
+    NullAudioOutput,
+    synth_utterance_wav,
+    voice_stack,
+)
 from livekit import rtc
 from livekit.agents import (
     Agent,
@@ -28,8 +33,7 @@ from livekit.agents import (
 )
 from livekit.agents.utils.audio import audio_frames_from_file, silence_frame
 from livekit.agents.voice import io as vio
-from livekit.plugins import openai, silero
-from openai import OpenAI
+from livekit.plugins import silero
 from opentelemetry.sdk.trace import TracerProvider
 
 import earshot
@@ -43,16 +47,6 @@ UTTERANCE = "What is the capital of France? Answer in one word."
 OUTPUT_DIR = pathlib.Path(".earshot/livekit_console")
 USER_WAV = OUTPUT_DIR / "user_utterance.wav"
 INCIDENT_PATH = OUTPUT_DIR / "audio_incident.json"
-
-
-def synth_user_utterance(path: pathlib.Path) -> None:
-    """One real OpenAI TTS call to create the user's spoken audio input."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    client = OpenAI()
-    with client.audio.speech.with_streaming_response.create(
-        model="tts-1", voice="echo", input=UTTERANCE, response_format="wav"
-    ) as response:
-        response.stream_to_file(str(path))
 
 
 class WavAudioInput(vio.AudioInput):
@@ -78,14 +72,14 @@ class WavAudioInput(vio.AudioInput):
 
 
 async def build_frames() -> list[rtc.AudioFrame]:
-    synth_user_utterance(USER_WAV)
+    synth_utterance_wav(USER_WAV, UTTERANCE, sample_rate=SR)  # local macOS `say`, no API
     lead = [silence_frame(0.1, SR) for _ in range(5)]  # 0.5s so VAD sees onset
     speech = [frame async for frame in audio_frames_from_file(str(USER_WAV), sample_rate=SR)]
     trail = [silence_frame(0.1, SR) for _ in range(25)]  # 2.5s so EOU fires
     return lead + speech + trail
 
 
-async def main() -> int:
+async def _run() -> int:
     earshot.configure()
     recorder = earshot.session(session_id="headless-full-pipeline")
     provider: TracerProvider | None = None
@@ -105,12 +99,9 @@ async def main() -> int:
         adapter.attach_span_processor(provider)
         frames = await build_frames()
         input_synthesized = True
-        session = AgentSession(
-            vad=silero.VAD.load(),
-            stt=openai.STT(model="whisper-1"),
-            llm=openai.LLM(model="gpt-4o-mini"),
-            tts=openai.TTS(model="tts-1", voice="alloy"),
-        )
+        stt, llm, tts, stack_label = voice_stack()
+        print(f"[driver] provider stack : {stack_label}")
+        session = AgentSession(vad=silero.VAD.load(), stt=stt, llm=llm, tts=tts)
         adapter.attach_session_listeners(session)
 
         @session.on("user_input_transcribed")
@@ -194,7 +185,7 @@ async def main() -> int:
     profile = bundle.profile
 
     print("\n" + "=" * 72)
-    print("REAL FULL-PIPELINE INCIDENT (LiveKit + OpenAI, headless)")
+    print("REAL FULL-PIPELINE INCIDENT (LiveKit, headless, model-agnostic)")
     print("=" * 72)
     print(f"  lifecycle status          : {profile.session.status}")
     print(f"  valid against v1 contract : {report.ok}  (errors={len(report.errors)})")
@@ -251,6 +242,16 @@ async def main() -> int:
         and sink.saw_audio
     )
     return 0 if succeeded else 1
+
+
+async def main() -> int:
+    # Plugins that use aiohttp (e.g. Groq TTS) need LiveKit's http context when
+    # run outside the agent worker. Open it once for the whole headless run so the
+    # driver stays provider-agnostic instead of special-casing one vendor.
+    from livekit.agents.utils import http_context
+
+    async with http_context.open():
+        return await _run()
 
 
 if __name__ == "__main__":

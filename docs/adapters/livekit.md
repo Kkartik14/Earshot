@@ -37,6 +37,35 @@ With a metrics-only listener, the normalizer maps callback objects to these fact
 so Earshot records them as `delta` measurements. `idle_time` is an `instant`
 measurement. Repeated turn-correlated delta windows are summed by analysis and cite
 every contributing quality-sample ID; instant values are never summed.
+Per-request usage, audio, session-duration, character, interruption, and EOT request
+counts are also deltas. Repeated requests therefore sum with every request's
+evidence; TTFT/TTFB and detector latency values remain instantaneous measurements.
+LLM `prompt_tokens`/`completion_tokens` and realtime-model `input_tokens`/
+`output_tokens` use the canonical `gen_ai.usage.*` namespace. STT and TTS token
+counts remain stage-specific under `livekit.stt.*` and `livekit.tts.*`; their audio
+durations are likewise separate, and realtime `session_duration` is retained as
+`livekit.realtime.session_duration`. Earshot never combines STT input usage with TTS
+output usage merely because LiveKit uses the same source field names.
+Realtime `input_token_details`/`output_token_details` retain audio, text, and image
+counts under `gen_ai.usage.*`. The nested cached-input total and cached modality
+breakdown are retained too. These per-response counters are deltas and accept only
+I-JSON integers; invalid nested values are omitted independently rather than
+discarding the rest of the metric.
+
+STT, TTS, and realtime `acquire_time` map to stage-specific
+`livekit.<stage>.connection_acquire_time` instant measurements. LiveKit 1.6 reports
+standalone STT/realtime connection acquisition using the ordinary metric class with
+an empty `request_id` and zero usage. Earshot retains that callback as a quality
+point only: it does not create a request operation, zero-valued usage deltas, or a
+false `no_audio_token` coverage fact. A zero `acquire_time` sentinel is omitted while
+the measured `connection_reused` decision remains available. This connection-only
+callback remains owned by the metrics listener even when native spans are enabled
+because it has no owning request span.
+
+Provider counters are accepted only as non-negative I-JSON integers (maximum
+`9007199254740991`). Booleans, fractional values, negatives, and larger integers are
+omitted from operation attributes and quality samples. An invalid
+`num_interruptions` value also cannot author an interruption event.
 LiveKit Agents 1.6 `VADMetrics` does not expose a request, speech, or turn ID, so
 real callback windows normally remain session-level
 `unassigned_provider_measurements`. Earshot preserves every raw delta window but
@@ -91,6 +120,16 @@ stages. Nested node/request/attempt spans keep their native name in
 `earshot.framework.operation.name`; literal operation counts are not used as
 cross-runtime equivalence. Session listeners use current 1.6.5 event types
 `overlapping_speech` and `agent_false_interruption`.
+
+LiveKit 1.6 creates each `InterruptionMetrics` callback from an
+`OverlappingSpeechEvent`, but gives the two surfaces no shared request/speech ID and
+stamps the metric later with a separate wall-clock read. When overlap listeners are
+attached, `overlapping_speech` therefore exclusively owns interruption point facts;
+`InterruptionMetrics` still owns its detector operation and aggregate delta quality.
+Earshot does not use a lossy timestamp window or duration fingerprint, so two nearby
+interruptions with identical detector values remain two events. Interruption
+durations must be finite and non-negative, probability must be within `[0, 1]`, and
+request counts must be non-negative I-JSON integers. Invalid fields are omitted.
 
 Current `ChatMessage.metrics` is retained without message content. A ChatMessage item
 ID is not a turn ID; only explicit `turn_id`/`speech_id` correlates it. An interrupted

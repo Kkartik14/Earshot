@@ -18,11 +18,14 @@ Framework extras are deliberately optional:
 
 ```bash
 pip install -e '.[pipecat]'
+pip install -e '.[pipecat-groq]'
 pip install -e '.[livekit]'
 pip install -e '.[otel]'
 ```
 
 Importing `earshot` must work without either runtime installed.
+The provider-neutral `pipecat` extra installs tracing only. The `pipecat-groq` extra
+adds the Groq service dependency used by the checked-in real STT, LLM, and TTS driver.
 
 Editable installs use the repository path, but built/published package metadata uses
 the collision-free distribution name `earshot-observability`. See
@@ -58,7 +61,7 @@ for every plan scenario. The fixture test verifies both validity and required si
 ```bash
 pytest
 pytest --cov=earshot --cov-report=term-missing
-ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples/livekit_console
+ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples
 pnpm test
 pnpm typecheck
 pnpm format:check
@@ -97,6 +100,19 @@ earshot list --data-dir .earshot
 earshot show <bundle-id> --data-dir .earshot --format json
 earshot purge <bundle-id> --data-dir .earshot
 ```
+
+The roomless Pipecat smoke driver uses macOS `say` for its local microphone-side input
+and Groq for STT, LLM, and TTS. Usage may be billed or rate-limited according to the
+current Groq plan:
+
+```bash
+set -a && . ./.env && set +a
+python examples/pipecat_headless/drive.py
+```
+
+It exits successfully only after a valid completed incident contains real STT, LLM,
+and TTS operations plus TTS audio accepted by the discard output transport. This is
+server-side output evidence; client render remains explicitly unobserved.
 
 ## Add an adapter
 

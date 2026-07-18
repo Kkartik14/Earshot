@@ -158,9 +158,9 @@ def test_pipeline_delay_fault_localizes_named_stage_and_output_boundaries(
         assert operation.started_at.monotonic_time_nano is not None
         assert operation.ended_at is not None
         assert operation.ended_at.monotonic_time_nano is not None
-        durations[operation.operation_name] = int(
-            operation.ended_at.monotonic_time_nano
-        ) - int(operation.started_at.monotonic_time_nano)
+        durations[operation.operation_name] = int(operation.ended_at.monotonic_time_nano) - int(
+            operation.started_at.monotonic_time_nano
+        )
     assert max(durations, key=durations.__getitem__) == expected_bottleneck
     boundary_names = [
         "earshot.response.first_audio_generated",
@@ -188,9 +188,7 @@ def test_tool_retry_fault_links_attempt_and_downstream_resume() -> None:
     assert retry.ended_at is not None
     assert retry.ended_at.monotonic_time_nano is not None
     assert downstream.started_at.monotonic_time_nano is not None
-    assert int(downstream.started_at.monotonic_time_nano) > int(
-        retry.ended_at.monotonic_time_nano
-    )
+    assert int(downstream.started_at.monotonic_time_nano) > int(retry.ended_at.monotonic_time_nano)
 
 
 def test_webrtc_fault_has_direct_loss_jitter_rtt_stats_provenance() -> None:
@@ -217,9 +215,7 @@ def test_websocket_fault_preserves_duplicate_and_out_of_order_identity_links() -
 
 def test_device_fault_keeps_capture_render_and_permission_absence_explicit() -> None:
     bundle = _fault_bundle("device_unavailable")
-    coverage = {
-        item.signal: (item.availability, item.reason) for item in bundle.profile.coverage
-    }
+    coverage = {item.signal: (item.availability, item.reason) for item in bundle.profile.coverage}
     assert coverage == {
         "device.microphone": ("not_observed", "permission_denied"),
         "capture": ("not_observed", "device_unavailable"),

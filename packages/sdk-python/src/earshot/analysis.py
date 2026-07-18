@@ -14,6 +14,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from .contract import (
+    UINT64_MAX,
     DerivedAnalysis,
     Diagnosis,
     Event,
@@ -24,9 +25,10 @@ from .contract import (
 )
 
 ANALYZER_NAME = "earshot.deterministic"
-# Delta-window aggregation changed the deterministic projection. Bump the cache
-# identity so stores never return a pre-aggregation result for the same artifact.
-ANALYZER_VERSION = "1.0.1"
+# Provider-stage latency aliases changed the deterministic projection. Bump the
+# cache identity so stores never return the older runtime-specific result.
+ANALYZER_VERSION = "1.0.3"
+_IJSON_INTEGER_MAX = 9_007_199_254_740_991
 
 
 @dataclass(frozen=True)
@@ -156,19 +158,29 @@ def _operation_end_event(operation: Operation, event_name: str) -> Event | None:
 
 
 def _shift_time_point(point: TimePoint, seconds: object) -> TimePoint | None:
-    if (
-        not isinstance(seconds, (int, float))
-        or isinstance(seconds, bool)
-        or not math.isfinite(float(seconds))
-        or float(seconds) < 0
-    ):
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
         return None
-    delta = round(float(seconds) * 1_000_000_000)
+    try:
+        seconds_value = float(seconds)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(seconds_value) or seconds_value < 0:
+        return None
+    scaled = seconds_value * 1_000_000_000
+    if not math.isfinite(scaled) or scaled > UINT64_MAX:
+        return None
+    delta = round(scaled)
     update: dict[str, str] = {}
     if point.source_time_unix_nano is not None:
-        update["source_time_unix_nano"] = str(int(point.source_time_unix_nano) + delta)
+        shifted = int(point.source_time_unix_nano) + delta
+        if shifted > UINT64_MAX:
+            return None
+        update["source_time_unix_nano"] = str(shifted)
     if point.monotonic_time_nano is not None:
-        update["monotonic_time_nano"] = str(int(point.monotonic_time_nano) + delta)
+        shifted = int(point.monotonic_time_nano) + delta
+        if shifted > UINT64_MAX:
+            return None
+        update["monotonic_time_nano"] = str(shifted)
     if not update:
         return None
     return point.model_copy(update=update)
@@ -206,18 +218,23 @@ def _first_provider_latency_event(
 
 
 def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[str, object]]:
-    grouped: dict[str, list[tuple[str, float, str, str, str]]] = defaultdict(list)
+    grouped: dict[str, list[tuple[str, int | float, str, str, str]]] = defaultdict(list)
     for sample in sorted(samples, key=lambda item: item.sample_id):
         for measurement in sample.measurements:
             if not isinstance(measurement.value, (int, float)) or isinstance(
                 measurement.value, bool
             ):
                 continue
-            value = float(measurement.value)
-            if not math.isfinite(value):
+            value = measurement.value
+            if isinstance(value, int):
+                if abs(value) > _IJSON_INTEGER_MAX:
+                    continue
+            elif not math.isfinite(value):
                 continue
             if measurement.unit == "s":
                 value *= 1_000
+                if isinstance(value, float) and not math.isfinite(value):
+                    continue
                 unit = "ms"
             else:
                 unit = measurement.unit
@@ -257,10 +274,23 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
                 confidences,
                 key=lambda item: (confidence_rank.get(item, len(confidence_rank)), item),
             )
-            try:
-                total = math.fsum(entry[1] for entry in entries)
-            except OverflowError:
-                total = None
+            values = [entry[1] for entry in entries]
+            if all(isinstance(value, int) for value in values):
+                total: int | float | None = sum(values)
+                if abs(total) > _IJSON_INTEGER_MAX:
+                    projected[name] = {
+                        "availability": "unavailable",
+                        "basis": "provider_delta_sum",
+                        "confidence": "unavailable",
+                        "limitation": "delta_sum_outside_i_json_domain",
+                        "evidence_ids": evidence_ids,
+                    }
+                    continue
+            else:
+                try:
+                    total = math.fsum(values)
+                except OverflowError:
+                    total = None
             if total is None or not math.isfinite(total):
                 projected[name] = {
                     "availability": "unavailable",
@@ -293,6 +323,15 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
         # Retain the existing deterministic first-sample projection until the
         # contract defines a selection policy for those aggregation modes.
         sample_id, value, unit, _aggregation, confidence = entries[0]
+        if isinstance(value, int) and abs(value) > _IJSON_INTEGER_MAX:
+            projected[name] = {
+                "availability": "unavailable",
+                "basis": "provider_measurement",
+                "confidence": "unavailable",
+                "limitation": "measurement_outside_i_json_domain",
+                "evidence_ids": [sample_id],
+            }
+            continue
         projected[name] = {
             "availability": "available",
             "basis": "provider_direct",
@@ -419,6 +458,63 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
     }
 
 
+def _provider_stage_latency_fallback(
+    current: dict[str, object],
+    provider_measurements: dict[str, dict[str, object]],
+    measurement_names: Sequence[str],
+    *,
+    target: Event | None,
+    target_is_provider_projection: bool,
+    operations: Sequence[Operation],
+    attribute_names: Sequence[str],
+) -> dict[str, object]:
+    """Use a measured stage duration when turn-relative timing cannot be derived."""
+
+    if current.get("availability") not in {"not_observed", "inconsistent"}:
+        return current
+    direct = next(
+        (
+            provider_measurements[name]
+            for name in measurement_names
+            if provider_measurements.get(name, {}).get("availability") == "available"
+        ),
+        None,
+    )
+    if direct is not None:
+        return {
+            **direct,
+            "basis": "provider_stage_direct",
+            "limitation": "stage_local_excludes_turn_scheduling",
+        }
+
+    # Native span attributes can be turn-owned even when a separate framework
+    # metrics callback has no safe turn identifier. Only reuse a duration that
+    # authored this analyzer's synthetic point; never reinterpret an explicit
+    # source event that happens to precede the turn anchor.
+    if target is None or not target_is_provider_projection:
+        return current
+    operation = next(
+        (item for item in operations if item.operation_id == target.operation_id),
+        None,
+    )
+    if operation is None:
+        return current
+    for attribute_name in attribute_names:
+        raw = operation.attributes.get(attribute_name)
+        if _shift_time_point(operation.started_at, raw) is None:
+            continue
+        return {
+            "availability": "available",
+            "basis": "provider_stage_direct",
+            "confidence": operation.evidence.confidence if operation.evidence else "estimated",
+            "value": float(raw) * 1_000,
+            "unit": "ms",
+            "limitation": "stage_local_excludes_turn_scheduling",
+            "evidence_ids": [operation.operation_id],
+        }
+    return current
+
+
 def _turn_projection(
     turn_id: str,
     operations: Sequence[Operation],
@@ -442,6 +538,7 @@ def _turn_projection(
     # Explicit events are highest fidelity. A provider TTFT/TTFB duration can be
     # projected from operation start, but operation start alone is never treated
     # as first output: that would systematically understate latency.
+    first_token_is_provider_projection = False
     if first_token is None:
         first_token = _first_provider_latency_event(
             operations,
@@ -449,6 +546,8 @@ def _turn_projection(
             "earshot.response.first_token",
             ("lk.response.ttft", "metrics.ttfb"),
         )
+        first_token_is_provider_projection = first_token is not None
+    generated_is_provider_projection = False
     if generated is None:
         generated = _first_provider_latency_event(
             operations,
@@ -456,6 +555,7 @@ def _turn_projection(
             "earshot.response.first_audio_generated",
             ("lk.response.ttfb", "metrics.ttfb"),
         )
+        generated_is_provider_projection = generated is not None
     if sent is None:
         transport = _first_operation(operations, {"transport_send"})
         sent = (
@@ -502,23 +602,40 @@ def _turn_projection(
     )
 
     provider_measurements = _quality_measurements(quality_samples)
-    first_token_latency = _latency_metric(anchor, first_token, "first_token")
-    if first_token_latency["availability"] == "not_observed":
-        direct_llm_ttft = provider_measurements.get("livekit.llm_node_ttft")
-        if direct_llm_ttft is not None:
-            first_token_latency = {
-                **direct_llm_ttft,
-                "basis": "provider_stage_direct",
-                "limitation": "stage_local_excludes_turn_scheduling",
-            }
+    first_token_latency = _provider_stage_latency_fallback(
+        _latency_metric(anchor, first_token, "first_token"),
+        provider_measurements,
+        ("livekit.llm_node_ttft", "pipecat.llm.ttfb"),
+        target=first_token,
+        target_is_provider_projection=first_token_is_provider_projection,
+        operations=operations,
+        attribute_names=("lk.response.ttft", "metrics.ttfb"),
+    )
+    generated_response_latency = _provider_stage_latency_fallback(
+        _latency_metric(anchor, generated, "generated"),
+        provider_measurements,
+        ("livekit.tts_node_ttfb", "pipecat.tts.ttfb"),
+        target=generated,
+        target_is_provider_projection=generated_is_provider_projection,
+        operations=operations,
+        attribute_names=("lk.response.ttfb", "metrics.ttfb"),
+    )
     response_latency = _latency_metric(anchor, response_target, response_basis)
-    if response_latency["availability"] == "not_observed":
-        direct_e2e = provider_measurements.get("livekit.e2e_latency")
-        if direct_e2e is not None:
-            response_latency = {
-                **direct_e2e,
-                "limitation": "server_output_excludes_delivery_and_render",
-            }
+    direct_e2e = provider_measurements.get("livekit.e2e_latency")
+    if direct_e2e is None:
+        direct_e2e = provider_measurements.get("pipecat.turn.user_bot_latency")
+    if (
+        direct_e2e is not None
+        and direct_e2e.get("availability") == "available"
+        and (response_latency["availability"] == "not_observed" or response_basis == "tts_estimate")
+    ):
+        # A native user-stop -> bot-start measurement is stronger than deriving
+        # server output from two separately observed provider points. Delivery
+        # and render evidence still outrank it above.
+        response_latency = {
+            **direct_e2e,
+            "limitation": "server_output_excludes_delivery_and_render",
+        }
 
     return {
         "turn_id": turn_id,
@@ -526,7 +643,7 @@ def _turn_projection(
         "event_ids": sorted(item.event_id for item in events),
         "metrics": {
             "first_token_latency": first_token_latency,
-            "generated_response_latency": _latency_metric(anchor, generated, "generated"),
+            "generated_response_latency": generated_response_latency,
             "sent_response_latency": _latency_metric(anchor, sent, "sent"),
             "received_response_latency": _latency_metric(anchor, received, "received"),
             "render_start_response_latency": _latency_metric(anchor, rendered, "render"),

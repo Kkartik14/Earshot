@@ -492,9 +492,11 @@ def test_pipecat_turn_lifecycle_is_not_endpointing_or_shutdown_barge_in() -> Non
             "started_at": point(1).model_dump(mode="json"),
             "ended_at": point(5).model_dump(mode="json"),
             "attributes": {
+                "conversation.id": "normal-end-frame",
                 "turn.number": 1,
+                "turn.type": "conversation",
+                "turn.duration_seconds": 0.25,
                 "turn.was_interrupted": True,
-                "turn.ended_by_conversation_end": True,
             },
         }
     )
@@ -503,6 +505,334 @@ def test_pipecat_turn_lifecycle_is_not_endpointing_or_shutdown_barge_in() -> Non
     assert bundle.profile.events == ()
     render = next(item for item in bundle.profile.coverage if item.signal == "client.render")
     assert render.reason == "server_cannot_observe_client_render"
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_quality_lift_is_an_allowlist_not_a_namespace_wildcard() -> None:
+    """An unknown numeric attribute must never reappear as a measurement.
+
+    The operation sanitizer governs unknown metadata; recreating it verbatim in a
+    quality sample would bypass that policy entirely.
+    """
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    adapter.consume_span(
+        {
+            "name": "llm",
+            "trace_id": TRACE_ID,
+            "span_id": ROOT_SPAN_ID,
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": {
+                "metrics.ttfb": 0.25,
+                "metrics.processing": 15551234567,
+                "metrics.customer_phone": 15551234567,
+                "gen_ai.usage.input_tokens": 11,
+            },
+        }
+    )
+    bundle = adapter.recorder.close()
+    names = {
+        measurement.name
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    }
+    assert names == {"pipecat.llm.ttfb", "gen_ai.usage.input_tokens"}
+    assert not any("customer_phone" in name for name in names)
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_stage_scoped_ttfb_keeps_native_stage_measurements_distinct() -> None:
+    """Pipecat reports both stages' first-byte latency under `metrics.ttfb`.
+
+    Analysis keys provider measurements by name, so unscoped names would let one
+    stage silently overwrite the other's value and evidence.
+    """
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    for stage, span_id, ttfb in (
+        ("stt", "b" * 16, 0.2),
+        ("llm", ROOT_SPAN_ID, 0.4),
+        ("tts", "a" * 16, 0.1),
+    ):
+        adapter.consume_span(
+            {
+                "name": stage,
+                "trace_id": TRACE_ID,
+                "span_id": span_id,
+                "status": "ok",
+                "started_at": point(1).model_dump(mode="json"),
+                "ended_at": point(2).model_dump(mode="json"),
+                "turn_id": "turn-1",
+                "attributes": {"metrics.ttfb": ttfb},
+            }
+        )
+    bundle = adapter.recorder.close()
+    measured = {
+        measurement.name: measurement.value
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    }
+    assert measured == {
+        "pipecat.stt.ttfb": 0.2,
+        "pipecat.llm.ttfb": 0.4,
+        "pipecat.tts.ttfb": 0.1,
+    }
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_duration_too_large_for_timestamp_math_is_not_lifted() -> None:
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    adapter.consume_span(
+        {
+            "name": "llm",
+            "trace_id": TRACE_ID,
+            "span_id": ROOT_SPAN_ID,
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": {"metrics.ttfb": 1e308},
+        }
+    )
+    bundle = adapter.recorder.close()
+    assert bundle.profile.quality_samples == ()
+    assert validate_incident(bundle).ok
+
+
+@pytest.mark.parametrize(
+    ("stage", "source"),
+    (
+        ("tool", "metrics.ttfb"),
+        ("turn", "metrics.ttfb"),
+        ("stt", "metrics.character_count"),
+        ("llm", "metrics.character_count"),
+    ),
+)
+def test_pipecat_vendor_metrics_are_lifted_only_from_native_emitting_stages(
+    stage: str,
+    source: str,
+) -> None:
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    adapter.consume_span(
+        {
+            "name": stage,
+            "trace_id": TRACE_ID,
+            "span_id": ROOT_SPAN_ID,
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": {source: 1},
+        }
+    )
+    bundle = adapter.recorder.close()
+    assert bundle.profile.quality_samples == ()
+    assert validate_incident(bundle).ok
+
+
+@pytest.mark.parametrize(
+    ("stage", "source", "raw"),
+    (
+        ("llm", "metrics.ttfb", -0.25),
+        ("turn", "turn.user_bot_latency_seconds", -0.25),
+        ("tts", "metrics.character_count", -1),
+        ("tts", "metrics.character_count", 1.5),
+        ("llm", "gen_ai.usage.input_tokens", -1),
+        ("llm", "gen_ai.usage.input_tokens", 1.5),
+    ),
+)
+def test_pipecat_quality_lift_rejects_values_outside_native_metric_domains(
+    stage: str,
+    source: str,
+    raw: int | float,
+) -> None:
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    adapter.consume_span(
+        {
+            "name": stage,
+            "trace_id": TRACE_ID,
+            "span_id": ROOT_SPAN_ID,
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": {source: raw},
+        }
+    )
+    bundle = adapter.recorder.close()
+    assert bundle.profile.quality_samples == ()
+    assert source not in bundle.profile.operations[0].attributes
+    assert validate_incident(bundle).ok
+
+
+@pytest.mark.parametrize(
+    ("stage", "source", "raw"),
+    (
+        ("llm", "gen_ai.usage.input_tokens", 9_007_199_254_740_992),
+        ("tts", "metrics.character_count", 10**1000),
+        ("llm", "metrics.ttfb", 10**1000),
+        ("turn", "turn.user_bot_latency_seconds", 10**1000),
+    ),
+)
+def test_pipecat_oversized_metrics_do_not_leave_partial_adapter_state(
+    stage: str,
+    source: str,
+    raw: int,
+) -> None:
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    span = {
+        "name": stage,
+        "trace_id": TRACE_ID,
+        "span_id": ROOT_SPAN_ID,
+        "status": "ok",
+        "started_at": point(1).model_dump(mode="json"),
+        "ended_at": point(2).model_dump(mode="json"),
+        "turn_id": "turn-1",
+        "attributes": {source: raw},
+    }
+    first = adapter.consume_span(span)
+    second = adapter.consume_span(span)
+    bundle = adapter.recorder.close()
+    assert first == second
+    assert len(bundle.profile.operations) == 1
+    assert bundle.profile.quality_samples == ()
+    assert source not in bundle.profile.operations[0].attributes
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_standard_usage_counters_are_lifted_only_from_llm_spans() -> None:
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    adapter.consume_span(
+        {
+            "name": "tts",
+            "trace_id": TRACE_ID,
+            "span_id": ROOT_SPAN_ID,
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": {
+                "gen_ai.usage.input_tokens": 11,
+                "gen_ai.usage.output_tokens": 7,
+                "gen_ai.usage.cache_read.input_tokens": 3,
+            },
+        }
+    )
+    bundle = adapter.recorder.close()
+    assert bundle.profile.quality_samples == ()
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_lifts_every_native_1_5_llm_usage_counter() -> None:
+    expected = {
+        "gen_ai.usage.input_tokens": 11,
+        "gen_ai.usage.output_tokens": 7,
+        "gen_ai.usage.cache_read.input_tokens": 3,
+        "gen_ai.usage.cache_creation.input_tokens": 2,
+        "gen_ai.usage.reasoning_tokens": 5,
+    }
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    adapter.consume_span(
+        {
+            "name": "llm",
+            "trace_id": TRACE_ID,
+            "span_id": ROOT_SPAN_ID,
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": expected,
+        }
+    )
+    bundle = adapter.recorder.close()
+    measured = {
+        measurement.name: measurement.value
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    }
+    assert measured == expected
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_metric_samples_preserve_exact_per_measurement_provenance() -> None:
+    adapter = PipecatAdapter(_pipecat_recorder(), framework_version="1.5.0")
+    adapter.consume_span(
+        {
+            "name": "llm",
+            "trace_id": TRACE_ID,
+            "span_id": ROOT_SPAN_ID,
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": {
+                "metrics.ttfb": 0.25,
+                "gen_ai.usage.input_tokens": 11,
+                "gen_ai.usage.output_tokens": 7,
+                "gen_ai.usage.cache_read.input_tokens": 3,
+                "gen_ai.usage.cache_creation.input_tokens": 2,
+                "gen_ai.usage.reasoning_tokens": 5,
+            },
+        }
+    )
+    adapter.consume_span(
+        {
+            "name": "tts",
+            "trace_id": TRACE_ID,
+            "span_id": "b" * 16,
+            "status": "ok",
+            "started_at": point(2).model_dump(mode="json"),
+            "ended_at": point(3).model_dump(mode="json"),
+            "turn_id": "turn-1",
+            "attributes": {"metrics.character_count": 17},
+        }
+    )
+    bundle = adapter.recorder.close()
+    samples = bundle.profile.quality_samples
+    assert len(samples) == 7
+    assert all(len(sample.measurements) == 1 for sample in samples)
+    assert len({sample.sample_id for sample in samples}) == 7
+    assert {
+        (
+            sample.measurements[0].name,
+            sample.evidence.attributes["earshot.framework.metric.name"],
+        )
+        for sample in samples
+        if sample.evidence is not None
+    } == {
+        ("pipecat.llm.ttfb", "metrics.ttfb"),
+        ("pipecat.tts.character_count", "metrics.character_count"),
+        ("gen_ai.usage.input_tokens", "gen_ai.usage.input_tokens"),
+        ("gen_ai.usage.output_tokens", "gen_ai.usage.output_tokens"),
+        (
+            "gen_ai.usage.cache_read.input_tokens",
+            "gen_ai.usage.cache_read.input_tokens",
+        ),
+        (
+            "gen_ai.usage.cache_creation.input_tokens",
+            "gen_ai.usage.cache_creation.input_tokens",
+        ),
+        ("gen_ai.usage.reasoning_tokens", "gen_ai.usage.reasoning_tokens"),
+    }
+    assert {sample.evidence.source_field for sample in samples if sample.evidence is not None} == {
+        "metrics.ttfb",
+        "metrics.character_count",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.cache_creation.input_tokens",
+        "gen_ai.usage.reasoning_tokens",
+    }
+    aggregations = {
+        sample.measurements[0].name: sample.measurements[0].aggregation for sample in samples
+    }
+    assert aggregations["pipecat.llm.ttfb"] == "instant"
+    assert all(
+        aggregation == "delta"
+        for name, aggregation in aggregations.items()
+        if name != "pipecat.llm.ttfb"
+    )
     assert validate_incident(bundle).ok
 
 
@@ -693,6 +1023,75 @@ def test_pipecat_native_objects_preserve_resource_scope_links_and_integer_ids() 
     assert validate_incident(bundle).ok
 
 
+def test_pipecat_span_outputs_retain_one_correlated_provenance_chain() -> None:
+    recorder = _pipecat_recorder()
+    adapter = PipecatAdapter(recorder, framework_version="native")
+    span = SimpleNamespace(
+        name="llm",
+        context=SimpleNamespace(
+            trace_id=int("2" * 32, 16),
+            span_id=int("3" * 16, 16),
+        ),
+        parent=None,
+        parent_scope="external",
+        status="ok",
+        start_time=1_800_000_000_000_000_000,
+        end_time=1_800_000_000_100_000_000,
+        turn_id="correlated-turn",
+        attributes={"metrics.ttfb": 0.1},
+        resource=SimpleNamespace(
+            attributes={"service.name": "voice-app"},
+            schema_url="https://opentelemetry.io/schemas/1.29.0",
+        ),
+        instrumentation_scope=SimpleNamespace(
+            name="pipecat.telemetry",
+            version="1.5.0",
+            attributes={"earshot.framework.name": "pipecat"},
+            schema_url="https://opentelemetry.io/schemas/1.30.0",
+        ),
+        links=(),
+        events=(
+            SimpleNamespace(
+                name="provider_event",
+                timestamp=1_800_000_000_050_000_000,
+                attributes={},
+            ),
+        ),
+    )
+    adapter.consume_span(span)
+    bundle = recorder.close()
+    operation = bundle.profile.operations[0]
+    event = bundle.profile.events[0]
+    sample = bundle.profile.quality_samples[0]
+
+    assert event.operation_id == operation.operation_id
+    assert event.trace_id == operation.trace_id
+    assert event.span_id == operation.span_id
+    assert event.turn_id == operation.turn_id
+    assert sample.attributes["earshot.operation.id"] == operation.operation_id
+    assert sample.attributes["earshot.turn.id"] == operation.turn_id
+    owner = next(
+        item
+        for item in bundle.profile.operations
+        if item.operation_id == sample.attributes["earshot.operation.id"]
+    )
+    assert (owner.trace_id, owner.span_id, owner.turn_id) == (
+        event.trace_id,
+        event.span_id,
+        event.turn_id,
+    )
+    for emitted in (event, sample):
+        assert emitted.resource == operation.resource
+        assert emitted.resource_schema_url == operation.resource_schema_url
+        assert emitted.instrumentation_scope_name == operation.instrumentation_scope_name
+        assert emitted.instrumentation_scope_version == operation.instrumentation_scope_version
+        assert (
+            emitted.instrumentation_scope_attributes == operation.instrumentation_scope_attributes
+        )
+        assert emitted.schema_url == operation.schema_url
+    assert validate_incident(bundle).ok
+
+
 def test_pipecat_source_controlled_scope_link_and_schema_labels_cannot_leak() -> None:
     adapter = PipecatAdapter(_pipecat_recorder())
     adapter.consume_span(
@@ -750,7 +1149,10 @@ def test_pipecat_source_controlled_scope_link_and_schema_labels_cannot_leak() ->
     assert validate_incident(bundle).ok
 
 
-def test_pipecat_current_otel_keys_preserve_turn_ttfb_and_interruption() -> None:
+@pytest.mark.parametrize("ended_by_conversation_end", [False, True])
+def test_pipecat_turn_attributes_do_not_infer_an_accepted_interruption(
+    ended_by_conversation_end: bool,
+) -> None:
     recorder = _pipecat_recorder()
     adapter = PipecatAdapter(recorder, framework_version="current")
     adapter.consume_span(
@@ -765,6 +1167,8 @@ def test_pipecat_current_otel_keys_preserve_turn_ttfb_and_interruption() -> None
                 "conversation.id": "conversation-current",
                 "turn.number": 7,
                 "turn.was_interrupted": True,
+                "turn.ended_by_conversation_end": ended_by_conversation_end,
+                "turn.user_bot_latency_seconds": 0.375,
                 "metrics.ttfb": 0.125,
             },
         }
@@ -775,8 +1179,135 @@ def test_pipecat_current_otel_keys_preserve_turn_ttfb_and_interruption() -> None
     assert operation.turn_id == "7"
     assert operation.attributes["conversation.id"] == "conversation-current"
     assert operation.attributes["metrics.ttfb"] == 0.125
-    assert bundle.profile.events[0].event_name == "earshot.interruption.accepted"
-    assert bundle.profile.events[0].turn_id == "7"
+    assert operation.attributes["turn.was_interrupted"] is True
+    assert operation.attributes["turn.ended_by_conversation_end"] is ended_by_conversation_end
+    assert operation.attributes["turn.user_bot_latency_seconds"] == 0.375
+    latency_sample = next(
+        sample
+        for sample in bundle.profile.quality_samples
+        if sample.measurements[0].name == "pipecat.turn.user_bot_latency"
+    )
+    assert latency_sample.measurements[0].value == 0.375
+    assert latency_sample.measurements[0].unit == "s"
+    assert latency_sample.measurements[0].aggregation == "instant"
+    assert latency_sample.evidence is not None
+    assert latency_sample.evidence.source_field == "turn.user_bot_latency_seconds"
+    assert bundle.profile.events == ()
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_native_interruption_observer_requires_active_bot_playout() -> None:
+    pytest.importorskip("pipecat")
+    from pipecat.frames.frames import (
+        BotStartedSpeakingFrame,
+        BotStoppedSpeakingFrame,
+        InterruptionFrame,
+        StartFrame,
+        UserStartedSpeakingFrame,
+    )
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+
+    clock = ManualClock(wall=1_800_000_000_000_000_000, monotonic=1_000)
+    recorder = IncidentRecorder(
+        config=RecorderConfig(clock_domain_id="server-clock"),
+        clock=clock,
+    )
+    adapter = PipecatAdapter(recorder, framework_version="1.5.0")
+    observer = adapter.create_observer()
+    # Pipecat's pipeline clock starts independently. Its small frame timestamps
+    # must not be mislabeled as coordinates in Earshot's recorder clock.
+    clock.advance(5_000_000_000)
+    pipeline_started = StartFrame()
+    initial_user_started = UserStartedSpeakingFrame()
+    initial_turn = InterruptionFrame()
+    first_bot_started = BotStartedSpeakingFrame()
+    second_bot_started = BotStartedSpeakingFrame()
+    first_bot_stopped = BotStoppedSpeakingFrame()
+    interrupting_user_started = UserStartedSpeakingFrame()
+    downstream = InterruptionFrame()
+    upstream = InterruptionFrame()
+    downstream.broadcast_sibling_id = upstream.id
+    upstream.broadcast_sibling_id = downstream.id
+    second_bot_stopped = BotStoppedSpeakingFrame()
+    after_playout = InterruptionFrame()
+    source = SimpleNamespace(name="source")
+    destination = SimpleNamespace(name="destination")
+
+    async def observe() -> None:
+        for frame, direction, timestamp in (
+            (pipeline_started, FrameDirection.DOWNSTREAM, 80),
+            # Pipecat broadcasts this on an ordinary first user turn. With no
+            # active bot playout it is not an accepted barge-in.
+            (initial_user_started, FrameDirection.DOWNSTREAM, 85),
+            (initial_turn, FrameDirection.DOWNSTREAM, 90),
+            # Independent Pipecat media senders can overlap. Stopping one must
+            # not clear the active state of the other.
+            (first_bot_started, FrameDirection.UPSTREAM, 94),
+            (second_bot_started, FrameDirection.UPSTREAM, 95),
+            (first_bot_stopped, FrameDirection.UPSTREAM, 96),
+            (interrupting_user_started, FrameDirection.DOWNSTREAM, 98),
+            (downstream, FrameDirection.DOWNSTREAM, 100),
+            (downstream, FrameDirection.DOWNSTREAM, 101),
+            (upstream, FrameDirection.UPSTREAM, 102),
+            (second_bot_stopped, FrameDirection.UPSTREAM, 110),
+            (after_playout, FrameDirection.DOWNSTREAM, 120),
+        ):
+            await observer.on_push_frame(
+                FramePushed(
+                    source=source,
+                    destination=destination,
+                    frame=frame,
+                    direction=direction,
+                    timestamp=timestamp,
+                )
+            )
+
+    asyncio.run(observe())
+    bundle = recorder.close()
+    assert len(bundle.profile.events) == 1
+    event = bundle.profile.events[0]
+    assert event.event_name == "earshot.interruption.accepted"
+    assert event.turn_id == "1"
+    assert event.time.monotonic_time_nano == "5000000000"
+    assert event.attributes == {"earshot.metric.interruption.accepted": True}
+    assert event.evidence is not None
+    assert event.evidence.source == "pipecat"
+    assert event.evidence.method == "native_frame_overlap_observer"
+    assert event.evidence.confidence == "inferred"
+    assert event.evidence.source_field == "InterruptionFrame+BotStartedSpeakingFrame"
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_interruption_frame_is_classified_on_first_observation() -> None:
+    pytest.importorskip("pipecat")
+    from pipecat.frames.frames import BotStartedSpeakingFrame, InterruptionFrame
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+
+    recorder = _pipecat_recorder()
+    adapter = PipecatAdapter(recorder, framework_version="1.5.0")
+    observer = adapter.create_observer()
+    interruption = InterruptionFrame()
+    bot_started = BotStartedSpeakingFrame()
+    source = SimpleNamespace(name="source")
+    destination = SimpleNamespace(name="destination")
+
+    async def observe() -> None:
+        for frame, timestamp in ((interruption, 90), (bot_started, 95), (interruption, 100)):
+            await observer.on_push_frame(
+                FramePushed(
+                    source=source,
+                    destination=destination,
+                    frame=frame,
+                    direction=FrameDirection.DOWNSTREAM,
+                    timestamp=timestamp,
+                )
+            )
+
+    asyncio.run(observe())
+    bundle = recorder.close()
+    assert bundle.profile.events == ()
     assert validate_incident(bundle).ok
 
 

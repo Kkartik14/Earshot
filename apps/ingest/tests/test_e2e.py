@@ -153,17 +153,18 @@ def _semantic_projection(bundle) -> dict[str, object]:
                 if operations[operation_id].operation_name in {"llm", "tts"}
             }
         ),
-        "latency_bases": {
-            "first_token": turn["metrics"]["first_token_latency"]["basis"],
-            "generated": turn["metrics"]["generated_response_latency"]["basis"],
-            "response": turn["metrics"]["response_latency"]["basis"],
+        "latency_availability": {
+            "first_token": turn["metrics"]["first_token_latency"]["availability"],
+            "generated": turn["metrics"]["generated_response_latency"]["availability"],
+            "response": turn["metrics"]["response_latency"]["availability"],
         },
+        "response_basis": turn["metrics"]["response_latency"]["basis"],
     }
 
 
 def test_pipecat_and_livekit_goldens_normalize_to_equivalent_voice_semantics() -> None:
     golden = ROOT / "fixtures" / "golden"
-    pipecat_values = json.loads((golden / "pipecat_spans.json").read_text())
+    pipecat_fixture = json.loads((golden / "pipecat_spans.json").read_text())
     livekit_values = json.loads((golden / "livekit_metrics.json").read_text())
     expected = json.loads((golden / "expected_semantics.json").read_text())
 
@@ -172,10 +173,17 @@ def test_pipecat_and_livekit_goldens_normalize_to_equivalent_voice_semantics() -
         config=RecorderConfig(clock_domain_id="server-clock"),
     )
     pipecat = PipecatAdapter(pipecat_recorder, framework_version="golden")
-    for span in pipecat_values:
+    for span in pipecat_fixture["spans"]:
         # Fixture session ownership is supplied by the recorder; clocks and OTel
         # identity remain the framework's original facts.
         pipecat.consume_span(span)
+    for observed in pipecat_fixture["interruption_frames"]:
+        pipecat.consume_interruption_frame(
+            observed["frame"],
+            observed_at=TimePoint.model_validate(observed["observed_at"]),
+            bot_was_speaking=observed["bot_was_speaking"],
+            interrupted_turn_id=observed["interrupted_turn_id"],
+        )
     pipecat_bundle = pipecat_recorder.close()
 
     livekit_recorder = IncidentRecorder(
@@ -188,6 +196,8 @@ def test_pipecat_and_livekit_goldens_normalize_to_equivalent_voice_semantics() -
             livekit.consume_metric(
                 item["metric"], observed_at=TimePoint.model_validate(item["observed_at"])
             )
+        elif "conversation_item" in item:
+            livekit.consume_conversation_item(item["conversation_item"])
         else:
             livekit.consume_interruption_event(item["event"])
     livekit_bundle = livekit_recorder.close()
@@ -197,6 +207,28 @@ def test_pipecat_and_livekit_goldens_normalize_to_equivalent_voice_semantics() -
     assert _semantic_projection(pipecat_bundle) == expected
     assert _semantic_projection(livekit_bundle) == expected
     assert _semantic_projection(pipecat_bundle) == _semantic_projection(livekit_bundle)
+
+    pipecat_analysis = analyze_incident(
+        pipecat_bundle,
+        input_sha256="a" * 64,
+        generated_at_unix_nano="1800000005000000000",
+    )
+    turn_interruptions = pipecat_analysis.projections.turns[0].interruptions
+    assert len(turn_interruptions) == 1
+    assert turn_interruptions[0].event_name == "earshot.interruption.accepted"
+    assert turn_interruptions[0].evidence_ids == (pipecat_bundle.profile.events[0].event_id,)
+    interruption_event = pipecat_bundle.profile.events[0]
+    pipecat_tts = next(
+        operation
+        for operation in pipecat_bundle.profile.operations
+        if operation.operation_name == "tts"
+    )
+    assert int(pipecat_tts.started_at.monotonic_time_nano or "0") <= int(
+        interruption_event.time.monotonic_time_nano or "0"
+    )
+    assert int(interruption_event.time.monotonic_time_nano or "0") <= int(
+        pipecat_tts.ended_at.monotonic_time_nano or "0"
+    )
 
     pipecat_turn = next(
         operation
@@ -223,14 +255,41 @@ def test_pipecat_and_livekit_goldens_normalize_to_equivalent_voice_semantics() -
         input_sha256="a" * 64,
         generated_at_unix_nano="1800000002000000000",
     )
-    assert (
-        pipecat_analysis.projections["turns"][0]["metrics"]["first_token_latency"]["availability"]
-        == "not_observed"
+    provider_measurements = pipecat_analysis.projections.turns[0].metrics.provider_measurements
+    ttfb_sample_ids = {
+        measurement.name: sample.sample_id
+        for sample in pipecat_bundle.profile.quality_samples
+        for measurement in sample.measurements
+        if measurement.name in {"pipecat.llm.ttfb", "pipecat.tts.ttfb"}
+    }
+    assert len(set(ttfb_sample_ids.values())) == 2
+    assert provider_measurements["pipecat.llm.ttfb"].value == 100.0
+    assert provider_measurements["pipecat.llm.ttfb"].unit == "ms"
+    assert provider_measurements["pipecat.llm.ttfb"].evidence_ids == (
+        ttfb_sample_ids["pipecat.llm.ttfb"],
     )
-    assert (
-        livekit_analysis.projections["turns"][0]["metrics"]["first_token_latency"]["availability"]
-        == "available"
+    assert provider_measurements["pipecat.tts.ttfb"].value == 50.0
+    assert provider_measurements["pipecat.tts.ttfb"].unit == "ms"
+    assert provider_measurements["pipecat.tts.ttfb"].evidence_ids == (
+        ttfb_sample_ids["pipecat.tts.ttfb"],
     )
+    assert provider_measurements["pipecat.turn.user_bot_latency"].value == 700.0
+    assert provider_measurements["pipecat.turn.user_bot_latency"].unit == "ms"
+    pipecat_response = pipecat_analysis.projections.turns[0].metrics.response_latency
+    livekit_response = livekit_analysis.projections.turns[0].metrics.response_latency
+    assert pipecat_response.value == livekit_response.value == 700.0
+    assert pipecat_response.basis == livekit_response.basis == "provider_direct"
+    assert (
+        pipecat_response.limitation
+        == livekit_response.limitation
+        == "server_output_excludes_delivery_and_render"
+    )
+    pipecat_first_token = pipecat_analysis.projections.turns[0].metrics.first_token_latency
+    livekit_first_token = livekit_analysis.projections.turns[0].metrics.first_token_latency
+    assert pipecat_first_token.availability == livekit_first_token.availability == "available"
+    assert pipecat_first_token.basis == "provider_stage_direct"
+    assert pipecat_first_token.limitation == "stage_local_excludes_turn_scheduling"
+    assert livekit_first_token.basis == "first_token"
     assert (
         next(
             operation

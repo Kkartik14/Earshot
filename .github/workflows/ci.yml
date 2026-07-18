@@ -23,16 +23,19 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install backend and pinned framework lanes
-        run: python -m pip install -e '.[dev,pipecat,livekit]'
+        run: python -m pip install -e '.[dev,pipecat-groq,livekit]'
+      - name: Smoke-import headless Pipecat providers
+        run: >-
+          python -c "from pipecat.services.groq.llm import GroqLLMService;
+          from pipecat.services.groq.stt import GroqSTTService;
+          from pipecat.services.groq.tts import GroqTTSService"
       - name: Check generated contracts
         run: |
           python scripts/generate_contract.py --check
           python scripts/generate_openapi.py --check
           python scripts/check_semconv.py
       - name: Lint
-        run: >-
-          ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts
-          examples/livekit_console
+        run: ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples
       - name: Test with branch coverage
         run: pytest --cov=earshot --cov-report=term-missing -q
       - name: Build installable wheel

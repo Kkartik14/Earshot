@@ -183,6 +183,8 @@ _SAFE_EXACT = {
     "lk.interrupted",
     "lk.transcript_confidence",
     "lk.transcription_delay",
+    "turn.ended_by_conversation_end",
+    "turn.user_bot_latency_seconds",
     "turn.was_interrupted",
     # Current Pipecat OTel correlation and latency attributes.
     "conversation.id",
@@ -216,6 +218,7 @@ _DIGEST_METADATA_KEYS = frozenset(
 _BOOLEAN_METADATA_KEYS = frozenset(
     {
         "lk.interrupted",
+        "turn.ended_by_conversation_end",
         "turn.was_interrupted",
         "earshot.metric.connection.reused",
         "earshot.metric.interruption.accepted",
@@ -231,6 +234,9 @@ _INTEGER_METADATA_KEYS = frozenset(
         "metrics.character_count",
         "gen_ai.usage.input_tokens",
         "gen_ai.usage.output_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.cache_creation.input_tokens",
+        "gen_ai.usage.reasoning_tokens",
     }
 )
 _NUMERIC_METADATA_KEYS = frozenset(
@@ -244,6 +250,7 @@ _NUMERIC_METADATA_KEYS = frozenset(
         "lk.transcript_confidence",
         "lk.transcription_delay",
         "turn.duration_seconds",
+        "turn.user_bot_latency_seconds",
         "metrics.ttfb",
     }
 )
@@ -332,6 +339,10 @@ SAFE_EVENT_NAMES = frozenset(
 _SAFE_SOURCE_LABELS = frozenset(
     {
         "LiveKit span attributes",
+        "InterruptionFrame",
+        "InterruptionFrame+BotStartedSpeakingFrame",
+        "avatar_metrics",
+        "avatarmetrics",
         "lk.llm_metrics",
         "lk.realtime_model_metrics",
         "lk.tts_metrics",
@@ -349,14 +360,25 @@ _SAFE_SOURCE_LABELS = frozenset(
         "function_tool",
         "llm",
         "llm generation",
+        "llm_metrics",
+        "llmmetrics",
         "llm_node",
         "llm_request",
         "llm_request_run",
         "llm_tool_call",
         "llm_tool_result",
+        "gen_ai.usage.cache_creation.input_tokens",
+        "gen_ai.usage.cache_read.input_tokens",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.reasoning_tokens",
+        "metrics.character_count",
         "metrics.ttfb",
+        "interruption_metrics",
+        "interruptionmetrics",
         "overlapping_speech",
         "realtime_model_metrics",
+        "realtimemodelmetrics",
         "stt",
         "stt processing",
         "stt_metrics",
@@ -370,6 +392,7 @@ _SAFE_SOURCE_LABELS = frozenset(
         "ttsmetrics",
         "turn detection",
         "turn",
+        "turn.user_bot_latency_seconds",
         "turn.was_interrupted",
         "user_interruption_detected",
         "user_turn",
