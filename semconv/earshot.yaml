@@ -72,6 +72,10 @@ groups:
         type: string
         requirement_level: opt_in
         brief: Privacy-governed role attached to a conversation item.
+      - id: earshot.tts.voice
+        type: string
+        requirement_level: opt_in
+        brief: Privacy-governed provider voice identifier selected for speech synthesis.
       - id: earshot.source.field
         type: string
         requirement_level: opt_in

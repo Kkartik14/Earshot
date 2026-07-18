@@ -144,6 +144,7 @@ _SAFE_EXACT = {
     "earshot.stream.id",
     "earshot.turn.id",
     "earshot.turn.index",
+    "earshot.tts.voice",
     "earshot.link.type",
     "earshot.link.target_scope",
     "earshot.clock.domain.id",

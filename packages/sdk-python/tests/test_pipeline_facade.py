@@ -103,6 +103,148 @@ def test_estimated_latency_is_not_labelled_measured() -> None:
     assert llm_operation.evidence.source == "app"
 
 
+def test_provider_scalar_does_not_fabricate_a_measured_stage_interval() -> None:
+    sess = earshot.pipeline(session_id="honest-stage", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.llm(
+            "openai",
+            model="gpt-4o",
+            ttft_ms=350,
+            completion_ms=600,
+            confidence="measured",
+        )
+    bundle = sess.close()
+
+    [operation] = bundle.profile.operations
+    [sample] = bundle.profile.quality_samples
+    assert operation.ended_at is None
+    assert operation.evidence is not None
+    assert operation.evidence.source == "app"
+    assert operation.evidence.confidence == "inferred"
+    assert sample.evidence.source == "provider"
+    assert sample.evidence.confidence == "measured"
+
+
+def test_barge_in_offset_is_relative_to_the_turn() -> None:
+    sess = earshot.pipeline(session_id="barge-clock", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.llm("openai", ttft_ms=350, completion_ms=600)
+        turn.tts("cartesia", ttfb_ms=90, first_audio_ms=140)
+        turn.barge_in(at_ms=1600)
+    bundle = sess.close()
+
+    event = next(
+        item
+        for item in bundle.profile.events
+        if item.event_name == "earshot.interruption.accepted"
+    )
+    assert int(event.time.source_time_unix_nano) == START + 1_600_000_000
+
+
+def test_stage_arguments_are_validated_before_recording() -> None:
+    sess = earshot.pipeline(session_id="atomic-stage", started_at_unix_nano=START)
+    with sess.turn() as turn, pytest.raises(ValueError, match="non-negative"):
+        turn.llm("openai", ttft_ms=-1, completion_ms=600)
+    bundle = sess.close()
+
+    assert bundle.profile.operations == ()
+    assert bundle.profile.quality_samples == ()
+
+
+def test_first_audio_boundary_is_preserved_without_provider_ttfb() -> None:
+    sess = earshot.pipeline(session_id="first-audio", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.vad(speech_end_ms=0)
+        turn.tts("cartesia", first_audio_ms=140, confidence="estimated")
+    bundle = sess.close()
+
+    first_audio = next(
+        event
+        for event in bundle.profile.events
+        if event.event_name == "earshot.response.first_audio_generated"
+    )
+    assert first_audio.evidence.confidence == "estimated"
+    analysis = analyze_incident(
+        bundle, input_sha256=analysis_input_sha256(bundle), generated_at_unix_nano=1
+    )
+    assert analysis.projections.turns[0].metrics.generated_response_latency.value == 140
+
+
+def test_final_transcript_is_attributed_to_the_user() -> None:
+    sess = earshot.pipeline(session_id="speaker", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.stt("deepgram", final_ms=420)
+    bundle = sess.close()
+
+    [event] = bundle.profile.events
+    assert event.event_name == "earshot.transcript.final"
+    assert event.participant_id == "participant-user"
+
+
+def test_failed_turn_does_not_reuse_its_clock_origin() -> None:
+    sess = earshot.pipeline(session_id="turn-failure", started_at_unix_nano=START)
+    with pytest.raises(RuntimeError, match="application failure"), sess.turn(
+        "failed"
+    ) as turn:
+        turn.llm("openai", ttft_ms=100)
+        raise RuntimeError("application failure")
+    with sess.turn("next") as turn:
+        turn.llm("openai", ttft_ms=100)
+    bundle = sess.close()
+
+    failed, following = bundle.profile.operations
+    assert int(following.started_at.monotonic_time_nano) > int(
+        failed.started_at.monotonic_time_nano
+    )
+
+
+def test_custom_recorder_config_keeps_pipeline_adapter_identity() -> None:
+    config = earshot.RecorderConfig(producer_name="customer-app", producer_version="2.0")
+    sess = earshot.pipeline(
+        session_id="custom-config",
+        started_at_unix_nano=START,
+        framework="raw_websocket",
+        config=config,
+    )
+    bundle = sess.close()
+
+    assert bundle.profile.manifest.producer.name == "customer-app"
+    assert any(
+        adapter.name == "earshot.pipeline" and adapter.framework == "raw_websocket"
+        for adapter in bundle.profile.manifest.adapters
+    )
+
+
+def test_tts_voice_is_retained_as_governed_metadata() -> None:
+    sess = earshot.pipeline(session_id="voice", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.tts("cartesia", model="sonic-3", voice="helpful-assistant")
+    bundle = sess.close()
+
+    [operation] = bundle.profile.operations
+    assert operation.attributes["earshot.tts.voice"] == "helpful-assistant"
+
+
+def test_vad_offsets_are_relative_to_the_turn() -> None:
+    sess = earshot.pipeline(session_id="vad-clock", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.llm("openai", completion_ms=600)
+        turn.vad(speech_start_ms=100, speech_end_ms=1700)
+    bundle = sess.close()
+
+    started, ended = bundle.profile.events
+    assert int(started.time.source_time_unix_nano) == START + 100_000_000
+    assert int(ended.time.source_time_unix_nano) == START + 1_700_000_000
+
+
+def test_duplicate_explicit_turn_ids_are_rejected() -> None:
+    sess = earshot.pipeline(session_id="turn-ids", started_at_unix_nano=START)
+    with sess.turn("same"):
+        pass
+    with pytest.raises(ValueError, match="unique"), sess.turn("same"):
+        pass
+
+
 def test_closed_session_rejects_new_turns() -> None:
     sess = earshot.pipeline(session_id="closed-call", started_at_unix_nano=START)
     sess.close()

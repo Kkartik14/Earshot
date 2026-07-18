@@ -24,7 +24,9 @@ first-token and generated-response latency from, so no analyzer change is needed
 from __future__ import annotations
 
 import contextlib
+import math
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from typing import Any
 
 from .clock import ManualClock
@@ -38,6 +40,7 @@ from .contract import (
     TimeRange,
 )
 from .recorder import IncidentRecorder, RecorderConfig
+from .sdk import _runtime_snapshot
 
 PIPELINE_ADAPTER_VERSION = "1.0.0"
 _MS_TO_NANO = 1_000_000
@@ -55,9 +58,9 @@ def _confidence_source(confidence: str) -> str:
 class TurnRecorder:
     """Records one conversational turn's stages and barge-ins.
 
-    Stages are placed on the turn clock in call order; each stage occupies its own
-    interval so the waterfall is readable, while provider-reported latencies
-    (TTFT/TTFB) are attached as governed measurements the analyzer consumes.
+    Stages are placed on the turn clock in call order. A scalar latency does not
+    prove a stage interval, so stage operations are points with app-inferred
+    evidence while provider-reported latencies are separate governed measurements.
     """
 
     def __init__(self, session: PipelineSession, turn_id: str, turn_index: int) -> None:
@@ -85,17 +88,21 @@ class TurnRecorder:
     ) -> TurnRecorder:
         """Record the speech-to-text stage. ``final_ms`` is audio-stop to final transcript."""
 
+        provider = self._label(provider, "provider")
+        model = self._optional_label(model, "model")
+        confidence = self._confidence(confidence)
+        ttfb_ms = self._optional_ms(ttfb_ms, "earshot.stt.ttfb")
+        final_ms = self._optional_ms(final_ms, "stt final")
         duration = self._duration(final_ms, ttfb_ms)
         operation_id = self._operation(
-            "stt", provider, model=model, duration_ms=duration, source="pipeline.stt",
-            confidence=confidence, attributes=attributes,
+            "stt", provider, model=model, attributes=attributes,
         )
         if ttfb_ms is not None:
             self._measurement(
                 "earshot.stt.ttfb", ttfb_ms, operation_id, confidence, "pipeline.stt.ttfb"
             )
         if final_ms is not None and transcript_final:
-            self._event("earshot.transcript.final", self._cursor_ms + final_ms, _AGENT, confidence)
+            self._event("earshot.transcript.final", self._cursor_ms + final_ms, _USER, confidence)
         self._advance(duration)
         return self
 
@@ -111,10 +118,14 @@ class TurnRecorder:
     ) -> TurnRecorder:
         """Record the LLM stage. ``ttft_ms`` feeds the derived first-token latency."""
 
+        provider = self._label(provider, "provider")
+        model = self._optional_label(model, "model")
+        confidence = self._confidence(confidence)
+        ttft_ms = self._optional_ms(ttft_ms, "earshot.llm.ttft")
+        completion_ms = self._optional_ms(completion_ms, "llm completion")
         duration = self._duration(completion_ms, ttft_ms)
         operation_id = self._operation(
-            "llm", provider, model=model, duration_ms=duration, source="pipeline.llm",
-            confidence=confidence, attributes=attributes,
+            "llm", provider, model=model, attributes=attributes,
         )
         if ttft_ms is not None:
             self._measurement(
@@ -136,17 +147,29 @@ class TurnRecorder:
     ) -> TurnRecorder:
         """Record the text-to-speech stage. ``ttfb_ms`` feeds generated-response latency."""
 
+        provider = self._label(provider, "provider")
+        model = self._optional_label(model, "model")
+        voice = self._optional_label(voice, "voice")
+        confidence = self._confidence(confidence)
+        ttfb_ms = self._optional_ms(ttfb_ms, "earshot.tts.ttfb")
+        first_audio_ms = self._optional_ms(first_audio_ms, "tts first audio")
         stage_attributes = dict(attributes or {})
         if voice is not None:
             stage_attributes["earshot.tts.voice"] = voice
         duration = self._duration(first_audio_ms, ttfb_ms)
         operation_id = self._operation(
-            "tts", provider, model=model, duration_ms=duration, source="pipeline.tts",
-            confidence=confidence, attributes=stage_attributes,
+            "tts", provider, model=model, attributes=stage_attributes,
         )
         if ttfb_ms is not None:
             self._measurement(
                 "earshot.tts.ttfb", ttfb_ms, operation_id, confidence, "pipeline.tts.ttfb"
+            )
+        if first_audio_ms is not None and ttfb_ms is None:
+            self._event(
+                "earshot.response.first_audio_generated",
+                self._cursor_ms + first_audio_ms,
+                _AGENT,
+                confidence,
             )
         self._advance(duration)
         return self
@@ -160,13 +183,14 @@ class TurnRecorder:
     ) -> TurnRecorder:
         """Mark user speech boundaries; paired with STT they yield finalization latency."""
 
+        confidence = self._confidence(confidence)
+        speech_start_ms = self._optional_ms(speech_start_ms, "speech start")
+        speech_end_ms = self._optional_ms(speech_end_ms, "speech end")
         if speech_start_ms is not None:
-            self._event(
-                "earshot.speech.started", self._cursor_ms + speech_start_ms, _USER, confidence
-            )
+            self._event("earshot.speech.started", speech_start_ms, _USER, confidence)
         if speech_end_ms is not None:
-            self._event("earshot.speech.ended", self._cursor_ms + speech_end_ms, _USER, confidence)
-            self._advance(speech_end_ms)
+            self._event("earshot.speech.ended", speech_end_ms, _USER, confidence)
+            self._cursor_ms = max(self._cursor_ms, speech_end_ms)
         return self
 
     def barge_in(
@@ -178,9 +202,11 @@ class TurnRecorder:
     ) -> TurnRecorder:
         """Record a caller barge-in (``accepted`` = real interruption vs ignored)."""
 
+        confidence = self._confidence(confidence)
+        at_ms = self._optional_ms(at_ms, "barge-in offset")
+        assert at_ms is not None
         name = "earshot.interruption.accepted" if accepted else "earshot.interruption.ignored"
-        self._event(name, self._cursor_ms + at_ms, _USER, confidence)
-        self._advance(at_ms)
+        self._event(name, at_ms, _USER, confidence)
         return self
 
     # -- internals -----------------------------------------------------------
@@ -191,26 +217,23 @@ class TurnRecorder:
         provider: str,
         *,
         model: str | None,
-        duration_ms: float,
-        source: str,
-        confidence: str,
         attributes: Mapping[str, Any] | None,
     ) -> str:
         self._sequence += 1
         operation_id = f"operation-{operation_name}-{self._turn_index}-{self._sequence}"
-        stage_attributes: dict[str, Any] = {"gen_ai.provider.name": provider}
+        stage_attributes: dict[str, Any] = dict(attributes or {})
+        stage_attributes["gen_ai.provider.name"] = provider
         if model is not None:
             stage_attributes["gen_ai.request.model"] = model
-        stage_attributes.update(attributes or {})
         self._session.recorder.record_operation(
             operation_id=operation_id,
             operation_name=operation_name,
             status="ok",
             started_at=self._point(self._cursor_ms),
-            ended_at=self._point(self._cursor_ms + duration_ms),
+            ended_at=None,
             participant_id=_AGENT,
             turn_id=self._turn_id,
-            evidence=self._evidence(confidence, source),
+            evidence=self._evidence("inferred", "pipeline.stage_order"),
             attributes=stage_attributes,
         )
         return operation_id
@@ -283,10 +306,35 @@ class TurnRecorder:
     def _duration(primary_ms: float | None, secondary_ms: float | None) -> float:
         for candidate in (primary_ms, secondary_ms):
             if candidate is not None:
-                if candidate < 0:
-                    raise ValueError("stage duration must be non-negative")
-                return float(candidate)
+                return candidate
         return 0.0
+
+    @staticmethod
+    def _optional_ms(value: float | None, label: str) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"{label} must be a number")
+        normalized = float(value)
+        if not math.isfinite(normalized) or normalized < 0:
+            raise ValueError(f"{label} must be finite and non-negative")
+        return normalized
+
+    @staticmethod
+    def _label(value: str, label: str) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{label} must be a non-empty string")
+        return value
+
+    @classmethod
+    def _optional_label(cls, value: str | None, label: str) -> str | None:
+        return None if value is None else cls._label(value, label)
+
+    @staticmethod
+    def _confidence(value: str) -> str:
+        if value not in {"measured", "estimated", "inferred"}:
+            raise ValueError("confidence must be measured, estimated, or inferred")
+        return value
 
     def _advance(self, span_ms: float) -> None:
         self._cursor_ms += span_ms
@@ -312,22 +360,30 @@ class PipelineSession:
             started_at_unix_nano if started_at_unix_nano is not None else _time.time_ns()
         )
         self._clock = ManualClock(wall=self.start_wall_nano, monotonic=0)
-        recorder_config = config or RecorderConfig(
-            producer_name=producer_name,
-            producer_version=PIPELINE_ADAPTER_VERSION,
-            adapters=(
-                Adapter(
-                    name="earshot.pipeline",
-                    version=PIPELINE_ADAPTER_VERSION,
-                    framework=framework,
-                ),
-            ),
+        runtime_config, exporter = _runtime_snapshot()
+        pipeline_adapter = Adapter(
+            name="earshot.pipeline",
+            version=PIPELINE_ADAPTER_VERSION,
+            framework=framework,
         )
+        if config is None:
+            recorder_config = RecorderConfig(
+                producer_name=producer_name,
+                producer_version=PIPELINE_ADAPTER_VERSION,
+                capture_policy=runtime_config.capture_policy,
+                adapters=(pipeline_adapter,),
+            )
+        else:
+            adapters = config.adapters
+            if not any(adapter.name == pipeline_adapter.name for adapter in adapters):
+                adapters = (*adapters, pipeline_adapter)
+            recorder_config = replace(config, adapters=adapters)
         self.recorder = IncidentRecorder(
             session_id=session_id,
             bundle_id=bundle_id,
             clock=self._clock,
             config=recorder_config,
+            exporter=exporter,
         )
         self.recorder.add_participant(_USER, role="user", endpoint_kind="app")
         self.recorder.add_participant(_AGENT, role="agent", endpoint_kind="app")
@@ -336,6 +392,7 @@ class PipelineSession:
             "client.render", "not_observed", "server_cannot_observe_client_render"
         )
         self._turn_origins_nano: list[int] = []
+        self._turn_ids: set[str] = set()
         self._cursor_nano = 0
         self._closed = False
 
@@ -365,12 +422,23 @@ class PipelineSession:
 
         if self._closed:
             raise RuntimeError("pipeline session is closed")
+        normalized_gap = TurnRecorder._optional_ms(gap_ms, "turn gap")
+        assert normalized_gap is not None
         turn_index = len(self._turn_origins_nano)
+        resolved_turn_id = turn_id or f"turn-{turn_index}"
+        resolved_turn_id = TurnRecorder._label(resolved_turn_id, "turn id")
+        if resolved_turn_id in self._turn_ids:
+            raise ValueError("turn id must be unique within a pipeline session")
+        self._turn_ids.add(resolved_turn_id)
         self._turn_origins_nano.append(self._cursor_nano)
-        recorder = TurnRecorder(self, turn_id or f"turn-{turn_index}", turn_index)
-        yield recorder
-        turn_span_nano = int(recorder._max_ms * _MS_TO_NANO) + int(gap_ms * _MS_TO_NANO)
-        self._cursor_nano += turn_span_nano
+        recorder = TurnRecorder(self, resolved_turn_id, turn_index)
+        try:
+            yield recorder
+        finally:
+            turn_span_nano = int(recorder._max_ms * _MS_TO_NANO) + int(
+                normalized_gap * _MS_TO_NANO
+            )
+            self._cursor_nano += turn_span_nano
 
     def close(self, status: str = "completed") -> IncidentBundle:
         """Finalize and return the immutable incident for ingestion or analysis."""
