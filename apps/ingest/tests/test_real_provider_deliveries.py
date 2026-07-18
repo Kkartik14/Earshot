@@ -16,8 +16,8 @@ Capture format — one JSON file per delivery, e.g.
 
     {
       "provider": "retell",
-      "secret": "<the signing secret the provider used: ElevenLabs wsec_,",
-      "                Vapi server secret, or Retell webhook API key>",
+      "secret_env": "RETELL_WEBHOOK_SECRET",
+      "expected_disposition": "applied",
       "headers": [["X-Retell-Signature", "v=...,d=..."], ["Content-Type", "application/json"]],
       "body_base64": "<base64 of the EXACT raw request body bytes>",
       "must_not_appear": ["a phrase from the transcript", "the raw call id"]
@@ -33,7 +33,9 @@ later than it was signed); the offline suites cover skew separately. See
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -86,6 +88,12 @@ _PARAMS = _CAPTURES or [
 def test_real_provider_delivery_authenticates_and_normalizes(capture_path, tmp_path) -> None:
     spec = json.loads(capture_path.read_text())
     provider = spec["provider"]
+    secret_env = spec.get("secret_env")
+    if not isinstance(secret_env, str) or not secret_env:
+        pytest.fail(f"{capture_path.name}: captures must name a non-empty 'secret_env'")
+    secret = os.environ.get(secret_env)
+    if secret is None:
+        pytest.skip(f"{capture_path.name}: required secret environment variable is not set")
     if "body_base64" not in spec:
         pytest.fail(
             f"{capture_path.name}: captures must include 'body_base64' (the exact "
@@ -99,7 +107,7 @@ def test_real_provider_delivery_authenticates_and_normalizes(capture_path, tmp_p
     endpoint = store.create_connector("real", provider=provider, secret_ref=_SECRET_REF)
     ingestion = HostedProviderIngestion(
         store,
-        secrets=MappingSecretResolver({_SECRET_REF: spec["secret"]}),
+        secrets=MappingSecretResolver({_SECRET_REF: secret}),
         signature_tolerance_seconds=_REPLAY_TOLERANCE_SECONDS,
     )
 
@@ -108,7 +116,12 @@ def test_real_provider_delivery_authenticates_and_normalizes(capture_path, tmp_p
         RawProviderDelivery(endpoint_id=endpoint.endpoint_id, headers=headers, body=body)
     )
 
-    assert outcome.disposition in {"applied", "ignored"}
+    expected_disposition = spec.get("expected_disposition", "applied")
+    if expected_disposition not in {"applied", "ignored"}:
+        pytest.fail(
+            f"{capture_path.name}: expected_disposition must be 'applied' or 'ignored'"
+        )
+    assert outcome.disposition == expected_disposition
     if outcome.disposition != "applied":
         return
 
@@ -116,7 +129,10 @@ def test_real_provider_delivery_authenticates_and_normalizes(capture_path, tmp_p
     bundle = decode_incident_protobuf(canonical)
     assert validate_incident(bundle).ok, f"{capture_path.name}: real delivery failed the contract"
     # A real capture carries genuine PII; confirm it never reaches the canonical bytes.
-    for sentinel in spec.get("must_not_appear", []):
+    for index, sentinel in enumerate(spec.get("must_not_appear", [])):
+        if not isinstance(sentinel, str):
+            pytest.fail(f"{capture_path.name}: privacy sentinel {index} must be text")
+        digest = hashlib.sha256(sentinel.encode()).hexdigest()[:12]
         assert sentinel.encode() not in canonical, (
-            f"{capture_path.name}: '{sentinel}' leaked into the canonical incident"
+            f"{capture_path.name}: privacy sentinel {index} ({digest}) leaked"
         )

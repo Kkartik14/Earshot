@@ -37,4 +37,5 @@ build/
 docs/private/
 
 # Real captured provider webhook deliveries contain signing secrets + caller PII.
-apps/ingest/tests/fixtures/connectors/*/*.json
+apps/ingest/tests/fixtures/connectors/*
+!apps/ingest/tests/fixtures/connectors/README.md

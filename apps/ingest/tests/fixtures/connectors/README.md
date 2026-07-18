@@ -6,19 +6,20 @@ prove our connector authenticates the **real** signature and normalizes the
 the live contract — a failure means our HMAC scheme disagrees with what the
 provider actually sends.
 
-> **These files contain real signing secrets and caller PII. They are gitignored
-> and must never be committed.** Only the raw bytes are needed; you can delete a
-> capture after the test passes.
+> **These files contain caller PII. They are gitignored and must never be
+> committed.** Signing secrets stay in environment variables and never enter a
+> fixture. Only the raw bytes are needed; delete a capture after the test passes.
 
 ## File format
 
 One JSON file per delivery, in the provider's subdirectory
-(`elevenlabs/`, `vapi/`, or `retell/`):
+(`elevenlabs/`, `vapi/`, `retell/`, or `ringg/`):
 
 ```json
 {
   "provider": "retell",
-  "secret": "the signing secret the provider used",
+  "secret_env": "RETELL_WEBHOOK_SECRET",
+  "expected_disposition": "applied",
   "headers": [
     ["X-Retell-Signature", "v=1752828600000,d=abc123..."],
     ["Content-Type", "application/json"]
@@ -28,7 +29,8 @@ One JSON file per delivery, in the provider's subdirectory
 }
 ```
 
-`body_base64` must be the **exact** bytes the provider signed — capture the raw
+Set the named environment variable only while running the checkpoint. Never put
+the secret itself in the JSON. `body_base64` must be the **exact** bytes the provider signed — capture the raw
 body before any parsing/re-serialization, or the signature will not validate.
 `must_not_appear` is optional: list a few real transcript phrases / identifiers,
 and the test asserts they never reach the canonical incident (privacy check).
@@ -43,6 +45,7 @@ To base64 a captured body: `base64 -i body.raw` (macOS) or
 | **ElevenLabs Agents** | the **Webhook Signing Secret** (`wsec_…`) from the agent's post-call webhook settings — **not** the API key | Configure the post-call webhook to a capture URL (e.g. an [RequestBin](https://pipedream.com/requestbin) / webhook.site), then run one real agent conversation, **or** use the dashboard's "send test event" on the webhook. Capture the `ElevenLabs-Signature` header + raw body. |
 | **Vapi** | the **server-URL secret you configured** (`X-Vapi-Secret`, or the Bearer credential) — you choose this value | Point the assistant's server URL at a capture endpoint, place one test call, and grab the `end-of-call-report` request (`Authorization`/`X-Vapi-Secret` header + raw body). |
 | **Retell** | the **Retell webhook API key** used to sign | Set the webhook URL to a capture endpoint, run one test call, and grab the `X-Retell-Signature` header + raw `call_analyzed` body. |
+| **Ringg** | the receiver-controlled Bearer token or `X-Webhook-Secret` configured on the subscription | Subscribe to `all_processing_completed`, run one sandbox call, and capture the configured auth header plus raw final body. Ringg does not document a provider HMAC scheme. |
 
 > Because webhooks are **pushed and signed** by the provider, a REST API key
 > alone cannot exercise the signature path — you need a real *signed delivery*.
