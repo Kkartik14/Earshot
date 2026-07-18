@@ -22,6 +22,7 @@ from earshot.storage import (
 
 from .elevenlabs import ElevenLabsConnectorAdapter
 from .retell import RetellConnectorAdapter
+from .ringg import RinggConnectorAdapter
 from .types import (
     ConnectorConfigurationError,
     ConnectorNotFoundError,
@@ -114,6 +115,7 @@ class HostedProviderIngestion:
         self._adapters = {
             "elevenlabs": ElevenLabsConnectorAdapter(),
             "retell": RetellConnectorAdapter(),
+            "ringg": RinggConnectorAdapter(),
             "vapi": VapiConnectorAdapter(),
         }
 

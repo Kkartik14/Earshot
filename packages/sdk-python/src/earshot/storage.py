@@ -1377,7 +1377,7 @@ class IncidentStore:
         endpoint_id: str | None = None,
         normalizer_version: str = "1.0.0",
     ) -> ConnectorRecord:
-        if provider not in {"elevenlabs", "vapi", "retell"}:
+        if provider not in {"elevenlabs", "vapi", "retell", "ringg"}:
             raise ValueError("unsupported connector provider")
         if not re.fullmatch(r"env:[A-Z][A-Z0-9_]{0,127}", secret_ref):
             raise ValueError("secret_ref must name a portable environment secret")
