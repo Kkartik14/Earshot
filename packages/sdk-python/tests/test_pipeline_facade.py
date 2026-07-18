@@ -245,6 +245,45 @@ def test_duplicate_explicit_turn_ids_are_rejected() -> None:
         pass
 
 
+def test_advanced_authoring_keeps_each_fact_evidence_independent() -> None:
+    sess = earshot.pipeline(session_id="native-facts", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        operation_id = turn.record_stage(
+            "agent", "openai", model="gpt-realtime", at_ms=100
+        )
+        turn.record_measurement(
+            "earshot.turn.response_latency",
+            410,
+            unit="ms",
+            operation_id=operation_id,
+            source="app",
+            confidence="estimated",
+            source_field="response.output_audio.delta",
+            basis="server_vad_stop_receipt_to_first_audio_receipt",
+            at_ms=510,
+        )
+        turn.record_event(
+            "earshot.audio.first_packet_received",
+            at_ms=510,
+            participant="agent",
+            source="app",
+            confidence="estimated",
+            source_field="response.output_audio.delta",
+        )
+    bundle = sess.close()
+
+    [sample] = bundle.profile.quality_samples
+    assert sample.evidence.source == "app"
+    assert sample.evidence.source_field == "response.output_audio.delta"
+    assert sample.attributes["earshot.metric.basis"] == (
+        "server_vad_stop_receipt_to_first_audio_receipt"
+    )
+    analysis = analyze_incident(
+        bundle, input_sha256=analysis_input_sha256(bundle), generated_at_unix_nano=1
+    )
+    assert analysis.projections.turns[0].metrics.response_latency.value == 410
+
+
 def test_closed_session_rejects_new_turns() -> None:
     sess = earshot.pipeline(session_id="closed-call", started_at_unix_nano=START)
     sess.close()

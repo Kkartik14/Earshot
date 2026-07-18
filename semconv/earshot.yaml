@@ -180,6 +180,10 @@ groups:
         type: string
         requirement_level: opt_in
         brief: Provider-unit provenance when an official schema does not define a normalizable unit.
+      - id: earshot.metric.basis
+        type: string
+        requirement_level: opt_in
+        brief: Exact source-boundary basis of a directly observed or provider-native measurement.
       - id: earshot.duration.audio_seconds
         type: double
         requirement_level: opt_in

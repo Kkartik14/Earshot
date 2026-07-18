@@ -209,6 +209,143 @@ class TurnRecorder:
         self._event(name, at_ms, _USER, confidence)
         return self
 
+    def record_stage(
+        self,
+        operation_name: str,
+        provider: str,
+        *,
+        model: str | None = None,
+        status: str = "ok",
+        at_ms: float | None = None,
+        ended_at_ms: float | None = None,
+        source: str = "app",
+        confidence: str = "inferred",
+        source_field: str = "pipeline.stage",
+        attributes: Mapping[str, Any] | None = None,
+    ) -> str:
+        """Author a provider stage without inventing boundaries it did not expose."""
+
+        operation_name = self._label(operation_name, "operation name")
+        provider = self._label(provider, "provider")
+        model = self._optional_label(model, "model")
+        status = self._label(status, "status")
+        source = self._label(source, "evidence source")
+        confidence = self._confidence(confidence)
+        source_field = self._label(source_field, "source field")
+        start = self._cursor_ms if at_ms is None else self._required_ms(at_ms, "stage offset")
+        end = self._optional_ms(ended_at_ms, "stage end offset")
+        if end is not None and end < start:
+            raise ValueError("stage end offset must not precede its start")
+
+        stage_attributes: dict[str, Any] = dict(attributes or {})
+        stage_attributes["gen_ai.provider.name"] = provider
+        if model is not None:
+            stage_attributes["gen_ai.request.model"] = model
+        self._sequence += 1
+        operation_id = f"operation-{operation_name}-{self._turn_index}-{self._sequence}"
+        self._session.recorder.record_operation(
+            operation_id=operation_id,
+            operation_name=operation_name,
+            status=status,
+            started_at=self._point(start),
+            ended_at=None if end is None else self._point(end),
+            participant_id=_AGENT,
+            turn_id=self._turn_id,
+            evidence=self._fact_evidence(source, confidence, source_field),
+            attributes=stage_attributes,
+        )
+        boundary = start if end is None else end
+        self._cursor_ms = max(self._cursor_ms, boundary)
+        self._max_ms = max(self._max_ms, boundary)
+        return operation_id
+
+    def record_event(
+        self,
+        name: str,
+        *,
+        at_ms: float,
+        participant: str | None = None,
+        source: str = "app",
+        confidence: str = "estimated",
+        source_field: str = "pipeline.event",
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Author a turn-relative point event with fact-specific evidence."""
+
+        name = self._label(name, "event name")
+        offset = self._required_ms(at_ms, "event offset")
+        participant_id = self._participant(participant)
+        source = self._label(source, "evidence source")
+        confidence = self._confidence(confidence)
+        source_field = self._label(source_field, "source field")
+        self._sequence += 1
+        self._session.recorder.record_event(
+            name,
+            event_id=f"event-{self._turn_index}-{self._sequence}",
+            time=self._point(offset),
+            participant_id=participant_id,
+            turn_id=self._turn_id,
+            evidence=self._fact_evidence(source, confidence, source_field),
+            attributes=attributes,
+        )
+        self._max_ms = max(self._max_ms, offset)
+
+    def record_measurement(
+        self,
+        name: str,
+        value: float,
+        *,
+        unit: str,
+        operation_id: str | None = None,
+        source: str,
+        confidence: str,
+        source_field: str | None = None,
+        basis: str | None = None,
+        at_ms: float | None = None,
+        quality_kind: str = "provider_metric",
+        attributes: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Author a provider-native or standard scalar without relabeling its meaning."""
+
+        name = self._label(name, "measurement name")
+        normalized_value = self._finite_number(value, name)
+        unit = self._label(unit, "measurement unit")
+        operation_id = self._optional_label(operation_id, "operation id")
+        source = self._label(source, "evidence source")
+        confidence = self._confidence(confidence)
+        source_field = self._label(source_field or name, "source field")
+        basis = self._optional_label(basis, "measurement basis")
+        quality_kind = self._label(quality_kind, "quality kind")
+        offset = self._cursor_ms if at_ms is None else self._required_ms(
+            at_ms, "measurement offset"
+        )
+
+        sample_attributes: dict[str, Any] = dict(attributes or {})
+        sample_attributes["earshot.turn.id"] = self._turn_id
+        sample_attributes["earshot.correlation"] = "provider_turn_scalar"
+        sample_attributes["earshot.chronology"] = "not_exposed"
+        if operation_id is not None:
+            sample_attributes["earshot.operation.id"] = operation_id
+        if basis is not None:
+            sample_attributes["earshot.metric.basis"] = basis
+        self._sequence += 1
+        point = self._point(offset)
+        self._session.recorder.record_quality_sample(
+            QualitySample(
+                sample_id=f"quality-{self._turn_index}-{self._sequence}",
+                session_id=self._session.session_id,
+                quality_kind=quality_kind,
+                sample_window=TimeRange(start=point, end=point),
+                measurements=(
+                    QualityMeasurement(name=name, value=normalized_value, unit=unit),
+                ),
+                evidence=self._fact_evidence(source, confidence, source_field),
+                participant_id=_AGENT,
+                attributes=sample_attributes,
+            )
+        )
+        self._max_ms = max(self._max_ms, offset)
+
     # -- internals -----------------------------------------------------------
 
     def _operation(
@@ -219,24 +356,15 @@ class TurnRecorder:
         model: str | None,
         attributes: Mapping[str, Any] | None,
     ) -> str:
-        self._sequence += 1
-        operation_id = f"operation-{operation_name}-{self._turn_index}-{self._sequence}"
-        stage_attributes: dict[str, Any] = dict(attributes or {})
-        stage_attributes["gen_ai.provider.name"] = provider
-        if model is not None:
-            stage_attributes["gen_ai.request.model"] = model
-        self._session.recorder.record_operation(
-            operation_id=operation_id,
-            operation_name=operation_name,
-            status="ok",
-            started_at=self._point(self._cursor_ms),
-            ended_at=None,
-            participant_id=_AGENT,
-            turn_id=self._turn_id,
-            evidence=self._evidence("inferred", "pipeline.stage_order"),
-            attributes=stage_attributes,
+        return self.record_stage(
+            operation_name,
+            provider,
+            model=model,
+            source="app",
+            confidence="inferred",
+            source_field="pipeline.stage_order",
+            attributes=attributes,
         )
-        return operation_id
 
     def _measurement(
         self,
@@ -269,20 +397,22 @@ class TurnRecorder:
         )
 
     def _event(self, name: str, at_ms: float, participant_id: str, confidence: str) -> None:
-        self._sequence += 1
-        self._session.recorder.record_event(
+        participant = "user" if participant_id == _USER else "agent"
+        self.record_event(
             name,
-            event_id=f"event-{self._turn_index}-{self._sequence}",
-            time=self._point(at_ms),
-            participant_id=participant_id,
-            turn_id=self._turn_id,
-            evidence=self._evidence(confidence, "pipeline.event"),
+            at_ms=at_ms,
+            participant=participant,
+            source=_confidence_source(confidence),
+            confidence=confidence,
         )
-        self._max_ms = max(self._max_ms, at_ms)
 
     def _evidence(self, confidence: str, source_field: str) -> Evidence:
+        return self._fact_evidence(_confidence_source(confidence), confidence, source_field)
+
+    @staticmethod
+    def _fact_evidence(source: str, confidence: str, source_field: str) -> Evidence:
         return Evidence(
-            source=_confidence_source(confidence),
+            source=source,
             observer="server",
             method="pipeline_capture",
             method_version=PIPELINE_ADAPTER_VERSION,
@@ -319,6 +449,31 @@ class TurnRecorder:
         if not math.isfinite(normalized) or normalized < 0:
             raise ValueError(f"{label} must be finite and non-negative")
         return normalized
+
+    @classmethod
+    def _required_ms(cls, value: float, label: str) -> float:
+        normalized = cls._optional_ms(value, label)
+        assert normalized is not None
+        return normalized
+
+    @staticmethod
+    def _finite_number(value: float, label: str) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"{label} must be a number")
+        normalized = float(value)
+        if not math.isfinite(normalized):
+            raise ValueError(f"{label} must be finite")
+        return normalized
+
+    @staticmethod
+    def _participant(value: str | None) -> str | None:
+        if value is None:
+            return None
+        if value in {"user", _USER}:
+            return _USER
+        if value in {"agent", _AGENT}:
+            return _AGENT
+        raise ValueError("participant must be user, agent, or None")
 
     @staticmethod
     def _label(value: str, label: str) -> str:
