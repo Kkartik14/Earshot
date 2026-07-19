@@ -747,7 +747,9 @@ def create_app(
             "response_ms",
             "turn_duration_ms",
         ] = "response_ms",
-        group_by: Literal["framework", "provider", "model", "status"] = "framework",
+        group_by: Literal[
+            "framework", "provider", "model", "language", "status"
+        ] = "framework",
     ) -> JSONResponse:
         groups = repository.summarize_turn_metric(
             metric,

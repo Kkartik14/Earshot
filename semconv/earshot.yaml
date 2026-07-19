@@ -64,6 +64,18 @@ groups:
         type: string
         requirement_level: opt_in
         brief: Opaque provider request identifier used only for evidence correlation.
+      - id: earshot.language.code
+        type: string
+        requirement_level: opt_in
+        brief: BCP 47 language tag reported or configured for a speech-recognition operation.
+      - id: earshot.language.probability
+        type: double
+        requirement_level: opt_in
+        brief: Provider-reported probability, from zero through one, for the detected language.
+      - id: earshot.stt.mode
+        type: string
+        requirement_level: opt_in
+        brief: Governed speech-recognition mode such as transcribe, translate, verbatim, translit, or codemix.
       - id: earshot.conversation.item.id
         type: string
         requirement_level: opt_in

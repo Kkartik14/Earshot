@@ -40,7 +40,7 @@ unreferenced CAS object is disposable.
 
 ## Relational projections
 
-Schema version 9 indexes:
+Schema version 10 indexes:
 
 - `projects` and `api_keys`: authorization scope and memory-hard credential hashes;
 - `incidents`: project, identity, digest, status, finality/completeness, framework,
@@ -51,9 +51,10 @@ Schema version 9 indexes:
 - `events`: point identity, operation/trace correlation, participant/stream/turn,
   timestamps, evidence summary, and capture class;
 - `turn_metrics`: rebuildable wide Turn Facts with per-measurement availability, basis,
-  confidence, limitation, and a dedicated projection version. Common fields include STT
-  finalization, EOU, first token/audio, transport/render response, explicit native turn
-  duration, tools, and evidence-qualified accepted-interruption count;
+  confidence, limitation, response-model and STT-language fleet dimensions, and a dedicated
+  projection version. Common fields include STT finalization, EOU, first token/audio,
+  transport/render response, explicit native turn duration, tools, and evidence-qualified
+  accepted-interruption count;
 - `connectors`, `delivery_receipts`, and `external_identities`: provider trust
   configuration, replay/content-digest state, and instance-keyed HMAC correlation;
 - `analyses`: analyzer version + exact input digest + strict JSON output; full uint64

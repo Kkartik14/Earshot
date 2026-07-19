@@ -80,7 +80,7 @@ _API_KEY_PREFIX = "earshot_sk_"
 # This version owns the wide Turn Fact semantics, not only the underlying
 # deterministic analyzer. Bump it whenever projection meanings or evidence
 # selection rules change.
-TURN_FACT_PROJECTION_VERSION = "2.0.0"
+TURN_FACT_PROJECTION_VERSION = "2.1.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +115,7 @@ class TurnFact:
     framework: str | None
     provider: str | None
     model: str | None
+    language: str | None
     status: str
     stt_finalization_ms: float | None
     stt_finalization_availability: str
@@ -269,7 +270,7 @@ class StoredAnalysis:
         }
 
 
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 _MAX_CURSOR_ENCODED_CHARS = 4096
 _MAX_CURSOR_DECODED_BYTES = 512
 _SQLITE_INT64_MAX = (1 << 63) - 1
@@ -444,6 +445,7 @@ CREATE TABLE IF NOT EXISTS turn_metrics (
     framework TEXT,
     provider TEXT,
     model TEXT,
+    language TEXT,
     status TEXT NOT NULL,
     stt_finalization_ms REAL,
     stt_finalization_availability TEXT NOT NULL,
@@ -506,7 +508,7 @@ CREATE TABLE IF NOT EXISTS turn_metrics (
 CREATE INDEX IF NOT EXISTS turn_metrics_project_time_idx
     ON turn_metrics(project_id, started_at_unix_nano, bundle_id, turn_index);
 CREATE INDEX IF NOT EXISTS turn_metrics_project_dimensions_idx
-    ON turn_metrics(project_id, framework, provider, model, status);
+    ON turn_metrics(project_id, framework, provider, model, language, status);
 
 CREATE TABLE IF NOT EXISTS connectors (
     endpoint_id TEXT PRIMARY KEY,
@@ -718,6 +720,7 @@ def _turn_fact(row: sqlite3.Row) -> TurnFact:
         framework=row["framework"],
         provider=row["provider"],
         model=row["model"],
+        language=row["language"],
         status=row["status"],
         stt_finalization_ms=row["stt_finalization_ms"],
         stt_finalization_availability=row["stt_finalization_availability"],
@@ -1155,7 +1158,10 @@ class IncidentStore:
                 row["name"]
                 for row in connection.execute("PRAGMA table_info(turn_metrics)")
             }
-            if turn_metric_columns and "stt_finalization_ms" not in turn_metric_columns:
+            if turn_metric_columns and not {
+                "stt_finalization_ms",
+                "language",
+            }.issubset(turn_metric_columns):
                 # Turn Facts are a fully rebuildable read model. Recreating the
                 # projection is safer than manufacturing evidence fields for old
                 # rows during a migration; reconciliation below repopulates it
@@ -1987,6 +1993,19 @@ class IncidentStore:
             else:
                 provider = None
                 model = None
+            language_values = {
+                value
+                for operation in operations
+                if operation.operation_name == "stt"
+                for value in (
+                    operation.attributes.get(
+                        "earshot.language.code",
+                        operation.resource.get("earshot.language.code"),
+                    ),
+                )
+                if isinstance(value, str)
+            }
+            language = next(iter(language_values)) if len(language_values) == 1 else None
             status = (
                 "failed"
                 if any(
@@ -2177,6 +2196,7 @@ class IncidentStore:
                     framework,
                     provider,
                     model,
+                    language,
                     status,
                     *stt_finalization,
                     *eou,
@@ -2198,7 +2218,8 @@ class IncidentStore:
 
         columns = (
             "project_id", "bundle_id", "session_id", "turn_id", "turn_index",
-            "started_at_unix_nano", "framework", "provider", "model", "status",
+            "started_at_unix_nano", "framework", "provider", "model", "language",
+            "status",
             "stt_finalization_ms", "stt_finalization_availability",
             "stt_finalization_basis", "stt_finalization_confidence",
             "stt_finalization_limitation", "eou_ms", "eou_availability",
@@ -2562,6 +2583,7 @@ class IncidentStore:
             "framework": "framework",
             "provider": "provider",
             "model": "model",
+            "language": "language",
             "status": "status",
         }
         if metric not in metric_columns:

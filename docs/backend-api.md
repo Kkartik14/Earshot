@@ -80,9 +80,10 @@ before pagination, including from cursor material.
 
 Returns project-scoped fleet summaries for STT finalization, EOU, first-token/first-audio,
 send/receive/render response, overall response, or explicit native turn duration, grouped
-by framework, provider, model, or status. Percentiles are stratified by availability,
-basis, confidence, and limitation; unlike evidence is never blended. Missing evidence is
-not converted to zero. The projection is rebuilt from canonical Incidents on startup.
+by framework, provider, model, STT language, or status. Percentiles are stratified by
+availability, basis, confidence, and limitation; unlike evidence is never blended. Missing
+evidence is not converted to zero. The projection is rebuilt from canonical Incidents on
+startup.
 
 ### `GET /v1/incidents/{bundle_id}`
 

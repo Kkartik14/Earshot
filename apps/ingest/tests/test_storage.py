@@ -647,7 +647,7 @@ def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
         )
     store = IncidentStore(tmp_path)
     with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
         columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
         assert {
             "expires_at_unix_nano",
@@ -705,7 +705,7 @@ def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid
     assert restored.value == original.value
     assert restored.generated_at_unix_nano == original.generated_at_unix_nano
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
         column = next(
             row
             for row in connection.execute("PRAGMA table_info(analyses)")
@@ -743,7 +743,7 @@ def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
             "default",
             123,
         )
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None:

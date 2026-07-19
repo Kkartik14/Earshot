@@ -136,6 +136,9 @@ _SAFE_EXACT = {
     "earshot.operation.name",
     "earshot.operation.id",
     "earshot.request.id",
+    "earshot.language.code",
+    "earshot.language.probability",
+    "earshot.stt.mode",
     "earshot.framework.name",
     "earshot.framework.metric.name",
     "earshot.framework.operation.name",
@@ -258,6 +261,8 @@ _NUMERIC_METADATA_KEYS = frozenset(
         "metrics.ttfb",
     }
 )
+_LANGUAGE_CODE_METADATA_KEYS = frozenset({"earshot.language.code"})
+_PROBABILITY_METADATA_KEYS = frozenset({"earshot.language.probability"})
 _DECIMAL_METADATA_KEYS = frozenset(
     {
         "earshot.time.monotonic_nano",
@@ -285,6 +290,7 @@ _SEMANTIC_METADATA_KEYS = frozenset(
         "earshot.correlation",
         "earshot.chronology",
         "earshot.unit_basis",
+        "earshot.stt.mode",
         "gen_ai.operation.name",
         "gen_ai.output.type",
         "conversation.type",
@@ -410,6 +416,7 @@ _SAFE_SOURCE_LABELS = frozenset(
     }
 )
 _SAFE_SEMANTIC_LABEL = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_SAFE_LANGUAGE_CODE = re.compile(r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
 _SAFE_SHA256_LABEL = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SAFE_VERSION_LABEL = re.compile(
     r"^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\.[0-9]+)*(?:[-+][a-z0-9.-]+)?)$"
@@ -653,6 +660,19 @@ def metadata_value_allowed(key: str, value: Any) -> bool:
         if isinstance(value, int):
             return 0 <= value <= _IJSON_INTEGER_MAX
         return math.isfinite(value) and value >= 0
+    if key in _LANGUAGE_CODE_METADATA_KEYS:
+        return (
+            isinstance(value, str)
+            and len(value) <= 63
+            and _SAFE_LANGUAGE_CODE.fullmatch(value) is not None
+        )
+    if key in _PROBABILITY_METADATA_KEYS:
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            and 0 <= value <= 1
+        )
     if key in _DECIMAL_METADATA_KEYS:
         return (
             isinstance(value, str)

@@ -72,6 +72,37 @@ def _golden_runtime_bundles():
     return pipecat_recorder.close(), livekit_recorder.close()
 
 
+def _with_stt_language(bundle, *, language: str = "hi-IN", probability: float = 0.95):
+    llm = next(
+        operation
+        for operation in bundle.profile.operations
+        if operation.operation_name == "llm"
+    )
+    stt = llm.model_copy(
+        update={
+            "operation_id": "op-stt-language",
+            "operation_name": "stt",
+            "trace_id": None,
+            "span_id": None,
+            "parent_span_id": None,
+            "parent_scope": "unknown",
+            "attributes": {
+                "gen_ai.provider.name": "sarvam",
+                "gen_ai.request.model": "saaras:v3",
+                "earshot.language.code": language,
+                "earshot.language.probability": probability,
+            },
+        }
+    )
+    return bundle.model_copy(
+        update={
+            "profile": bundle.profile.model_copy(
+                update={"operations": (*bundle.profile.operations, stt)}
+            )
+        }
+    )
+
+
 def test_ingest_projects_queryable_turn_facts_with_per_metric_quality(tmp_path) -> None:
     store = IncidentStore(tmp_path)
     bundle = make_valid_bundle(bundle_id="turn-fact-bundle")
@@ -98,6 +129,68 @@ def test_ingest_projects_queryable_turn_facts_with_per_metric_quality(tmp_path) 
     assert fact.interruption_count is None
     assert fact.interruption_availability == "not_observed"
     assert fact.projection_version == TURN_FACT_PROJECTION_VERSION
+
+
+def test_stt_language_is_a_queryable_fleet_dimension(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    bundle = _with_stt_language(make_valid_bundle(bundle_id="sarvam-language"))
+
+    store.ingest(bundle, encode_incident_protobuf(bundle))
+
+    [fact] = store.list_turn_facts()
+    assert fact.language == "hi-IN"
+    [summary] = store.summarize_turn_metric("response_ms", group_by="language")
+    assert summary.group == "hi-IN"
+    assert summary.turn_count == 1
+
+
+def test_conflicting_stt_languages_remain_an_unknown_fleet_dimension(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    bundle = _with_stt_language(make_valid_bundle(bundle_id="ambiguous-language"))
+    stt = next(
+        operation
+        for operation in bundle.profile.operations
+        if operation.operation_name == "stt"
+    )
+    conflicting = stt.model_copy(
+        update={
+            "operation_id": "op-stt-language-conflict",
+            "attributes": {
+                **stt.attributes,
+                "earshot.language.code": "bn-IN",
+            },
+        }
+    )
+    bundle = bundle.model_copy(
+        update={
+            "profile": bundle.profile.model_copy(
+                update={"operations": (*bundle.profile.operations, conflicting)}
+            )
+        }
+    )
+
+    store.ingest(bundle, encode_incident_protobuf(bundle))
+
+    [fact] = store.list_turn_facts()
+    assert fact.language is None
+    [summary] = store.summarize_turn_metric("response_ms", group_by="language")
+    assert summary.group == "unknown"
+
+
+def test_metrics_http_can_group_turns_by_stt_language(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    bundle = _with_stt_language(make_valid_bundle(bundle_id="sarvam-language-http"))
+    store.ingest(bundle, encode_incident_protobuf(bundle))
+    client = TestClient(create_app(store=store))
+
+    response = client.get(
+        "/v1/metrics/turns",
+        params={"metric": "response_ms", "group_by": "language"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["group_by"] == "language"
+    assert [group["group"] for group in response.json()["groups"]] == ["hi-IN"]
 
 
 def test_turn_facts_are_rebuilt_from_canonical_incidents_on_restart(tmp_path) -> None:
@@ -139,7 +232,26 @@ def test_v7_turn_fact_projection_is_recreated_from_canonical_incidents(tmp_path)
     assert fact.eou_ms == 50.0
     assert fact.projection_version == TURN_FACT_PROJECTION_VERSION
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+
+
+def test_v9_turn_facts_are_rebuilt_with_language_from_canonical_incidents(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    bundle = _with_stt_language(make_valid_bundle(bundle_id="migrated-language"))
+    store.ingest(bundle, encode_incident_protobuf(bundle))
+    store.close()
+    with sqlite3.connect(tmp_path / "earshot.sqlite3") as connection:
+        connection.execute("DROP INDEX turn_metrics_project_dimensions_idx")
+        connection.execute("ALTER TABLE turn_metrics DROP COLUMN language")
+        connection.execute("PRAGMA user_version = 9")
+
+    migrated = IncidentStore(tmp_path)
+
+    [fact] = migrated.list_turn_facts()
+    assert fact.bundle_id == "migrated-language"
+    assert fact.language == "hi-IN"
+    with sqlite3.connect(migrated.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 def test_turn_fact_queries_are_project_scoped(tmp_path) -> None:

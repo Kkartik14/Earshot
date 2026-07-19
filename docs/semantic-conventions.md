@@ -23,6 +23,12 @@ Reuse `session.id`, relevant `gen_ai.*`, `error.type`, resource attributes, and
 instrumentation scope where applicable. `gen_ai.output.type="speech"` identifies a
 requested modality but does not replace voice delivery/render semantics.
 
+`earshot.language.code` is the BCP 47 language tag attached to an STT operation.
+`earshot.language.probability` is a provider-reported value from zero through one and
+must be absent when the provider did not perform language detection.
+`earshot.stt.mode` records the governed recognition mode without retaining transcript
+content.
+
 ## Operations
 
 Classify an existing span with `earshot.operation.name`; preserve its native name.
