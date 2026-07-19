@@ -27,6 +27,8 @@ to implement another producer or consumer without access to `docs/private`.
   publication guardrails.
 - [Pipecat adapter](./adapters/pipecat.md) and
   [LiveKit adapter](./adapters/livekit.md) — adapter contracts and limitations.
+- [Raw provider adapters](./adapters/providers.md) — Deepgram, Cartesia, OpenAI
+  Realtime, and Sarvam event mapping for custom in-app pipelines.
 
 ## Normative sources
 
