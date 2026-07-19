@@ -123,13 +123,20 @@ class RinggConnectorAdapter:
         call_id = payload.get("call_id")
         if not isinstance(call_id, str) or not call_id or len(call_id) > 512:
             raise DeliveryPayloadError
+        call_sid = payload.get("call_sid")
+        if not isinstance(call_sid, str) or not call_sid or len(call_sid) > 512:
+            raise DeliveryPayloadError
+        external_identities = (
+            ExternalIdentityInput("call_id", call_id),
+            ExternalIdentityInput("call_sid", call_sid),
+        )
         delivery_key = f"{call_id}:{event_type}"
         if event_type in _PROGRESS_EVENTS:
             return NormalizedProviderDelivery(
                 delivery_key=delivery_key,
                 event_type=event_type,
                 disposition="ignore",
-                external_identities=(ExternalIdentityInput("call_id", call_id),),
+                external_identities=external_identities,
                 bundle=None,
             )
         status = payload.get("status")
@@ -139,7 +146,7 @@ class RinggConnectorAdapter:
             delivery_key=delivery_key,
             event_type=_FINAL_EVENT,
             disposition="incident",
-            external_identities=(ExternalIdentityInput("call_id", call_id),),
+            external_identities=external_identities,
             bundle=self._final_bundle(
                 payload,
                 call_id=call_id,

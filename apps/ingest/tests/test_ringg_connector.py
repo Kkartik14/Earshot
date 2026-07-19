@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
 
 from earshot.api import create_app
-from earshot.codec import decode_incident_protobuf
+from earshot.codec import decode_incident_protobuf, encode_incident_json
 from earshot.connectors import (
     DeliveryConflictError,
     DeliveryPayloadError,
@@ -24,6 +25,7 @@ PRIVATE_TEXT = "private Ringg transcript and analysis must never be canonical"
 PRIVATE_PHONE = "+919999999999"
 PRIVATE_URL = "https://recordings.example/private-call.mp3"
 CALL_ID = "4b30f5dc-7f86-4e4c-a3aa-15c01138559b"
+CALL_SID = "provider-call-sensitive"
 
 
 def _payload(*, event_type: str = "all_processing_completed", latency: float = 0.892345) -> bytes:
@@ -31,7 +33,7 @@ def _payload(*, event_type: str = "all_processing_completed", latency: float = 0
         {
             "event_type": event_type,
             "call_id": CALL_ID,
-            "call_sid": "provider-call-sensitive",
+            "call_sid": CALL_SID,
             "agent_id": "agent-sensitive",
             "workspace_id": "workspace-sensitive",
             "status": "completed",
@@ -94,6 +96,7 @@ def test_final_event_keeps_only_session_metadata_and_pseudonymous_identity(conne
 
     _, canonical = store.get_artifact(outcome.bundle_id, project_id="support")
     bundle = decode_incident_protobuf(canonical)
+    incident_json = encode_incident_json(bundle)
     measurements = {
         measurement.name: measurement
         for sample in bundle.profile.quality_samples
@@ -114,11 +117,40 @@ def test_final_event_keeps_only_session_metadata_and_pseudonymous_identity(conne
         PRIVATE_PHONE,
         PRIVATE_URL,
         CALL_ID,
-        "provider-call-sensitive",
+        CALL_SID,
         "agent-sensitive",
         "workspace-sensitive",
     ):
         assert private_value.encode() not in canonical
+        assert private_value.encode() not in incident_json
+
+    with sqlite3.connect(store.database_path) as connection:
+        identities = connection.execute(
+            """
+            SELECT key_kind, value_hmac
+            FROM external_identities
+            WHERE bundle_id = ?
+            ORDER BY key_kind
+            """,
+            (outcome.bundle_id,),
+        ).fetchall()
+    assert identities == [
+        (
+            "call_id",
+            store.fingerprint(
+                f"identity:{endpoint.endpoint_id}:call_id",
+                CALL_ID,
+            ),
+        ),
+        (
+            "call_sid",
+            store.fingerprint(
+                f"identity:{endpoint.endpoint_id}:call_sid",
+                CALL_SID,
+            ),
+        ),
+    ]
+    assert all(len(value_hmac) == 64 for _, value_hmac in identities)
 
 
 @pytest.mark.parametrize("header", ("authorization", "x-webhook-secret"))
@@ -187,6 +219,9 @@ def test_progress_events_are_authenticated_then_ignored(connector) -> None:
         ("overall_latency_seconds", "0.9"),
         ("first_utterance_seconds", None),
         ("called_on", "not-a-timestamp"),
+        ("call_sid", None),
+        ("call_sid", ""),
+        ("call_sid", "x" * 513),
     ),
 )
 def test_required_session_metadata_is_strictly_validated(
