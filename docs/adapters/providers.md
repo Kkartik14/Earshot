@@ -42,12 +42,12 @@ are never retained.
 
 ## Supported mappings
 
-| Adapter | Native input | Retained Earshot facts |
-| --- | --- | --- |
-| `DeepgramAdapter` | `Results`, `SpeechStarted`, `UtteranceEnd` | STT stage; segment/cursor measurements; final transcript; natural turn commit; forced-final marker |
-| `CartesiaAdapter` | `chunk`, `done`, `error` | Per-chunk `step_time`; app request-to-first-chunk TTFB; first received audio; terminal/error metadata |
-| `OpenAIRealtimeAdapter` | speech start/stop, input transcription completion, response create/audio delta/done | Fused `agent` interval; app speech-stop-receipt to first-audio-receipt latency; interruption detection; terminal status |
-| `SarvamAdapter` | `events`, transcription `data`, `error` | VAD receipt boundaries; native audio/processing measurements; final transcript; language code/probability; failed STT stage |
+| Adapter                 | Native input                                                                        | Retained Earshot facts                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `DeepgramAdapter`       | `Results`, `SpeechStarted`, `UtteranceEnd`                                          | STT stage; segment/cursor measurements; final transcript; natural turn commit; forced-final marker                          |
+| `CartesiaAdapter`       | `chunk`, `done`, `error`                                                            | Per-chunk `step_time`; app request-to-first-chunk TTFB; first received audio; terminal/error metadata                       |
+| `OpenAIRealtimeAdapter` | speech start/stop, input transcription completion, response create/audio delta/done | Fused `agent` interval; app speech-stop-receipt to first-audio-receipt latency; interruption detection; terminal status     |
+| `SarvamAdapter`         | `events`, transcription `data`, `error`                                             | VAD receipt boundaries; native audio/processing measurements; final transcript; language code/probability; failed STT stage |
 
 Deepgram's `start`, `duration`, and `last_word_end` are audio-stream coordinates,
 not precise transport latency. Cartesia's `step_time` is per-chunk server

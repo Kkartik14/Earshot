@@ -40,15 +40,15 @@ To base64 a captured body: `base64 -i body.raw` (macOS) or
 
 ## What to capture per provider — and what `secret` is
 
-| Provider | `secret` is… | How to get a signed delivery |
-|---|---|---|
-| **ElevenLabs Agents** | the **Webhook Signing Secret** (`wsec_…`) from the agent's post-call webhook settings — **not** the API key | Configure the post-call webhook to a capture URL (e.g. an [RequestBin](https://pipedream.com/requestbin) / webhook.site), then run one real agent conversation, **or** use the dashboard's "send test event" on the webhook. Capture the `ElevenLabs-Signature` header + raw body. |
-| **Vapi** | the **server-URL secret you configured** (`X-Vapi-Secret`, or the Bearer credential) — you choose this value | Point the assistant's server URL at a capture endpoint, place one test call, and grab the `end-of-call-report` request (`Authorization`/`X-Vapi-Secret` header + raw body). |
-| **Retell** | the **Retell webhook API key** used to sign | Set the webhook URL to a capture endpoint, run one test call, and grab the `X-Retell-Signature` header + raw `call_analyzed` body. |
-| **Ringg** | the receiver-controlled Bearer token or `X-Webhook-Secret` configured on the subscription | Subscribe to `all_processing_completed`, run one sandbox call, and capture the configured auth header plus raw final body. Ringg does not document a provider HMAC scheme. |
+| Provider              | `secret` is…                                                                                                 | How to get a signed delivery                                                                                                                                                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ElevenLabs Agents** | the **Webhook Signing Secret** (`wsec_…`) from the agent's post-call webhook settings — **not** the API key  | Configure the post-call webhook to a capture URL (e.g. an [RequestBin](https://pipedream.com/requestbin) / webhook.site), then run one real agent conversation, **or** use the dashboard's "send test event" on the webhook. Capture the `ElevenLabs-Signature` header + raw body. |
+| **Vapi**              | the **server-URL secret you configured** (`X-Vapi-Secret`, or the Bearer credential) — you choose this value | Point the assistant's server URL at a capture endpoint, place one test call, and grab the `end-of-call-report` request (`Authorization`/`X-Vapi-Secret` header + raw body).                                                                                                        |
+| **Retell**            | the **Retell webhook API key** used to sign                                                                  | Set the webhook URL to a capture endpoint, run one test call, and grab the `X-Retell-Signature` header + raw `call_analyzed` body.                                                                                                                                                 |
+| **Ringg**             | the receiver-controlled Bearer token or `X-Webhook-Secret` configured on the subscription                    | Subscribe to `all_processing_completed`, run one sandbox call, and capture the configured auth header plus raw final body. Ringg does not document a provider HMAC scheme.                                                                                                         |
 
 > Because webhooks are **pushed and signed** by the provider, a REST API key
-> alone cannot exercise the signature path — you need a real *signed delivery*.
+> alone cannot exercise the signature path — you need a real _signed delivery_.
 > The providers' "send test webhook" buttons are the cheapest way to get one
 > without placing a live call.
 
