@@ -259,6 +259,34 @@ class IncidentRecorder:
                 )
             )
 
+    def record_omission(
+        self,
+        field_name: str,
+        *,
+        capture_class: str | CaptureClass,
+        reason: str = "adapter_payload_omitted",
+    ) -> None:
+        """Ledger a discarded source field without retaining its value."""
+
+        if not isinstance(field_name, str) or not field_name:
+            raise ValueError("field_name must be a non-empty string")
+        try:
+            normalized_class = CaptureClass(capture_class)
+        except (TypeError, ValueError) as error:
+            raise ValueError("capture_class must be a known capture class") from error
+        if reason != "adapter_payload_omitted":
+            raise ValueError("reason must be the stable adapter omission code")
+        omission = Omission(
+            field_key_sha256=hashlib.sha256(
+                field_name.encode("utf-8", errors="surrogatepass")
+            ).hexdigest(),
+            capture_class=normalized_class,
+            reason=reason,
+        )
+        with self._lock:
+            self._require_open()
+            self._omissions.append(omission)
+
     def register_adapter(self, adapter: Adapter) -> None:
         adapter, has_model_extensions = self._prepare_model(adapter)
         self._assert_profile_record_depth(adapter, root_depth=4)

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 import earshot
 from earshot.analysis import analyze_incident
-from earshot.codec import analysis_input_sha256
+from earshot.codec import analysis_input_sha256, encode_incident_protobuf
 from earshot.storage import IncidentStore
 from earshot.validation import validate_incident
 
@@ -134,9 +136,7 @@ def test_barge_in_offset_is_relative_to_the_turn() -> None:
     bundle = sess.close()
 
     event = next(
-        item
-        for item in bundle.profile.events
-        if item.event_name == "earshot.interruption.accepted"
+        item for item in bundle.profile.events if item.event_name == "earshot.interruption.accepted"
     )
     assert int(event.time.source_time_unix_nano) == START + 1_600_000_000
 
@@ -183,9 +183,7 @@ def test_final_transcript_is_attributed_to_the_user() -> None:
 
 def test_failed_turn_does_not_reuse_its_clock_origin() -> None:
     sess = earshot.pipeline(session_id="turn-failure", started_at_unix_nano=START)
-    with pytest.raises(RuntimeError, match="application failure"), sess.turn(
-        "failed"
-    ) as turn:
+    with pytest.raises(RuntimeError, match="application failure"), sess.turn("failed") as turn:
         turn.llm("openai", ttft_ms=100)
         raise RuntimeError("application failure")
     with sess.turn("next") as turn:
@@ -248,9 +246,7 @@ def test_duplicate_explicit_turn_ids_are_rejected() -> None:
 def test_advanced_authoring_keeps_each_fact_evidence_independent() -> None:
     sess = earshot.pipeline(session_id="native-facts", started_at_unix_nano=START)
     with sess.turn() as turn:
-        operation_id = turn.record_stage(
-            "agent", "openai", model="gpt-realtime", at_ms=100
-        )
+        operation_id = turn.record_stage("agent", "openai", model="gpt-realtime", at_ms=100)
         turn.record_measurement(
             "earshot.turn.response_latency",
             410,
@@ -289,3 +285,20 @@ def test_closed_session_rejects_new_turns() -> None:
     sess.close()
     with pytest.raises(RuntimeError), sess.turn():
         pass
+
+
+def test_explicit_omission_ledgers_only_a_source_field_digest() -> None:
+    sess = earshot.pipeline(session_id="omission", started_at_unix_nano=START)
+    field_name = "provider.response.private_payload"
+    with sess.turn() as turn:
+        turn.record_omission(field_name, capture_class="model_payload")
+    bundle = sess.close()
+
+    [omission] = bundle.profile.privacy.omissions
+    assert omission.capture_class == "model_payload"
+    assert omission.reason == "adapter_payload_omitted"
+    assert omission.count == 1
+    assert omission.attributes == {
+        "field_key_sha256": hashlib.sha256(field_name.encode()).hexdigest()
+    }
+    assert field_name.encode() not in encode_incident_protobuf(bundle)

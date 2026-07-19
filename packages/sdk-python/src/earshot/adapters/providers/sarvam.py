@@ -26,11 +26,13 @@ class SarvamAdapter(ProviderAdapter):
         *,
         model: str = "saaras:v3",
         mode: str = "transcribe",
+        language_code: str = "unknown",
         identity_key: bytes | None = None,
     ) -> None:
         super().__init__("sarvam", identity_key=identity_key)
         self.model = require_string(model, "model")
         self.mode = sanitize_semantic_label(require_string(mode, "mode"))
+        self.language_code = require_string(language_code, "language_code")
 
     def adapt(
         self,
@@ -89,7 +91,11 @@ class SarvamAdapter(ProviderAdapter):
                 _apply_update=apply_update,
             )
 
-        return self._remember(payload, create_update)
+        return self._remember(
+            payload,
+            create_update,
+            observed_at_ms=receipt_ms,
+        )
 
     def _transcription(
         self,
@@ -110,7 +116,7 @@ class SarvamAdapter(ProviderAdapter):
         language_probability = optional_probability(
             data.get("language_probability"), "data.language_probability"
         )
-        if language_code not in {None, "unknown"} and language_probability is not None:
+        if self.language_code != "unknown" and language_probability is not None:
             raise ValueError(
                 "language_probability must be null when a specific language is supplied"
             )
@@ -125,6 +131,10 @@ class SarvamAdapter(ProviderAdapter):
                 attributes["earshot.language.probability"] = language_probability
 
             def apply_update(turn: TurnRecorder) -> None:
+                turn.record_omission(
+                    "sarvam.data.transcript",
+                    capture_class="transcript",
+                )
                 operation_id = turn.record_stage(
                     "stt",
                     "sarvam",
@@ -177,7 +187,11 @@ class SarvamAdapter(ProviderAdapter):
                 _apply_update=apply_update,
             )
 
-        return self._remember(payload, create_update)
+        return self._remember(
+            payload,
+            create_update,
+            native_update_id=request_id,
+        )
 
     def _error(
         self,
@@ -195,6 +209,10 @@ class SarvamAdapter(ProviderAdapter):
                 attributes["error.type"] = code
 
             def apply_update(turn: TurnRecorder) -> None:
+                turn.record_omission(
+                    "sarvam.data.error",
+                    capture_class="diagnostic_payload",
+                )
                 turn.record_stage(
                     "stt",
                     "sarvam",

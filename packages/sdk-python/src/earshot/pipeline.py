@@ -39,6 +39,7 @@ from .contract import (
     TimePoint,
     TimeRange,
 )
+from .privacy import CaptureClass
 from .recorder import IncidentRecorder, RecorderConfig
 from .sdk import _runtime_snapshot
 
@@ -345,6 +346,21 @@ class TurnRecorder:
             )
         )
         self._max_ms = max(self._max_ms, offset)
+
+    def record_omission(
+        self,
+        field_name: str,
+        *,
+        capture_class: str | CaptureClass,
+        reason: str = "adapter_payload_omitted",
+    ) -> None:
+        """Ledger a discarded provider field without retaining its value."""
+
+        self._session.recorder.record_omission(
+            field_name,
+            capture_class=capture_class,
+            reason=reason,
+        )
 
     # -- internals -----------------------------------------------------------
 

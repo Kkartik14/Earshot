@@ -36,6 +36,7 @@ class AdapterUpdate:
     _lock: threading.RLock = field(
         default_factory=threading.RLock, init=False, repr=False, compare=False
     )
+    _state_lock: threading.RLock | None = field(default=None, init=False, repr=False, compare=False)
 
     def apply(self, turn: TurnRecorder) -> bool:
         """Apply this update once; return ``False`` for an exact replay."""
@@ -45,7 +46,12 @@ class AdapterUpdate:
         with self._lock:
             if self._applied:
                 return False
-            self._apply_update(turn)
+            state_lock = self._state_lock
+            if state_lock is None:
+                self._apply_update(turn)
+            else:
+                with state_lock:
+                    self._apply_update(turn)
             self._applied = True
             return True
 
@@ -63,6 +69,7 @@ class ProviderAdapter:
         self.provider = provider
         self._identity_key = identity_key or secrets.token_bytes(32)
         self._updates: dict[bytes, AdapterUpdate] = {}
+        self._native_updates: dict[bytes, bytes] = {}
         self._lock = threading.RLock()
 
     def _remember(
@@ -71,15 +78,34 @@ class ProviderAdapter:
         factory: Callable[[str], AdapterUpdate],
         *,
         observed_at_ms: float | None = None,
+        native_update_id: str | None = None,
+        fingerprint_context: Mapping[str, object] | None = None,
     ) -> AdapterUpdate:
-        fingerprint = self._fingerprint(payload, observed_at_ms=observed_at_ms)
+        fingerprint = self._fingerprint(
+            payload,
+            observed_at_ms=observed_at_ms,
+            fingerprint_context=fingerprint_context,
+        )
         with self._lock:
+            native_key: bytes | None = None
+            if native_update_id is not None:
+                native_key = hmac.new(
+                    self._identity_key,
+                    f"{self.provider}\x1fupdate\x1f{native_update_id}".encode(),
+                    hashlib.sha256,
+                ).digest()
+                prior_fingerprint = self._native_updates.get(native_key)
+                if prior_fingerprint is not None and prior_fingerprint != fingerprint:
+                    raise ValueError("conflicting provider update identity")
             existing = self._updates.get(fingerprint)
             if existing is not None:
                 return existing
             update_id = f"{self.provider}-update-{fingerprint.hex()[:24]}"
             update = factory(update_id)
+            update._state_lock = self._lock
             self._updates[fingerprint] = update
+            if native_key is not None:
+                self._native_updates[native_key] = fingerprint
             return update
 
     def _opaque_id(self, kind: str, native_id: str) -> str:
@@ -95,10 +121,15 @@ class ProviderAdapter:
         payload: Mapping[str, object],
         *,
         observed_at_ms: float | None,
+        fingerprint_context: Mapping[str, object] | None,
     ) -> bytes:
         identity: object = payload
-        if observed_at_ms is not None:
-            identity = {"observed_at_ms": observed_at_ms, "payload": payload}
+        if observed_at_ms is not None or fingerprint_context is not None:
+            identity = {
+                "context": fingerprint_context,
+                "observed_at_ms": observed_at_ms,
+                "payload": payload,
+            }
         try:
             canonical = json.dumps(
                 identity,
