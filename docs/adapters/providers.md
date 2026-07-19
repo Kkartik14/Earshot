@@ -25,7 +25,8 @@ incident = session.close()
 one application-monotonic clock. Do not pass Unix time or provider media offsets.
 `AdapterUpdate.apply()` is idempotent for an exact update. `correlation_id` is an
 opaque keyed digest; raw request, response, context, transcript, and audio values
-are never retained.
+are never retained. Apply each update before adapting the next stream event: parsing
+alone never advances response, turn, or first-audio state.
 
 ## Evidence rules
 
@@ -36,18 +37,20 @@ are never retained.
   TTFB.
 - First received audio is not client render. `client.render` remains unobserved.
 - Provider interruption detection is not accepted barge-in. The application must
-  explicitly author acceptance after output cancellation or playout stop.
+  explicitly author acceptance after output cancellation or playout stop. The
+  Realtime adapter does this only when a speech-started response later ends cancelled.
 - Realtime speech-to-speech remains one `agent` operation; Earshot does not invent
   internal STT, LLM, or TTS stages.
+- Every discarded content field contributes a value-free privacy omission entry.
 
 ## Supported mappings
 
-| Adapter                 | Native input                                                                        | Retained Earshot facts                                                                                                      |
-| ----------------------- | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `DeepgramAdapter`       | `Results`, `SpeechStarted`, `UtteranceEnd`                                          | STT stage; segment/cursor measurements; final transcript; natural turn commit; forced-final marker                          |
-| `CartesiaAdapter`       | `chunk`, `done`, `error`                                                            | Per-chunk `step_time`; app request-to-first-chunk TTFB; first received audio; terminal/error metadata                       |
-| `OpenAIRealtimeAdapter` | speech start/stop, input transcription completion, response create/audio delta/done | Fused `agent` interval; app speech-stop-receipt to first-audio-receipt latency; interruption detection; terminal status     |
-| `SarvamAdapter`         | `events`, transcription `data`, `error`                                             | VAD receipt boundaries; native audio/processing measurements; final transcript; language code/probability; failed STT stage |
+| Adapter                 | Native input                                                                  | Retained Earshot facts                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `DeepgramAdapter`       | Nova `Results`/cursor events; Flux v2 `TurnInfo` lifecycle                    | STT stage; segment/cursor measurements; speculative Flux transitions; final transcript; committed/forced finality           |
+| `CartesiaAdapter`       | `chunk`, word/phoneme timestamps, `done`, `error`                             | Per-chunk `step_time`; app request-to-first-chunk TTFB; timestamp counts/durations; terminal/error metadata                 |
+| `OpenAIRealtimeAdapter` | speech start/stop, transcription, response create/audio delta/audio done/done | Fused `agent` interval; response-bound receipt latency; verified cancellation acceptance; terminal status                   |
+| `SarvamAdapter`         | `events`, transcription `data`, `error`                                       | VAD receipt boundaries; native audio/processing measurements; final transcript; language code/probability; failed STT stage |
 
 Deepgram's `start`, `duration`, and `last_word_end` are audio-stream coordinates,
 not precise transport latency. Cartesia's `step_time` is per-chunk server
@@ -56,9 +59,20 @@ is converted exactly once to milliseconds. OpenAI Realtime's `audio_end_ms` is a
 session media-buffer offset; response latency therefore uses local receipt times
 on both sides.
 
+For Flux, pass `agent_output_active=True` while adapting `StartOfTurn` only when
+the application knows agent output is active. That condition authors interruption
+detection, never acceptance. A single detected Flux language populates the fleet
+dimension; multilingual turns retain a provider language count and project as
+`unknown` rather than guessing one language. `response.output_audio.done` records
+an output-part boundary but is not response-terminal; only `response.done` closes
+the fused Realtime operation.
+
 Sarvam language is projected from STT operations into `TurnFact.language` and can
 be queried with `GET /v1/metrics/turns?...&group_by=language`. Missing or
 conflicting STT language values become the `unknown` group; they are never guessed.
+Configure `SarvamAdapter(language_code="unknown")` for auto-detection; a detected
+BCP-47 language and probability are then accepted. A fixed configured language
+rejects a provider probability as a schema conflict.
 
 ## Advanced facade
 
@@ -94,7 +108,8 @@ stage look provider-measured.
 .venv/bin/pytest -q \
   packages/sdk-python/tests/test_pipeline_facade.py \
   packages/sdk-python/tests/test_provider_adapters_deepgram_cartesia.py \
-  packages/sdk-python/tests/test_provider_adapters_openai_sarvam.py
+  packages/sdk-python/tests/test_provider_adapters_openai_sarvam.py \
+  packages/sdk-python/tests/test_provider_adapter_parity.py
 ```
 
 Core tests use minimal, synthetic, content-bearing payloads and assert that content
@@ -102,6 +117,7 @@ does not reach canonical incidents. Optional real-provider checks must keep keys
 environment variables and store only scrubbed, gitignored captures.
 
 Primary references: [Deepgram streaming STT](https://developers.deepgram.com/reference/speech-to-text/listen-streaming),
+[Deepgram Flux v2](https://developers.deepgram.com/reference/speech-to-text/listen-flux),
 [Cartesia WebSocket TTS](https://docs.cartesia.ai/api-reference/tts/websocket),
 [OpenAI Realtime WebSocket lifecycle](https://developers.openai.com/api/docs/guides/realtime-conversations#handling-audio-with-websockets),
 and [Sarvam streaming STT schema](https://docs.sarvam.ai/api-reference/speech-to-text/transcribe/ws.md).

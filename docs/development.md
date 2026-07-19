@@ -179,8 +179,9 @@ server-side output evidence; client render remains explicitly unobserved.
   only through explicit caller-supplied, policy-enabled SDK input.
 - The server is single-node; Project scoping is an authorization boundary, not a
   distributed multi-organization control plane.
-- Media upload/replay, browser collection, additional provider-specific native S2S
-  adapters, P.563 processing, and generic live OTLP receiving are later milestones.
+- Media upload/replay, browser collection, native S2S adapters beyond the shipped
+  OpenAI Realtime event mapper, P.563 processing, and generic live OTLP receiving
+  are later milestones.
 - Broad automatic failure explanation and incident-to-regression conversion are later
   milestones; the current analyzer provides deterministic projections and measured
   failed-operation diagnoses.
