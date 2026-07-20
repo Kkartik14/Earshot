@@ -60,3 +60,12 @@ jobs:
           pnpm typecheck
           pnpm build
           pnpm format:check
+
+  container:
+    name: Single-image smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and exercise hardened container
+        run: sh scripts/smoke-container.sh

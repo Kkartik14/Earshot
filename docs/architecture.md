@@ -15,6 +15,11 @@ voice runtime / application
        -> local ingest: validation -> content-addressed storage -> SQLite index
        -> deterministic analysis: graph -> projections -> evidence-linked diagnosis
        -> governed local API/CLI and portable artifact export
+
+hosted voice provider
+  -> provider-authenticated finalized delivery
+  -> connector kernel: raw-body trust -> receipt -> privacy-minimal normalization
+  -> the same canonical incident and Turn Fact pipeline
 ```
 
 The canonical graph is evidence. Turns and waterfalls are replaceable projections.
@@ -52,15 +57,19 @@ supplies filtered bytes through the SDK.
 - Preserves trace/span IDs and native parentage after filtering.
 - Never performs synchronous network I/O in a voice-processing callback.
 
-### Local ingest API
+### Backend API and Connector boundary
 
 - Treats every body as untrusted.
 - Enforces size, media type, JSON duplicate-key, nesting, shape, invariant, and
   privacy-policy checks.
 - Never dereferences a submitted media locator.
-- Binds to loopback exclusively in M1. Remote access requires a same-host HTTPS proxy
-  to the loopback socket plus bearer authentication; a flag cannot authorize a
-  non-loopback cleartext listener.
+- Tokenless development binds to loopback and requires a loopback `Host` header.
+- Remote access requires an explicit trusted-TLS-proxy deployment plus either a
+  project API key or the legacy default-project bearer token. Container deployments
+  bind inside the container network but publish the host port on loopback for the proxy.
+- `/v1/*` operator/SDK routes use Earshot credentials. `/hooks/*` routes never accept
+  those credentials as provider proof; each Connector authenticates the provider's
+  documented raw delivery before JSON parsing.
 - Tokenless loopback requests require a loopback `Host` header, closing the local
   DNS-rebinding boundary. Decode/canonicalization and fsync/SQLite ingest run in a
   worker thread so storage contention cannot stall ASGI liveness.
@@ -70,8 +79,9 @@ supplies filtered bytes through the SDK.
 - Exact canonical protobuf bytes live in a content-addressed object store and own
   evidence/graph content truth.
 - SQLite is the durable publication/catalog/tombstone authority and contains
-  privacy-safe indexes plus versioned derived analysis. CAS and SQLite are one backup
-  unit; neither is independently reconstructable in M1.
+  project-scoped credentials, Connector/Delivery Receipts, privacy-safe indexes,
+  rebuildable Turn Facts, and versioned derived analysis. CAS and SQLite are one backup
+  unit together with `instance-correlation.key`; none is independently reconstructable.
 - Operations, typed links, and events are transactionally projected into relational
   graph indexes; the canonical protobuf remains the source of truth.
 - Evidence is immutable; legal/privacy deletion physically purges it and leaves a
@@ -127,10 +137,12 @@ packages/sdk-python/src/earshot/
   recorder.py                         framework-neutral SDK recorder
   exporter.py                         bounded fail-open exporter
   adapters/                           Pipecat and LiveKit mappings
+  connectors/                         hosted-provider trust + normalization
   analysis.py                         deterministic projections/diagnoses
   storage.py                          SQLite + content-addressed store
   api.py / cli.py                     local backend surfaces
 apps/ingest/app.py                    ASGI deployment entry point
+Dockerfile / compose.yaml             single-image self-host path
 fixtures/                             shared conformance and golden artifacts
 ```
 

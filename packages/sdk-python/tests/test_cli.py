@@ -4,12 +4,31 @@ import json
 
 import pytest
 
-from earshot.cli import main
+from earshot.cli import _build_parser, main
 from earshot.codec import encode_incident_json, encode_incident_protobuf
 from earshot.contract import ExportPolicy
 from incident_factory import SECRET_SENTINEL
 
 pytestmark = pytest.mark.integration
+
+
+def test_serve_honors_trusted_proxy_environment(monkeypatch) -> None:
+    monkeypatch.setenv("EARSHOT_BEHIND_TLS_PROXY", "true")
+
+    arguments = _build_parser().parse_args(["serve"])
+
+    assert arguments.behind_tls_proxy is True
+
+
+def test_serve_reports_the_active_data_path(monkeypatch, tmp_path, capsys) -> None:
+    observed = {}
+    monkeypatch.setattr("earshot.cli.create_app", lambda **_kwargs: object())
+    monkeypatch.setattr("uvicorn.run", lambda _app, **kwargs: observed.update(kwargs))
+
+    assert main(["serve", "--data-dir", str(tmp_path)]) == 0
+
+    assert str(tmp_path.resolve()) in capsys.readouterr().err
+    assert observed["host"] == "127.0.0.1"
 
 
 def test_validate_json_and_protobuf_files(tmp_path, valid_bundle, capsys) -> None:
@@ -79,3 +98,91 @@ def test_cli_show_enforces_destination_export_policy(tmp_path, valid_bundle, cap
     captured = capsys.readouterr()
     assert "ExportPolicyError" in captured.err
     assert SECRET_SENTINEL not in captured.err
+
+
+def test_cli_provisions_project_key_and_connector_without_persisting_secrets(
+    tmp_path, capsys
+) -> None:
+    data_dir = tmp_path / "data"
+
+    assert (
+        main(
+            [
+                "project",
+                "create",
+                "support",
+                "--display-name",
+                "Support Voice",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    project = json.loads(capsys.readouterr().out)
+    assert project["project_id"] == "support"
+
+    assert (
+        main(
+            [
+                "api-key",
+                "issue",
+                "--project",
+                "support",
+                "--label",
+                "production-ingest",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    issued = json.loads(capsys.readouterr().out)
+    assert issued["credential"].startswith("earshot_sk_")
+    assert issued["warning"] == "credential is shown once; store it securely"
+
+    assert (
+        main(
+            [
+                "connector",
+                "create",
+                "--project",
+                "support",
+                "--provider",
+                "elevenlabs",
+                "--secret-env",
+                "ELEVENLABS_WEBHOOK_SECRET",
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    connector = json.loads(capsys.readouterr().out)
+    assert connector["hook_path"] == (
+        f"/hooks/v1/connectors/{connector['endpoint_id']}"
+    )
+    assert connector["secret_ref"] == "env:ELEVENLABS_WEBHOOK_SECRET"
+    assert issued["credential"].encode() not in (data_dir / "earshot.sqlite3").read_bytes()
+
+    assert (
+        main(
+            [
+                "api-key",
+                "revoke",
+                "--project",
+                "support",
+                "--key-id",
+                issued["key_id"],
+                "--data-dir",
+                str(data_dir),
+            ]
+        )
+        == 0
+    )
+    revoked = json.loads(capsys.readouterr().out)
+    assert revoked == {
+        "key_id": issued["key_id"],
+        "project_id": "support",
+        "revoked": True,
+    }

@@ -734,6 +734,105 @@
         "title": "ClockDomain",
         "type": "object"
       },
+      "ConnectorDeliveryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bundle_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundle Id"
+          },
+          "canonical_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonical Sha256"
+          },
+          "disposition": {
+            "enum": [
+              "applied",
+              "replayed",
+              "ignored"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "receipt_id": {
+            "title": "Receipt Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_id",
+          "disposition",
+          "bundle_id",
+          "canonical_sha256"
+        ],
+        "title": "ConnectorDeliveryResponse",
+        "type": "object"
+      },
+      "ConnectorProblemDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "issues": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ApiIssue"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issues"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable"
+        ],
+        "title": "ConnectorProblemDetail",
+        "type": "object"
+      },
+      "ConnectorProblemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ConnectorProblemDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ConnectorProblemResponse",
+        "type": "object"
+      },
       "ConsentRecord": {
         "additionalProperties": true,
         "properties": {
@@ -1320,6 +1419,19 @@
         "title": "ExportPolicy",
         "type": "object"
       },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
       "HealthResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1525,6 +1637,10 @@
             "title": "Ingested At Unix Nano",
             "type": "string"
           },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
           "schema_version": {
             "title": "Schema Version",
             "type": "string"
@@ -1543,6 +1659,7 @@
           }
         },
         "required": [
+          "project_id",
           "bundle_id",
           "session_id",
           "schema_version",
@@ -1600,6 +1717,10 @@
             "title": "Ingested At Unix Nano",
             "type": "string"
           },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
           "schema_version": {
             "title": "Schema Version",
             "type": "string"
@@ -1625,6 +1746,7 @@
           }
         },
         "required": [
+          "project_id",
           "bundle_id",
           "session_id",
           "schema_version",
@@ -2958,6 +3080,144 @@
         "title": "ToolAnalysis",
         "type": "object"
       },
+      "TurnMetricGroupResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "title": "Availability",
+            "type": "string"
+          },
+          "available_count": {
+            "title": "Available Count",
+            "type": "integer"
+          },
+          "average_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Ms"
+          },
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "limitation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limitation"
+          },
+          "maximum_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maximum Ms"
+          },
+          "minimum_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum Ms"
+          },
+          "p50_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Ms"
+          },
+          "p95_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Ms"
+          },
+          "turn_count": {
+            "title": "Turn Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group",
+          "availability",
+          "basis",
+          "confidence",
+          "limitation",
+          "turn_count",
+          "available_count",
+          "average_ms",
+          "minimum_ms",
+          "maximum_ms",
+          "p50_ms",
+          "p95_ms"
+        ],
+        "title": "TurnMetricGroupResponse",
+        "type": "object"
+      },
+      "TurnMetricSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "group_by": {
+            "title": "Group By",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/TurnMetricGroupResponse"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "group_by",
+          "groups"
+        ],
+        "title": "TurnMetricSummaryResponse",
+        "type": "object"
+      },
       "TurnMetrics": {
         "additionalProperties": false,
         "properties": {
@@ -3086,6 +3346,46 @@
         ],
         "title": "ValidateResponse",
         "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -3118,6 +3418,225 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/hooks/v1/connectors/{endpoint_id}": {
+      "post": {
+        "operationId": "connector_delivery_endpoint_hooks_v1_connectors__endpoint_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "endpoint_id",
+            "required": true,
+            "schema": {
+              "title": "Endpoint Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorDeliveryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 400 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 401 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 404 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 409 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 413 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 415 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 429 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Too Many Requests",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds before the delivery should be retried.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 500 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 503 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
+                }
+              }
+            },
+            "description": "Service Unavailable",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds before the delivery should be retried.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Connector Delivery Endpoint"
       }
     },
     "/readyz": {
@@ -3298,6 +3817,16 @@
             },
             "description": "Unprocessable Entity"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -3467,6 +3996,16 @@
             },
             "description": "Unprocessable Entity"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -3628,6 +4167,16 @@
             },
             "description": "Unprocessable Entity"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -3765,6 +4314,16 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
           },
           "500": {
             "content": {
@@ -3918,6 +4477,16 @@
             },
             "description": "Unprocessable Entity"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -4063,6 +4632,16 @@
             },
             "description": "Unprocessable Entity"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -4091,6 +4670,190 @@
           {}
         ],
         "summary": "Analysis Endpoint"
+      }
+    },
+    "/v1/metrics/turns": {
+      "get": {
+        "operationId": "turn_metrics_endpoint_v1_metrics_turns_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "metric",
+            "required": false,
+            "schema": {
+              "default": "response_ms",
+              "enum": [
+                "stt_finalization_ms",
+                "eou_ms",
+                "first_token_ms",
+                "generated_response_ms",
+                "sent_response_ms",
+                "received_response_ms",
+                "render_start_response_ms",
+                "response_ms",
+                "turn_duration_ms"
+              ],
+              "title": "Metric",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "default": "framework",
+              "enum": [
+                "framework",
+                "provider",
+                "model",
+                "language",
+                "status"
+              ],
+              "title": "Group By",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnMetricSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {}
+        ],
+        "summary": "Turn Metrics Endpoint"
       }
     }
   }

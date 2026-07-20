@@ -62,6 +62,7 @@ from .contract import (
     TurnMetrics,
     TurnProjection,
 )
+from .pipeline import PipelineSession, TurnRecorder, pipeline
 from .privacy import (
     CaptureClass,
     CaptureGovernance,
@@ -128,6 +129,7 @@ __all__ = [
     "Omission",
     "Operation",
     "Participant",
+    "PipelineSession",
     "PrivacyManifest",
     "Producer",
     "QualityMeasurement",
@@ -145,6 +147,7 @@ __all__ = [
     "ToolAnalysis",
     "TurnMetrics",
     "TurnProjection",
+    "TurnRecorder",
     "ValidationIssue",
     "ValidationReport",
     "analysis_input_sha256",
@@ -160,6 +163,7 @@ __all__ = [
     "encode_incident_protobuf",
     "encode_json",
     "encode_protobuf",
+    "pipeline",
     "session",
     "shutdown",
     "validate_derived_analysis",

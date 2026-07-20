@@ -136,6 +136,9 @@ _SAFE_EXACT = {
     "earshot.operation.name",
     "earshot.operation.id",
     "earshot.request.id",
+    "earshot.language.code",
+    "earshot.language.probability",
+    "earshot.stt.mode",
     "earshot.framework.name",
     "earshot.framework.metric.name",
     "earshot.framework.operation.name",
@@ -144,6 +147,7 @@ _SAFE_EXACT = {
     "earshot.stream.id",
     "earshot.turn.id",
     "earshot.turn.index",
+    "earshot.tts.voice",
     "earshot.link.type",
     "earshot.link.target_scope",
     "earshot.clock.domain.id",
@@ -166,6 +170,9 @@ _SAFE_EXACT = {
     "earshot.event.name",
     "earshot.privacy.capture_class",
     "earshot.quality.aggregation",
+    "earshot.correlation",
+    "earshot.chronology",
+    "earshot.unit_basis",
     # LiveKit source-native numeric facts. These keys are metadata-safe; other
     # unknown lk.* attributes remain denied by default.
     "lk.response.ttft",
@@ -254,6 +261,8 @@ _NUMERIC_METADATA_KEYS = frozenset(
         "metrics.ttfb",
     }
 )
+_LANGUAGE_CODE_METADATA_KEYS = frozenset({"earshot.language.code"})
+_PROBABILITY_METADATA_KEYS = frozenset({"earshot.language.probability"})
 _DECIMAL_METADATA_KEYS = frozenset(
     {
         "earshot.time.monotonic_nano",
@@ -277,6 +286,11 @@ _SEMANTIC_METADATA_KEYS = frozenset(
         "earshot.event.name",
         "earshot.privacy.capture_class",
         "earshot.quality.aggregation",
+        "earshot.metric.basis",
+        "earshot.correlation",
+        "earshot.chronology",
+        "earshot.unit_basis",
+        "earshot.stt.mode",
         "gen_ai.operation.name",
         "gen_ai.output.type",
         "conversation.type",
@@ -351,6 +365,32 @@ _SAFE_SOURCE_LABELS = frozenset(
         "agent_turn",
         "conversation_item_added.item.interrupted",
         "conversation_item_added.item.metrics",
+        "conversation.item.input_audio_transcription.completed",
+        "Results",
+        "SpeechStarted",
+        "UtteranceEnd",
+        "START_SPEECH",
+        "END_SPEECH",
+        "audio_end_ms",
+        "audio_start_ms",
+        "cartesia.chunk.receipt",
+        "cartesia.done.receipt",
+        "cartesia.error.receipt",
+        "cartesia.request.sent",
+        "channel.alternatives.confidence",
+        "chunk",
+        "data",
+        "deepgram.Results",
+        "deepgram.Results.from_finalize.receipt",
+        "deepgram.Results.is_final.receipt",
+        "deepgram.Results.speech_final.receipt",
+        "deepgram.SpeechStarted.receipt",
+        "deepgram.UtteranceEnd.receipt",
+        "done",
+        "duration",
+        "error",
+        "events.END_SPEECH.receipt",
+        "events.START_SPEECH.receipt",
         "eot_inference_metrics",
         "eotinferencemetrics",
         "eou_metrics",
@@ -373,13 +413,27 @@ _SAFE_SOURCE_LABELS = frozenset(
         "gen_ai.usage.output_tokens",
         "gen_ai.usage.reasoning_tokens",
         "metrics.character_count",
+        "metrics.audio_duration",
+        "metrics.processing_latency",
         "metrics.ttfb",
         "interruption_metrics",
         "interruptionmetrics",
+        "input_audio_buffer.speech_started",
+        "input_audio_buffer.speech_stopped",
         "overlapping_speech",
         "realtime_model_metrics",
         "realtimemodelmetrics",
+        "response.created",
+        "response.done",
+        "response.output_audio.delta",
+        "response.created_to_response.done",
+        "sarvam.data",
+        "sarvam.data.receipt",
+        "sarvam.error.code",
         "stt",
+        "start",
+        "status_code",
+        "step_time",
         "stt processing",
         "stt_metrics",
         "sttmetrics",
@@ -401,6 +455,7 @@ _SAFE_SOURCE_LABELS = frozenset(
     }
 )
 _SAFE_SEMANTIC_LABEL = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_SAFE_LANGUAGE_CODE = re.compile(r"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
 _SAFE_SHA256_LABEL = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SAFE_VERSION_LABEL = re.compile(
     r"^(?:[a-z][a-z0-9_.-]{0,127}|v?[0-9]+(?:\.[0-9]+)*(?:[-+][a-z0-9.-]+)?)$"
@@ -644,6 +699,19 @@ def metadata_value_allowed(key: str, value: Any) -> bool:
         if isinstance(value, int):
             return 0 <= value <= _IJSON_INTEGER_MAX
         return math.isfinite(value) and value >= 0
+    if key in _LANGUAGE_CODE_METADATA_KEYS:
+        return (
+            isinstance(value, str)
+            and len(value) <= 63
+            and _SAFE_LANGUAGE_CODE.fullmatch(value) is not None
+        )
+    if key in _PROBABILITY_METADATA_KEYS:
+        return (
+            not isinstance(value, bool)
+            and isinstance(value, (int, float))
+            and math.isfinite(value)
+            and 0 <= value <= 1
+        )
     if key in _DECIMAL_METADATA_KEYS:
         return (
             isinstance(value, str)

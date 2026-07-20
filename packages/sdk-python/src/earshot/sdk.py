@@ -26,6 +26,13 @@ _config = SdkConfig()
 _exporter: BoundedAsyncExporter | None = None
 
 
+def _runtime_snapshot() -> tuple[SdkConfig, BoundedAsyncExporter | None]:
+    """Return one consistent process-configuration snapshot for SDK facades."""
+
+    with _lock:
+        return _config, _exporter
+
+
 def configure(
     *,
     endpoint: str | None = None,
@@ -76,9 +83,7 @@ def session(
             ...
     """
 
-    with _lock:
-        config = _config
-        exporter = _exporter
+    config, exporter = _runtime_snapshot()
     return IncidentRecorder(
         session_id=session_id,
         bundle_id=bundle_id,

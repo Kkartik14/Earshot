@@ -151,6 +151,52 @@ def test_all_native_pipecat_usage_counters_survive_with_valid_integer_values() -
     assert omissions == []
 
 
+@pytest.mark.parametrize("language", ("hi-IN", "en", "zh-Hant-TW"))
+def test_governed_language_metadata_survives_metadata_only_capture(language: str) -> None:
+    kept, omissions = sanitize_attributes(
+        {
+            "earshot.language.code": language,
+            "earshot.language.probability": 0.95,
+        }
+    )
+
+    assert kept == {
+        "earshot.language.code": language,
+        "earshot.language.probability": 0.95,
+    }
+    assert omissions == []
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    (
+        ("earshot.language.code", "hi IN"),
+        ("earshot.language.code", "hi-IN-secretpayload"),
+        ("earshot.language.probability", -0.1),
+        ("earshot.language.probability", 1.1),
+        ("earshot.language.probability", float("nan")),
+        ("earshot.language.probability", True),
+    ),
+)
+def test_governed_language_metadata_rejects_invalid_values(key: str, value: object) -> None:
+    kept, omissions = sanitize_attributes({key: value})
+
+    assert kept == {}
+    assert len(omissions) == 1
+
+
+def test_governed_stt_mode_requires_a_semantic_value() -> None:
+    kept, omissions = sanitize_attributes(
+        {
+            "earshot.stt.mode": "codemix",
+            "earshot.stt.unsafe_mode": "customer supplied free form mode",
+        }
+    )
+
+    assert kept == {"earshot.stt.mode": "codemix"}
+    assert len(omissions) == 1
+
+
 def test_raw_otlp_grant_does_not_authorize_unknown_normalized_attributes() -> None:
     policy = CapturePolicy(enabled=frozenset({CaptureClass.METADATA, CaptureClass.RAW_OTLP}))
     kept, omissions = sanitize_attributes(
