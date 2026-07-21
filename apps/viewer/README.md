@@ -35,3 +35,22 @@ pnpm --filter @earshot/viewer build      # -> dist/, served by FastAPI in prod
 
 Set `EARSHOT_API_URL` to point the dev proxy at a non-default backend
 (default `http://127.0.0.1:8000`).
+
+## Self-host (single process)
+
+In production the API and the UI are one process — no separate web server. The
+SPA calls `/v1/*` on its own origin, so FastAPI serves both:
+
+```bash
+pnpm --filter @earshot/viewer bundle     # build + copy dist -> the Python package's web/
+earshot serve --data-dir .earshot        # then browse http://127.0.0.1:4319/
+```
+
+`bundle` drops the build into `packages/sdk-python/src/earshot/web/`, which
+`earshot serve` serves by default (client routes fall back to `index.html`,
+hashed assets are cached, and `/v1` is never shadowed). Point at an unbundled
+build instead with `earshot serve --web-dir apps/viewer/dist` or
+`EARSHOT_WEB_DIR`. With nothing bundled, the API just runs headless.
+
+Serving the UI over a non-loopback address needs the auth story that ships with
+the hosted tier; today this is a local, loopback self-host.

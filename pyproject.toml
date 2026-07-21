@@ -51,6 +51,9 @@ earshot = "earshot.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["packages/sdk-python/src/earshot"]
+# The viewer SPA is built into src/earshot/web by `pnpm bundle` (git-ignored);
+# ship it in the wheel so `pip install earshot` serves the UI out of the box.
+artifacts = ["packages/sdk-python/src/earshot/web/**"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --strict-config"

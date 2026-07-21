@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "bundle": "pnpm build && rm -rf ../../packages/sdk-python/src/earshot/web && cp -r dist ../../packages/sdk-python/src/earshot/web",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
