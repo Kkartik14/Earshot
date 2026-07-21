@@ -212,6 +212,10 @@ class ApiConfig:
     default_page_size: int = 50
     analyzer_version: str = ANALYZER_VERSION
     behind_tls_proxy: bool = False
+    # Opt-in for a single-machine container: permits an unauthenticated
+    # non-loopback bind on the promise that the listener is confined to a
+    # trusted boundary (e.g. `docker run -p 127.0.0.1:PORT`). Off by default.
+    trust_local_network: bool = False
 
     def __post_init__(self) -> None:
         if self.max_body_bytes < 1:
@@ -222,7 +226,11 @@ class ApiConfig:
             raise ValueError("max_connector_deliveries_per_minute must be positive")
         if self.max_json_depth < 1:
             raise ValueError("max_json_depth must be positive")
-        if not _is_loopback(self.host) and not self.behind_tls_proxy:
+        if (
+            not _is_loopback(self.host)
+            and not self.behind_tls_proxy
+            and not self.trust_local_network
+        ):
             raise ValueError(
                 "a non-loopback listener requires an explicitly trusted TLS proxy"
             )
@@ -491,7 +499,12 @@ def create_app(
     settings = config or ApiConfig()
     repository = store or IncidentStore(data_dir)
     remote_access = not _is_loopback(settings.host) or settings.behind_tls_proxy
-    if remote_access and not settings.token and not repository.has_active_api_keys():
+    if (
+        remote_access
+        and not settings.trust_local_network
+        and not settings.token
+        and not repository.has_active_api_keys()
+    ):
         raise ValueError("remote access requires a bearer token or an active project API key")
     app = FastAPI(
         title="Earshot local ingest",
@@ -688,6 +701,7 @@ def create_app(
             unsafe_runtime_binding
             and transport_protected_path
             and not settings.behind_tls_proxy
+            and not settings.trust_local_network
         ):
             return JSONResponse(
                 {
@@ -726,7 +740,9 @@ def create_app(
                 and settings.token
                 and hmac.compare_digest(supplied, settings.token)
             )
-            auth_required = remote_access or settings.token is not None
+            auth_required = (
+                remote_access and not settings.trust_local_network
+            ) or settings.token is not None
             invalid_supplied = bool(authorization) and principal is None and not legacy_valid
             if (auth_required and principal is None and not legacy_valid) or invalid_supplied:
                 return JSONResponse(

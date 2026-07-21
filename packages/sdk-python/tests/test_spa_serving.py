@@ -24,9 +24,11 @@ def _client(tmp_path: Path, *, with_spa: bool) -> TestClient:
     web = tmp_path / "web"
     if with_spa:
         _write_spa(web)
+    # For the headless case, point at a directory with no index.html so the
+    # packaged default (if the SPA was bundled into the package) is bypassed.
     app = create_app(
         data_dir=tmp_path / "data",
-        web_dir=web if with_spa else None,
+        web_dir=web if with_spa else tmp_path / "no-web",
     )
     # A loopback Host header keeps the request on the trusted path.
     return TestClient(app, base_url="http://127.0.0.1")

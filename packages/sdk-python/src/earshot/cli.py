@@ -198,6 +198,7 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         ),
         analyzer_version=ANALYZER_VERSION,
         behind_tls_proxy=arguments.behind_tls_proxy,
+        trust_local_network=arguments.trust_local_network,
     )
     app = create_app(
         data_dir=data_dir,
@@ -207,6 +208,13 @@ def _serve_command(arguments: argparse.Namespace) -> int:
     )
     print(f"Earshot data path: {data_dir}", file=sys.stderr)
     print(f"Earshot listening: http://{arguments.host}:{arguments.port}/", file=sys.stderr)
+    if arguments.trust_local_network:
+        print(
+            "Earshot warning: API authentication is disabled "
+            "(--trust-local-network); keep this listener on a trusted boundary "
+            "such as `docker -p 127.0.0.1:PORT`, never a public interface.",
+            file=sys.stderr,
+        )
     uvicorn.run(
         app,
         host=arguments.host,
@@ -304,6 +312,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=_boolean_environment("EARSHOT_BEHIND_TLS_PROXY"),
         help="confirm that a same-host proxy exposes the loopback listener over HTTPS",
+    )
+    serve.add_argument(
+        "--trust-local-network",
+        action="store_true",
+        default=_boolean_environment("EARSHOT_TRUST_LOCAL_NETWORK"),
+        help=(
+            "serve the API without authentication on a listener confined to a "
+            "trusted local boundary (e.g. `docker -p 127.0.0.1:PORT`); never on "
+            "a public interface"
+        ),
     )
     serve.add_argument(
         "--max-body-bytes",
