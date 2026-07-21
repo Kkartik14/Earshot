@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import os
 import sqlite3
 import time
 from collections.abc import Callable
@@ -17,7 +18,8 @@ from urllib.parse import quote
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -420,6 +422,63 @@ def _analysis_value(value: Any) -> Any:
     return value
 
 
+_SPA_RESERVED_PREFIXES = (
+    "v1/",
+    "hooks/",
+    "healthz",
+    "readyz",
+    "openapi.json",
+    "docs",
+    "redoc",
+)
+
+
+def _resolve_web_dir(web_dir: str | Path | None) -> Path | None:
+    """Locate a built single-page viewer to serve alongside the API, if any.
+
+    Precedence: explicit argument, ``EARSHOT_WEB_DIR``, then a ``web`` directory
+    packaged next to this module. Returns ``None`` when no ``index.html`` exists,
+    so the API runs headless without a bundled UI.
+    """
+    candidate: str | Path | None = web_dir or os.environ.get("EARSHOT_WEB_DIR")
+    if candidate is None:
+        packaged = Path(__file__).resolve().parent / "web"
+        candidate = packaged if packaged.is_dir() else None
+    if candidate is None:
+        return None
+    root = Path(candidate).expanduser().resolve()
+    return root if (root / "index.html").is_file() else None
+
+
+def _mount_spa(app: FastAPI, web_root: Path) -> None:
+    """Serve the viewer: hashed assets are cached by the static handler, client
+    routes fall back to ``index.html``, and API prefixes are never shadowed."""
+    assets = web_root / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
+
+    def index() -> FileResponse:
+        return FileResponse(
+            web_root / "index.html",
+            media_type="text/html; charset=utf-8",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/{spa_path:path}", include_in_schema=False)
+    async def spa(spa_path: str) -> Response:
+        if spa_path.startswith(_SPA_RESERVED_PREFIXES):
+            return JSONResponse(
+                {"error": {"code": "EARSHOT_NOT_FOUND", "message": "not found"}},
+                status_code=404,
+            )
+        if spa_path:
+            candidate = (web_root / spa_path).resolve()
+            within = candidate == web_root or web_root in candidate.parents
+            if within and candidate.is_file():
+                return FileResponse(candidate)
+        return index()
+
+
 def create_app(
     *,
     store: IncidentStore | None = None,
@@ -427,6 +486,7 @@ def create_app(
     analyzer: Analyzer | None = None,
     config: ApiConfig | None = None,
     connector_ingestion: HostedProviderIngestion | None = None,
+    web_dir: str | Path | None = None,
 ) -> FastAPI:
     settings = config or ApiConfig()
     repository = store or IncidentStore(data_dir)
@@ -1028,5 +1088,10 @@ def create_app(
     def delete_endpoint(bundle_id: str, request: Request) -> Response:
         repository.purge(bundle_id, project_id=request.state.project_id)
         return Response(status_code=204)
+
+    # The SPA catch-all is registered last so every API route takes precedence.
+    web_root = _resolve_web_dir(web_dir)
+    if web_root is not None:
+        _mount_spa(app, web_root)
 
     return app

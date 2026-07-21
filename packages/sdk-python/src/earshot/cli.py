@@ -203,8 +203,10 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         data_dir=data_dir,
         analyzer=analyze_incident,
         config=config,
+        web_dir=arguments.web_dir,
     )
     print(f"Earshot data path: {data_dir}", file=sys.stderr)
+    print(f"Earshot listening: http://{arguments.host}:{arguments.port}/", file=sys.stderr)
     uvicorn.run(
         app,
         host=arguments.host,
@@ -291,6 +293,11 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--data-dir")
     serve.add_argument("--host", default=os.environ.get("EARSHOT_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(os.environ.get("EARSHOT_PORT", "4319")))
+    serve.add_argument(
+        "--web-dir",
+        default=os.environ.get("EARSHOT_WEB_DIR"),
+        help="serve a built viewer SPA from this directory at the site root",
+    )
     serve.add_argument("--token")
     serve.add_argument(
         "--behind-tls-proxy",
