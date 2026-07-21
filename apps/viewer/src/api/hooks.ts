@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import type { GroupBy, MetricKey } from "../features/fleet/fleet";
 import { api, unwrap } from "./client";
 
 /** Recent incidents (one per stored voice session). */
@@ -20,6 +21,19 @@ export function useIncident(bundleId: string | undefined) {
       unwrap(
         api.GET("/v1/incidents/{bundle_id}", {
           params: { path: { bundle_id: bundleId as string } },
+        }),
+      ),
+  });
+}
+
+/** Fleet-wide turn-latency percentiles for one metric, grouped for comparison. */
+export function useTurnMetrics(metric: MetricKey, groupBy: GroupBy) {
+  return useQuery({
+    queryKey: ["turn-metrics", metric, groupBy],
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/metrics/turns", {
+          params: { query: { metric, group_by: groupBy } },
         }),
       ),
   });

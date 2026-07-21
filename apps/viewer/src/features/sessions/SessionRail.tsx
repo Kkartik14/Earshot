@@ -15,6 +15,17 @@ export function SessionRail() {
         <Waveform className={styles.mark} />
         <b>earshot</b>
       </div>
+
+      <NavLink
+        to="/"
+        end
+        className={({ isActive }) =>
+          isActive ? `${styles.overview} ${styles.overviewActive}` : styles.overview
+        }
+      >
+        Fleet metrics
+      </NavLink>
+
       <span className={styles.eyebrow}>Sessions</span>
 
       <nav className={styles.list}>

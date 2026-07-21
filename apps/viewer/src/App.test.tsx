@@ -10,12 +10,18 @@ vi.mock("./api/hooks", () => ({
     isSuccess: true,
     data: { items: [], next_cursor: null },
   }),
+  useTurnMetrics: () => ({
+    isPending: false,
+    isError: false,
+    isSuccess: true,
+    data: { metric: "first_token_ms", group_by: "model", groups: [] },
+  }),
 }));
 
 describe("App", () => {
-  it("renders the shell and the empty state at the index route", () => {
+  it("renders the shell and the fleet dashboard at the index route", () => {
     renderWithProviders(<App />);
     expect(screen.getByText("earshot")).toBeInTheDocument();
-    expect(screen.getByText("Select a session")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Fleet metrics" })).toBeInTheDocument();
   });
 });

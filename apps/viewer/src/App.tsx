@@ -1,6 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import styles from "./App.module.css";
-import { EmptyState } from "./components/EmptyState";
+import { FleetDashboard } from "./features/fleet/FleetDashboard";
 import { SessionInspector } from "./features/inspector/SessionInspector";
 import { SessionRail } from "./features/sessions/SessionRail";
 
@@ -10,15 +10,7 @@ export function App() {
       <SessionRail />
       <main className={styles.main}>
         <Routes>
-          <Route
-            index
-            element={
-              <EmptyState
-                title="Select a session"
-                hint="Pick a voice session on the left to inspect its turns, latency, and call-graph."
-              />
-            }
-          />
+          <Route index element={<FleetDashboard />} />
           <Route path="sessions/:bundleId" element={<SessionInspector />} />
         </Routes>
       </main>
