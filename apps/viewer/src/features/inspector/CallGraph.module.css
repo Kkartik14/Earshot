@@ -1,189 +1,101 @@
 .graph {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+  margin-top: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
-
-/* Each node hangs off a vertical spine drawn in the left gutter. */
-.node {
-  position: relative;
-  padding: 0 0 12px 26px;
-}
-.node::before {
-  content: "";
-  position: absolute;
-  left: 7px;
-  top: 14px;
-  bottom: -2px;
-  width: 2px;
-  background: var(--line);
-}
-.node:last-child {
-  padding-bottom: 0;
-}
-.node:last-child::before {
-  display: none;
-}
-
-.dot {
-  position: absolute;
-  left: 2px;
-  top: 5px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--bg);
-  border: 2px solid var(--c, var(--tx-low));
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--c, var(--tx-low)) 18%, transparent);
-}
-.stt {
-  --c: var(--stt);
-}
-.llm {
-  --c: var(--llm);
-}
-.tts {
-  --c: var(--tts);
-}
-
-.card {
+.graph svg {
   display: block;
-  width: 100%;
-  text-align: left;
-  background: var(--panel-2);
-  border: 1px solid var(--line-soft);
-  border-radius: 8px;
-  padding: 9px 11px;
-  color: inherit;
-  font: inherit;
+}
+
+.gn {
   cursor: pointer;
-  transition:
-    border-color 0.12s ease,
-    background 0.12s ease;
 }
-.card:hover:not([data-static]) {
-  border-color: color-mix(in oklab, var(--c, var(--acc)) 45%, var(--line));
-  background: color-mix(in oklab, var(--c, var(--acc)) 6%, var(--panel-2));
-}
-.card[data-static] {
+.gn.term {
   cursor: default;
-  background: transparent;
-  border-style: dashed;
 }
-.card:focus-visible {
-  outline: 2px solid var(--acc);
-  outline-offset: 2px;
+.box {
+  fill: var(--panel-2);
+  stroke: var(--nc, var(--line));
+  stroke-width: 1.5;
+}
+.gn.slow .box {
+  stroke: var(--crit);
+  stroke-width: 2;
+}
+.gn:not(.term):hover .box {
+  fill: color-mix(in oklab, var(--nc) 13%, var(--panel-2));
+}
+.gn:focus-visible .box {
+  stroke: var(--acc);
+  stroke-width: 2;
+}
+.gn.term .box {
+  fill: transparent;
+  stroke: var(--line);
+  stroke-dasharray: 4 3;
 }
 
-.head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.stage {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--c);
-}
-.kind {
-  font-size: 11px;
-  color: var(--tx-mid);
-}
-.badge {
-  font-size: 9.5px;
+.nm {
+  fill: var(--nc, var(--tx-mid));
+  font-family: var(--mono);
+  font-size: 12px;
   font-weight: 600;
-  color: var(--acc);
-  background: color-mix(in oklab, var(--acc) 14%, transparent);
-  border-radius: 4px;
-  padding: 2px 6px;
 }
-.lead {
-  margin-left: auto;
+.gn.term .nm {
+  fill: var(--tx-mid);
+}
+.lat {
+  fill: var(--tx);
   font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 11.5px;
-  color: var(--tx);
+  font-size: 12px;
+  font-weight: 600;
 }
-.chev {
-  font-size: 15px;
-  line-height: 1;
-  color: var(--tx-low);
-  transition: transform 0.15s ease;
+.slowLat {
+  fill: var(--crit);
 }
-.chevOpen {
-  transform: rotate(90deg);
-}
-
-.model {
-  margin-top: 3px;
+.termLat {
+  fill: var(--tx-low);
   font-family: var(--mono);
-  font-size: 10.5px;
-  color: var(--tx-low);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.endpoint .kind {
+  font-size: 10px;
   font-weight: 500;
 }
-
-.detail {
-  margin-top: 9px;
-  padding-top: 9px;
-  border-top: 1px solid var(--line-soft);
-}
-.evidence {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 14px;
-  margin: 0;
-}
-.evidence dt {
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--tx-low);
-}
-.evidence dd {
-  margin: 1px 0 0;
+.sub {
+  fill: var(--tx-low);
   font-family: var(--mono);
-  font-size: 11px;
-  color: var(--tx-mid);
-}
-.measured {
-  color: var(--good);
-}
-.inferred {
-  color: var(--llm);
-}
-.weak {
-  color: var(--tx-low);
+  font-size: 10px;
 }
 
-.meas {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+.edge {
+  stroke: var(--tx-low);
+  stroke-width: 1.4;
+  fill: none;
 }
-.meas li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.edge.intr {
+  stroke: var(--tts);
+  stroke-width: 1.7;
+  stroke-dasharray: 4 3;
 }
-.meas code {
+.elab {
+  fill: var(--tx-low);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.03em;
+}
+.ilab {
+  fill: var(--tts);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.bargeBox {
+  fill: transparent;
+  stroke: var(--tts);
+  stroke-dasharray: 4 3;
+  stroke-width: 1.5;
+}
+.bargeTx {
+  fill: var(--tts);
   font-family: var(--mono);
   font-size: 10.5px;
-  color: var(--tx-mid);
-}
-.meas span {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  color: var(--tx);
+  font-weight: 700;
 }

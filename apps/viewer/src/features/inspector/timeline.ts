@@ -33,6 +33,7 @@ interface Operation {
   started_at: { monotonic_time_nano?: string | null };
   attributes?: Record<string, unknown> | null;
   evidence?: Evidence | null;
+  status?: string | null;
 }
 interface QualitySample {
   measurements: { name: string; value: number; unit: string }[];
@@ -228,6 +229,7 @@ export interface StageDetail {
   name: StageName;
   provider?: string;
   model?: string;
+  status: string;
   startMs: number;
   endMs: number;
   leadMs: number;
@@ -311,6 +313,7 @@ export function buildTurnDetails(
         name: w.name,
         provider: w.provider,
         model: w.model,
+        status: typeof w.op.status === "string" ? w.op.status : "unknown",
         startMs: w.startMs,
         endMs: w.endMs,
         leadMs: w.leadMs,

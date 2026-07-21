@@ -86,6 +86,7 @@ describe("buildTurnDetails", () => {
     expect(stt?.evidence?.source).toBe("app");
     expect(stt?.evidence?.observer).toBe("server");
     expect(stt?.evidence?.confidence).toBe("inferred");
+    expect(stt?.status).toBe("ok");
   });
 
   it("collects the per-stage measurements", () => {

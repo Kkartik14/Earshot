@@ -1,121 +1,203 @@
-import { useState } from "react";
-import { formatMs } from "../../lib/format";
+import type { CSSProperties } from "react";
 import styles from "./CallGraph.module.css";
-import type { StageDetail, TurnDetail } from "./timeline";
+import type { StageName, TurnDetail } from "./timeline";
 
-const STAGE_LABEL: Record<string, string> = {
-  stt: "speech-to-text",
-  llm: "language model",
-  tts: "text-to-speech",
+const REL: Record<StageName, string> = {
+  stt: "transcribes",
+  llm: "produces",
+  tts: "emits",
 };
+const shortModel = (m?: string) =>
+  m == null
+    ? "?"
+    : m.includes("whisper")
+      ? "whisper"
+      : m.includes("llama")
+        ? "llama-3.1"
+        : m;
 
-function confClass(confidence: string): string {
-  if (confidence === "measured") return styles.measured;
-  if (confidence === "inferred") return styles.inferred;
-  return styles.weak;
-}
+const X = 12;
+const NW = 214;
+const NH = 42;
+const PIT = 62;
+const CX = X + NW / 2;
 
-function StageNode({ stage, badge }: { stage: StageDetail; badge?: string }) {
-  const [open, setOpen] = useState(false);
-  const expandable = stage.evidence != null || stage.measurements.length > 0;
+type Row =
+  | { term: false; name: StageName; lat: string; sub: string; slow: boolean; nc: string }
+  | { term: true; name: string; lat: string; sub: string };
+
+export function CallGraph({
+  detail,
+  onPick,
+}: {
+  detail: TurnDetail;
+  onPick: (stage: StageName) => void;
+}) {
+  const slowTurn = (detail.firstTokenMs ?? 0) > 500;
+  const rows: Row[] = [
+    ...detail.stages.map((s) => ({
+      term: false as const,
+      name: s.name,
+      lat: `${Math.round(s.leadMs)}ms`,
+      sub: `${s.provider ?? "?"} · ${shortModel(s.model)}`,
+      slow: s.name === "llm" && slowTurn,
+      nc: `var(--${s.name})`,
+    })),
+    { term: true as const, name: "playout", lat: "not observed", sub: "client render" },
+  ];
+
+  const H = 8 + (rows.length - 1) * PIT + NH + 8;
+  const W = detail.interrupted ? 348 : NW + X * 2;
 
   return (
-    <li className={`${styles.node} ${styles[stage.name]}`}>
-      <span className={styles.dot} />
-      <button
-        type="button"
-        className={styles.card}
-        onClick={() => expandable && setOpen((v) => !v)}
-        aria-expanded={expandable ? open : undefined}
-        data-static={expandable ? undefined : ""}
+    <div className={styles.graph}>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        width={W}
+        height={H}
+        xmlns="http://www.w3.org/2000/svg"
       >
-        <div className={styles.head}>
-          <span className={styles.stage}>{stage.name}</span>
-          <span className={styles.kind}>{STAGE_LABEL[stage.name]}</span>
-          {badge ? <span className={styles.badge}>{badge}</span> : null}
-          <span className={styles.lead}>{formatMs(stage.leadMs)}</span>
-          {expandable ? (
-            <span className={`${styles.chev} ${open ? styles.chevOpen : ""}`}>›</span>
-          ) : null}
-        </div>
-        <div className={styles.model}>
-          {stage.provider ?? "unknown"} · {stage.model ?? "unknown"}
-        </div>
+        <defs>
+          <marker
+            id="cg-arrow"
+            markerWidth="7"
+            markerHeight="7"
+            refX="6"
+            refY="3.5"
+            orient="auto"
+          >
+            <path d="M0 0L7 3.5L0 7Z" fill="var(--tx-low)" />
+          </marker>
+          <marker
+            id="cg-arrow-t"
+            markerWidth="7"
+            markerHeight="7"
+            refX="6"
+            refY="3.5"
+            orient="auto"
+          >
+            <path d="M0 0L7 3.5L0 7Z" fill="var(--tts)" />
+          </marker>
+        </defs>
 
-        {open ? (
-          <div className={styles.detail}>
-            {stage.evidence ? (
-              <dl className={styles.evidence}>
-                <div>
-                  <dt>source</dt>
-                  <dd>{stage.evidence.source}</dd>
-                </div>
-                <div>
-                  <dt>observer</dt>
-                  <dd>{stage.evidence.observer}</dd>
-                </div>
-                <div>
-                  <dt>method</dt>
-                  <dd>{stage.evidence.method}</dd>
-                </div>
-                <div>
-                  <dt>confidence</dt>
-                  <dd className={confClass(stage.evidence.confidence)}>
-                    {stage.evidence.confidence}
-                  </dd>
-                </div>
-              </dl>
-            ) : null}
-            {stage.measurements.length > 0 ? (
-              <ul className={styles.meas}>
-                {stage.measurements.map((m) => (
-                  <li key={m.name}>
-                    <code>{m.name}</code>
-                    <span>{formatMs(m.value)}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
-      </button>
-    </li>
-  );
-}
+        {rows.map((row, i) => {
+          const y = 8 + i * PIT;
+          const next = rows[i + 1];
+          const edge =
+            next != null && !row.term ? (
+              <g key={`e${i}`}>
+                <path
+                  className={styles.edge}
+                  d={`M${CX} ${y + NH}L${CX} ${y + PIT}`}
+                  markerEnd="url(#cg-arrow)"
+                />
+                <text
+                  className={styles.elab}
+                  x={CX + 13}
+                  y={(y + NH + (y + PIT)) / 2 + 3.5}
+                >
+                  {REL[row.name]}
+                </text>
+              </g>
+            ) : null;
+          return edge;
+        })}
 
-function Endpoint({ label, sub }: { label: string; sub: string }) {
-  return (
-    <li className={`${styles.node} ${styles.endpoint}`}>
-      <span className={styles.dot} />
-      <div className={styles.card} data-static="">
-        <div className={styles.head}>
-          <span className={styles.kind}>{label}</span>
-          <span className={styles.lead}>{sub}</span>
-        </div>
-      </div>
-    </li>
-  );
-}
-
-export function CallGraph({ detail }: { detail: TurnDetail }) {
-  const response = detail.metrics.find((m) => m.key === "response");
-  const heard = detail.events.some((e) => e.name === "earshot.transcript.final");
-
-  return (
-    <ol className={styles.graph}>
-      <Endpoint label="user speech" sub={heard ? "transcribed" : "captured"} />
-      {detail.stages.map((stage) => (
-        <StageNode
-          key={stage.name}
-          stage={stage}
-          badge={
-            stage.name === "llm" && detail.firstTokenMs != null
-              ? `first token ${formatMs(detail.firstTokenMs)}`
-              : undefined
+        {rows.map((row, i) => {
+          const y = 8 + i * PIT;
+          if (row.term) {
+            return (
+              <g key={`n${i}`} className={`${styles.gn} ${styles.term}`}>
+                <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
+                <text className={styles.nm} x={X + 16} y={y + 19}>
+                  {row.name}
+                </text>
+                <text
+                  className={styles.termLat}
+                  x={X + NW - 13}
+                  y={y + 19}
+                  textAnchor="end"
+                >
+                  {row.lat}
+                </text>
+                <text className={styles.sub} x={X + 16} y={y + 34}>
+                  {row.sub}
+                </text>
+              </g>
+            );
           }
-        />
-      ))}
-      <Endpoint label="agent audio" sub={formatMs(response?.value ?? null)} />
-    </ol>
+          return (
+            <g
+              key={`n${i}`}
+              className={`${styles.gn} ${row.slow ? styles.slow : ""}`}
+              style={{ "--nc": row.nc } as CSSProperties}
+              onClick={() => onPick(row.name)}
+              role="button"
+              tabIndex={0}
+            >
+              <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
+              <rect x={X} y={y + 9} width={3.5} height={NH - 18} rx={2} fill={row.nc} />
+              <text className={styles.nm} x={X + 16} y={y + 19}>
+                {row.name}
+              </text>
+              <text
+                className={`${styles.lat} ${row.slow ? styles.slowLat : ""}`}
+                x={X + NW - 13}
+                y={y + 19}
+                textAnchor="end"
+              >
+                {row.lat}
+              </text>
+              <text className={styles.sub} x={X + 16} y={y + 34}>
+                {row.sub}
+              </text>
+            </g>
+          );
+        })}
+
+        {detail.interrupted
+          ? (() => {
+              const ttsY = 8 + 2 * PIT;
+              const ty = ttsY + NH / 2;
+              const bx = X + NW + 18;
+              const bw = 98;
+              const by = ty - 16;
+              return (
+                <g>
+                  <path
+                    className={`${styles.edge} ${styles.intr}`}
+                    d={`M${bx} ${ty}L${X + NW} ${ty}`}
+                    markerEnd="url(#cg-arrow-t)"
+                  />
+                  <text
+                    className={styles.ilab}
+                    x={(bx + X + NW) / 2}
+                    y={ty - 7}
+                    textAnchor="middle"
+                  >
+                    interrupts
+                  </text>
+                  <rect
+                    className={styles.bargeBox}
+                    x={bx}
+                    y={by}
+                    width={bw}
+                    height={32}
+                    rx={8}
+                  />
+                  <text
+                    className={styles.bargeTx}
+                    x={bx + bw / 2}
+                    y={by + 20}
+                    textAnchor="middle"
+                  >
+                    ⚡ barge-in
+                  </text>
+                </g>
+              );
+            })()
+          : null}
+      </svg>
+    </div>
   );
 }

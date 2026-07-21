@@ -1,32 +1,35 @@
-import { formatMs } from "../../lib/format";
 import { CallGraph } from "./CallGraph";
-import styles from "./TurnDrawer.module.css";
-import type { CoverageRow, TurnDetail } from "./timeline";
+import styles from "./drawer.module.css";
+import type { CoverageRow, StageName, TurnDetail } from "./timeline";
 
 const short = (name: string) => name.replace(/^earshot\./, "");
+const humanize = (s: string) => s.replace(/_/g, " ");
 
-function confClass(confidence: string): string {
-  if (confidence === "measured") return styles.good;
-  if (confidence === "inferred") return styles.warn;
-  return styles.muted;
+function glyphColor(name: string): string {
+  if (name.includes("interruption")) return "var(--tts)";
+  if (name.includes("transcript")) return "var(--stt)";
+  return "var(--tx-low)";
 }
 
 export function TurnDrawer({
   detail,
   coverage,
   onClose,
+  onPickStage,
 }: {
   detail: TurnDetail;
   coverage: CoverageRow[];
   onClose: () => void;
+  onPickStage: (stage: StageName) => void;
 }) {
+  const ft = detail.firstTokenMs;
+  const slow = (ft ?? 0) > 500;
+  const budget =
+    ft == null ? "not observed" : slow ? "well over budget" : "within budget";
+
   return (
     <aside className={styles.drawer} aria-label={`Turn ${detail.index} detail`}>
-      <header className={styles.head}>
-        <div className={styles.title}>
-          <span className={styles.tnum}>T{String(detail.index).padStart(2, "0")}</span>
-          {detail.interrupted ? <span className={styles.barge}>barge-in</span> : null}
-        </div>
+      <div className={styles.head}>
         <button
           type="button"
           className={styles.close}
@@ -35,63 +38,74 @@ export function TurnDrawer({
         >
           ×
         </button>
-      </header>
+        <div className={styles.kind}>
+          <span className={styles.dot} style={{ background: "var(--acc)" }} />
+          <span className={styles.title}>
+            turn {String(detail.index).padStart(2, "0")}
+          </span>
+          {detail.interrupted ? (
+            <span className={`${styles.chip} ${styles.barge}`}>barge-in</span>
+          ) : null}
+          {slow ? <span className={`${styles.chip} ${styles.slow}`}>slow</span> : null}
+        </div>
+        <div className={styles.hero}>
+          <span className={`${styles.big} ${slow ? styles.critical : ""}`}>
+            {ft == null ? "—" : ft}
+            {ft == null ? null : <small> ms</small>}
+          </span>
+          <span className={styles.heroLbl}>first token · {budget}</span>
+        </div>
+      </div>
 
       <div className={styles.body}>
-        <section className={styles.section}>
-          <h3 className={styles.heading}>Call graph</h3>
-          <CallGraph detail={detail} />
+        <section className={styles.sec}>
+          <span className={styles.secLabel}>Call graph</span>
+          <CallGraph detail={detail} onPick={onPickStage} />
         </section>
 
-        <section className={styles.section}>
-          <h3 className={styles.heading}>Latency metrics</h3>
-          <ul className={styles.metrics}>
-            {detail.metrics.map((m) => (
-              <li key={m.key} className={styles.metricRow}>
-                <span className={styles.metricKey}>{m.key.replace(/_/g, " ")}</span>
-                <span className={styles.metricVal}>{formatMs(m.value)}</span>
-                <span className={`${styles.tag} ${confClass(m.confidence)}`}>
-                  {m.value == null ? m.availability : m.confidence}
-                </span>
-              </li>
-            ))}
-          </ul>
+        <section className={styles.sec}>
+          <span className={styles.secLabel}>Derived metrics</span>
+          {detail.metrics.map((m) => (
+            <div key={m.key} className={styles.metricLine}>
+              <span className={styles.mln}>{m.key}</span>
+              <span className={`${styles.mlv} ${m.value == null ? styles.na : ""}`}>
+                {m.value == null ? humanize(m.availability) : `${m.value}ms`}
+              </span>
+              <span className={styles.mlb}>{m.basis}</span>
+            </div>
+          ))}
         </section>
 
-        <section className={styles.section}>
-          <h3 className={styles.heading}>Events</h3>
-          <ul className={styles.events}>
-            {detail.events.map((e, i) => (
-              <li key={`${e.name}-${i}`} className={styles.eventRow}>
-                <span className={styles.at}>{formatMs(e.atMs)}</span>
-                <span className={styles.eventName}>{short(e.name)}</span>
-                {e.participant ? (
-                  <span className={styles.who}>{e.participant}</span>
-                ) : null}
-                <span
-                  className={`${styles.led} ${confClass(e.confidence)}`}
-                  title={e.confidence}
-                />
-              </li>
-            ))}
-          </ul>
+        <section className={styles.sec}>
+          <span className={styles.secLabel}>Events</span>
+          {detail.events.map((e, i) => (
+            <div key={`${e.name}-${i}`} className={styles.evrow}>
+              <span className={styles.glyph} style={{ background: glyphColor(e.name) }} />
+              <span className={styles.en}>{short(e.name)}</span>
+              <span className={styles.et}>
+                +{Math.round(e.atMs)}ms · {e.confidence}
+              </span>
+            </div>
+          ))}
         </section>
 
-        {coverage.length > 0 ? (
-          <section className={styles.section}>
-            <h3 className={styles.heading}>Coverage gaps</h3>
-            <ul className={styles.gaps}>
-              {coverage.map((c) => (
-                <li key={c.signal} className={styles.gapRow}>
-                  <code className={styles.gapSignal}>{c.signal}</code>
-                  <span className={styles.gapReason}>
-                    {(c.reason ?? c.availability).replace(/_/g, " ")}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
+        <section className={styles.sec}>
+          <span className={styles.secLabel}>Coverage · not observed</span>
+          {coverage.map((c) => (
+            <div key={c.signal} className={styles.metricLine}>
+              <span className={styles.mln}>{c.signal}</span>
+              <span className={`${styles.mlv} ${styles.na}`}>
+                {humanize(c.availability)}
+              </span>
+              <span className={styles.mlb}>{c.reason ?? ""}</span>
+            </div>
+          ))}
+          <div className={styles.note}>
+            Earshot never guesses. A server-side pipeline can't see when the caller{" "}
+            <b>heard</b> the reply, so response &amp; render stay <b>not observed</b>{" "}
+            rather than fabricated.
+          </div>
+        </section>
       </div>
     </aside>
   );

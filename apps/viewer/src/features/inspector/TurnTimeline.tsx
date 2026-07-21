@@ -1,83 +1,158 @@
 import { formatMs } from "../../lib/format";
 import styles from "./TurnTimeline.module.css";
-import type { StageName, Timeline, TurnView } from "./timeline";
+import type { StageBar, StageName, Timeline } from "./timeline";
 
 const LEGEND: StageName[] = ["stt", "llm", "tts"];
 const TICK_COUNT = 6;
 
+export interface Selection {
+  turn: number;
+  stage: StageName | null;
+}
+
+function Bar({ stage, scale }: { stage: StageBar; scale: number }) {
+  const width = stage.endMs - stage.startMs;
+  const leadPct = width > 0 ? Math.min(100, (stage.leadMs / width) * 100) : 100;
+  return (
+    <div
+      className={`${styles.bar} ${styles[stage.name]}`}
+      style={{
+        left: `${(stage.startMs / scale) * 100}%`,
+        width: `${(width / scale) * 100}%`,
+      }}
+      title={`${stage.name} · ${stage.provider ?? "?"} · ${formatMs(stage.leadMs)}`}
+    >
+      <div className={styles.tail} />
+      <div className={styles.lead} style={{ width: `${leadPct}%` }} />
+    </div>
+  );
+}
+
+function Caret({ open }: { open: boolean }) {
+  return (
+    <span className={`${styles.caret} ${open ? styles.caretOpen : ""}`}>
+      <svg viewBox="0 0 10 10" fill="none" aria-hidden="true">
+        <path
+          d="M3 1 L7 5 L3 9"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
 function TurnRow({
   turn,
   scale,
-  selected,
-  onSelect,
+  open,
+  selection,
+  onToggle,
+  onStage,
 }: {
-  turn: TurnView;
+  turn: Timeline["turns"][number];
   scale: number;
-  selected: boolean;
-  onSelect: (index: number) => void;
+  open: boolean;
+  selection: Selection | null;
+  onToggle: (index: number) => void;
+  onStage: (index: number, stage: StageName) => void;
 }) {
   const slow = (turn.firstToken.value ?? 0) > 500;
   const llm = turn.stages.find((s) => s.name === "llm");
   const firstTokenAt = llm ? llm.startMs + llm.leadMs : null;
+  const turnSelected = selection?.turn === turn.index && selection.stage === null;
 
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(turn.index)}
-      aria-pressed={selected}
-      className={`${styles.row} ${slow ? styles.slow : ""} ${selected ? styles.selected : ""}`}
-    >
-      <div className={styles.label}>
-        <span className={styles.tnum}>T{String(turn.index).padStart(2, "0")}</span>
-        {turn.interrupted ? (
-          <span className={`${styles.chip} ${styles.barge}`}>barge-in</span>
-        ) : null}
-        {slow ? <span className={`${styles.chip} ${styles.slowChip}`}>slow</span> : null}
-      </div>
-
-      <div className={styles.track}>
-        {turn.stages.map((stage) => {
-          const width = stage.endMs - stage.startMs;
-          const leadPct = width > 0 ? Math.min(100, (stage.leadMs / width) * 100) : 100;
-          return (
+    <>
+      <button
+        type="button"
+        onClick={() => onToggle(turn.index)}
+        aria-expanded={open}
+        className={`${styles.node} ${styles.turn} ${slow ? styles.slow : ""} ${
+          turnSelected ? styles.sel : ""
+        }`}
+      >
+        <div className={styles.lab}>
+          <Caret open={open} />
+          <span className={styles.tnum}>T{String(turn.index).padStart(2, "0")}</span>
+          {turn.interrupted ? (
+            <span className={`${styles.chip} ${styles.barge}`}>barge-in</span>
+          ) : null}
+          {slow ? (
+            <span className={`${styles.chip} ${styles.slowChip}`}>slow</span>
+          ) : null}
+        </div>
+        <div className={styles.gantt}>
+          {turn.stages.map((stage) => (
+            <Bar key={stage.name} stage={stage} scale={scale} />
+          ))}
+          {firstTokenAt != null ? (
             <div
-              key={stage.name}
-              className={`${styles.bar} ${styles[stage.name]}`}
-              style={{
-                left: `${(stage.startMs / scale) * 100}%`,
-                width: `${(width / scale) * 100}%`,
-              }}
-              title={`${stage.name} · ${stage.provider ?? "?"} · ${formatMs(stage.leadMs)}`}
-            >
-              <div className={styles.tail} />
-              <div className={styles.lead} style={{ width: `${leadPct}%` }} />
-            </div>
-          );
-        })}
-        {firstTokenAt != null ? (
-          <div
-            className={styles.marker}
-            style={{ left: `${(firstTokenAt / scale) * 100}%` }}
-            title={`first token ${formatMs(turn.firstToken.value)}`}
-          />
-        ) : null}
-      </div>
+              className={styles.mk}
+              style={{ left: `${(firstTokenAt / scale) * 100}%` }}
+              title={`first token ${formatMs(turn.firstToken.value)}`}
+            />
+          ) : null}
+        </div>
+        <div className={`${styles.dur} ${slow ? styles.durSlow : ""}`}>
+          {formatMs(turn.totalMs)}
+        </div>
+      </button>
 
-      <div className={`${styles.dur} ${slow ? styles.durSlow : ""}`}>
-        {formatMs(turn.totalMs)}
-      </div>
-    </button>
+      {open ? (
+        <div className={styles.kids}>
+          {turn.stages.map((stage) => {
+            const stageSelected =
+              selection?.turn === turn.index && selection.stage === stage.name;
+            return (
+              <button
+                key={stage.name}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onStage(turn.index, stage.name);
+                }}
+                className={`${styles.node} ${styles.stage} ${stageSelected ? styles.sel : ""}`}
+              >
+                <div className={styles.lab}>
+                  <span
+                    className={styles.sdot2}
+                    style={{ background: `var(--${stage.name})` }}
+                  />
+                  <span className={styles.nm} style={{ color: `var(--${stage.name})` }}>
+                    {stage.name}
+                  </span>
+                  <span className={styles.prov}>
+                    {stage.provider ?? "?"} · {stage.model ?? "?"}
+                  </span>
+                </div>
+                <div className={styles.gantt}>
+                  <Bar stage={stage} scale={scale} />
+                </div>
+                <div className={styles.dur}>{formatMs(stage.leadMs)}</div>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </>
   );
 }
 
 export function TurnTimeline({
   timeline,
-  selectedIndex,
-  onSelect,
+  openTurns,
+  selection,
+  onToggleTurn,
+  onSelectStage,
 }: {
   timeline: Timeline;
-  selectedIndex: number | null;
-  onSelect: (index: number) => void;
+  openTurns: Set<number>;
+  selection: Selection | null;
+  onToggleTurn: (index: number) => void;
+  onSelectStage: (index: number, stage: StageName) => void;
 }) {
   const scale = timeline.scaleMs;
   const ticks = Array.from({ length: TICK_COUNT + 1 }, (_, i) =>
@@ -126,8 +201,10 @@ export function TurnTimeline({
             key={turn.turnId}
             turn={turn}
             scale={scale}
-            selected={turn.index === selectedIndex}
-            onSelect={onSelect}
+            open={openTurns.has(turn.index)}
+            selection={selection}
+            onToggle={onToggleTurn}
+            onStage={onSelectStage}
           />
         ))}
       </div>

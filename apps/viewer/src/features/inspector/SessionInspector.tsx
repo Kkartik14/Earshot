@@ -3,8 +3,9 @@ import { useParams } from "react-router-dom";
 import { useAnalysis, useIncident } from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
 import { SessionHeader } from "./SessionHeader";
+import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
-import { TurnTimeline } from "./TurnTimeline";
+import { TurnTimeline, type Selection } from "./TurnTimeline";
 import styles from "./SessionInspector.module.css";
 import {
   buildSummary,
@@ -13,22 +14,35 @@ import {
   getCoverage,
   type AnalysisLike,
   type IncidentLike,
+  type StageName,
 } from "./timeline";
 
 export function SessionInspector() {
   const { bundleId } = useParams<{ bundleId: string }>();
   const incident = useIncident(bundleId);
   const analysis = useAnalysis(bundleId);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [openTurns, setOpenTurns] = useState<Set<number>>(new Set());
+  const [selection, setSelection] = useState<Selection | null>(null);
 
-  // A different session resets the open drawer.
-  useEffect(() => setSelected(null), [bundleId]);
+  // Switching sessions resets selection and opens the slow turn, so the
+  // expandable breakdown is visible the moment a flagged session loads.
   useEffect(() => {
-    if (selected == null) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelected(null);
+    setSelection(null);
+    const turns =
+      (analysis.data?.analysis as unknown as AnalysisLike | undefined)?.projections
+        ?.turns ?? [];
+    const slow = turns.findIndex(
+      (t) => (t.metrics?.first_token_latency?.value ?? 0) > 500,
+    );
+    setOpenTurns(slow >= 0 ? new Set([slow]) : new Set());
+  }, [bundleId, analysis.data]);
+
+  useEffect(() => {
+    if (selection == null) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelection(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
+  }, [selection]);
 
   if (incident.isPending || analysis.isPending) {
     return <EmptyState title="Loading session…" />;
@@ -50,25 +64,52 @@ export function SessionInspector() {
   const summary = buildSummary(inc, timeline);
   const details = buildTurnDetails(inc, derived);
   const coverage = getCoverage(inc);
-  const open = selected != null && details[selected] != null;
+
+  const openTurn = (i: number) =>
+    setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
+  const toggleTurn = (i: number) => {
+    setOpenTurns((prev) => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+    setSelection({ turn: i, stage: null });
+  };
+  const selectStage = (i: number, stage: StageName) => {
+    openTurn(i);
+    setSelection({ turn: i, stage });
+  };
+
+  const sel = selection != null && details[selection.turn] != null ? selection : null;
 
   return (
-    <div className={styles.inspector} data-open={open ? "" : undefined}>
+    <div className={styles.inspector} data-open={sel ? "" : undefined}>
       <div className={styles.main}>
         <SessionHeader summary={summary} />
         <TurnTimeline
           timeline={timeline}
-          selectedIndex={selected}
-          onSelect={(index) => setSelected((cur) => (cur === index ? null : index))}
+          openTurns={openTurns}
+          selection={sel}
+          onToggleTurn={toggleTurn}
+          onSelectStage={selectStage}
         />
       </div>
-      {open ? (
+      {sel ? (
         <div className={styles.drawerCol}>
-          <TurnDrawer
-            detail={details[selected]}
-            coverage={coverage}
-            onClose={() => setSelected(null)}
-          />
+          {sel.stage == null ? (
+            <TurnDrawer
+              detail={details[sel.turn]}
+              coverage={coverage}
+              onClose={() => setSelection(null)}
+              onPickStage={(stage) => selectStage(sel.turn, stage)}
+            />
+          ) : (
+            <StageDrawer
+              index={sel.turn}
+              stage={details[sel.turn].stages.find((s) => s.name === sel.stage)!}
+              onClose={() => setSelection(null)}
+            />
+          )}
         </div>
       ) : null}
     </div>
