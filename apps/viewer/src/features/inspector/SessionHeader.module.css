@@ -1,0 +1,103 @@
+.head {
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 3;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.id {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-family: var(--mono);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 100px;
+  border: 1px solid var(--line);
+  color: var(--tx-mid);
+}
+.led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 22%, transparent);
+}
+.good {
+  color: var(--good);
+  border-color: color-mix(in oklab, var(--good) 36%, transparent);
+  background: color-mix(in oklab, var(--good) 11%, transparent);
+}
+.crit {
+  color: var(--crit);
+  border-color: color-mix(in oklab, var(--crit) 36%, transparent);
+  background: color-mix(in oklab, var(--crit) 11%, transparent);
+}
+.warn {
+  color: var(--llm);
+  border-color: color-mix(in oklab, var(--llm) 36%, transparent);
+  background: color-mix(in oklab, var(--llm) 11%, transparent);
+}
+.muted {
+  color: var(--tx-low);
+}
+
+.stack {
+  display: flex;
+  gap: 8px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
+.chip {
+  font-size: 11px;
+  color: var(--tx-mid);
+  font-family: var(--mono);
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  padding: 4px 9px;
+  border-radius: 6px;
+}
+
+.stats {
+  display: flex;
+  gap: 22px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.statLabel {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+}
+.statValue {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
+  font-weight: 600;
+}
+.flagged .statValue {
+  color: var(--crit);
+}
