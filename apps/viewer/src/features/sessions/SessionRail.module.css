@@ -1,0 +1,120 @@
+.rail {
+  background: var(--rail);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 6px 14px;
+}
+.mark {
+  width: 24px;
+  height: 18px;
+  color: var(--acc);
+  flex: none;
+}
+.brand b {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+  padding: 8px 8px 4px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.note {
+  font-size: 11.5px;
+  color: var(--tx-low);
+  padding: 8px 10px;
+}
+
+.row {
+  display: block;
+  padding: 9px 10px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  transition: background 0.12s;
+}
+.row:hover {
+  background: color-mix(in oklab, var(--acc) 8%, transparent);
+}
+.active {
+  background: var(--panel);
+  border-color: var(--line);
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.id {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--tx);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.active .id {
+  color: var(--acc);
+}
+.meta {
+  display: block;
+  font-size: 10.5px;
+  color: var(--tx-low);
+  margin-top: 3px;
+  font-family: var(--mono);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--tx-low);
+}
+.good {
+  background: var(--good);
+}
+.crit {
+  background: var(--crit);
+}
+.warn {
+  background: var(--llm);
+}
+.muted {
+  background: var(--tx-low);
+}
+
+.foot {
+  margin-top: auto;
+  padding: 10px 8px 2px;
+  font-size: 10.5px;
+  color: var(--tx-low);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-top: 1px solid var(--line-soft);
+}
+.footMark {
+  width: 14px;
+  height: 11px;
+}
