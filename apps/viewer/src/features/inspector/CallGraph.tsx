@@ -171,8 +171,8 @@ export function CallGraph({
                   />
                   <text
                     className={styles.ilab}
-                    x={(bx + X + NW) / 2}
-                    y={ty - 7}
+                    x={bx + bw / 2}
+                    y={by - 6}
                     textAnchor="middle"
                   >
                     interrupts
