@@ -1,0 +1,1670 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "0",
+        "observer": "earshot.sdk",
+        "synchronization_method": "same_process_sample",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1784593333024445000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "server_cannot_observe_client_render",
+        "signal": "client.render"
+      }
+    ],
+    "events": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-0-1",
+        "event_name": "earshot.speech.ended",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "0",
+          "source_time_unix_nano": "1784593333024445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-0"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-0-4",
+        "event_name": "earshot.transcript.final",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "300000000",
+          "source_time_unix_nano": "1784593333324445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-0"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-1-1",
+        "event_name": "earshot.speech.ended",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "1400000000",
+          "source_time_unix_nano": "1784593334424445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-1-4",
+        "event_name": "earshot.transcript.final",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "1720000000",
+          "source_time_unix_nano": "1784593334744445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-2-1",
+        "event_name": "earshot.speech.ended",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "2925000000",
+          "source_time_unix_nano": "1784593335949445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-2"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-2-4",
+        "event_name": "earshot.transcript.final",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "3235000000",
+          "source_time_unix_nano": "1784593336259445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-2"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-2-9",
+        "event_name": "earshot.interruption.accepted",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "3015000000",
+          "source_time_unix_nano": "1784593336039445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-2"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-3-1",
+        "event_name": "earshot.speech.ended",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "4395000000",
+          "source_time_unix_nano": "1784593337419445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-3"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-3-4",
+        "event_name": "earshot.transcript.final",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "4725000000",
+          "source_time_unix_nano": "1784593337749445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-3"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-4-1",
+        "event_name": "earshot.speech.ended",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "6355000000",
+          "source_time_unix_nano": "1784593339379445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-4"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "event_id": "event-4-4",
+        "event_name": "earshot.transcript.final",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:40bdf9d0632e9a05ead3fa46c421a88c03c601108d010084fba24edeee708e44"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "participant-user",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "time": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "6645000000",
+          "source_time_unix_nano": "1784593339669445000",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "turn-4"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "custom_pipeline",
+          "name": "earshot.pipeline",
+          "version": "1.0.0"
+        }
+      ],
+      "attributes": {},
+      "bundle_id": "bundle-9b164d1b306f4130ae6cbfc96ae62881",
+      "completeness": "complete",
+      "created_at_unix_nano": "1784593333024445000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot.pipeline",
+        "sdk_version": "1.0.0",
+        "version": "1.0.0"
+      },
+      "schema_version": "1.0.0",
+      "semantic_profile_version": "1.0.0",
+      "session_id": "support-call-8842"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-stt-0-2",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "0",
+          "source_time_unix_nano": "1784593333024445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-0"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "llama-3.1-8b-instant"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-llm-0-5",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "300000000",
+          "source_time_unix_nano": "1784593333324445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-0"
+      },
+      {
+        "attributes": {
+          "earshot.tts.voice": "fd2ada67-c2d9-4afe-b474-6386b87d8fc3",
+          "gen_ai.provider.name": "cartesia",
+          "gen_ai.request.model": "sonic-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-tts-0-7",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "770000000",
+          "source_time_unix_nano": "1784593333794445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-0"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-stt-1-2",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "1400000000",
+          "source_time_unix_nano": "1784593334424445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "llama-3.1-8b-instant"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-llm-1-5",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "1720000000",
+          "source_time_unix_nano": "1784593334744445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {
+          "earshot.tts.voice": "fd2ada67-c2d9-4afe-b474-6386b87d8fc3",
+          "gen_ai.provider.name": "cartesia",
+          "gen_ai.request.model": "sonic-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-tts-1-7",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "2280000000",
+          "source_time_unix_nano": "1784593335304445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-1"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-stt-2-2",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "2925000000",
+          "source_time_unix_nano": "1784593335949445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-2"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "llama-3.1-8b-instant"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-llm-2-5",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "3235000000",
+          "source_time_unix_nano": "1784593336259445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-2"
+      },
+      {
+        "attributes": {
+          "earshot.tts.voice": "fd2ada67-c2d9-4afe-b474-6386b87d8fc3",
+          "gen_ai.provider.name": "cartesia",
+          "gen_ai.request.model": "sonic-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-tts-2-7",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "3755000000",
+          "source_time_unix_nano": "1784593336779445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-2"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-stt-3-2",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "4395000000",
+          "source_time_unix_nano": "1784593337419445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-3"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "llama-3.1-8b-instant"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-llm-3-5",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "4725000000",
+          "source_time_unix_nano": "1784593337749445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-3"
+      },
+      {
+        "attributes": {
+          "earshot.tts.voice": "fd2ada67-c2d9-4afe-b474-6386b87d8fc3",
+          "gen_ai.provider.name": "cartesia",
+          "gen_ai.request.model": "sonic-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-tts-3-7",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "5705000000",
+          "source_time_unix_nano": "1784593338729445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-3"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-stt-4-2",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "6355000000",
+          "source_time_unix_nano": "1784593339379445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-4"
+      },
+      {
+        "attributes": {
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "llama-3.1-8b-instant"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-llm-4-5",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "6645000000",
+          "source_time_unix_nano": "1784593339669445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-4"
+      },
+      {
+        "attributes": {
+          "earshot.tts.voice": "fd2ada67-c2d9-4afe-b474-6386b87d8fc3",
+          "gen_ai.provider.name": "cartesia",
+          "gen_ai.request.model": "sonic-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sha256:fe8b2586928e1b54677b4c50a787edd9cbe9e0323457185e20f13d34a471805c"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "operation-tts-4-7",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "participant_id": "participant-agent",
+        "resource": {},
+        "session_id": "support-call-8842",
+        "started_at": {
+          "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+          "monotonic_time_nano": "7075000000",
+          "source_time_unix_nano": "1784593340099445000",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "turn-4"
+      }
+    ],
+    "participants": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "app",
+        "participant_id": "participant-user",
+        "role": "user",
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "app",
+        "participant_id": "participant-agent",
+        "role": "agent",
+        "session_id": "support-call-8842"
+      }
+    ],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [],
+      "policy_id": "earshot.metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-stt-0-2",
+          "earshot.turn.id": "turn-0"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:4220875f27882a7701361b7d361350c341ac56f3b53f8fd1ced5471e57e25764"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.stt.ttfb",
+            "unit": "ms",
+            "value": 165
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-0-3",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "0",
+            "source_time_unix_nano": "1784593333024445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "0",
+            "source_time_unix_nano": "1784593333024445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-llm-0-5",
+          "earshot.turn.id": "turn-0"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:61c92a197a0f881467ea0359b28572051115e35ec7d48a5ba545a46fb90ef27c"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.llm.ttft",
+            "unit": "ms",
+            "value": 240
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-0-6",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "300000000",
+            "source_time_unix_nano": "1784593333324445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "300000000",
+            "source_time_unix_nano": "1784593333324445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-tts-0-7",
+          "earshot.turn.id": "turn-0"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:084a0fa55368ef72c78374bb3d914be3a6c7d7f04179304f76baf46f03b8d5fd"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.tts.ttfb",
+            "unit": "ms",
+            "value": 110
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-0-8",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "770000000",
+            "source_time_unix_nano": "1784593333794445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "770000000",
+            "source_time_unix_nano": "1784593333794445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-stt-1-2",
+          "earshot.turn.id": "turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:4220875f27882a7701361b7d361350c341ac56f3b53f8fd1ced5471e57e25764"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.stt.ttfb",
+            "unit": "ms",
+            "value": 176
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-1-3",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "1400000000",
+            "source_time_unix_nano": "1784593334424445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "1400000000",
+            "source_time_unix_nano": "1784593334424445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-llm-1-5",
+          "earshot.turn.id": "turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:61c92a197a0f881467ea0359b28572051115e35ec7d48a5ba545a46fb90ef27c"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.llm.ttft",
+            "unit": "ms",
+            "value": 290
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-1-6",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "1720000000",
+            "source_time_unix_nano": "1784593334744445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "1720000000",
+            "source_time_unix_nano": "1784593334744445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-tts-1-7",
+          "earshot.turn.id": "turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:084a0fa55368ef72c78374bb3d914be3a6c7d7f04179304f76baf46f03b8d5fd"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.tts.ttfb",
+            "unit": "ms",
+            "value": 125
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-1-8",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "2280000000",
+            "source_time_unix_nano": "1784593335304445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "2280000000",
+            "source_time_unix_nano": "1784593335304445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-stt-2-2",
+          "earshot.turn.id": "turn-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:4220875f27882a7701361b7d361350c341ac56f3b53f8fd1ced5471e57e25764"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.stt.ttfb",
+            "unit": "ms",
+            "value": 170
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-2-3",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "2925000000",
+            "source_time_unix_nano": "1784593335949445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "2925000000",
+            "source_time_unix_nano": "1784593335949445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-llm-2-5",
+          "earshot.turn.id": "turn-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:61c92a197a0f881467ea0359b28572051115e35ec7d48a5ba545a46fb90ef27c"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.llm.ttft",
+            "unit": "ms",
+            "value": 280
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-2-6",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "3235000000",
+            "source_time_unix_nano": "1784593336259445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "3235000000",
+            "source_time_unix_nano": "1784593336259445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-tts-2-7",
+          "earshot.turn.id": "turn-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:084a0fa55368ef72c78374bb3d914be3a6c7d7f04179304f76baf46f03b8d5fd"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.tts.ttfb",
+            "unit": "ms",
+            "value": 120
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-2-8",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "3755000000",
+            "source_time_unix_nano": "1784593336779445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "3755000000",
+            "source_time_unix_nano": "1784593336779445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-stt-3-2",
+          "earshot.turn.id": "turn-3"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:4220875f27882a7701361b7d361350c341ac56f3b53f8fd1ced5471e57e25764"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.stt.ttfb",
+            "unit": "ms",
+            "value": 181
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-3-3",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "4395000000",
+            "source_time_unix_nano": "1784593337419445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "4395000000",
+            "source_time_unix_nano": "1784593337419445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-llm-3-5",
+          "earshot.turn.id": "turn-3"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:61c92a197a0f881467ea0359b28572051115e35ec7d48a5ba545a46fb90ef27c"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.llm.ttft",
+            "unit": "ms",
+            "value": 720
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-3-6",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "4725000000",
+            "source_time_unix_nano": "1784593337749445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "4725000000",
+            "source_time_unix_nano": "1784593337749445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-tts-3-7",
+          "earshot.turn.id": "turn-3"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:084a0fa55368ef72c78374bb3d914be3a6c7d7f04179304f76baf46f03b8d5fd"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.tts.ttfb",
+            "unit": "ms",
+            "value": 130
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-3-8",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "5705000000",
+            "source_time_unix_nano": "1784593338729445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "5705000000",
+            "source_time_unix_nano": "1784593338729445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-stt-4-2",
+          "earshot.turn.id": "turn-4"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:4220875f27882a7701361b7d361350c341ac56f3b53f8fd1ced5471e57e25764"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.stt.ttfb",
+            "unit": "ms",
+            "value": 159
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-4-3",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "6355000000",
+            "source_time_unix_nano": "1784593339379445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "6355000000",
+            "source_time_unix_nano": "1784593339379445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-llm-4-5",
+          "earshot.turn.id": "turn-4"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:61c92a197a0f881467ea0359b28572051115e35ec7d48a5ba545a46fb90ef27c"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.llm.ttft",
+            "unit": "ms",
+            "value": 250
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-4-6",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "6645000000",
+            "source_time_unix_nano": "1784593339669445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "6645000000",
+            "source_time_unix_nano": "1784593339669445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.operation.id": "operation-tts-4-7",
+          "earshot.turn.id": "turn-4"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:084a0fa55368ef72c78374bb3d914be3a6c7d7f04179304f76baf46f03b8d5fd"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.tts.ttfb",
+            "unit": "ms",
+            "value": 115
+          }
+        ],
+        "participant_id": "participant-agent",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "quality-4-8",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "7075000000",
+            "source_time_unix_nano": "1784593340099445000",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+            "monotonic_time_nano": "7075000000",
+            "source_time_unix_nano": "1784593340099445000",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "support-call-8842"
+      }
+    ],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+        "monotonic_time_nano": "7710000000",
+        "source_time_unix_nano": "1784593340734445000"
+      },
+      "session_id": "support-call-8842",
+      "started_at": {
+        "clock_domain_id": "process-bc19d0222ef6468f9a57360b1ec57b93",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1784593333024445000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}
