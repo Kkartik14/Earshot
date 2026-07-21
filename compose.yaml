@@ -3,9 +3,13 @@ services:
     build: .
     image: earshot:local
     environment:
-      EARSHOT_TOKEN: ${EARSHOT_TOKEN:?set EARSHOT_TOKEN to a high-entropy secret}
       EARSHOT_HOST: 0.0.0.0
-      EARSHOT_BEHIND_TLS_PROXY: "true"
+      # Single-machine use: the API runs without auth, but the port below is
+      # published to host loopback only, so the listener stays on a trusted
+      # boundary. To expose beyond localhost, drop this line and instead set
+      # EARSHOT_TOKEN (a high-entropy secret) + EARSHOT_BEHIND_TLS_PROXY=true
+      # and front it with your own TLS proxy.
+      EARSHOT_TRUST_LOCAL_NETWORK: "true"
     ports:
       - "127.0.0.1:4319:4319"
     volumes:
