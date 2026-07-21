@@ -41,25 +41,42 @@ generation are later product milestones, not current implementation claims.
 
 ## Quick start
 
+Clone and run the whole thing — the API and the web viewer in one container:
+
+```bash
+docker compose up --build
+# then open http://127.0.0.1:4319
+```
+
+That builds the viewer SPA, bakes it into the image, and serves the UI and the `/v1`
+API from a single port. Compose publishes only to `127.0.0.1:4319` and persists the
+catalog and evidence in the named `earshot-data` volume. The container runs with
+`EARSHOT_TRUST_LOCAL_NETWORK=true`: the API is unauthenticated, but the loopback-only
+port mapping is the trust boundary. To expose it beyond localhost, drop that line from
+`compose.yaml` and instead set `EARSHOT_TOKEN` (a high-entropy secret) plus
+`EARSHOT_BEHIND_TLS_PROXY=true`, and front it with your own TLS proxy.
+
+Load a session to look at:
+
+```bash
+curl -X POST http://127.0.0.1:4319/v1/incidents \
+  -H 'Content-Type: application/json' --data-binary @fixtures/valid/minimal.json
+```
+
+### From source (no container)
+
 ```bash
 python3.11 -m venv .venv
 . .venv/bin/activate
 pip install -e '.[dev]'
 pytest
-earshot serve --data-dir .earshot
+pnpm install && pnpm --filter @earshot/viewer bundle   # build the UI into the package
+earshot serve --data-dir .earshot                       # http://127.0.0.1:4319
 ```
 
-The API starts at `http://127.0.0.1:4319`.
-
-For the container path:
-
-```bash
-export EARSHOT_TOKEN="$(openssl rand -hex 32)"
-docker compose up --build
-```
-
-Compose publishes only to `127.0.0.1:4319` and persists the catalog and evidence in the
-named `earshot-data` volume.
+Without the `bundle` step the API still runs; it just serves no UI. During UI
+development, run `pnpm --filter @earshot/viewer dev` for a hot-reloading server that
+proxies `/v1` to the backend.
 
 The Python distribution is named `earshot-observability`; the import package and
 CLI remain `earshot`. The plain PyPI distribution name `earshot` belongs to an
