@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import analysisFixture from "./__fixtures__/analysis.json";
 import incidentFixture from "./__fixtures__/incident.json";
-import { buildTimeline, type AnalysisLike, type IncidentLike } from "./timeline";
+import {
+  buildSummary,
+  buildTimeline,
+  type AnalysisLike,
+  type IncidentLike,
+} from "./timeline";
 
 const incident = incidentFixture as unknown as IncidentLike;
 const analysis = analysisFixture as unknown as AnalysisLike;
@@ -45,5 +50,24 @@ describe("buildTimeline", () => {
     expect(timeline.scaleMs).toBeGreaterThanOrEqual(
       Math.max(...timeline.turns.map((t) => t.totalMs)),
     );
+  });
+});
+
+describe("buildSummary", () => {
+  const summary = buildSummary(incident, buildTimeline(incident, analysis));
+
+  it("counts turns and interruptions", () => {
+    expect(summary.turns).toBe(5);
+    expect(summary.interruptions).toBe(1);
+    expect(summary.status).toBe("completed");
+  });
+
+  it("lists each provider·model in the stack once", () => {
+    expect(summary.stack).toContain("cartesia · sonic-2");
+    expect(summary.stack).toHaveLength(3);
+  });
+
+  it("reports a p95 first-token that reflects the slow turn", () => {
+    expect(summary.p95FirstTokenMs).toBe(720);
   });
 });

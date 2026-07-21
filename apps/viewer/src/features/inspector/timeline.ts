@@ -28,6 +28,12 @@ interface EventRecord {
 }
 export interface IncidentLike {
   profile: {
+    manifest?: { session_id?: string } | null;
+    session?: {
+      status?: string;
+      started_at?: { monotonic_time_nano?: string | null };
+      ended_at?: { monotonic_time_nano?: string | null } | null;
+    } | null;
     operations: Operation[];
     events: EventRecord[];
     quality_samples: QualitySample[];
@@ -148,4 +154,51 @@ export function buildTimeline(incident: IncidentLike, analysis: AnalysisLike): T
   });
 
   return { turns, scaleMs: roundUp(Math.max(1, ...turns.map((t) => t.totalMs)), 250) };
+}
+
+export interface SessionSummary {
+  sessionId: string;
+  status: string;
+  stack: string[];
+  turns: number;
+  durationMs: number;
+  p95FirstTokenMs: number | null;
+  interruptions: number;
+}
+
+/** Nearest-rank percentile; null for an empty sample. */
+function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil((p / 100) * sorted.length);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
+}
+
+export function buildSummary(incident: IncidentLike, timeline: Timeline): SessionSummary {
+  const stack: string[] = [];
+  const seen = new Set<string>();
+  for (const turn of timeline.turns) {
+    for (const stage of turn.stages) {
+      const label = `${stage.provider ?? "?"} · ${stage.model ?? "?"}`;
+      if (!seen.has(label)) {
+        seen.add(label);
+        stack.push(label);
+      }
+    }
+  }
+  const firstTokens = timeline.turns
+    .map((t) => t.firstToken.value)
+    .filter((v): v is number => v != null);
+  const started = nano(incident.profile.session?.started_at?.monotonic_time_nano);
+  const ended = nano(incident.profile.session?.ended_at?.monotonic_time_nano);
+
+  return {
+    sessionId: incident.profile.manifest?.session_id ?? "session",
+    status: incident.profile.session?.status ?? "unknown",
+    stack,
+    turns: timeline.turns.length,
+    durationMs: Math.max(0, ended - started),
+    p95FirstTokenMs: percentile(firstTokens, 95),
+    interruptions: timeline.turns.filter((t) => t.interrupted).length,
+  };
 }
