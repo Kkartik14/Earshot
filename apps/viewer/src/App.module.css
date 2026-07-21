@@ -5,7 +5,7 @@
 }
 
 .main {
-  overflow-y: auto;
+  overflow: hidden;
   border-left: 1px solid var(--line);
   min-width: 0;
 }

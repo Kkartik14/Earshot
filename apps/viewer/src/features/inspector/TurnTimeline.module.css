@@ -71,12 +71,31 @@
   padding: 8px 0;
   position: relative;
   border-radius: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
 }
 .row + .row {
   border-top: 1px solid var(--line-soft);
 }
 .row:hover {
   background: color-mix(in oklab, var(--acc) 5%, transparent);
+}
+.row:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: -2px;
+}
+.selected {
+  background: color-mix(in oklab, var(--acc) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--acc) 32%, transparent);
+}
+.selected:hover {
+  background: color-mix(in oklab, var(--acc) 12%, transparent);
 }
 .slow::before {
   content: "";

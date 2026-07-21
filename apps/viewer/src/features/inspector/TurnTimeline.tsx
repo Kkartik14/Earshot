@@ -5,13 +5,28 @@ import type { StageName, Timeline, TurnView } from "./timeline";
 const LEGEND: StageName[] = ["stt", "llm", "tts"];
 const TICK_COUNT = 6;
 
-function TurnRow({ turn, scale }: { turn: TurnView; scale: number }) {
+function TurnRow({
+  turn,
+  scale,
+  selected,
+  onSelect,
+}: {
+  turn: TurnView;
+  scale: number;
+  selected: boolean;
+  onSelect: (index: number) => void;
+}) {
   const slow = (turn.firstToken.value ?? 0) > 500;
   const llm = turn.stages.find((s) => s.name === "llm");
   const firstTokenAt = llm ? llm.startMs + llm.leadMs : null;
 
   return (
-    <div className={`${styles.row} ${slow ? styles.slow : ""}`}>
+    <button
+      type="button"
+      onClick={() => onSelect(turn.index)}
+      aria-pressed={selected}
+      className={`${styles.row} ${slow ? styles.slow : ""} ${selected ? styles.selected : ""}`}
+    >
       <div className={styles.label}>
         <span className={styles.tnum}>T{String(turn.index).padStart(2, "0")}</span>
         {turn.interrupted ? (
@@ -51,11 +66,19 @@ function TurnRow({ turn, scale }: { turn: TurnView; scale: number }) {
       <div className={`${styles.dur} ${slow ? styles.durSlow : ""}`}>
         {formatMs(turn.totalMs)}
       </div>
-    </div>
+    </button>
   );
 }
 
-export function TurnTimeline({ timeline }: { timeline: Timeline }) {
+export function TurnTimeline({
+  timeline,
+  selectedIndex,
+  onSelect,
+}: {
+  timeline: Timeline;
+  selectedIndex: number | null;
+  onSelect: (index: number) => void;
+}) {
   const scale = timeline.scaleMs;
   const ticks = Array.from({ length: TICK_COUNT + 1 }, (_, i) =>
     Math.round((scale / TICK_COUNT) * i),
@@ -99,7 +122,13 @@ export function TurnTimeline({ timeline }: { timeline: Timeline }) {
 
       <div className={styles.rows}>
         {timeline.turns.map((turn) => (
-          <TurnRow key={turn.turnId} turn={turn} scale={scale} />
+          <TurnRow
+            key={turn.turnId}
+            turn={turn}
+            scale={scale}
+            selected={turn.index === selectedIndex}
+            onSelect={onSelect}
+          />
         ))}
       </div>
     </section>
