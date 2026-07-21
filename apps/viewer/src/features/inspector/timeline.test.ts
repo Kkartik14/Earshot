@@ -4,6 +4,8 @@ import incidentFixture from "./__fixtures__/incident.json";
 import {
   buildSummary,
   buildTimeline,
+  buildTurnDetails,
+  getCoverage,
   type AnalysisLike,
   type IncidentLike,
 } from "./timeline";
@@ -69,5 +71,52 @@ describe("buildSummary", () => {
 
   it("reports a p95 first-token that reflects the slow turn", () => {
     expect(summary.p95FirstTokenMs).toBe(720);
+  });
+});
+
+describe("buildTurnDetails", () => {
+  const details = buildTurnDetails(incident, analysis);
+
+  it("produces one detail per turn", () => {
+    expect(details).toHaveLength(5);
+  });
+
+  it("attaches provenance evidence to each stage", () => {
+    const stt = details[0].stages.find((s) => s.name === "stt");
+    expect(stt?.evidence?.source).toBe("app");
+    expect(stt?.evidence?.observer).toBe("server");
+    expect(stt?.evidence?.confidence).toBe("inferred");
+  });
+
+  it("collects the per-stage measurements", () => {
+    const stt = details[0].stages.find((s) => s.name === "stt");
+    expect(stt?.measurements.some((m) => m.name.includes("stt"))).toBe(true);
+    expect(stt?.measurements[0].unit).toBe("ms");
+  });
+
+  it("exposes all derived metrics under friendly keys", () => {
+    const keys = details[0].metrics.map((m) => m.key);
+    expect(keys).toContain("first_token");
+    expect(keys).toContain("response");
+    expect(details[0].firstTokenMs).toBe(240);
+    expect(details[3].firstTokenMs).toBe(720);
+  });
+
+  it("lists the turn's events with the acting participant", () => {
+    const names = details[0].events.map((e) => e.name);
+    expect(names).toContain("earshot.speech.ended");
+    expect(details[0].events[0].participant).toBe("user");
+    expect(
+      details[2].events.some((e) => e.name === "earshot.interruption.accepted"),
+    ).toBe(true);
+  });
+});
+
+describe("getCoverage", () => {
+  it("reports only the signals that were not fully observed", () => {
+    const gaps = getCoverage(incident);
+    expect(gaps.some((g) => g.signal === "client.render")).toBe(true);
+    expect(gaps.every((g) => g.availability !== "available")).toBe(true);
+    expect(gaps.find((g) => g.signal === "client.render")?.reason).toContain("client");
   });
 });
