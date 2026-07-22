@@ -13,6 +13,10 @@ class ContextSnapshot:
     project_id: str | None
     conversation_id: str | None
     operation_id: str | None
+    # OTel identity of the active manual operation, so a nested operation can
+    # adopt it as its parent span (within the same trace).
+    operation_span_id: str | None = None
+    operation_trace_id: str | None = None
 
 
 _CURRENT: ContextVar[ContextSnapshot | None] = ContextVar("earshot_context", default=None)
@@ -31,6 +35,15 @@ def current_conversation() -> str | None:
 def current_operation() -> str | None:
     context = current_context()
     return None if context is None else context.operation_id
+
+
+def current_operation_span() -> tuple[str | None, str | None]:
+    """Return the active manual operation's ``(span_id, trace_id)``, if any."""
+
+    context = current_context()
+    if context is None:
+        return None, None
+    return context.operation_span_id, context.operation_trace_id
 
 
 def is_instrumentation_suppressed() -> bool:
@@ -120,10 +133,27 @@ def _conversation_scope(*, client_id: str, project_id: str, conversation_id: str
     )
 
 
-def _operation_scope(operation_id: str) -> _ContextScope:
+def _operation_scope(
+    operation_id: str,
+    *,
+    span_id: str | None = None,
+    trace_id: str | None = None,
+) -> _ContextScope:
     current = current_context()
     if current is None:
-        current = ContextSnapshot(None, None, None, operation_id)
+        current = ContextSnapshot(
+            client_id=None,
+            project_id=None,
+            conversation_id=None,
+            operation_id=operation_id,
+            operation_span_id=span_id,
+            operation_trace_id=trace_id,
+        )
     else:
-        current = replace(current, operation_id=operation_id)
+        current = replace(
+            current,
+            operation_id=operation_id,
+            operation_span_id=span_id,
+            operation_trace_id=trace_id,
+        )
     return _ContextScope(current)
