@@ -6,7 +6,8 @@ export function formatMs(value: number | null | undefined): string {
 }
 
 /** A duration given in milliseconds, rendered compactly (ms under 1s, else s). */
-export function formatDuration(milliseconds: number): string {
+export function formatDuration(milliseconds: number | null | undefined): string {
+  if (milliseconds == null) return EM_DASH;
   if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
   return `${(milliseconds / 1000).toFixed(1)}s`;
 }

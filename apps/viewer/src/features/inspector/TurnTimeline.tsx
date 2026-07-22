@@ -11,8 +11,21 @@ export interface Selection {
 }
 
 function Bar({ stage, scale }: { stage: StageBar; scale: number }) {
+  if (stage.startMs == null) {
+    return <div className={styles.unplaced} title={`${stage.name} timing unavailable`} />;
+  }
+  if (stage.timing === "point" || stage.endMs == null) {
+    return (
+      <div
+        className={`${styles.point} ${styles[stage.name]}`}
+        style={{ left: `${(stage.startMs / scale) * 100}%` }}
+        title={`${stage.name} point · ${stage.provider ?? "?"} · interval not observed`}
+      />
+    );
+  }
   const width = stage.endMs - stage.startMs;
-  const leadPct = width > 0 ? Math.min(100, (stage.leadMs / width) * 100) : 100;
+  const leadPct =
+    width > 0 && stage.leadMs != null ? Math.min(100, (stage.leadMs / width) * 100) : 0;
   return (
     <div
       className={`${styles.bar} ${styles[stage.name]}`}
@@ -20,7 +33,7 @@ function Bar({ stage, scale }: { stage: StageBar; scale: number }) {
         left: `${(stage.startMs / scale) * 100}%`,
         width: `${(width / scale) * 100}%`,
       }}
-      title={`${stage.name} · ${stage.provider ?? "?"} · ${formatMs(stage.leadMs)}`}
+      title={`${stage.name} observed interval · ${stage.provider ?? "?"}`}
     >
       <div className={styles.tail} />
       <div className={styles.lead} style={{ width: `${leadPct}%` }} />
@@ -61,7 +74,8 @@ function TurnRow({
 }) {
   const slow = (turn.firstToken.value ?? 0) > 500;
   const llm = turn.stages.find((s) => s.name === "llm");
-  const firstTokenAt = llm ? llm.startMs + llm.leadMs : null;
+  const firstTokenAt =
+    llm?.startMs != null && llm.leadMs != null ? llm.startMs + llm.leadMs : null;
   const turnSelected = selection?.turn === turn.index && selection.stage === null;
 
   return (
@@ -97,7 +111,7 @@ function TurnRow({
           ) : null}
         </div>
         <div className={`${styles.dur} ${slow ? styles.durSlow : ""}`}>
-          {formatMs(turn.totalMs)}
+          +{formatMs(turn.totalMs)}
         </div>
       </button>
 
@@ -131,7 +145,9 @@ function TurnRow({
                 <div className={styles.gantt}>
                   <Bar stage={stage} scale={scale} />
                 </div>
-                <div className={styles.dur}>{formatMs(stage.leadMs)}</div>
+                <div className={styles.dur}>
+                  {stage.leadMs == null ? "not observed" : formatMs(stage.leadMs)}
+                </div>
               </button>
             );
           })}

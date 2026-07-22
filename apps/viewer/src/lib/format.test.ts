@@ -16,6 +16,10 @@ describe("formatDuration", () => {
     expect(formatDuration(720)).toBe("720ms");
     expect(formatDuration(7210)).toBe("7.2s");
   });
+
+  it("renders unavailable duration as an em-dash", () => {
+    expect(formatDuration(null)).toBe("—");
+  });
 });
 
 describe("formatRelativeTime", () => {
