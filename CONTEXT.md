@@ -1,9 +1,15 @@
 # Earshot Voice Observability
 
-Earshot turns heterogeneous voice-agent evidence into portable, governed incidents that can
-be compared across runtimes and providers without overstating what was observed.
+Earshot is the open-source Voice Observability SDK. It turns heterogeneous voice-agent
+evidence into portable, governed incidents that can be compared across runtimes and providers
+without overstating what was observed.
 
 ## Language
+
+**Voice Observability SDK**:
+An SDK that instruments existing voice runtimes and providers, preserves evidence, and derives
+portable operational insight without owning the voice runtime itself.
+_Avoid_: Voice SDK, voice runtime, voice-agent framework
 
 **Incident**:
 A finalized, immutable evidence artifact for one voice session, including its causal graph,
