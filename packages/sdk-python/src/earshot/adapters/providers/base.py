@@ -8,6 +8,7 @@ import json
 import math
 import secrets
 import threading
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +16,11 @@ from typing import Any
 from ...pipeline import TurnRecorder
 
 _ApplyUpdate = Callable[[TurnRecorder], None]
+
+# Backstop cap on per-adapter replay/dedupe state. A single voice session stays
+# far below this; the cap only bounds a long-lived adapter reused across many
+# sessions without ``close()``. Reuse across sessions should call ``close()``.
+_MAX_REMEMBERED_UPDATES = 65_536
 
 
 @dataclass(slots=True)
@@ -68,9 +74,16 @@ class ProviderAdapter:
             raise ValueError("identity_key must contain at least 16 bytes")
         self.provider = provider
         self._identity_key = identity_key or secrets.token_bytes(32)
-        self._updates: dict[bytes, AdapterUpdate] = {}
-        self._native_updates: dict[bytes, bytes] = {}
+        self._updates: OrderedDict[bytes, AdapterUpdate] = OrderedDict()
+        self._native_updates: OrderedDict[bytes, bytes] = OrderedDict()
         self._lock = threading.RLock()
+
+    def close(self) -> None:
+        """Release replay/dedupe state so a reused adapter does not leak it."""
+
+        with self._lock:
+            self._updates.clear()
+            self._native_updates.clear()
 
     def _remember(
         self,
@@ -99,6 +112,7 @@ class ProviderAdapter:
                     raise ValueError("conflicting provider update identity")
             existing = self._updates.get(fingerprint)
             if existing is not None:
+                self._updates.move_to_end(fingerprint)
                 return existing
             update_id = f"{self.provider}-update-{fingerprint.hex()[:24]}"
             update = factory(update_id)
@@ -106,7 +120,15 @@ class ProviderAdapter:
             self._updates[fingerprint] = update
             if native_key is not None:
                 self._native_updates[native_key] = fingerprint
+                self._native_updates.move_to_end(native_key)
+            self._evict_over_cap()
             return update
+
+    def _evict_over_cap(self) -> None:
+        while len(self._updates) > _MAX_REMEMBERED_UPDATES:
+            self._updates.popitem(last=False)
+        while len(self._native_updates) > _MAX_REMEMBERED_UPDATES:
+            self._native_updates.popitem(last=False)
 
     def _opaque_id(self, kind: str, native_id: str) -> str:
         digest = hmac.new(
