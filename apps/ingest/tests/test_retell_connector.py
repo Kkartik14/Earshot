@@ -155,8 +155,7 @@ def test_call_analyzed_keeps_word_timing_and_uncorrelated_latency_without_text(
     ]
     assert all(sample.measurements[0].unit == "ms" for sample in bundle.profile.quality_samples)
     assert all(
-        "earshot.turn.id" not in sample.attributes
-        for sample in bundle.profile.quality_samples
+        "earshot.turn.id" not in sample.attributes for sample in bundle.profile.quality_samples
     )
     facts = store.list_turn_facts(project_id="support")
     assert len(facts) == 1

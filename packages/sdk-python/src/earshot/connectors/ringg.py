@@ -18,6 +18,7 @@ from earshot.contract import (
 )
 from earshot.recorder import IncidentRecorder, RecorderConfig
 
+from ..versions import RINGG_NORMALIZER_VERSION
 from .types import (
     DeliveryPayloadError,
     DeliveryTrustError,
@@ -27,7 +28,7 @@ from .types import (
     RawProviderDelivery,
 )
 
-ADAPTER_VERSION = "1.0.0"
+ADAPTER_VERSION = RINGG_NORMALIZER_VERSION
 _FINAL_EVENT = "all_processing_completed"
 _PROGRESS_EVENTS = {
     "call_started",
@@ -166,9 +167,7 @@ class RinggConnectorAdapter:
         context: NormalizationContext,
     ):
         start_nano = _iso_nano(payload.get("called_on"))
-        duration_seconds = _nonnegative_number(
-            payload.get("call_duration"), maximum=86_400.0
-        )
+        duration_seconds = _nonnegative_number(payload.get("call_duration"), maximum=86_400.0)
         duration_nano = int(duration_seconds * 1_000_000_000)
         end_nano = start_nano + duration_nano
         if end_nano > (1 << 64) - 1:
@@ -254,9 +253,7 @@ class RinggConnectorAdapter:
                     observer="server",
                     method="provider_webhook",
                     method_version=ADAPTER_VERSION,
-                    source_field=(
-                        "call_duration+overall_latency_seconds+first_utterance_seconds"
-                    ),
+                    source_field=("call_duration+overall_latency_seconds+first_utterance_seconds"),
                     confidence="measured",
                     availability="available",
                 ),
