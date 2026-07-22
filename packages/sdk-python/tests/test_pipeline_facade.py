@@ -118,13 +118,16 @@ def test_provider_scalar_does_not_fabricate_a_measured_stage_interval() -> None:
     bundle = sess.close()
 
     [operation] = bundle.profile.operations
-    [sample] = bundle.profile.quality_samples
     assert operation.ended_at is None
     assert operation.evidence is not None
     assert operation.evidence.source == "app"
     assert operation.evidence.confidence == "inferred"
-    assert sample.evidence.source == "provider"
-    assert sample.evidence.confidence == "measured"
+    # Both provider scalars become governed measurements, not a stage interval.
+    names = {m.name for sample in bundle.profile.quality_samples for m in sample.measurements}
+    assert names == {"earshot.llm.ttft", "earshot.llm.completion_latency"}
+    for sample in bundle.profile.quality_samples:
+        assert sample.evidence.source == "provider"
+        assert sample.evidence.confidence == "measured"
 
 
 def test_barge_in_offset_is_relative_to_the_turn() -> None:
@@ -185,15 +188,52 @@ def test_failed_turn_does_not_reuse_its_clock_origin() -> None:
     sess = earshot.pipeline(session_id="turn-failure", started_at_unix_nano=START)
     with pytest.raises(RuntimeError, match="application failure"), sess.turn("failed") as turn:
         turn.llm("openai", ttft_ms=100)
+        # An observed offset gives the failed turn a real extent, so the next
+        # turn starts after it rather than reusing the same origin.
+        turn.barge_in(at_ms=300)
         raise RuntimeError("application failure")
     with sess.turn("next") as turn:
         turn.llm("openai", ttft_ms=100)
     bundle = sess.close()
 
-    failed, following = bundle.profile.operations
+    failed = next(op for op in bundle.profile.operations if op.turn_id == "failed")
+    following = next(op for op in bundle.profile.operations if op.turn_id == "next")
     assert int(following.started_at.monotonic_time_nano) > int(
         failed.started_at.monotonic_time_nano
     )
+
+
+def test_scalars_only_session_reports_no_fabricated_duration() -> None:
+    sess = earshot.pipeline(session_id="scalars-only", started_at_unix_nano=START)
+    for _ in range(2):
+        with sess.turn() as turn:
+            turn.stt("deepgram", ttfb_ms=180)
+            turn.llm("openai", ttft_ms=350, completion_ms=600)
+            turn.tts("cartesia", ttfb_ms=90)
+    bundle = sess.close()
+
+    session = bundle.profile.session
+    # No observed offsets were supplied, so the conversation duration is unknown
+    # and must never be summed from latency scalars (old behaviour: ~2740 ms).
+    assert session.ended_at.monotonic_time_nano == session.started_at.monotonic_time_nano
+    coverage = {(item.signal, item.availability) for item in bundle.profile.coverage}
+    assert ("session.timeline", "not_observed") in coverage
+
+
+def test_no_synthetic_inter_turn_gap() -> None:
+    sess = earshot.pipeline(session_id="no-gap", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.vad(speech_end_ms=0)
+        turn.barge_in(at_ms=400)  # the turn's only observed extent
+    with sess.turn() as turn:
+        turn.llm("openai", ttft_ms=100)
+    bundle = sess.close()
+
+    second_llm = next(
+        op for op in bundle.profile.operations if op.operation_name == "llm"
+    )
+    # Turn 2 starts exactly at turn 1's observed extent (400 ms) with no 500 ms gap.
+    assert int(second_llm.started_at.monotonic_time_nano) == 400 * 1_000_000
 
 
 def test_custom_recorder_config_keeps_pipeline_adapter_identity() -> None:
