@@ -44,6 +44,11 @@ artifacts, deterministic analysis, and a backend-authored explanation of every c
 - Explicit synchronous and durable delivery modes cover serverless and restart-replay
   use cases. Durable records are atomic, private, bounded, checksummed, quarantined on
   corruption, and bound to an endpoint/project destination fingerprint.
+- Open recorders are now prefix-bounded by 10,000 evidence records, 16 MiB of logical
+  retained capture, 8 MiB of raw OTLP inside that total, and 64 KiB per structural value.
+  Oversized values are omitted before deep copy; whole-record overflow freezes the
+  evidence suffix, produces a valid incomplete artifact, and is reported separately
+  from exporter loss through fixed-size status/omission aggregates.
 - SDK project identity is asserted in `X-Earshot-Project-Id` and checked against the
   authenticated backend project. It cannot silently select another tenant.
 - Negative durations/counters and out-of-range probabilities cannot become measured
@@ -106,6 +111,10 @@ secondary details even though those edges become the permanent SDK contract.
   encrypted volume. It is not a coordinated multi-process queue; give workers separate
   roots or use an external durable transport. Durability begins only after final close;
   active recorders are not incrementally journaled and a crash loses the unfinished call.
+- Recorder byte limits are deterministic logical-size ceilings, not exact CPython heap
+  accounting. They bound retained incident structures and capacity bookkeeping; they do
+  not make caller-owned input memory part of the SDK budget and do not provide crash
+  journaling. Durable persistence still starts only at final close.
 - There is no generic live OTLP receiver and no clock-alignment layer. The first is a
   product interoperability gap; the second is an intentional truth constraint, so
   unaligned facts remain unavailable rather than guessed.

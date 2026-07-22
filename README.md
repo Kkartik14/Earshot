@@ -13,23 +13,26 @@ The core workflow:
 > This session failed. Here is the portable evidence artifact and the deterministic
 > projection needed to investigate it across runtimes.
 
-Status: alpha M1 backend. Incident-to-explanation automation and regression-fixture
-generation are later product milestones, not current implementation claims.
+Status: pre-v1 alpha. Backend-authored incident explanations are implemented;
+cross-incident regression-fixture generation and a generic live OTLP receiver remain
+later product milestones.
 
 ## What is implemented
 
-- A v1 voice-session contract with participants, streams, distributed clock domains,
+- A pre-v1 `v1alpha1` voice-session contract with participants, streams, distributed clock domains,
   graph causality, explicit coverage, evidence/provenance, privacy policy, media refs,
   and optional exact caller-supplied raw OTLP chunks. Automatic OTLP interception is
   not implemented in M1.
 - Deterministic protobuf plus strict JSON codecs and generated JSON Schema.
 - Bundle-wide invariant and privacy validation with stable issue codes.
 - Metadata-only capture policy and omission ledger.
-- Framework-neutral recorder, bounded fail-open exporter, and Pipecat/LiveKit
-  normalization adapters.
-- Deterministic analysis separating generated/sent/received/render timing, cross-clock
+- Explicit and global SDK clients with context ownership, deterministic whole-conversation
+  sampling, lifecycle/loss status, fork/atexit recovery, bounded gzip export, and
+  Pipecat/LiveKit normalization adapters.
+- Deterministic analysis and backend explanation separating generated/sent/received/render timing, cross-clock
   uncertainty, parallel tool work, provider measurements, and measured failed-operation
-  diagnoses. Broader fault explanation remains roadmap work.
+  diagnoses. The viewer consumes authored points/intervals, provenance, coverage,
+  omissions, and limitations without manufacturing durations.
 - FastAPI backend with project-scoped API keys, immutable SQLite/content-addressed
   storage, JSON/protobuf negotiation, fleet Turn Facts, analysis caching, corruption
   checks, and privacy purge/tombstones.
@@ -55,6 +58,9 @@ catalog and evidence in the named `earshot-data` volume. The container runs with
 port mapping is the trust boundary. To expose it beyond localhost, drop that line from
 `compose.yaml` and instead set `EARSHOT_TOKEN` (a high-entropy secret) plus
 `EARSHOT_BEHIND_TLS_PROXY=true`, and front it with your own TLS proxy.
+On a protected deployment, the viewer exchanges the entered project API key or legacy
+token for an expiring HttpOnly session cookie; it never saves the credential in browser
+storage.
 
 Load a session to look at:
 
@@ -74,6 +80,10 @@ pnpm install && pnpm --filter @earshot/viewer bundle   # build the UI into the p
 earshot serve --data-dir .earshot                       # http://127.0.0.1:4319
 ```
 
+Applications that only emit Earshot evidence install the lightweight base package.
+Running the local API/CLI server from a non-development installation requires the
+server extra: `pip install 'earshot-observability[server]'`.
+
 Without the `bundle` step the API still runs; it just serves no UI. During UI
 development, run `pnpm --filter @earshot/viewer dev` for a hot-reloading server that
 proxies `/v1` to the backend.
@@ -81,6 +91,26 @@ proxies `/v1` to the backend.
 The Python distribution is named `earshot-observability`; the import package and
 CLI remain `earshot`. The plain PyPI distribution name `earshot` belongs to an
 unrelated VAD project and must not be used for this repository.
+
+Instrument an application through the environment-configured process client:
+
+```python
+import earshot
+
+earshot.init()  # EARSHOT_ENDPOINT, EARSHOT_TOKEN, EARSHOT_PROJECT_ID, ...
+
+with earshot.conversation(session_id="opaque-session-id") as incident:
+    with incident.operation("agent", turn_id="turn-1"):
+        run_voice_agent()
+
+assert earshot.flush(timeout=5.0)
+earshot.shutdown(timeout=5.0)
+```
+
+`earshot.Client(...)` provides the same capture kernel with explicit ownership for
+libraries, tests, and multi-project processes. Async delivery is bounded and
+non-blocking; sync and disk-durable delivery are explicit opt-in modes. `status()` makes
+sampling, queue pressure, retries, rejection, and evidence loss observable.
 
 ```bash
 curl http://127.0.0.1:4319/healthz
@@ -116,7 +146,7 @@ a system can prove a human **heard** the audio.
 
 | Path                                   | Purpose                                                           |
 | -------------------------------------- | ----------------------------------------------------------------- |
-| `proto/earshot/v1`                     | Canonical protobuf envelope.                                      |
+| `proto/earshot/v1alpha1`               | Experimental canonical protobuf envelope.                         |
 | `semconv/earshot.yaml`                 | Earshot OTel semantic-profile registry.                           |
 | `spec/`                                | Generated JSON Schema.                                            |
 | `packages/sdk-python`                  | Contract, SDK, adapters, analysis, storage, and API.              |
