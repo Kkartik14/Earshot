@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from earshot.adapters import LiveKitAdapter
+from earshot.adapters import LiveKitAdapter, routing
 from earshot.adapters.base import AdapterDependencyError
 from earshot.analysis import analyze_incident
 from earshot.privacy import CaptureClass, CapturePolicy
@@ -1045,19 +1045,15 @@ def test_livekit_zero_connection_acquisition_sentinel_is_omitted(
     assert measurement_name not in {item.name for item in sample.measurements}
 
 
-def test_real_connection_only_realtime_metric_survives_dual_surface_ownership(
-    monkeypatch,
-) -> None:
+def test_real_connection_only_realtime_metric_survives_dual_surface_ownership() -> None:
     pytest.importorskip("livekit.agents")
     from livekit.agents.metrics import RealtimeModelMetrics
 
     adapter = LiveKitAdapter(recorder(), framework_version="1.6.5")
-    sentinel_processor = object()
-    monkeypatch.setattr(adapter, "create_span_processor", lambda: sentinel_processor)
 
     class Provider:
         def add_span_processor(self, processor: object) -> None:
-            assert processor is sentinel_processor
+            del processor
 
     listeners: dict[str, object] = {}
 
@@ -1622,11 +1618,7 @@ def test_attach_session_listeners_supports_decorator_api() -> None:
     ]
 
 
-def test_span_processor_attach_is_additive_and_validates_provider(monkeypatch) -> None:
-    adapter = LiveKitAdapter(recorder())
-    sentinel = object()
-    monkeypatch.setattr(adapter, "create_span_processor", lambda: sentinel)
-
+def test_span_processor_attach_is_additive_and_validates_provider() -> None:
     class Provider:
         def __init__(self) -> None:
             self.processors: list[object] = []
@@ -1635,10 +1627,15 @@ def test_span_processor_attach_is_additive_and_validates_provider(monkeypatch) -
             self.processors.append(processor)
 
     provider = Provider()
-    assert adapter.attach_span_processor(provider) is sentinel
-    assert provider.processors == [sentinel]
+    handle = LiveKitAdapter(recorder()).attach_span_processor(provider)
+    assert isinstance(handle, routing.RoutingHandle)
+    # Additive: exactly one shared router processor is installed on the provider.
+    assert len(provider.processors) == 1
+    # A second concurrent session reuses the one processor, never adds another.
+    LiveKitAdapter(recorder()).attach_span_processor(provider)
+    assert len(provider.processors) == 1
     with pytest.raises(TypeError, match="does not support"):
-        adapter.attach_span_processor(object())
+        LiveKitAdapter(recorder()).attach_span_processor(object())
 
 
 def test_optional_livekit_span_processor_has_actionable_dependency_error(monkeypatch) -> None:

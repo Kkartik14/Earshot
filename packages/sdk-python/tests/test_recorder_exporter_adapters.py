@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from earshot.adapters import LiveKitAdapter, PipecatAdapter
+from earshot.adapters import LiveKitAdapter, PipecatAdapter, routing
 from earshot.adapters.base import AdapterDependencyError, seconds_to_nano
 from earshot.clock import ManualClock
 from earshot.context import is_instrumentation_suppressed
@@ -1603,12 +1603,7 @@ def test_pipecat_preserves_policy_safe_native_span_events_without_payload_leak()
     assert validate_incident(bundle).ok
 
 
-def test_pipecat_attach_uses_existing_provider_without_replacing_it(monkeypatch) -> None:
-    recorder = _pipecat_recorder()
-    adapter = PipecatAdapter(recorder)
-    sentinel = object()
-    monkeypatch.setattr(adapter, "create_span_processor", lambda: sentinel)
-
+def test_pipecat_attach_uses_existing_provider_without_replacing_it() -> None:
     class Provider:
         def __init__(self) -> None:
             self.processors = []
@@ -1617,10 +1612,14 @@ def test_pipecat_attach_uses_existing_provider_without_replacing_it(monkeypatch)
             self.processors.append(processor)
 
     provider = Provider()
-    assert adapter.attach(provider) is sentinel
-    assert provider.processors == [sentinel]
+    handle = PipecatAdapter(_pipecat_recorder()).attach(provider)
+    assert isinstance(handle, routing.RoutingHandle)
+    # Additive: one shared router processor, reused by later concurrent sessions.
+    assert len(provider.processors) == 1
+    PipecatAdapter(_pipecat_recorder()).attach(provider)
+    assert len(provider.processors) == 1
     with pytest.raises(TypeError, match="does not support"):
-        adapter.attach(object())
+        PipecatAdapter(_pipecat_recorder()).attach(object())
 
 
 def test_pipecat_optional_span_processor_has_actionable_dependency_error(monkeypatch) -> None:
