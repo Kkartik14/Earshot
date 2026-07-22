@@ -32,6 +32,7 @@ const explanation = {
         const start = operation.started_at.monotonic_time_nano ?? "0";
         const end = operation.ended_at?.monotonic_time_nano;
         return {
+          operation_id: operation.operation_id ?? undefined,
           operation_name: operation.operation_name,
           status: operation.status ?? "unknown",
           shape: end == null ? ("point" as const) : ("interval" as const),
@@ -340,5 +341,166 @@ describe("getCoverage", () => {
     expect(gaps.some((g) => g.signal === "client.render")).toBe(true);
     expect(gaps.every((g) => g.availability !== "available")).toBe(true);
     expect(gaps.find((g) => g.signal === "client.render")?.reason).toContain("client");
+  });
+});
+
+// -- generic operation list (WS-3) ------------------------------------------
+
+interface RawOp {
+  operation_id?: string;
+  operation_name: string;
+  status?: string;
+  shape?: "point" | "interval";
+  start_nano?: string;
+  duration_nano?: string | null;
+  clock?: string;
+  measurements?: { name: string; value: boolean | number; unit: string }[];
+}
+
+/** A single-turn explanation over an arbitrary operation set, one clock. */
+function turnOf(operations: RawOp[]): ExplanationLike {
+  return {
+    bundle_id: "generic",
+    session_id: "generic",
+    session_status: "completed",
+    finality: "final",
+    completeness: "complete",
+    analyzer_version: "test",
+    limitations: [],
+    coverage: [],
+    omissions: [],
+    turns: [
+      {
+        turn_id: "turn-generic",
+        metrics: {},
+        events: [],
+        operations: operations.map((raw, i) => ({
+          operation_id: raw.operation_id,
+          operation_name: raw.operation_name,
+          status: raw.status ?? "ok",
+          shape: raw.shape ?? "interval",
+          time_basis: "monotonic" as const,
+          clock_domain_id: raw.clock ?? "generic-clock",
+          start_nano: raw.start_nano ?? String(1000 + i * 1000),
+          duration_nano:
+            raw.duration_nano === undefined ? "500000000" : raw.duration_nano,
+          measurements: (raw.measurements ?? []).map((m) => ({ ...m })),
+        })),
+      },
+    ],
+  } satisfies ExplanationLike;
+}
+
+describe("generic operation list", () => {
+  it("renders a native speech-to-speech turn (single agent op) instead of an empty timeline", () => {
+    const timeline = buildTimeline(
+      turnOf([{ operation_id: "op-native-agent", operation_name: "agent" }]),
+    );
+    const stages = timeline.turns[0].stages;
+    expect(stages).toHaveLength(1);
+    expect(stages[0].name).toBe("agent");
+    expect(stages[0].role).toBe("agent");
+    expect(stages[0].operationId).toBe("op-native-agent");
+    expect(timeline.turns[0].hasCascade).toBe(false);
+    // The agent op is placed, not dropped.
+    expect(stages[0].timing).toBe("interval");
+  });
+
+  it("keeps a tool call and its same-named retry as distinct addressable operations", () => {
+    const details = buildTurnDetails(
+      turnOf([
+        {
+          operation_id: "op-tool-attempt-1",
+          operation_name: "tool",
+          status: "timeout",
+          start_nano: "1000",
+        },
+        {
+          operation_id: "op-tool-attempt-2",
+          operation_name: "tool",
+          status: "ok",
+          start_nano: "2000",
+        },
+        {
+          operation_id: "op-downstream-agent",
+          operation_name: "agent",
+          start_nano: "3000",
+        },
+      ]),
+    );
+    const tools = details[0].stages.filter((s) => s.role === "tool");
+    expect(tools).toHaveLength(2);
+    // Two same-named ops do not collide: each is separately keyed and addressable.
+    expect(new Set(tools.map((t) => t.operationId)).size).toBe(2);
+    expect(tools[0].status).toBe("timeout");
+    expect(tools[1].status).toBe("ok");
+  });
+
+  it("renders transport, vad, and render operations that used to vanish", () => {
+    const stages = buildTimeline(
+      turnOf([
+        { operation_name: "vad", start_nano: "1000" },
+        { operation_name: "transport_send", start_nano: "2000" },
+        { operation_name: "stt", start_nano: "3000" },
+        { operation_name: "transport_receive", start_nano: "4000" },
+        { operation_name: "render", start_nano: "5000" },
+      ]),
+    ).turns[0].stages;
+    expect(stages.map((s) => s.role)).toEqual([
+      "vad",
+      "transport",
+      "stt",
+      "transport",
+      "render",
+    ]);
+    // A fully cascaded turn no longer drops transport/render (all ops survive).
+    expect(stages).toHaveLength(5);
+  });
+
+  it("assigns lead metrics only to cascade stages, not other roles", () => {
+    const stages = buildTimeline(
+      turnOf([
+        {
+          operation_name: "llm",
+          start_nano: "1000",
+          measurements: [{ name: "earshot.llm.ttft", value: 200, unit: "ms" }],
+        },
+        {
+          operation_name: "tool",
+          start_nano: "2000",
+          measurements: [{ name: "earshot.tool.ttft", value: 999, unit: "ms" }],
+        },
+      ]),
+    ).turns[0].stages;
+    const llm = stages.find((s) => s.role === "llm");
+    const tool = stages.find((s) => s.role === "tool");
+    expect(llm?.leadMs).toBe(200);
+    expect(tool?.leadMs).toBeNull();
+  });
+
+  it("carries each measurement's real unit through to the drawer view", () => {
+    const details = buildTurnDetails(
+      turnOf([
+        {
+          operation_name: "vad",
+          measurements: [
+            { name: "earshot.audio.input_level", value: -21.4, unit: "dbfs" },
+            { name: "earshot.vad.active", value: true, unit: "1" },
+          ],
+        },
+      ]),
+    );
+    const vad = details[0].stages.find((s) => s.role === "vad");
+    const level = vad?.measurements.find((m) => m.unit === "dbfs");
+    expect(level?.value).toBe(-21.4);
+    // The boolean measurement is retained, not filtered out as non-numeric.
+    expect(vad?.measurements.some((m) => m.value === true)).toBe(true);
+  });
+
+  it("flags a turn that contains the STT->LLM->TTS cascade", () => {
+    expect(buildTimeline(explanation).turns[0].hasCascade).toBe(true);
+    const noCascade = buildTimeline(turnOf([{ operation_name: "agent" }])).turns[0]
+      .hasCascade;
+    expect(noCascade).toBe(false);
   });
 });

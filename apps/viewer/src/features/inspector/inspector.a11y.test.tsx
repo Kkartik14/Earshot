@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { CallGraph } from "./CallGraph";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
-import type { StageDetail, StageName, TurnDetail } from "./timeline";
+import type { OperationRole, StageDetail, StageName, TurnDetail } from "./timeline";
 
 function stage(name: StageName, over: Partial<StageDetail> = {}): StageDetail {
   return {
+    operationId: `op-${name}`,
     name,
+    role: name,
     provider: "groq",
     model: name === "stt" ? "whisper-large-v3-turbo" : "llama-3.1-8b-instant",
     status: "ok",
@@ -29,10 +31,32 @@ function stage(name: StageName, over: Partial<StageDetail> = {}): StageDetail {
   };
 }
 
+/** A non-cascade operation (tool / agent / transport / …) for generic tests. */
+function op(
+  operationId: string,
+  name: string,
+  role: OperationRole,
+  over: Partial<StageDetail> = {},
+): StageDetail {
+  return {
+    operationId,
+    name,
+    role,
+    status: "ok",
+    startMs: 0,
+    endMs: 50,
+    leadMs: null,
+    timing: "interval",
+    measurements: [],
+    ...over,
+  };
+}
+
 const turnDetail: TurnDetail = {
   turnId: "turn-0",
   index: 0,
   interrupted: false,
+  hasCascade: true,
   firstTokenMs: 240,
   stages: [stage("stt"), stage("llm"), stage("tts")],
   metrics: [
@@ -55,29 +79,64 @@ const turnDetail: TurnDetail = {
 };
 
 describe("CallGraph accessibility", () => {
-  it("activates a stage node with click, Enter, and Space", () => {
+  it("activates an operation node with click, Enter, and Space", () => {
     const onPick = vi.fn();
     render(<CallGraph detail={turnDetail} onPick={onPick} />);
-    const node = screen.getByRole("button", { name: /stt stage/i });
+    const node = screen.getByRole("button", { name: /stt operation/i });
 
     fireEvent.click(node);
     fireEvent.keyDown(node, { key: "Enter" });
     fireEvent.keyDown(node, { key: " " });
 
     expect(onPick).toHaveBeenCalledTimes(3);
-    expect(onPick).toHaveBeenCalledWith("stt");
+    expect(onPick).toHaveBeenCalledWith("op-stt");
   });
 
-  it("exposes only the interactive nodes and labels the graph", () => {
+  it("exposes one interactive node per operation and labels the graph", () => {
     const { container } = render(<CallGraph detail={turnDetail} onPick={() => {}} />);
-    // stt, llm, tts are operable; the terminal playout node and edge labels are hidden.
-    expect(screen.getAllByRole("button")).toHaveLength(3);
+    // The generic graph renders exactly one operable node per operation — no
+    // invented playout node, no fixed barge row.
+    expect(screen.getAllByRole("button")).toHaveLength(turnDetail.stages.length);
     const svg = container.querySelector("svg");
     expect(svg).toHaveAttribute("role", "group");
     expect(svg?.getAttribute("aria-label")).toMatch(/call graph/i);
+    // The description is generated from the real operations, in arrival order.
     expect(svg).toHaveAccessibleDescription(
-      /stt transcribes to llm.*tts emits playout.*client render.*not observed/i,
+      /operations in arrival order.*stt.*llm.*tts/i,
     );
+    expect(svg).toHaveAccessibleDescription(/does not imply causation/i);
+  });
+
+  it("renders a single native speech-to-speech agent operation", () => {
+    const s2s: TurnDetail = {
+      ...turnDetail,
+      hasCascade: false,
+      stages: [op("op-native-agent", "agent", "agent")],
+    };
+    render(<CallGraph detail={s2s} onPick={() => {}} />);
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: /agent operation/i })).toBeInTheDocument();
+  });
+
+  it("renders a tool call and its same-named retry as distinct addressable nodes", () => {
+    const onPick = vi.fn();
+    const retried: TurnDetail = {
+      ...turnDetail,
+      hasCascade: false,
+      stages: [
+        op("op-tool-attempt-1", "tool", "tool", { status: "timeout" }),
+        op("op-tool-attempt-2", "tool", "tool"),
+        op("op-downstream-agent", "agent", "agent"),
+      ],
+    };
+    render(<CallGraph detail={retried} onPick={onPick} />);
+    // Both tool attempts are present and separately reachable despite the shared name.
+    const toolNodes = screen.getAllByRole("button", { name: /tool operation/i });
+    expect(toolNodes).toHaveLength(2);
+    fireEvent.click(toolNodes[0]);
+    fireEvent.click(toolNodes[1]);
+    expect(onPick).toHaveBeenNthCalledWith(1, "op-tool-attempt-1");
+    expect(onPick).toHaveBeenNthCalledWith(2, "op-tool-attempt-2");
   });
 });
 
@@ -113,5 +172,29 @@ describe("Detail drawers", () => {
     expect(
       screen.getByRole("heading", { name: /provider measurement/i }),
     ).toBeInTheDocument();
+  });
+
+  it("StageDrawer formats a non-duration measurement by its real unit", () => {
+    const noise = stage("stt", {
+      measurements: [
+        {
+          name: "earshot.audio.input_level",
+          value: -21.4,
+          unit: "dbfs",
+          confidence: "measured",
+        },
+        {
+          name: "earshot.stt.output",
+          value: 42,
+          unit: "{character}",
+          confidence: "measured",
+        },
+      ],
+    });
+    render(<StageDrawer index={0} stage={noise} onClose={() => {}} />);
+    // Formatted with the declared unit — never mislabelled as milliseconds.
+    expect(screen.getByText("-21.4 dbfs")).toBeInTheDocument();
+    expect(screen.getByText("42 character")).toBeInTheDocument();
+    expect(screen.queryByText(/-21ms/)).not.toBeInTheDocument();
   });
 });
