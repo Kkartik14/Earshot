@@ -229,9 +229,7 @@ def test_no_synthetic_inter_turn_gap() -> None:
         turn.llm("openai", ttft_ms=100)
     bundle = sess.close()
 
-    second_llm = next(
-        op for op in bundle.profile.operations if op.operation_name == "llm"
-    )
+    second_llm = next(op for op in bundle.profile.operations if op.operation_name == "llm")
     # Turn 2 starts exactly at turn 1's observed extent (400 ms) with no 500 ms gap.
     assert int(second_llm.started_at.monotonic_time_nano) == 400 * 1_000_000
 
