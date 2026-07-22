@@ -26,6 +26,7 @@ from ..contract import (
 )
 from ..privacy import sanitize_semantic_label, sanitize_source_label
 from ..recorder import IncidentRecorder
+from ..versions import LIVEKIT_ADAPTER_VERSION
 from .base import AdapterDependencyError, seconds_to_nano, stable_id, value
 
 _METRIC_TYPES = {
@@ -315,7 +316,7 @@ class LiveKitAdapter:
         self.recorder.register_adapter(
             Adapter(
                 name="earshot.livekit",
-                version="0.1.0",
+                version=LIVEKIT_ADAPTER_VERSION,
                 framework="livekit",
                 framework_version=framework_version,
             )

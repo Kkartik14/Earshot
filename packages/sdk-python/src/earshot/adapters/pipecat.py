@@ -26,6 +26,7 @@ from ..contract import (
 )
 from ..privacy import sanitize_semantic_label, sanitize_source_label
 from ..recorder import IncidentRecorder
+from ..versions import PIPECAT_ADAPTER_VERSION
 from .base import AdapterDependencyError, stable_id, value
 
 _EXACT_SPAN_NAMES = {
@@ -171,7 +172,7 @@ class PipecatAdapter:
         self.recorder.register_adapter(
             Adapter(
                 name="earshot.pipecat",
-                version="0.1.0",
+                version=PIPECAT_ADAPTER_VERSION,
                 framework="pipecat",
                 framework_version=framework_version,
             )
