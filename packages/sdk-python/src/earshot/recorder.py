@@ -113,7 +113,12 @@ def _utf8_size_up_to(value: str, limit: int) -> tuple[int, bool]:
     return total, False
 
 
-def _structural_size_up_to(value: Any, limit: int) -> tuple[int, bool]:
+def _structural_size_up_to(
+    value: Any,
+    limit: int,
+    *,
+    reject_cycles: bool = False,
+) -> tuple[int, bool]:
     """Deterministic logical size with bounded traversal and cycle detection.
 
     Each value/node contributes one byte in addition to scalar content. The estimate
@@ -141,6 +146,8 @@ def _structural_size_up_to(value: Any, limit: int) -> tuple[int, bool]:
         if isinstance(candidate, Mapping):
             identity = id(candidate)
             if identity in active:
+                if reject_cycles:
+                    raise ValueError("captured value contains an unsafe key or value")
                 return remaining + 1, True
             active.add(identity)
             total = 1
@@ -160,6 +167,8 @@ def _structural_size_up_to(value: Any, limit: int) -> tuple[int, bool]:
         if isinstance(candidate, (list, tuple)):
             identity = id(candidate)
             if identity in active:
+                if reject_cycles:
+                    raise ValueError("captured value contains an unsafe key or value")
                 return remaining + 1, True
             active.add(identity)
             total = 1
@@ -463,7 +472,11 @@ class IncidentRecorder:
         bounded: dict[str, Any] = {}
         aggregate = 0
         for key, value in attributes.items():
-            estimate, exceeded = _structural_size_up_to(value, self.config.max_value_bytes)
+            estimate, exceeded = _structural_size_up_to(
+                value,
+                self.config.max_value_bytes,
+                reject_cycles=True,
+            )
             capture_class = (
                 classify_attribute(key) if isinstance(key, str) else CaptureClass.METADATA
             )
