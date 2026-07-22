@@ -1,4 +1,4 @@
-"""Pydantic models for the Earshot v1 incident contract.
+"""Pydantic models for the experimental Earshot v1alpha1 incident contract.
 
 The normalized profile is deliberately independent of any one runtime or
 transport.  Vocabulary supplied by frameworks and providers is represented by
@@ -24,8 +24,9 @@ from pydantic import (
     model_validator,
 )
 
-SCHEMA_VERSION = "1.0.0"
-SEMANTIC_PROFILE_VERSION = "1.0.0"
+from .versions import CONTRACT_VERSION, SEMANTIC_PROFILE_VERSION
+
+SCHEMA_VERSION = CONTRACT_VERSION
 
 NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 OpaqueId = Annotated[str, StringConstraints(min_length=1, max_length=256)]
@@ -598,7 +599,9 @@ class IncidentProfile(ContractModel):
     media_refs: tuple[MediaRef, ...] = ()
     analysis: DerivedAnalysis | None = Field(
         default=None,
-        description="Reserved for a future profile; v1 validation requires this to be absent.",
+        description=(
+            "Reserved for a future profile; v1alpha1 validation requires this to be absent."
+        ),
         json_schema_extra={"deprecated": True},
     )
     attributes: dict[str, Any] = Field(default_factory=dict)
