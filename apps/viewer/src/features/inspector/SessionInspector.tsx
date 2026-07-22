@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useExplanation, useIncident } from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
@@ -23,11 +23,27 @@ export function SessionInspector() {
   const explanation = useExplanation(bundleId);
   const [openTurns, setOpenTurns] = useState<Set<number>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
+  // The control that opened the detail dialog; focus returns here on close.
+  const restoreFocus = useRef<HTMLElement | null>(null);
+  const initializedExplanationFor = useRef<string | undefined>(undefined);
 
-  // Switching sessions resets selection and opens the slow turn, so the
-  // expandable breakdown is visible the moment a flagged session loads.
+  // A session change invalidates both the current detail and its invoking
+  // control. A same-session data refresh must preserve them.
   useEffect(() => {
     setSelection(null);
+    restoreFocus.current = null;
+    initializedExplanationFor.current = undefined;
+    setOpenTurns(new Set());
+  }, [bundleId]);
+
+  // Open the slow turn once when this session's explanation first arrives.
+  // Background refreshes update the open detail without closing it or
+  // disturbing the user's expansion state.
+  useEffect(() => {
+    if (explanation.data == null || initializedExplanationFor.current === bundleId) {
+      return;
+    }
+    initializedExplanationFor.current = bundleId;
     const turns =
       (explanation.data as unknown as ExplanationLike | undefined)?.turns ?? [];
     const slow = turns.findIndex(
@@ -37,7 +53,13 @@ export function SessionInspector() {
   }, [bundleId, explanation.data]);
 
   useEffect(() => {
-    if (selection == null) return;
+    if (selection == null) {
+      // Every close path lands here; return focus to the invoking control.
+      const trigger = restoreFocus.current;
+      restoreFocus.current = null;
+      if (trigger?.isConnected) trigger.focus();
+      return;
+    }
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSelection(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -66,7 +88,14 @@ export function SessionInspector() {
 
   const openTurn = (i: number) =>
     setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
+  // Capture the invoking control only on the first open; switching turns/stages
+  // while the dialog is already open must not overwrite the restore target.
+  const rememberTrigger = () => {
+    if (selection == null)
+      restoreFocus.current = document.activeElement as HTMLElement | null;
+  };
   const toggleTurn = (i: number) => {
+    rememberTrigger();
     setOpenTurns((prev) => {
       const next = new Set(prev);
       next.has(i) ? next.delete(i) : next.add(i);
@@ -75,6 +104,7 @@ export function SessionInspector() {
     setSelection({ turn: i, stage: null });
   };
   const selectStage = (i: number, stage: StageName) => {
+    rememberTrigger();
     openTurn(i);
     setSelection({ turn: i, stage });
   };
