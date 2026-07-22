@@ -10,15 +10,24 @@ bodies reference the generated incident schema; analysis responses reference
 
 Tokenless development is loopback-only and rejects non-loopback `Host` headers. Remote
 deployments must explicitly declare a trusted TLS proxy and authenticate `/v1/*` with a
-project API key or the legacy default-project bearer token. Every repository call is
+project API key, an expiring server-created viewer session, or the legacy
+default-project bearer token. API keys are exchanged once for an HttpOnly,
+SameSite=Strict viewer cookie; unsafe cookie-authenticated methods require the
+in-memory CSRF token, and logout, expiry, or issuer-key revocation invalidates the
+session. Every repository call is
 scoped from that principal; an unknown incident in another Project is indistinguishable
 from a missing incident. The request middleware checks the actual ASGI listener as well
 as declared configuration and refuses both `/v1/*` and `/hooks/v1/*` on an unexpected
 non-loopback plaintext bind.
 
+SDK requests assert `X-Earshot-Project-Id`. When present, the backend compares it with
+the project selected by the bearer credential (or local default project) and returns
+`403 EARSHOT_PROJECT_MISMATCH` on disagreement. Authentication remains authoritative;
+the assertion cannot select or override a project.
+
 Bundle identifiers occupy one installation-wide namespace. Producers should use UUIDv4,
 UUIDv7, or Connector-generated collision-resistant IDs. Projects are single-organization
-authorization scopes in v1, not hostile SaaS tenant boundaries.
+authorization scopes in this alpha, not hostile SaaS tenant boundaries.
 
 Provider `/hooks/*` routes are a separate trust boundary. They do not accept Earshot
 bearer credentials as provider proof and do not return Project identifiers.
@@ -30,8 +39,11 @@ application/vnd.earshot.incident+protobuf
 application/vnd.earshot.incident+json
 ```
 
-`application/x-protobuf` and `application/json` are accepted aliases. Compressed
-request bodies are not accepted in v1.
+`application/x-protobuf` and `application/json` are accepted aliases. Incident and
+validation requests may use one `Content-Encoding: gzip` member. Both compressed and
+decompressed sizes are bounded; malformed, concatenated, or trailing gzip data is
+rejected before contract decoding. Signed provider hooks continue to authenticate the
+exact uncompressed delivery bytes defined by each provider.
 
 ## Endpoints
 
@@ -103,6 +115,14 @@ The nested `analysis` value is a closed, metadata-only `DerivedAnalysis` contrac
 Unknown projection fields, non-finite values, dangling operation/event/quality refs,
 wrong session/digest/version/time bindings, and summaries inconsistent with source
 counts are rejected before caching.
+
+### `GET /v1/incidents/{bundle_id}/explanation`
+
+Returns the versioned, backend-authored presentation projection: exact decimal-string
+coordinates, true intervals only where comparable start/end evidence exists, point facts,
+clock basis/domain, evidence IDs and provenance, governed stage measurements, coverage,
+privacy omissions, finality/completeness, and analyzer limitations. The viewer positions
+these facts but does not invent stage duration or cross-clock ordering.
 
 ### `DELETE /v1/incidents/{bundle_id}`
 
