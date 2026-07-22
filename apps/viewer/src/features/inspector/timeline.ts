@@ -1,8 +1,5 @@
-// Reconstructs a per-turn waterfall from a stored incident + its derived
-// analysis. Stage operations are points on a session-relative clock; a stage's
-// visible window runs to the next stage's start (and the provider-measured
-// latency — ttfb/ttft — is the bright "lead" portion). `computeStages` holds
-// that timing logic once; the timeline and the drawer both build on it.
+// Visualizes the backend-authored explanation projection. The browser positions
+// exact coordinates; it never decides whether an operation is a point or interval.
 
 export type StageName = "stt" | "llm" | "tts";
 const STAGES: readonly StageName[] = ["stt", "llm", "tts"];
@@ -30,10 +27,15 @@ interface Evidence {
 interface Operation {
   operation_name: string;
   turn_id?: string | null;
-  started_at: { monotonic_time_nano?: string | null };
+  started_at: Timestamp;
+  ended_at?: Timestamp | null;
   attributes?: Record<string, unknown> | null;
   evidence?: Evidence | null;
   status?: string | null;
+}
+interface Timestamp {
+  monotonic_time_nano?: string | null;
+  clock_domain_id?: string | null;
 }
 interface QualitySample {
   measurements: { name: string; value: number; unit: string }[];
@@ -43,7 +45,7 @@ interface QualitySample {
 interface EventRecord {
   event_name: string;
   turn_id?: string | null;
-  time?: { monotonic_time_nano?: string | null };
+  time?: Timestamp | null;
   participant_id?: string | null;
   evidence?: { confidence?: string | null } | null;
 }
@@ -57,8 +59,8 @@ export interface IncidentLike {
     manifest?: { session_id?: string } | null;
     session?: {
       status?: string;
-      started_at?: { monotonic_time_nano?: string | null };
-      ended_at?: { monotonic_time_nano?: string | null } | null;
+      started_at?: Timestamp;
+      ended_at?: Timestamp | null;
     } | null;
     operations: Operation[];
     events: EventRecord[];
@@ -77,6 +79,62 @@ export interface AnalysisLike {
   projections: { turns: { turn_id: string; metrics: Record<string, MetricLike> }[] };
 }
 
+interface ExplainedMeasurement {
+  name: string;
+  value: boolean | number;
+  unit: string;
+  evidence?: Evidence | null;
+}
+interface ExplainedOperation {
+  operation_id?: string;
+  operation_name: string;
+  status: string;
+  shape: "point" | "interval";
+  time_basis: "monotonic" | "source_wall" | "observed_wall";
+  clock_domain_id?: string | null;
+  start_nano: string;
+  duration_nano?: string | null;
+  provider?: string | null;
+  model?: string | null;
+  evidence?: Evidence | null;
+  measurements: ExplainedMeasurement[];
+}
+interface ExplainedEvent {
+  event_name: string;
+  time_basis: "monotonic" | "source_wall" | "observed_wall";
+  clock_domain_id?: string | null;
+  at_nano: string;
+  participant_id?: string | null;
+  evidence?: Evidence | null;
+}
+interface ExplainedTurn {
+  turn_id: string;
+  operations: ExplainedOperation[];
+  events: ExplainedEvent[];
+  metrics: Record<string, MetricLike>;
+}
+export interface ExplanationLike {
+  bundle_id: string;
+  session_id: string;
+  session_status: string;
+  finality: string;
+  completeness: string;
+  analyzer_version: string;
+  turns: ExplainedTurn[];
+  coverage: {
+    signal: string;
+    availability: string;
+    reason?: string | null;
+  }[];
+  omissions: {
+    omission_id: string;
+    capture_class: string;
+    reason: string;
+    count?: number | null;
+  }[];
+  limitations: string[];
+}
+
 export interface MetricView {
   value: number | null;
   availability: string;
@@ -87,9 +145,10 @@ export interface StageBar {
   name: StageName;
   provider?: string;
   model?: string;
-  startMs: number;
-  endMs: number;
-  leadMs: number;
+  startMs: number | null;
+  endMs: number | null;
+  leadMs: number | null;
+  timing: "interval" | "point" | "unavailable";
   confidence?: string;
 }
 export interface TurnView {
@@ -107,8 +166,27 @@ export interface Timeline {
   scaleMs: number;
 }
 
-const nano = (value: string | null | undefined): number =>
-  value == null ? 0 : Number(value) / 1_000_000;
+const nano = (value: string | null | undefined): bigint | null => {
+  if (value == null) return null;
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+};
+
+const durationMs = (
+  start: Timestamp | null | undefined,
+  end: Timestamp | null | undefined,
+) => {
+  const startNano = nano(start?.monotonic_time_nano);
+  const endNano = nano(end?.monotonic_time_nano);
+  if (startNano == null || endNano == null || endNano < startNano) return null;
+  if (start?.clock_domain_id == null || start.clock_domain_id !== end?.clock_domain_id) {
+    return null;
+  }
+  return Number(endNano - startNano) / 1_000_000;
+};
 
 const view = (m: MetricLike | undefined): MetricView => ({
   value: m?.value ?? null,
@@ -120,73 +198,120 @@ const view = (m: MetricLike | undefined): MetricView => ({
 const roundUp = (value: number, step: number): number =>
   Math.max(step, Math.ceil(value / step) * step);
 
-const attr = (op: Operation, key: string): string | undefined =>
-  typeof op.attributes?.[key] === "string" ? (op.attributes[key] as string) : undefined;
-
 interface StageWindow {
-  op: Operation;
+  op: ExplainedOperation;
   name: StageName;
   provider?: string;
   model?: string;
-  startMs: number;
-  endMs: number;
-  leadMs: number;
+  origin: ExplainedOperation | null;
+  startMs: number | null;
+  endMs: number | null;
+  leadMs: number | null;
+  timing: "interval" | "point" | "unavailable";
   confidence?: string;
 }
 
-/** Shared per-turn stage windows: the timing logic both views build on. */
-function computeStages(incident: IncidentLike, turnId: string): StageWindow[] {
-  const { operations, quality_samples } = incident.profile;
-  const sample = (name: string) => {
-    for (const s of quality_samples) {
-      if (s.attributes?.["earshot.turn.id"] !== turnId) continue;
-      const m = s.measurements.find((x) => x.name === name);
-      if (m) return { value: m.value, confidence: s.evidence?.confidence ?? undefined };
-    }
-    return undefined;
-  };
+const coordinateDeltaMs = (
+  value: string,
+  basis: ExplainedOperation["time_basis"],
+  domain: string | null | undefined,
+  origin: ExplainedOperation | null,
+): number | null => {
+  if (
+    origin == null ||
+    basis !== origin.time_basis ||
+    domain !== origin.clock_domain_id
+  ) {
+    return null;
+  }
+  const coordinate = nano(value);
+  const originCoordinate = nano(origin.start_nano);
+  if (coordinate == null || originCoordinate == null) return null;
+  return Number(coordinate - originCoordinate) / 1_000_000;
+};
 
-  const stageOps = operations
-    .filter((o) => o.turn_id === turnId && STAGES.includes(o.operation_name as StageName))
-    .sort(
-      (a, b) =>
-        nano(a.started_at.monotonic_time_nano) - nano(b.started_at.monotonic_time_nano),
+/** Shared stage placement over explanation facts authored by the analyzer. */
+function computeStages(turn: ExplainedTurn): StageWindow[] {
+  const candidates = turn.operations.filter((operation) =>
+    STAGES.includes(operation.operation_name as StageName),
+  );
+  const coordinateGroups = new Set(
+    candidates.map(
+      (operation) => `${operation.time_basis}\u0000${operation.clock_domain_id ?? ""}`,
+    ),
+  );
+  const comparable =
+    coordinateGroups.size === 1 &&
+    candidates.every(
+      (operation) =>
+        operation.clock_domain_id != null && nano(operation.start_nano) != null,
     );
-  const turnStart = stageOps.length
-    ? nano(stageOps[0].started_at.monotonic_time_nano)
-    : 0;
+  const stageOps = comparable
+    ? [...candidates].sort((left, right) => {
+        const leftStart = nano(left.start_nano);
+        const rightStart = nano(right.start_nano);
+        if (leftStart == null || rightStart == null) return 0;
+        if (leftStart < rightStart) return -1;
+        if (leftStart > rightStart) return 1;
+        return (left.operation_id ?? left.operation_name).localeCompare(
+          right.operation_id ?? right.operation_name,
+        );
+      })
+    : candidates;
+  // A single origin would falsely place independent clocks on one axis. If any
+  // stage is unaligned, leave the whole turn unplaced instead of making whichever
+  // operation happened to arrive first look like +0 ms.
+  const origin = comparable ? (stageOps[0] ?? null) : null;
 
-  return stageOps.map((op, i) => {
+  return stageOps.map((op) => {
     const name = op.operation_name as StageName;
-    const startMs = nano(op.started_at.monotonic_time_nano) - turnStart;
-    const lead = sample(LEAD_METRIC[name]);
-    const next = stageOps[i + 1];
+    const startMs = coordinateDeltaMs(
+      op.start_nano,
+      op.time_basis,
+      op.clock_domain_id,
+      origin,
+    );
+    const lead = op.measurements.find((item) => item.name === LEAD_METRIC[name]);
+    const duration = nano(op.duration_nano);
+    const explicitDuration =
+      op.shape === "interval" && duration != null && duration >= 0n
+        ? Number(duration) / 1_000_000
+        : null;
     const endMs =
-      next != null
-        ? nano(next.started_at.monotonic_time_nano) - turnStart
-        : startMs + (lead?.value ?? 0);
+      startMs != null && explicitDuration != null ? startMs + explicitDuration : null;
+    const timing =
+      startMs == null ? "unavailable" : op.shape === "interval" ? "interval" : "point";
+    const leadMs =
+      lead != null &&
+      typeof lead.value === "number" &&
+      Number.isFinite(lead.value) &&
+      lead.value >= 0
+        ? lead.value
+        : null;
     return {
       op,
       name,
-      provider: attr(op, "gen_ai.provider.name"),
-      model: attr(op, "gen_ai.request.model"),
+      provider: op.provider ?? undefined,
+      model: op.model ?? undefined,
+      origin,
       startMs,
       endMs,
-      leadMs: lead?.value ?? endMs - startMs,
-      confidence: lead?.confidence,
+      leadMs,
+      timing,
+      confidence: lead?.evidence?.confidence ?? undefined,
     };
   });
 }
 
-function isInterrupted(incident: IncidentLike, turnId: string): boolean {
-  return incident.profile.events.some(
-    (e) => e.turn_id === turnId && e.event_name === "earshot.interruption.accepted",
+function isInterrupted(turn: ExplainedTurn): boolean {
+  return turn.events.some(
+    (event) => event.event_name === "earshot.interruption.accepted",
   );
 }
 
-export function buildTimeline(incident: IncidentLike, analysis: AnalysisLike): Timeline {
-  const turns: TurnView[] = analysis.projections.turns.map((t, index) => {
-    const windows = computeStages(incident, t.turn_id);
+export function buildTimeline(explanation: ExplanationLike): Timeline {
+  const turns: TurnView[] = explanation.turns.map((t, index) => {
+    const windows = computeStages(t);
     const stages: StageBar[] = windows.map((w) => ({
       name: w.name,
       provider: w.provider,
@@ -194,6 +319,7 @@ export function buildTimeline(incident: IncidentLike, analysis: AnalysisLike): T
       startMs: w.startMs,
       endMs: w.endMs,
       leadMs: w.leadMs,
+      timing: w.timing,
       confidence: w.confidence,
     }));
     return {
@@ -203,8 +329,8 @@ export function buildTimeline(incident: IncidentLike, analysis: AnalysisLike): T
       firstToken: view(t.metrics.first_token_latency),
       generated: view(t.metrics.generated_response_latency),
       response: view(t.metrics.response_latency),
-      interrupted: isInterrupted(incident, t.turn_id),
-      totalMs: stages.reduce((max, s) => Math.max(max, s.endMs), 0),
+      interrupted: isInterrupted(t),
+      totalMs: stages.reduce((max, s) => Math.max(max, s.endMs ?? s.startMs ?? 0), 0),
     };
   });
   return { turns, scaleMs: roundUp(Math.max(1, ...turns.map((t) => t.totalMs)), 250) };
@@ -230,15 +356,16 @@ export interface StageDetail {
   provider?: string;
   model?: string;
   status: string;
-  startMs: number;
-  endMs: number;
-  leadMs: number;
+  startMs: number | null;
+  endMs: number | null;
+  leadMs: number | null;
+  timing: "interval" | "point" | "unavailable";
   evidence?: EvidenceView;
   measurements: MeasurementView[];
 }
 export interface EventView {
   name: string;
-  atMs: number;
+  atMs: number | null;
   participant: string;
   confidence: string;
 }
@@ -275,39 +402,14 @@ const evidenceView = (e: Evidence | null | undefined): EvidenceView | undefined 
         sourceField: e.source_field ?? undefined,
       };
 
-export function buildTurnDetails(
-  incident: IncidentLike,
-  analysis: AnalysisLike,
-): TurnDetail[] {
-  const { events, quality_samples } = incident.profile;
-
-  const stageMeasurements = (turnId: string, name: StageName): MeasurementView[] => {
-    const out: MeasurementView[] = [];
-    for (const s of quality_samples) {
-      if (s.attributes?.["earshot.turn.id"] !== turnId) continue;
-      for (const m of s.measurements) {
-        if (m.name.includes(name)) {
-          out.push({
-            name: m.name,
-            value: m.value,
-            unit: m.unit,
-            confidence: s.evidence?.confidence ?? "unavailable",
-          });
-        }
-      }
-    }
-    return out;
-  };
-
-  return analysis.projections.turns.map((t, index) => {
-    const windows = computeStages(incident, t.turn_id);
-    const turnStart = windows.length
-      ? nano(windows[0].op.started_at.monotonic_time_nano)
-      : 0;
+export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
+  return explanation.turns.map((t, index) => {
+    const windows = computeStages(t);
+    const origin = windows[0]?.origin ?? null;
     return {
       turnId: t.turn_id,
       index,
-      interrupted: isInterrupted(incident, t.turn_id),
+      interrupted: isInterrupted(t),
       firstTokenMs: t.metrics.first_token_latency?.value ?? null,
       stages: windows.map((w) => ({
         name: w.name,
@@ -317,8 +419,19 @@ export function buildTurnDetails(
         startMs: w.startMs,
         endMs: w.endMs,
         leadMs: w.leadMs,
+        timing: w.timing,
         evidence: evidenceView(w.op.evidence),
-        measurements: stageMeasurements(t.turn_id, w.name),
+        measurements: w.op.measurements
+          .filter(
+            (measurement): measurement is ExplainedMeasurement & { value: number } =>
+              typeof measurement.value === "number",
+          )
+          .map((measurement) => ({
+            name: measurement.name,
+            value: measurement.value,
+            unit: measurement.unit,
+            confidence: measurement.evidence?.confidence ?? "unavailable",
+          })),
       })),
       metrics: METRIC_KEYS.map(({ key, label }) => {
         const m = t.metrics[key];
@@ -330,26 +443,40 @@ export function buildTurnDetails(
           confidence: m?.confidence ?? "unavailable",
         };
       }),
-      events: events
-        .filter((e) => e.turn_id === t.turn_id)
-        .map((e) => ({
-          name: e.event_name,
-          atMs: nano(e.time?.monotonic_time_nano) - turnStart,
-          participant: (e.participant_id ?? "").split("-").pop() ?? "",
-          confidence: e.evidence?.confidence ?? "",
-        })),
+      events: t.events.map((event) => ({
+        name: event.event_name,
+        atMs: coordinateDeltaMs(
+          event.at_nano,
+          event.time_basis,
+          event.clock_domain_id,
+          origin,
+        ),
+        participant: (event.participant_id ?? "").split("-").pop() ?? "",
+        confidence: event.evidence?.confidence ?? "",
+      })),
     };
   });
 }
 
-export function getCoverage(incident: IncidentLike): CoverageRow[] {
-  return (incident.profile.coverage ?? [])
+export function getCoverage(explanation: ExplanationLike): CoverageRow[] {
+  const coverage = explanation.coverage
     .filter((c) => c.availability !== "available")
     .map((c) => ({
       signal: c.signal,
       availability: c.availability,
       reason: c.reason ?? undefined,
     }));
+  const omissions = explanation.omissions.map((item) => ({
+    signal: `privacy.${item.capture_class}`,
+    availability: "omitted",
+    reason: item.reason,
+  }));
+  const limitations = explanation.limitations.map((limitation) => ({
+    signal: `analysis.${limitation}`,
+    availability: "unavailable",
+    reason: limitation,
+  }));
+  return [...coverage, ...omissions, ...limitations];
 }
 
 export interface SessionSummary {
@@ -357,7 +484,7 @@ export interface SessionSummary {
   status: string;
   stack: string[];
   turns: number;
-  durationMs: number;
+  durationMs: number | null;
   p95FirstTokenMs: number | null;
   interruptions: number;
 }
@@ -370,7 +497,11 @@ function percentile(values: number[], p: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
 }
 
-export function buildSummary(incident: IncidentLike, timeline: Timeline): SessionSummary {
+export function buildSummary(
+  incident: IncidentLike,
+  explanation: ExplanationLike,
+  timeline: Timeline,
+): SessionSummary {
   const stack: string[] = [];
   const seen = new Set<string>();
   for (const turn of timeline.turns) {
@@ -385,15 +516,17 @@ export function buildSummary(incident: IncidentLike, timeline: Timeline): Sessio
   const firstTokens = timeline.turns
     .map((t) => t.firstToken.value)
     .filter((v): v is number => v != null);
-  const started = nano(incident.profile.session?.started_at?.monotonic_time_nano);
-  const ended = nano(incident.profile.session?.ended_at?.monotonic_time_nano);
+  const sessionDuration = durationMs(
+    incident.profile.session?.started_at,
+    incident.profile.session?.ended_at,
+  );
 
   return {
     sessionId: incident.profile.manifest?.session_id ?? "session",
-    status: incident.profile.session?.status ?? "unknown",
+    status: explanation.session_status,
     stack,
     turns: timeline.turns.length,
-    durationMs: Math.max(0, ended - started),
+    durationMs: sessionDuration,
     p95FirstTokenMs: percentile(firstTokens, 95),
     interruptions: timeline.turns.filter((t) => t.interrupted).length,
   };
