@@ -83,7 +83,8 @@ export function TurnDrawer({
               <span className={styles.glyph} style={{ background: glyphColor(e.name) }} />
               <span className={styles.en}>{short(e.name)}</span>
               <span className={styles.et}>
-                +{Math.round(e.atMs)}ms · {e.confidence}
+                {e.atMs == null ? "offset unavailable" : `+${Math.round(e.atMs)}ms`} ·{" "}
+                {e.confidence}
               </span>
             </div>
           ))}

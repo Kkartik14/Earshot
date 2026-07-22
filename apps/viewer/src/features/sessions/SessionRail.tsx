@@ -57,7 +57,7 @@ export function SessionRail() {
 
       <div className={styles.foot}>
         <Waveform className={styles.footMark} />
-        v1 · self-hosted
+        v0.1 · self-hosted
       </div>
     </aside>
   );

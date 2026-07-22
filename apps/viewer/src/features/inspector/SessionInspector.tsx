@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useAnalysis, useIncident } from "../../api/hooks";
+import { useExplanation, useIncident } from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
 import { SessionHeader } from "./SessionHeader";
 import { StageDrawer } from "./StageDrawer";
@@ -12,7 +12,7 @@ import {
   buildTimeline,
   buildTurnDetails,
   getCoverage,
-  type AnalysisLike,
+  type ExplanationLike,
   type IncidentLike,
   type StageName,
 } from "./timeline";
@@ -20,7 +20,7 @@ import {
 export function SessionInspector() {
   const { bundleId } = useParams<{ bundleId: string }>();
   const incident = useIncident(bundleId);
-  const analysis = useAnalysis(bundleId);
+  const explanation = useExplanation(bundleId);
   const [openTurns, setOpenTurns] = useState<Set<number>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
 
@@ -29,13 +29,12 @@ export function SessionInspector() {
   useEffect(() => {
     setSelection(null);
     const turns =
-      (analysis.data?.analysis as unknown as AnalysisLike | undefined)?.projections
-        ?.turns ?? [];
+      (explanation.data as unknown as ExplanationLike | undefined)?.turns ?? [];
     const slow = turns.findIndex(
       (t) => (t.metrics?.first_token_latency?.value ?? 0) > 500,
     );
     setOpenTurns(slow >= 0 ? new Set([slow]) : new Set());
-  }, [bundleId, analysis.data]);
+  }, [bundleId, explanation.data]);
 
   useEffect(() => {
     if (selection == null) return;
@@ -44,10 +43,10 @@ export function SessionInspector() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selection]);
 
-  if (incident.isPending || analysis.isPending) {
+  if (incident.isPending || explanation.isPending) {
     return <EmptyState title="Loading session…" />;
   }
-  if (!incident.data || !analysis.data) {
+  if (!incident.data || !explanation.data) {
     return (
       <EmptyState
         title="Couldn't load this session"
@@ -59,11 +58,11 @@ export function SessionInspector() {
   // The API responses are the source of truth; the transform reads only the
   // fields it needs, so we narrow to the local shapes at this boundary.
   const inc = incident.data as unknown as IncidentLike;
-  const derived = analysis.data.analysis as unknown as AnalysisLike;
-  const timeline = buildTimeline(inc, derived);
-  const summary = buildSummary(inc, timeline);
-  const details = buildTurnDetails(inc, derived);
-  const coverage = getCoverage(inc);
+  const explained = explanation.data as unknown as ExplanationLike;
+  const timeline = buildTimeline(explained);
+  const summary = buildSummary(inc, explained, timeline);
+  const details = buildTurnDetails(explained);
+  const coverage = getCoverage(explained);
 
   const openTurn = (i: number) =>
     setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));

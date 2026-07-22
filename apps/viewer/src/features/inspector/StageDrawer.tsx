@@ -49,8 +49,8 @@ export function StageDrawer({
         </div>
         <div className={styles.hero}>
           <span className={styles.big}>
-            {Math.round(stage.leadMs)}
-            <small> ms</small>
+            {stage.leadMs == null ? "—" : Math.round(stage.leadMs)}
+            {stage.leadMs == null ? null : <small> ms</small>}
           </span>
           <span className={styles.heroLbl}>{LEAD_LABEL[stage.name]}</span>
         </div>
@@ -72,9 +72,13 @@ export function StageDrawer({
             <span className={styles.vv}>{stage.status}</span>
           </div>
           <div className={styles.kv}>
-            <span className={styles.kk}>window</span>
+            <span className={styles.kk}>timing</span>
             <span className={styles.vv}>
-              +{Math.round(stage.startMs)} → +{Math.round(stage.endMs)} ms
+              {stage.timing === "interval" && stage.startMs != null && stage.endMs != null
+                ? `observed interval +${Math.round(stage.startMs)} → +${Math.round(stage.endMs)} ms`
+                : stage.timing === "point" && stage.startMs != null
+                  ? `observed point +${Math.round(stage.startMs)} ms; interval not observed`
+                  : "stage timing unavailable"}
             </span>
           </div>
         </section>
@@ -115,9 +119,8 @@ export function StageDrawer({
               </div>
             ) : null}
             <div className={styles.note}>
-              The <b>latency</b> is provider-measured; the stage <b>interval</b> is{" "}
-              <span className={`${styles.conf} ${styles.inferred}`}>inferred</span> — a
-              scalar can't prove a boundary Earshot didn't observe.
+              A provider scalar describes the named <b>latency</b>. It does not create a
+              stage interval; intervals appear only when both boundaries were observed.
             </div>
           </section>
         ) : null}

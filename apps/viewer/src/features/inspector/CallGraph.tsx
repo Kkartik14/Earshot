@@ -38,7 +38,7 @@ export function CallGraph({
     ...detail.stages.map((s) => ({
       term: false as const,
       name: s.name,
-      lat: `${Math.round(s.leadMs)}ms`,
+      lat: s.leadMs == null ? "not observed" : `${Math.round(s.leadMs)}ms`,
       sub: `${s.provider ?? "?"} · ${shortModel(s.model)}`,
       slow: s.name === "llm" && slowTurn,
       nc: `var(--${s.name})`,
