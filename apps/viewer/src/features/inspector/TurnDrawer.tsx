@@ -1,6 +1,7 @@
 import { CallGraph } from "./CallGraph";
 import styles from "./drawer.module.css";
 import type { CoverageRow, StageName, TurnDetail } from "./timeline";
+import { useInitialFocus } from "./useInitialFocus";
 
 const short = (name: string) => name.replace(/^earshot\./, "");
 const humanize = (s: string) => s.replace(/_/g, " ");
@@ -27,10 +28,20 @@ export function TurnDrawer({
   const budget =
     ft == null ? "not observed" : slow ? "well over budget" : "within budget";
 
+  // Move focus to the close control when the panel opens or its turn changes,
+  // so keyboard and screen-reader users land inside the labelled dialog on a
+  // visibly focusable element.
+  const closeButton = useInitialFocus<HTMLButtonElement>(detail.index);
+
   return (
-    <aside className={styles.drawer} aria-label={`Turn ${detail.index} detail`}>
+    <aside
+      role="dialog"
+      aria-label={`Turn ${detail.index} detail`}
+      className={styles.drawer}
+    >
       <div className={styles.head}>
         <button
+          ref={closeButton}
           type="button"
           className={styles.close}
           onClick={onClose}
@@ -59,12 +70,12 @@ export function TurnDrawer({
 
       <div className={styles.body}>
         <section className={styles.sec}>
-          <span className={styles.secLabel}>Call graph</span>
+          <h2 className={styles.secLabel}>Call graph</h2>
           <CallGraph detail={detail} onPick={onPickStage} />
         </section>
 
         <section className={styles.sec}>
-          <span className={styles.secLabel}>Derived metrics</span>
+          <h2 className={styles.secLabel}>Derived metrics</h2>
           {detail.metrics.map((m) => (
             <div key={m.key} className={styles.metricLine}>
               <span className={styles.mln}>{m.key}</span>
@@ -77,7 +88,7 @@ export function TurnDrawer({
         </section>
 
         <section className={styles.sec}>
-          <span className={styles.secLabel}>Events</span>
+          <h2 className={styles.secLabel}>Events</h2>
           {detail.events.map((e, i) => (
             <div key={`${e.name}-${i}`} className={styles.evrow}>
               <span className={styles.glyph} style={{ background: glyphColor(e.name) }} />
@@ -91,7 +102,7 @@ export function TurnDrawer({
         </section>
 
         <section className={styles.sec}>
-          <span className={styles.secLabel}>Coverage · not observed</span>
+          <h2 className={styles.secLabel}>Coverage · not observed</h2>
           {coverage.map((c) => (
             <div key={c.signal} className={styles.metricLine}>
               <span className={styles.mln}>{c.signal}</span>

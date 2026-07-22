@@ -1,6 +1,7 @@
 import { formatMs } from "../../lib/format";
 import styles from "./drawer.module.css";
 import type { StageDetail } from "./timeline";
+import { useInitialFocus } from "./useInitialFocus";
 
 const STAGE_LABEL: Record<string, string> = {
   stt: "listen",
@@ -29,10 +30,19 @@ export function StageDrawer({
   const color = `var(--${stage.name})`;
   const ev = stage.evidence;
 
+  // Focus the close control on open / stage change: keyboard and SR users land
+  // inside the labelled dialog on a visibly focusable element.
+  const closeButton = useInitialFocus<HTMLButtonElement>(`${index}:${stage.name}`);
+
   return (
-    <aside className={styles.drawer} aria-label={`Turn ${index} ${stage.name} detail`}>
+    <aside
+      role="dialog"
+      aria-label={`Turn ${index} ${stage.name} detail`}
+      className={styles.drawer}
+    >
       <div className={styles.head}>
         <button
+          ref={closeButton}
           type="button"
           className={styles.close}
           onClick={onClose}
@@ -58,7 +68,7 @@ export function StageDrawer({
 
       <div className={styles.body}>
         <section className={styles.sec}>
-          <span className={styles.secLabel}>Stage</span>
+          <h2 className={styles.secLabel}>Stage</h2>
           <div className={styles.kv}>
             <span className={styles.kk}>provider</span>
             <span className={styles.vv}>{stage.provider ?? "unknown"}</span>
@@ -84,7 +94,7 @@ export function StageDrawer({
         </section>
 
         <section className={styles.sec}>
-          <span className={styles.secLabel}>Provider measurement</span>
+          <h2 className={styles.secLabel}>Provider measurement</h2>
           {stage.measurements.length > 0 ? (
             stage.measurements.map((m) => (
               <div key={m.name} className={styles.mrow}>
@@ -104,7 +114,7 @@ export function StageDrawer({
 
         {ev ? (
           <section className={styles.sec}>
-            <span className={styles.secLabel}>Evidence · provenance</span>
+            <h2 className={styles.secLabel}>Evidence · provenance</h2>
             <div className={styles.provFlow}>
               <b>{ev.source}</b>
               <span className={styles.ar}>→</span>

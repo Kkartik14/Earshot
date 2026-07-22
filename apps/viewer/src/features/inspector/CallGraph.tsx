@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useId, type CSSProperties } from "react";
 import styles from "./CallGraph.module.css";
 import type { StageName, TurnDetail } from "./timeline";
 
@@ -33,6 +33,7 @@ export function CallGraph({
   detail: TurnDetail;
   onPick: (stage: StageName) => void;
 }) {
+  const descriptionId = useId();
   const slowTurn = (detail.firstTokenMs ?? 0) > 500;
   const rows: Row[] = [
     ...detail.stages.map((s) => ({
@@ -48,6 +49,13 @@ export function CallGraph({
 
   const H = 8 + (rows.length - 1) * PIT + NH + 8;
   const W = detail.interrupted ? 348 : NW + X * 2;
+  const description = [
+    "Stage flow: STT transcribes to LLM; LLM produces TTS; TTS emits playout.",
+    "Playout at the client render boundary is not observed.",
+    detail.interrupted ? "A barge-in interrupts TTS." : null,
+  ]
+    .filter((part) => part != null)
+    .join(" ");
 
   return (
     <div className={styles.graph}>
@@ -56,7 +64,11 @@ export function CallGraph({
         width={W}
         height={H}
         xmlns="http://www.w3.org/2000/svg"
+        role="group"
+        aria-label="Turn call graph; select a stage to inspect it"
+        aria-describedby={descriptionId}
       >
+        <desc id={descriptionId}>{description}</desc>
         <defs>
           <marker
             id="cg-arrow"
@@ -85,7 +97,7 @@ export function CallGraph({
           const next = rows[i + 1];
           const edge =
             next != null && !row.term ? (
-              <g key={`e${i}`}>
+              <g key={`e${i}`} aria-hidden="true">
                 <path
                   className={styles.edge}
                   d={`M${CX} ${y + NH}L${CX} ${y + PIT}`}
@@ -107,7 +119,11 @@ export function CallGraph({
           const y = 8 + i * PIT;
           if (row.term) {
             return (
-              <g key={`n${i}`} className={`${styles.gn} ${styles.term}`}>
+              <g
+                key={`n${i}`}
+                className={`${styles.gn} ${styles.term}`}
+                aria-hidden="true"
+              >
                 <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
                 <text className={styles.nm} x={X + 16} y={y + 19}>
                   {row.name}
@@ -126,14 +142,22 @@ export function CallGraph({
               </g>
             );
           }
+          const activate = () => onPick(row.name);
           return (
             <g
               key={`n${i}`}
               className={`${styles.gn} ${row.slow ? styles.slow : ""}`}
               style={{ "--nc": row.nc } as CSSProperties}
-              onClick={() => onPick(row.name)}
+              onClick={activate}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  activate();
+                }
+              }}
               role="button"
               tabIndex={0}
+              aria-label={`${row.name} stage, ${row.sub}, ${row.lat}. Open stage detail.`}
             >
               <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
               <rect x={X} y={y + 9} width={3.5} height={NH - 18} rx={2} fill={row.nc} />
@@ -163,7 +187,7 @@ export function CallGraph({
               const bw = 98;
               const by = ty - 16;
               return (
-                <g>
+                <g aria-hidden="true">
                   <path
                     className={`${styles.edge} ${styles.intr}`}
                     d={`M${bx} ${ty}L${X + NW} ${ty}`}
