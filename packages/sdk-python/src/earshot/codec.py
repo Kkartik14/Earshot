@@ -1,4 +1,4 @@
-"""Deterministic JSON and protobuf codecs for Earshot v1 incidents."""
+"""Deterministic JSON and protobuf codecs for Earshot v1alpha1 incidents."""
 
 from __future__ import annotations
 
@@ -14,7 +14,9 @@ from google.protobuf.message import DecodeError
 from pydantic import BaseModel, ValidationError
 
 from .contract import IncidentBundle, IncidentBundleJson, IncidentProfile, RawOtlpChunk
-from .generated.earshot.v1.incident_pb2 import IncidentEnvelope as _IncidentEnvelopeMessage
+from .generated.earshot.v1alpha1.incident_pb2 import (
+    IncidentEnvelope as _IncidentEnvelopeMessage,
+)
 from .validation import IncidentValidationError, assert_valid_incident
 
 JSON_MEDIA_TYPE = "application/vnd.earshot.incident+json"
@@ -190,9 +192,9 @@ def decode_incident_json(
             assert_valid_incident(bundle)
         return bundle
     except ValidationError as error:
-        raise IncidentCodecError("incident JSON violates the v1 structure") from error
+        raise IncidentCodecError("incident JSON violates the v1alpha1 structure") from error
     except IncidentValidationError as error:
-        raise IncidentCodecError("incident JSON violates v1 invariants") from error
+        raise IncidentCodecError("incident JSON violates v1alpha1 invariants") from error
 
 
 def _encode_incident_protobuf_unchecked(bundle: IncidentBundle) -> bytes:
@@ -303,9 +305,9 @@ def decode_incident_protobuf(
             assert_valid_incident(bundle)
         return bundle
     except ValidationError as error:
-        raise IncidentCodecError("incident protobuf violates the v1 structure") from error
+        raise IncidentCodecError("incident protobuf violates the v1alpha1 structure") from error
     except IncidentValidationError as error:
-        raise IncidentCodecError("incident protobuf violates v1 invariants") from error
+        raise IncidentCodecError("incident protobuf violates v1alpha1 invariants") from error
 
 
 # Short aliases keep exporter integrations readable while the explicit names make

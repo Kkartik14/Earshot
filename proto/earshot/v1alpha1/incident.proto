@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package earshot.v1;
+package earshot.v1alpha1;
 
 // The durable Earshot artifact envelope.
 //
