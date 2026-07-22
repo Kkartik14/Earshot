@@ -75,8 +75,11 @@ async def _synthesize() -> list:
                 break
             elif kind == "error":
                 # Surface the provider error class without leaking its message.
-                print(f"[cartesia] provider error status={message.get('status_code')} "
-                      f"code={message.get('error_code')!r}", file=sys.stderr)
+                print(
+                    f"[cartesia] provider error status={message.get('status_code')} "
+                    f"code={message.get('error_code')!r}",
+                    file=sys.stderr,
+                )
                 updates.append(adapter.adapt(message, received_at_ms=received_ms))
                 break
     print(f"[cartesia] received {chunk_count} real audio chunks")
@@ -119,13 +122,17 @@ def main() -> int:
     print(f"  valid v1 contract     : {report.ok}  (errors={len(report.errors)})")
     print(f"  operations            : {[op.operation_name for op in bundle.profile.operations]}")
     leaked = TRANSCRIPT.encode() in earshot.encode_incident_protobuf(bundle)
-    print(f"  step_time samples      : {len(step_times)} chunks "
-          f"(min={min(step_times) if step_times else '-'} "
-          f"max={max(step_times) if step_times else '-'} ms)")
+    print(
+        f"  step_time samples      : {len(step_times)} chunks "
+        f"(min={min(step_times) if step_times else '-'} "
+        f"max={max(step_times) if step_times else '-'} ms)"
+    )
     if "earshot.tts.ttfb" in measurements:
         print(f"  app TTFB (estimated)   : {measurements['earshot.tts.ttfb'].value:.0f} ms")
-    print(f"  generated_response     : {generated.value} "
-          f"({generated.availability}, {generated.confidence})")
+    print(
+        f"  generated_response     : {generated.value} "
+        f"({generated.availability}, {generated.confidence})"
+    )
     print(f"  transcript retained?   : {'YES (LEAK!)' if leaked else 'no'}")
     print(f"  artifact               : {OUTPUT}")
     print("=" * 68)

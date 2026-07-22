@@ -36,7 +36,8 @@ def _synth_wav() -> bytes:
     WAV.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["say", "-o", str(WAV), f"--data-format=LEI16@{SR}", UTTERANCE],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     with wave.open(str(WAV)) as handle:
         return handle.readframes(handle.getnframes())
@@ -62,6 +63,7 @@ async def _transcribe() -> list:
     async with websockets.connect(
         url, additional_headers={"Authorization": f"Token {API_KEY}"}, max_size=8 * 1024 * 1024
     ) as ws:
+
         async def send_audio() -> None:
             frame = int(SR * 0.1) * 2  # 100 ms of s16le mono
             for offset in range(0, len(pcm), frame):
@@ -107,11 +109,13 @@ def main() -> int:
     OUTPUT.write_bytes(earshot.encode_incident_json(bundle, indent=2))
 
     event_names = [event.event_name for event in bundle.profile.events]
-    measurement_names = sorted({
-        measurement.name
-        for sample in bundle.profile.quality_samples
-        for measurement in sample.measurements
-    })
+    measurement_names = sorted(
+        {
+            measurement.name
+            for sample in bundle.profile.quality_samples
+            for measurement in sample.measurements
+        }
+    )
     leaked = UTTERANCE.encode() in earshot.encode_incident_protobuf(bundle)
 
     print("\n" + "=" * 68)

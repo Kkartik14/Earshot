@@ -42,7 +42,8 @@ def _synth_pcm() -> bytes:
     WAV.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["say", "-v", VOICE, "-o", str(WAV), f"--data-format=LEI16@{SR}", UTTERANCE],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     with wave.open(str(WAV)) as handle:
         return handle.readframes(handle.getnframes())
@@ -64,13 +65,15 @@ async def _transcribe() -> list:
         return (time.monotonic() - epoch) * 1000
 
     adapter = SarvamAdapter(model=MODEL, mode=MODE, language_code="unknown")
-    query = urllib.parse.urlencode({
-        "language-code": "unknown",
-        "model": MODEL,
-        "mode": MODE,
-        "sample_rate": SR,
-        "input_audio_codec": "pcm_s16le",
-    })
+    query = urllib.parse.urlencode(
+        {
+            "language-code": "unknown",
+            "model": MODEL,
+            "mode": MODE,
+            "sample_rate": SR,
+            "input_audio_codec": "pcm_s16le",
+        }
+    )
     url = f"wss://api.sarvam.ai/speech-to-text/ws?{query}"
     updates = []
     counts: dict[str, int] = {}
@@ -82,13 +85,17 @@ async def _transcribe() -> list:
         frame = SR * 2  # 1 s of s16le mono
         for offset in range(0, len(pcm), frame):
             chunk = pcm[offset : offset + frame]
-            await ws.send(json.dumps({
-                "audio": {
-                    "data": base64.b64encode(chunk).decode("ascii"),
-                    "sample_rate": str(SR),
-                    "encoding": "audio/wav",
-                }
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "audio": {
+                            "data": base64.b64encode(chunk).decode("ascii"),
+                            "sample_rate": str(SR),
+                            "encoding": "audio/wav",
+                        }
+                    }
+                )
+            )
             await asyncio.sleep(0.2)
         await ws.send(json.dumps({"type": "flush"}))
 
@@ -103,14 +110,18 @@ async def _transcribe() -> list:
                     data = message.get("data", {})
                     transcript = data.get("transcript") or ""
                     # Driver-side observation ONLY — never stored in the incident.
-                    print(f"[sarvam] mode={MODE!r} lang={data.get('language_code')} "
-                          f"p={data.get('language_probability')} script={_script_of(transcript)}")
+                    print(
+                        f"[sarvam] mode={MODE!r} lang={data.get('language_code')} "
+                        f"p={data.get('language_probability')} script={_script_of(transcript)}"
+                    )
                     updates.append(adapter.adapt(message, received_at_ms=received_ms))
                 elif kind == "events":
                     updates.append(adapter.adapt(message, received_at_ms=received_ms))
                 elif kind == "error":
-                    print(f"[sarvam] provider error: {message.get('data', {}).get('code')}",
-                          file=sys.stderr)
+                    print(
+                        f"[sarvam] provider error: {message.get('data', {}).get('code')}",
+                        file=sys.stderr,
+                    )
                     updates.append(adapter.adapt(message, received_at_ms=received_ms))
                     break
         except (TimeoutError, websockets.ConnectionClosed):
@@ -122,8 +133,10 @@ async def _transcribe() -> list:
 def main() -> int:
     updates = asyncio.run(_transcribe())
     if not updates:
-        print("[sarvam] no updates produced — check message format against the live server",
-              file=sys.stderr)
+        print(
+            "[sarvam] no updates produced — check message format against the live server",
+            file=sys.stderr,
+        )
         return 1
     session = earshot.pipeline(session_id="sarvam-real")
     with session.turn() as turn:

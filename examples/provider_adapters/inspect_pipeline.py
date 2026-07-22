@@ -43,17 +43,21 @@ def main() -> int:
     print("=" * 74)
     print("VIEW 1 — THE INCIDENT (per-session capture)")
     print("=" * 74)
-    print(f"session={p.session.status}  framework={p.manifest.adapters[0].framework}  "
-          f"participants={[x.role for x in p.participants]}")
+    print(
+        f"session={p.session.status}  framework={p.manifest.adapters[0].framework}  "
+        f"participants={[x.role for x in p.participants]}"
+    )
 
     print("\n  operations (the pipeline stages, evidence-qualified):")
     for op in p.operations:
         ev = op.evidence
         extra = op.attributes.get("gen_ai.request.model") or op.attributes.get("earshot.tts.voice")
-        print(f"    [{op.turn_id}] {op.operation_name:5} "
-              f"provider={op.attributes.get('gen_ai.provider.name','-'):8} "
-              f"{('model/voice=' + str(extra)) if extra else '':40} "
-              f"evidence={ev.source}/{ev.confidence}")
+        print(
+            f"    [{op.turn_id}] {op.operation_name:5} "
+            f"provider={op.attributes.get('gen_ai.provider.name', '-'):8} "
+            f"{('model/voice=' + str(extra)) if extra else '':40} "
+            f"evidence={ev.source}/{ev.confidence}"
+        )
 
     print("\n  events (turn boundaries, transcript-final, barge-in):")
     for e in p.events:
@@ -63,8 +67,10 @@ def main() -> int:
     print("\n  quality samples (provider + derived measurements):")
     for s in p.quality_samples:
         for m in s.measurements:
-            print(f"    [{s.attributes.get('earshot.turn.id','-')}] {m.name:26} "
-                  f"= {m.value:>8} {m.unit:12} {s.evidence.source}/{s.evidence.confidence}")
+            print(
+                f"    [{s.attributes.get('earshot.turn.id', '-')}] {m.name:26} "
+                f"= {m.value:>8} {m.unit:12} {s.evidence.source}/{s.evidence.confidence}"
+            )
 
     print("\n  coverage (what was NOT observed, and why):")
     for c in p.coverage:
@@ -88,8 +94,7 @@ def main() -> int:
             ("response", m.response_latency),
         ):
             value = f"{metric.value:.0f}ms" if metric.value is not None else metric.availability
-            print(f"    {label:22} {value:14} basis={metric.basis:26} "
-                  f"conf={metric.confidence}")
+            print(f"    {label:22} {value:14} basis={metric.basis:26} conf={metric.confidence}")
         if m.provider_measurements:
             names = ", ".join(sorted(m.provider_measurements))
             print(f"    provider_measurements: {names}")
@@ -108,8 +113,10 @@ def main() -> int:
             for g in groups:
                 p50 = f"{g.p50_ms:.0f}ms" if g.p50_ms is not None else g.availability
                 p95 = f"{g.p95_ms:.0f}ms" if g.p95_ms is not None else "-"
-                print(f"    {metric:22} provider={g.group:10} "
-                      f"p50={p50:10} p95={p95:10} n={g.available_count}/{g.turn_count}")
+                print(
+                    f"    {metric:22} provider={g.group:10} "
+                    f"p50={p50:10} p95={p95:10} n={g.available_count}/{g.turn_count}"
+                )
         interruptions = sum(f.interruption_count or 0 for f in facts)
         print(f"  interruptions across turns: {interruptions}")
     print("=" * 74)
