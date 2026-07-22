@@ -27,10 +27,12 @@ from .contract import (
     TimePoint,
     TimeRange,
 )
+from .measurement_semantics import measurement_value_limitation
 from .privacy import (
     CaptureClass,
     classify_attribute,
     is_canonical_otel_schema_url,
+    is_locator_attribute_key,
     is_safe_error_label,
     is_safe_event_name,
     is_safe_measurement_label,
@@ -41,7 +43,7 @@ from .privacy import (
     is_safe_semantic_label,
     is_safe_version_label,
     is_unobservable_heard_key,
-    locator_has_credentials,
+    media_locator_safety,
     metadata_value_allowed,
     sanitize_source_label,
 )
@@ -452,12 +454,21 @@ def _check_media_locator(
     path: tuple[str | int, ...],
     issues: list[ValidationIssue],
 ) -> None:
-    if locator_has_credentials(uri):
+    safety = media_locator_safety(uri)
+    if safety == "credential":
         issues.append(
             ValidationIssue(
                 code="EARSHOT_MEDIA_LOCATOR_CREDENTIAL",
                 path=path,
                 message="portable media locators must not embed credentials",
+            )
+        )
+    elif safety == "invalid":
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_MEDIA_LOCATOR_INVALID",
+                path=path,
+                message="media locator must be a portable HTTPS reference",
             )
         )
 
@@ -507,18 +518,20 @@ def _check_governed_value(
                 message="human hearing is not a directly observable system fact",
             )
         )
-    if (
-        isinstance(value, str)
-        and ("uri" in key.lower() or "url" in key.lower())
-        and locator_has_credentials(value)
-    ):
-        issues.append(
-            ValidationIssue(
-                code="EARSHOT_MEDIA_LOCATOR_CREDENTIAL",
-                path=path,
-                message="credential-bearing locators are not portable evidence",
+    if isinstance(value, str) and is_locator_attribute_key(key):
+        locator_safety = media_locator_safety(value)
+        if locator_safety != "portable":
+            issues.append(
+                ValidationIssue(
+                    code=(
+                        "EARSHOT_MEDIA_LOCATOR_CREDENTIAL"
+                        if locator_safety == "credential"
+                        else "EARSHOT_MEDIA_LOCATOR_INVALID"
+                    ),
+                    path=path,
+                    message="unsafe locators are not portable evidence",
+                )
             )
-        )
     extension_allowed = _capture_allowed(policies.get(CaptureClass.EXTENSION_PAYLOAD.value))
     if requires_extension and not extension_allowed:
         issues.append(
@@ -755,7 +768,7 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                 ValidationIssue(
                     code="EARSHOT_STRUCTURAL_INVALID",
                     path=tuple(item.get("loc", ())),
-                    message="incident violates the v1 structural contract",
+                    message="incident violates the v1alpha1 structural contract",
                 )
             )
         return ValidationReport(issues=tuple(issues))
@@ -1458,6 +1471,19 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                         message="measurement unit must use a governed semantic identifier",
                     )
                 )
+            limitation = measurement_value_limitation(
+                measurement.name,
+                measurement.value,
+                measurement.unit,
+            )
+            if limitation is not None:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_MEASUREMENT_VALUE_OUT_OF_RANGE",
+                        path=measurement_path + ("value",),
+                        message=limitation,
+                    )
+                )
         if sample.evidence is None:
             issues.append(
                 ValidationIssue(
@@ -1610,7 +1636,9 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
             ValidationIssue(
                 code="EARSHOT_EMBEDDED_ANALYSIS_UNSUPPORTED",
                 path=("profile", "analysis"),
-                message="v1 derived analysis is a digest-bound sidecar and must not be embedded",
+                message=(
+                    "v1alpha1 derived analysis is a digest-bound sidecar and must not be embedded"
+                ),
             )
         )
         _check_capture_class(

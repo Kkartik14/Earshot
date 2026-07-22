@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 if TYPE_CHECKING:
     from .contract import IncidentBundle
@@ -791,8 +791,8 @@ def _is_portable_attribute_value(
                         return False
                     if (
                         isinstance(child, str)
-                        and ("uri" in key.lower() or "url" in key.lower())
-                        and locator_has_credentials(child)
+                        and is_locator_attribute_key(key)
+                        and media_locator_safety(child) != "portable"
                     ):
                         return False
                 if not _is_portable_attribute_value(
@@ -879,10 +879,8 @@ def snapshot_portable_value(
         active.remove(identity)
 
 
-def locator_has_credentials(value: str) -> bool:
-    parsed = urlsplit(value)
-    query_names = {name.lower() for name, _ in parse_qsl(parsed.query, keep_blank_values=True)}
-    credential_names = {
+_LOCATOR_CREDENTIAL_NAMES = frozenset(
+    {
         "access_token",
         "api_key",
         "key",
@@ -895,13 +893,76 @@ def locator_has_credentials(value: str) -> bool:
         "x-goog-security-token",
         "x-goog-signature",
     }
-    signed_query_prefixes = ("x-amz-", "x-goog-")
-    return (
-        parsed.username is not None
-        or parsed.password is not None
-        or bool(query_names & credential_names)
-        or any(name.startswith(signed_query_prefixes) for name in query_names)
+)
+_LOCATOR_SIGNED_PREFIXES = ("x-amz-", "x-goog-")
+
+
+def _locator_name_is_credential(name: str) -> bool:
+    normalized = name.strip().lower()
+    return normalized in _LOCATOR_CREDENTIAL_NAMES or normalized.startswith(
+        _LOCATOR_SIGNED_PREFIXES
     )
+
+
+def is_locator_attribute_key(key: str) -> bool:
+    normalized = key.lower()
+    return normalized in {"uri", "url"} or normalized.endswith((".uri", ".url", "_uri", "_url"))
+
+
+def media_locator_safety(value: str) -> str:
+    """Classify an untrusted media locator without raising.
+
+    Only portable HTTPS references are retainable. Credential-bearing and
+    malformed/non-portable values are distinguished so callers can record an
+    accurate omission without ever preserving the unsafe input.
+    """
+
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        return "invalid"
+    if any(ord(character) <= 0x20 or ord(character) == 0x7F for character in value):
+        return "invalid"
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+        query_names = {name.lower() for name, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+        path_parameters = tuple(
+            segment.partition(";")[2]
+            for segment in unquote(parsed.path).split("/")
+            if ";" in segment
+        )
+        parameter_names = {
+            item.partition("=")[0]
+            for parameters in path_parameters
+            for item in parameters.split(";")
+        }
+        fragment_names = {
+            item.partition("=")[0] for item in re.split(r"[&;]", unquote(parsed.fragment)) if item
+        }
+        has_credentials = (
+            parsed.username is not None
+            or parsed.password is not None
+            or any(_locator_name_is_credential(name) for name in query_names)
+            or any(_locator_name_is_credential(name) for name in parameter_names)
+            or any(_locator_name_is_credential(name) for name in fragment_names)
+        )
+        if has_credentials:
+            return "credential"
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname is None
+            or parsed.fragment
+            or path_parameters
+        ):
+            return "invalid"
+    except (TypeError, UnicodeError, ValueError):
+        return "invalid"
+    return "portable"
+
+
+def locator_has_credentials(value: str) -> bool:
+    """Return whether a locator contains credentials, never raising on hostile input."""
+
+    return media_locator_safety(value) == "credential"
 
 
 def _schema_url_properties(value: str) -> tuple[bool, bool]:
@@ -993,7 +1054,7 @@ def sanitize_attributes(
         if unobservable_claim:
             allowed = False
         unsafe_value = False
-        credential_locator = False
+        locator_safety: str | None = None
         snapshot: Any = None
         if allowed:
             try:
@@ -1005,12 +1066,9 @@ def sanitize_attributes(
             allowed = metadata_value_allowed(key, snapshot)
             unsafe_value = not allowed
         if allowed:
-            credential_locator = (
-                isinstance(snapshot, str)
-                and ("uri" in key.lower() or "url" in key.lower())
-                and locator_has_credentials(snapshot)
-            )
-            if credential_locator:
+            if isinstance(snapshot, str) and is_locator_attribute_key(key):
+                locator_safety = media_locator_safety(snapshot)
+            if locator_safety is not None and locator_safety != "portable":
                 allowed = False
         if allowed:
             portable_value = _is_portable_attribute_value(
@@ -1026,23 +1084,21 @@ def sanitize_attributes(
             # retained container so later caller mutation cannot rewrite evidence.
             kept[key] = snapshot
         else:
+            if locator_safety == "credential":
+                omission_reason = "credential_bearing_locator"
+            elif locator_safety == "invalid":
+                omission_reason = "invalid_media_locator"
+            elif unobservable_claim:
+                omission_reason = "unobservable_claim"
+            elif unsafe_value:
+                omission_reason = "unsafe_attribute_key_or_value"
+            else:
+                omission_reason = "capture_class_disabled"
             omissions.append(
                 Omission(
                     field_key_sha256=hashlib.sha256(key.encode("utf-8")).hexdigest(),
                     capture_class=capture_class,
-                    reason=(
-                        "credential_bearing_locator"
-                        if credential_locator
-                        else (
-                            "unobservable_claim"
-                            if unobservable_claim
-                            else (
-                                "unsafe_attribute_key_or_value"
-                                if unsafe_value
-                                else "capture_class_disabled"
-                            )
-                        )
-                    ),
+                    reason=omission_reason,
                 )
             )
 
