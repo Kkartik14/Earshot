@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import stat
+import threading
 import time
 from pathlib import Path
 
@@ -102,11 +103,46 @@ def test_corrupt_record_is_quarantined_and_observable(tmp_path) -> None:
 
     exporter = _durable(_Recording(), tmp_path, diagnostic=diagnostics.append)
     try:
-        _wait_until(lambda: exporter.status().abandoned == 1)
+        _wait_until(lambda: exporter.status().abandoned == 1 and bool(diagnostics))
         assert list(tmp_path.glob("*.spool")) == []
         assert len(list((tmp_path / "quarantine").glob("*.corrupt"))) == 1
         assert diagnostics[-1].code == "exporter.spool_corrupt"
     finally:
+        assert exporter.shutdown()
+
+
+def test_flush_waits_for_delivery_accounting_after_spool_deletion(tmp_path) -> None:
+    exporter = _durable(_Recording(), tmp_path)
+    deleted = threading.Event()
+    release_delete = threading.Event()
+    original_delete = exporter._delete
+
+    def delayed_delete(path: Path) -> None:
+        original_delete(path)
+        deleted.set()
+        assert release_delete.wait(2)
+
+    exporter._delete = delayed_delete
+    flush_result: list[bool] = []
+    try:
+        assert exporter.submit(ExportItem("accounted", b"payload"))
+        assert deleted.wait(2)
+
+        flush_thread = threading.Thread(
+            target=lambda: flush_result.append(exporter.flush(2)),
+            daemon=True,
+        )
+        flush_thread.start()
+        time.sleep(0.02)
+        assert flush_result == []
+        assert exporter.status().pending == 1
+
+        release_delete.set()
+        flush_thread.join(2)
+        assert flush_result == [True]
+        assert exporter.status().sent == 1
+    finally:
+        release_delete.set()
         assert exporter.shutdown()
 
 

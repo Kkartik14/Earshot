@@ -760,6 +760,7 @@ class DurableExporter:
         self._retried = 0
         self._overflow = 0
         self._replayed = 0
+        self._in_flight_files: set[str] = set()
         self._new_records: set[str] = set()
         self._retry_cycles: dict[str, int] = {}
         self._retry_not_before: dict[str, float] = {}
@@ -803,6 +804,7 @@ class DurableExporter:
         self._retried = 0
         self._overflow = 0
         self._replayed = 0
+        self._in_flight_files = set()
         self._new_records = set()
         self._retry_cycles = {}
         self._retry_not_before = {}
@@ -1089,16 +1091,23 @@ class DurableExporter:
             for path in ready:
                 if self._stop_requested.is_set():
                     return
-                if self._send_file(path):
-                    made_progress = True
-                else:
-                    cycle = self._retry_cycles.get(path.name, 0) + 1
-                    self._retry_cycles[path.name] = cycle
-                    cross_cycle_delay = min(
-                        self._max_backoff,
-                        max(0.05, self._base_backoff) * (2 ** min(cycle - 1, 20)),
-                    )
-                    self._retry_not_before[path.name] = time.monotonic() + cross_cycle_delay
+                with self._lock:
+                    self._in_flight_files.add(path.name)
+                try:
+                    if self._send_file(path):
+                        made_progress = True
+                    else:
+                        cycle = self._retry_cycles.get(path.name, 0) + 1
+                        self._retry_cycles[path.name] = cycle
+                        cross_cycle_delay = min(
+                            self._max_backoff,
+                            max(0.05, self._base_backoff) * (2 ** min(cycle - 1, 20)),
+                        )
+                        self._retry_not_before[path.name] = time.monotonic() + cross_cycle_delay
+                finally:
+                    with self._lock:
+                        self._in_flight_files.discard(path.name)
+                    self._wake.set()
             if not made_progress:
                 self._wake.wait(0.01)
                 self._wake.clear()
@@ -1107,14 +1116,17 @@ class DurableExporter:
         self._ensure_pid()
         with self._lock:
             if self._closed:
-                return not self._spool_files()
+                return not self._spool_files() and not self._in_flight_files
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
         self._wake.set()
-        while self._spool_files():
+        while True:
+            with self._lock:
+                in_flight = bool(self._in_flight_files)
+            if not self._spool_files() and not in_flight:
+                return True
             if deadline is not None and time.monotonic() >= deadline:
                 return False
             time.sleep(0.005)
-        return True
 
     def shutdown(self, timeout: float = 5.0) -> bool:
         self._ensure_pid()
@@ -1130,7 +1142,7 @@ class DurableExporter:
     def status(self) -> ExporterStatus:
         self._ensure_pid()
         (
-            active,
+            _active,
             depth,
             spool_bytes,
             abandoned,
@@ -1138,6 +1150,7 @@ class DurableExporter:
             oldest_age_seconds,
         ) = self._disk_status()
         with self._lock:
+            pending_names = {path.name for path in self._spool_files()} | self._in_flight_files
             return ExporterStatus(
                 state=(
                     "closing"
@@ -1152,7 +1165,7 @@ class DurableExporter:
                 dropped=self._dropped,
                 failed=self._failed,
                 rejected=self._rejected,
-                pending=active,
+                pending=len(pending_names),
                 queued_bytes=spool_bytes,
                 high_water_bytes=self._high_water_bytes,
                 oldest_age_seconds=oldest_age_seconds,
