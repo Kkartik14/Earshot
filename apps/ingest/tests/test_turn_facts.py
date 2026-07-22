@@ -21,9 +21,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 def _with_expired_metadata(bundle):
     policies = tuple(
-        policy.model_copy(
-            update={"retention": RetentionPolicy(expires_at_unix_nano="0")}
-        )
+        policy.model_copy(update={"retention": RetentionPolicy(expires_at_unix_nano="0")})
         if policy.capture_class == "metadata"
         else policy
         for policy in bundle.profile.privacy.capture_classes
@@ -74,9 +72,7 @@ def _golden_runtime_bundles():
 
 def _with_stt_language(bundle, *, language: str = "hi-IN", probability: float = 0.95):
     llm = next(
-        operation
-        for operation in bundle.profile.operations
-        if operation.operation_name == "llm"
+        operation for operation in bundle.profile.operations if operation.operation_name == "llm"
     )
     stt = llm.model_copy(
         update={
@@ -148,9 +144,7 @@ def test_conflicting_stt_languages_remain_an_unknown_fleet_dimension(tmp_path) -
     store = IncidentStore(tmp_path)
     bundle = _with_stt_language(make_valid_bundle(bundle_id="ambiguous-language"))
     stt = next(
-        operation
-        for operation in bundle.profile.operations
-        if operation.operation_name == "stt"
+        operation for operation in bundle.profile.operations if operation.operation_name == "stt"
     )
     conflicting = stt.model_copy(
         update={
@@ -206,13 +200,18 @@ def test_turn_facts_are_rebuilt_from_canonical_incidents_on_restart(tmp_path) ->
     assert [fact.bundle_id for fact in restarted.list_turn_facts()] == ["rebuild-turn-fact"]
 
 
-def test_v7_turn_fact_projection_is_recreated_from_canonical_incidents(tmp_path) -> None:
+def test_internal_narrow_turn_fact_projection_is_recreated_from_canonical_incidents(
+    tmp_path,
+) -> None:
     store = IncidentStore(tmp_path)
     bundle = make_valid_bundle(bundle_id="migrated-turn-fact")
     store.ingest(bundle, encode_incident_protobuf(bundle))
     store.close()
     with sqlite3.connect(tmp_path / "earshot.sqlite3") as connection:
         connection.execute("DROP TABLE turn_metrics")
+        # Versions 5-8 had no independently committed layouts. This deliberately
+        # narrow table exercises structural recovery from an internal marker; it
+        # is not presented as a historical v7 schema fixture.
         connection.execute(
             """
             CREATE TABLE turn_metrics (
@@ -272,9 +271,7 @@ def test_turn_fact_queries_are_project_scoped(tmp_path) -> None:
 
 def test_turn_fact_queries_purge_expired_derived_evidence(tmp_path) -> None:
     store = IncidentStore(tmp_path)
-    bundle = _with_expired_metadata(
-        make_valid_bundle(bundle_id="expired-turn-fact")
-    )
+    bundle = _with_expired_metadata(make_valid_bundle(bundle_id="expired-turn-fact"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
     with sqlite3.connect(store.database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM turn_metrics").fetchone()[0] == 1
@@ -287,9 +284,7 @@ def test_turn_fact_queries_purge_expired_derived_evidence(tmp_path) -> None:
 
 def test_metrics_http_never_aggregates_expired_turn_facts(tmp_path) -> None:
     store = IncidentStore(tmp_path)
-    bundle = _with_expired_metadata(
-        make_valid_bundle(bundle_id="expired-http-turn-fact")
-    )
+    bundle = _with_expired_metadata(make_valid_bundle(bundle_id="expired-http-turn-fact"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
     client = TestClient(create_app(store=store))
 
@@ -452,9 +447,7 @@ def test_fleet_summary_never_mixes_unavailable_limitations(tmp_path) -> None:
 def test_ambiguous_turn_boundaries_never_publish_a_shortest_pair(tmp_path) -> None:
     bundle = make_valid_bundle(bundle_id="ambiguous-eou")
     speech_end = next(
-        event
-        for event in bundle.profile.events
-        if event.event_name == "earshot.speech.ended"
+        event for event in bundle.profile.events if event.event_name == "earshot.speech.ended"
     )
     duplicate = speech_end.model_copy(update={"event_id": "speech-end-duplicate"})
     bundle = bundle.model_copy(
@@ -481,11 +474,7 @@ def test_cross_clock_turn_boundaries_preserve_explicit_unavailability(tmp_path) 
     )
     events = tuple(
         event.model_copy(
-            update={
-                "time": event.time.model_copy(
-                    update={"clock_domain_id": "other-clock"}
-                )
-            }
+            update={"time": event.time.model_copy(update={"clock_domain_id": "other-clock"})}
         )
         if event.event_name == "earshot.turn.committed"
         else event
