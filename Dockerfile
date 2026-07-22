@@ -3,9 +3,21 @@ FROM node:22-slim AS web
 
 WORKDIR /repo
 RUN corepack enable
-COPY . .
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/analysis/package.json ./packages/analysis/package.json
+COPY packages/schema/package.json ./packages/schema/package.json
+COPY apps/viewer/package.json ./apps/viewer/package.json
 RUN pnpm install --frozen-lockfile \
-    && pnpm --filter @earshot/viewer build
+    --filter @earshot/viewer... \
+    --filter earshot
+COPY apps/viewer/index.html \
+    apps/viewer/tsconfig.json \
+    apps/viewer/tsconfig.app.json \
+    apps/viewer/tsconfig.node.json \
+    apps/viewer/vite.config.ts \
+    ./apps/viewer/
+COPY apps/viewer/src ./apps/viewer/src
+RUN pnpm --filter @earshot/viewer build
 
 # 2) Build the Python wheel.
 FROM python:3.11-slim AS builder
@@ -16,7 +28,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY packages/sdk-python ./packages/sdk-python
-RUN python -m pip wheel --no-deps --wheel-dir /wheels .
+RUN python -m pip wheel --wheel-dir /wheels '.[server]'
 
 # 3) Runtime: one process serving the SPA and the API from a single port.
 FROM python:3.11-slim AS runtime
@@ -33,7 +45,7 @@ RUN groupadd --system earshot \
     && useradd --system --gid earshot --home-dir /nonexistent --shell /usr/sbin/nologin earshot \
     && install --directory --owner earshot --group earshot --mode 0700 /data
 COPY --from=builder /wheels /wheels
-RUN python -m pip install /wheels/*.whl \
+RUN python -m pip install --no-index --find-links=/wheels 'earshot-observability[server]' \
     && rm -rf /wheels
 # The built viewer, baked in and served from EARSHOT_WEB_DIR.
 COPY --from=web /repo/apps/viewer/dist /app/web
