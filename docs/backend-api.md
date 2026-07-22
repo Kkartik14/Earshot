@@ -20,6 +20,17 @@ from a missing incident. The request middleware checks the actual ASGI listener 
 as declared configuration and refuses both `/v1/*` and `/hooks/v1/*` on an unexpected
 non-loopback plaintext bind.
 
+There is one explicit exception for single-machine self-hosting: `serve
+--trust-local-network` (env `EARSHOT_TRUST_LOCAL_NETWORK`). It permits an
+unauthenticated non-loopback bind — intended for a loopback-mapped container
+(`docker -p 127.0.0.1:PORT`), which keeps the listener on a trusted boundary while still
+requiring a loopback `Host` header. Under it, `/v1/*` is served anonymously (unless a
+token is also configured, which is still enforced), and `/v1/auth/session` reports
+`authentication_required: false` so the bundled viewer loads without a project key. A
+single predicate governs middleware enforcement, the session gate, and the generated
+OpenAPI `security`, so the machine contract always matches runtime. Never enable it on a
+public interface.
+
 SDK requests assert `X-Earshot-Project-Id`. When present, the backend compares it with
 the project selected by the bearer credential (or local default project) and returns
 `403 EARSHOT_PROJECT_MISMATCH` on disagreement. Authentication remains authoritative;

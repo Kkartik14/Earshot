@@ -283,6 +283,25 @@ class ApiConfig:
             raise ValueError("a non-loopback listener requires an explicitly trusted TLS proxy")
 
 
+def _remote_access(settings: ApiConfig) -> bool:
+    """Whether the listener is reachable beyond the loopback interface."""
+    return not _is_loopback(settings.host) or settings.behind_tls_proxy
+
+
+def _authentication_required(settings: ApiConfig) -> bool:
+    """Single source of truth for whether ``/v1`` demands a credential.
+
+    Loopback — or an explicitly trusted local network (a loopback-mapped
+    container) — with no configured token serves anonymously; every other
+    binding requires a bearer key or a viewer session. Middleware enforcement,
+    the ``/v1/auth/session`` gate, and the generated OpenAPI security all read
+    from this one predicate so they cannot drift.
+    """
+    return (
+        _remote_access(settings) and not settings.trust_local_network
+    ) or settings.token is not None
+
+
 class ApiProblem(Exception):
     def __init__(
         self,
@@ -579,7 +598,7 @@ def create_app(
 ) -> FastAPI:
     settings = config or ApiConfig()
     repository = store or IncidentStore(data_dir)
-    remote_access = not _is_loopback(settings.host) or settings.behind_tls_proxy
+    remote_access = _remote_access(settings)
     if (
         remote_access
         and not settings.trust_local_network
@@ -643,21 +662,20 @@ def create_app(
                     # Loopback deployments may omit auth; remote deployments
                     # accept bearer clients or the same-origin viewer session.
                     authenticated = [{"BearerAuth": []}, {"BrowserSession": []}]
+                    auth_needed = _authentication_required(settings)
                     if path == "/v1/auth/session" and method == "post":
                         operation["security"] = [{"BearerAuth": []}]
                     elif path == "/v1/auth/session" and method == "get":
                         operation["security"] = (
                             [{"BrowserSession": []}]
-                            if remote_access or settings.token
+                            if auth_needed
                             else [{"BrowserSession": []}, {}]
                         )
                     elif path == "/v1/auth/logout":
                         operation["security"] = [{"BrowserSession": []}]
                     else:
                         operation["security"] = (
-                            authenticated
-                            if remote_access or settings.token
-                            else [*authenticated, {}]
+                            authenticated if auth_needed else [*authenticated, {}]
                         )
         app.openapi_schema = schema
         return schema
@@ -860,9 +878,7 @@ def create_app(
             legacy_valid = bool(
                 supplied and settings.token and hmac.compare_digest(supplied, settings.token)
             )
-            auth_required = (
-                remote_access and not settings.trust_local_network
-            ) or settings.token is not None
+            auth_required = _authentication_required(settings)
             bearer_valid = principal is not None or legacy_valid
             session_valid = browser_session is not None
             invalid_supplied = bool(authorization or browser_token) and not (
@@ -965,7 +981,10 @@ def create_app(
     def get_browser_session(request: Request) -> JSONResponse:
         session = request.state.browser_session
         if request.state.auth_method != "session" or session is None:
-            if remote_access or settings.token is not None:
+            # A trusted local network (e.g. a loopback-mapped container) needs no
+            # viewer login, so the SPA can load without a project key it does not
+            # yet have. Same predicate as the middleware and OpenAPI security.
+            if _authentication_required(settings):
                 raise ApiProblem(401, "EARSHOT_UNAUTHORIZED", "viewer session required")
             return JSONResponse(
                 {
