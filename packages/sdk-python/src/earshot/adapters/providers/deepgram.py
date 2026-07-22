@@ -131,13 +131,9 @@ class DeepgramAdapter(ProviderAdapter):
                 f"channel.alternatives[{index}].transcript",
                 allow_empty=True,
             )
-            omission_paths.append(
-                f"deepgram.Results.channel.alternatives[{index}].transcript"
-            )
+            omission_paths.append(f"deepgram.Results.channel.alternatives[{index}].transcript")
             if "words" in alternative:
-                omission_paths.append(
-                    f"deepgram.Results.channel.alternatives[{index}].words"
-                )
+                omission_paths.append(f"deepgram.Results.channel.alternatives[{index}].words")
             if index == 0:
                 transcript_confidence = optional_probability(
                     alternative.get("confidence"), "confidence"

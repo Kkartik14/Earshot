@@ -12,9 +12,7 @@ pytestmark = pytest.mark.integration
 
 def _write_spa(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    (root / "index.html").write_text(
-        "<!doctype html><title>Earshot</title><div id=root></div>"
-    )
+    (root / "index.html").write_text("<!doctype html><title>Earshot</title><div id=root></div>")
     assets = root / "assets"
     assets.mkdir()
     (assets / "app.js").write_text("console.log('earshot')")
@@ -46,7 +44,7 @@ def test_client_routes_fall_back_to_index(tmp_path) -> None:
     # A deep client-side route must resolve to the SPA shell, not a 404.
     response = _client(tmp_path, with_spa=True).get("/sessions/bundle-abc")
     assert response.status_code == 200
-    assert 'id=root' in response.text
+    assert "id=root" in response.text
 
 
 def test_static_assets_are_served(tmp_path) -> None:
