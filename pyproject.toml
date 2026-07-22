@@ -36,7 +36,7 @@ server = [
 dev = [
   "build>=1.2,<2",
   "fastapi>=0.115,<1",
-  "grpcio-tools==1.81.1",
+  "grpcio-tools==1.82.1",
   "httpx>=0.27,<1",
   "hypothesis>=6.120,<7",
   "pytest>=8.3,<9",
