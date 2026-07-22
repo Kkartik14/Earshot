@@ -9,6 +9,7 @@ import json
 import os
 import sqlite3
 import time
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .analysis import ANALYZER_VERSION
+from .browser_session import BrowserSessionStore
 from .codec import (
     JSON_MEDIA_TYPE,
     PROTOBUF_MEDIA_TYPE,
@@ -41,6 +43,7 @@ from .connectors import (
     RawProviderDelivery,
 )
 from .contract import DerivedAnalysis, IncidentBundle, IncidentBundleJson
+from .explanation import IncidentExplanation, explain_incident
 from .privacy import ExportPolicyError, assert_export_allowed
 from .storage import (
     DEFAULT_PROJECT_ID,
@@ -58,8 +61,13 @@ from .validation import (
     validate_derived_analysis,
     validate_incident,
 )
+from .versions import API_VERSION
 
 Analyzer = Callable[..., DerivedAnalysis]
+_VIEWER_SESSION_COOKIE = "earshot_session"
+_CSRF_HEADER = "x-earshot-csrf"
+_PROJECT_HEADER = "x-earshot-project-id"
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class ApiModel(BaseModel):
@@ -93,6 +101,20 @@ class ConnectorProblemResponse(ApiModel):
 
 class HealthResponse(ApiModel):
     status: str
+
+
+class BrowserSessionResponse(ApiModel):
+    project_id: str
+    csrf_token: str
+    expires_in_seconds: int
+
+
+class BrowserSessionStatusResponse(ApiModel):
+    authenticated: bool
+    authentication_required: bool
+    project_id: str
+    csrf_token: str | None
+    expires_in_seconds: int | None
 
 
 class ValidateResponse(ApiModel):
@@ -189,6 +211,27 @@ _CONNECTOR_ERROR_RESPONSES = {
 }
 
 _INCIDENT_REQUEST_BODY = {
+    "parameters": [
+        {
+            "name": "Content-Encoding",
+            "in": "header",
+            "required": False,
+            "schema": {
+                "type": "string",
+                "enum": ["identity", "gzip"],
+                "default": "identity",
+            },
+        },
+        {
+            "name": "X-Earshot-Project-Id",
+            "in": "header",
+            "required": False,
+            "description": (
+                "SDK assertion checked against the project selected by the credential."
+            ),
+            "schema": {"type": "string", "minLength": 1, "maxLength": 64},
+        },
+    ],
     "requestBody": {
         "required": True,
         "content": {
@@ -197,7 +240,7 @@ _INCIDENT_REQUEST_BODY = {
             PROTOBUF_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}},
             "application/x-protobuf": {"schema": {"type": "string", "format": "binary"}},
         },
-    }
+    },
 }
 
 
@@ -216,6 +259,8 @@ class ApiConfig:
     # non-loopback bind on the promise that the listener is confined to a
     # trusted boundary (e.g. `docker run -p 127.0.0.1:PORT`). Off by default.
     trust_local_network: bool = False
+    viewer_session_capacity: int = 256
+    viewer_session_ttl_seconds: int = 8 * 60 * 60
 
     def __post_init__(self) -> None:
         if self.max_body_bytes < 1:
@@ -226,14 +271,16 @@ class ApiConfig:
             raise ValueError("max_connector_deliveries_per_minute must be positive")
         if self.max_json_depth < 1:
             raise ValueError("max_json_depth must be positive")
+        if self.viewer_session_capacity < 1:
+            raise ValueError("viewer_session_capacity must be positive")
+        if self.viewer_session_ttl_seconds < 1:
+            raise ValueError("viewer_session_ttl_seconds must be positive")
         if (
             not _is_loopback(self.host)
             and not self.behind_tls_proxy
             and not self.trust_local_network
         ):
-            raise ValueError(
-                "a non-loopback listener requires an explicitly trusted TLS proxy"
-            )
+            raise ValueError("a non-loopback listener requires an explicitly trusted TLS proxy")
 
 
 class ApiProblem(Exception):
@@ -315,6 +362,40 @@ async def _read_body(request: Request, maximum: int) -> bytes:
     if not body:
         raise ApiProblem(400, "EARSHOT_EMPTY_BODY", "incident body is empty")
     return bytes(body)
+
+
+def _decompress_gzip(payload: bytes, maximum: int) -> bytes:
+    """Decode one strict gzip member without allocating beyond the body limit."""
+
+    try:
+        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        decoded = bytearray(decompressor.decompress(payload, maximum + 1))
+        if len(decoded) > maximum or decompressor.unconsumed_tail:
+            raise ApiProblem(
+                413,
+                "EARSHOT_BODY_TOO_LARGE",
+                "incident body exceeds limit after decompression",
+            )
+        decoded.extend(decompressor.flush(maximum + 1 - len(decoded)))
+    except zlib.error as error:
+        raise ApiProblem(
+            400,
+            "EARSHOT_MALFORMED_GZIP",
+            "incident gzip body is malformed",
+        ) from error
+    if len(decoded) > maximum:
+        raise ApiProblem(
+            413,
+            "EARSHOT_BODY_TOO_LARGE",
+            "incident body exceeds limit after decompression",
+        )
+    if not decompressor.eof or decompressor.unused_data or not decoded:
+        raise ApiProblem(
+            400,
+            "EARSHOT_MALFORMED_GZIP",
+            "incident gzip body is malformed",
+        )
+    return bytes(decoded)
 
 
 async def _read_connector_body(request: Request, maximum: int) -> bytes:
@@ -508,7 +589,7 @@ def create_app(
         raise ValueError("remote access requires a bearer token or an active project API key")
     app = FastAPI(
         title="Earshot local ingest",
-        version="1.0.0",
+        version=API_VERSION,
         docs_url="/docs",
         redoc_url=None,
     )
@@ -521,6 +602,10 @@ def create_app(
         max_json_depth=settings.max_json_depth,
         max_deliveries_per_minute=settings.max_connector_deliveries_per_minute,
     )
+    app.state.browser_sessions = BrowserSessionStore(
+        capacity=settings.viewer_session_capacity,
+        ttl_seconds=settings.viewer_session_ttl_seconds,
+    )
 
     def openapi_schema() -> dict[str, Any]:
         if app.openapi_schema is not None:
@@ -531,7 +616,7 @@ def create_app(
             routes=app.routes,
             description=(
                 "Local immutable ingest, retrieval, purge, and digest-bound analysis "
-                "for Earshot v1 incidents."
+                "for Earshot v1alpha1 incidents."
             ),
         )
         incident_schema = IncidentBundleJson.model_json_schema(
@@ -545,18 +630,35 @@ def create_app(
             "type": "http",
             "scheme": "bearer",
         }
+        schema["components"]["securitySchemes"]["BrowserSession"] = {
+            "type": "apiKey",
+            "in": "cookie",
+            "name": _VIEWER_SESSION_COOKIE,
+        }
         for path, path_item in schema.get("paths", {}).items():
             if not path.startswith("/v1/"):
                 continue
-            for operation in path_item.values():
+            for method, operation in path_item.items():
                 if isinstance(operation, dict) and "responses" in operation:
-                    # Loopback deployments may omit a token; remote deployments
-                    # require BearerAuth behind a trusted TLS proxy.
-                    operation["security"] = (
-                        [{"BearerAuth": []}]
-                        if remote_access or settings.token
-                        else [{"BearerAuth": []}, {}]
-                    )
+                    # Loopback deployments may omit auth; remote deployments
+                    # accept bearer clients or the same-origin viewer session.
+                    authenticated = [{"BearerAuth": []}, {"BrowserSession": []}]
+                    if path == "/v1/auth/session" and method == "post":
+                        operation["security"] = [{"BearerAuth": []}]
+                    elif path == "/v1/auth/session" and method == "get":
+                        operation["security"] = (
+                            [{"BrowserSession": []}]
+                            if remote_access or settings.token
+                            else [{"BrowserSession": []}, {}]
+                        )
+                    elif path == "/v1/auth/logout":
+                        operation["security"] = [{"BrowserSession": []}]
+                    else:
+                        operation["security"] = (
+                            authenticated
+                            if remote_access or settings.token
+                            else [*authenticated, {}]
+                        )
         app.openapi_schema = schema
         return schema
 
@@ -694,9 +796,7 @@ def create_app(
         unsafe_runtime_binding = (
             runtime_host and not test_transport and not _is_loopback(runtime_host)
         )
-        transport_protected_path = request.url.path.startswith(
-            ("/v1/", "/hooks/v1/")
-        )
+        transport_protected_path = request.url.path.startswith(("/v1/", "/hooks/v1/"))
         if (
             unsafe_runtime_binding
             and transport_protected_path
@@ -715,10 +815,12 @@ def create_app(
                 },
                 status_code=503,
             )
+        local_only_host_boundary = settings.trust_local_network or (
+            not settings.token and _is_loopback(settings.host)
+        )
         if (
-            not settings.token
-            and _is_loopback(settings.host)
-            and request.url.path.startswith("/v1/")
+            local_only_host_boundary
+            and transport_protected_path
             and not _host_header_is_loopback(request.headers.get("host", ""))
         ):
             return JSONResponse(
@@ -734,17 +836,39 @@ def create_app(
             authorization = request.headers.get("authorization", "")
             scheme, separator, credential = authorization.partition(" ")
             supplied = credential if separator and scheme.lower() == "bearer" else ""
-            principal = repository.authenticate_api_key(supplied) if supplied else None
+            principal = None
+            browser_session = None
+            browser_token = ""
+            if supplied:
+                principal = await run_in_threadpool(
+                    repository.authenticate_api_key,
+                    supplied,
+                )
+            elif not authorization:
+                browser_token = request.cookies.get(_VIEWER_SESSION_COOKIE, "")
+                if browser_token:
+                    browser_session = app.state.browser_sessions.authenticate(browser_token)
+                    if browser_session is not None and browser_session.key_id is not None:
+                        issuer_active = await run_in_threadpool(
+                            repository.api_key_is_active,
+                            browser_session.project_id,
+                            browser_session.key_id,
+                        )
+                        if not issuer_active:
+                            app.state.browser_sessions.revoke(browser_token)
+                            browser_session = None
             legacy_valid = bool(
-                supplied
-                and settings.token
-                and hmac.compare_digest(supplied, settings.token)
+                supplied and settings.token and hmac.compare_digest(supplied, settings.token)
             )
             auth_required = (
                 remote_access and not settings.trust_local_network
             ) or settings.token is not None
-            invalid_supplied = bool(authorization) and principal is None and not legacy_valid
-            if (auth_required and principal is None and not legacy_valid) or invalid_supplied:
+            bearer_valid = principal is not None or legacy_valid
+            session_valid = browser_session is not None
+            invalid_supplied = bool(authorization or browser_token) and not (
+                bearer_valid or session_valid
+            )
+            if (auth_required and not bearer_valid and not session_valid) or invalid_supplied:
                 return JSONResponse(
                     {
                         "error": {
@@ -755,10 +879,137 @@ def create_app(
                     status_code=401,
                     headers={"WWW-Authenticate": "Bearer"},
                 )
+            if browser_session is not None and request.method.upper() in _UNSAFE_METHODS:
+                csrf = request.headers.get(_CSRF_HEADER, "")
+                if not app.state.browser_sessions.csrf_matches(browser_session, csrf):
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "EARSHOT_CSRF_REQUIRED",
+                                "message": "valid CSRF token required",
+                            }
+                        },
+                        status_code=403,
+                    )
             request.state.project_id = (
-                principal.project_id if principal is not None else DEFAULT_PROJECT_ID
+                principal.project_id
+                if principal is not None
+                else (
+                    browser_session.project_id
+                    if browser_session is not None
+                    else DEFAULT_PROJECT_ID
+                )
             )
+            request.state.auth_method = (
+                "bearer" if bearer_valid else ("session" if session_valid else "anonymous")
+            )
+            request.state.auth_key_id = principal.key_id if principal is not None else None
+            request.state.browser_session = browser_session
+            request.state.browser_session_token = browser_token
+            asserted_project_id = request.headers.get(_PROJECT_HEADER)
+            if asserted_project_id is not None and asserted_project_id != request.state.project_id:
+                return JSONResponse(
+                    {
+                        "error": {
+                            "code": "EARSHOT_PROJECT_MISMATCH",
+                            "message": (
+                                "asserted SDK project does not match the authenticated project"
+                            ),
+                        }
+                    },
+                    status_code=403,
+                )
         return await call_next(request)
+
+    @app.post(
+        "/v1/auth/session",
+        response_model=BrowserSessionResponse,
+        status_code=201,
+        responses=_ERROR_RESPONSES,
+    )
+    def create_browser_session(request: Request) -> JSONResponse:
+        if request.state.auth_method != "bearer":
+            raise ApiProblem(401, "EARSHOT_UNAUTHORIZED", "valid bearer token required")
+        previous = request.cookies.get(_VIEWER_SESSION_COOKIE, "")
+        if previous:
+            app.state.browser_sessions.revoke(previous)
+        issued = app.state.browser_sessions.issue(
+            project_id=request.state.project_id,
+            key_id=request.state.auth_key_id,
+        )
+        response = JSONResponse(
+            {
+                "project_id": issued.session.project_id,
+                "csrf_token": issued.session.csrf_token,
+                "expires_in_seconds": settings.viewer_session_ttl_seconds,
+            },
+            status_code=201,
+            headers={"Cache-Control": "no-store"},
+        )
+        response.set_cookie(
+            _VIEWER_SESSION_COOKIE,
+            issued.token,
+            max_age=settings.viewer_session_ttl_seconds,
+            path="/",
+            secure=settings.behind_tls_proxy,
+            httponly=True,
+            samesite="strict",
+        )
+        return response
+
+    @app.get(
+        "/v1/auth/session",
+        response_model=BrowserSessionStatusResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def get_browser_session(request: Request) -> JSONResponse:
+        session = request.state.browser_session
+        if request.state.auth_method != "session" or session is None:
+            if remote_access or settings.token is not None:
+                raise ApiProblem(401, "EARSHOT_UNAUTHORIZED", "viewer session required")
+            return JSONResponse(
+                {
+                    "authenticated": False,
+                    "authentication_required": False,
+                    "project_id": DEFAULT_PROJECT_ID,
+                    "csrf_token": None,
+                    "expires_in_seconds": None,
+                },
+                headers={"Cache-Control": "no-store"},
+            )
+        return JSONResponse(
+            {
+                "authenticated": True,
+                "authentication_required": True,
+                "project_id": session.project_id,
+                "csrf_token": session.csrf_token,
+                "expires_in_seconds": max(
+                    0,
+                    int(session.expires_at - time.monotonic()),
+                ),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/v1/auth/logout",
+        status_code=204,
+        responses=_ERROR_RESPONSES,
+    )
+    def logout_browser_session(request: Request) -> Response:
+        token = request.state.browser_session_token
+        if request.state.auth_method != "session" or not token:
+            raise ApiProblem(401, "EARSHOT_UNAUTHORIZED", "viewer session required")
+        app.state.browser_sessions.revoke(token)
+        response = Response(status_code=204)
+        response.delete_cookie(
+            _VIEWER_SESSION_COOKIE,
+            path="/",
+            secure=settings.behind_tls_proxy,
+            httponly=True,
+            samesite="strict",
+        )
+        return response
 
     @app.get("/healthz", response_model=HealthResponse)
     def health() -> dict[str, str]:
@@ -823,9 +1074,7 @@ def create_app(
             "response_ms",
             "turn_duration_ms",
         ] = "response_ms",
-        group_by: Literal[
-            "framework", "provider", "model", "language", "status"
-        ] = "framework",
+        group_by: Literal["framework", "provider", "model", "language", "status"] = "framework",
     ) -> JSONResponse:
         groups = repository.summarize_turn_metric(
             metric,
@@ -860,13 +1109,20 @@ def create_app(
     async def decode_and_validate(
         request: Request,
     ) -> tuple[IncidentBundle, list[dict[str, object]], bytes]:
-        if request.headers.get("content-encoding", "identity").lower() not in {"", "identity"}:
+        content_encoding = request.headers.get("content-encoding", "identity").strip().lower()
+        if content_encoding not in {"", "identity", "gzip"}:
             raise ApiProblem(
                 415,
                 "EARSHOT_UNSUPPORTED_CONTENT_ENCODING",
-                "compressed incident requests are not supported",
+                "incident content encoding is not supported",
             )
         payload = await _read_body(request, settings.max_body_bytes)
+        if content_encoding == "gzip":
+            payload = await run_in_threadpool(
+                _decompress_gzip,
+                payload,
+                settings.max_body_bytes,
+            )
         content_type = _content_type(request)
 
         def decode_validate_and_canonicalize() -> tuple[
@@ -1000,9 +1256,7 @@ def create_app(
         },
     )
     def get_endpoint(bundle_id: str, request: Request) -> Response:
-        record, payload = repository.get_artifact(
-            bundle_id, project_id=request.state.project_id
-        )
+        record, payload = repository.get_artifact(bundle_id, project_id=request.state.project_id)
         try:
             bundle = decode_incident_protobuf(payload)
         except IncidentCodecError as error:
@@ -1022,15 +1276,10 @@ def create_app(
         headers["ETag"] = f'"sha256:{hashlib.sha256(rendered).hexdigest()}"'
         return Response(rendered, media_type=JSON_MEDIA_TYPE, headers=headers)
 
-    @app.get(
-        "/v1/incidents/{bundle_id}/analysis",
-        response_model=StoredAnalysisResponse,
-        responses=_ERROR_RESPONSES,
-    )
-    def analysis_endpoint(bundle_id: str, request: Request) -> JSONResponse:
-        record, payload = repository.get_artifact(
-            bundle_id, project_id=request.state.project_id
-        )
+    def resolve_analysis(
+        bundle_id: str, *, project_id: str
+    ) -> tuple[IncidentBundle, object, DerivedAnalysis]:
+        record, payload = repository.get_artifact(bundle_id, project_id=project_id)
         try:
             bundle = decode_incident_protobuf(payload)
         except IncidentCodecError as error:
@@ -1039,13 +1288,14 @@ def create_app(
         stored = repository.get_analysis(
             bundle_id,
             settings.analyzer_version,
-            project_id=request.state.project_id,
+            project_id=project_id,
         )
         if stored is not None:
-            return JSONResponse(
-                stored.as_dict(),
-                headers={"Cache-Control": "no-store"},
-            )
+            try:
+                bound_analysis = DerivedAnalysis.model_validate(stored.value)
+            except ValidationError as error:
+                raise ArtifactCorruptionError("stored analysis cannot be decoded") from error
+            return bundle, stored, bound_analysis
         if analyzer is None:
             raise ApiProblem(
                 404,
@@ -1089,10 +1339,38 @@ def create_app(
             bundle_id,
             settings.analyzer_version,
             bound_analysis,
+            project_id=project_id,
+        )
+        return bundle, stored, bound_analysis
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/analysis",
+        response_model=StoredAnalysisResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def analysis_endpoint(bundle_id: str, request: Request) -> JSONResponse:
+        _, stored, _ = resolve_analysis(
+            bundle_id,
             project_id=request.state.project_id,
         )
         return JSONResponse(
             stored.as_dict(),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/explanation",
+        response_model=IncidentExplanation,
+        responses=_ERROR_RESPONSES,
+    )
+    def explanation_endpoint(bundle_id: str, request: Request) -> JSONResponse:
+        bundle, _, analysis = resolve_analysis(
+            bundle_id,
+            project_id=request.state.project_id,
+        )
+        explanation = explain_incident(bundle, analysis)
+        return JSONResponse(
+            explanation.model_dump(mode="json", exclude_none=True),
             headers={"Cache-Control": "no-store"},
         )
 

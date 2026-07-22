@@ -89,13 +89,12 @@ def test_remote_project_key_only_sees_its_project(tmp_path) -> None:
 
     schema = client.get("/openapi.json").json()
     assert schema["paths"]["/v1/incidents"]["get"]["security"] == [
-        {"BearerAuth": []}
+        {"BearerAuth": []},
+        {"BrowserSession": []},
     ]
 
     unauthorized = client.get("/v1/incidents")
-    visible = client.get(
-        "/v1/incidents", headers={"Authorization": f"Bearer {issued.credential}"}
-    )
+    visible = client.get("/v1/incidents", headers={"Authorization": f"Bearer {issued.credential}"})
     hidden = client.get(
         f"/v1/incidents/{default_bundle.profile.manifest.bundle_id}",
         headers={"Authorization": f"Bearer {issued.credential}"},
@@ -107,6 +106,66 @@ def test_remote_project_key_only_sees_its_project(tmp_path) -> None:
         sales_bundle.profile.manifest.bundle_id
     ]
     assert hidden.status_code == 404
+
+
+def test_sdk_project_assertion_cannot_silently_route_to_the_token_project(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    store.create_project("sales", display_name="Sales")
+    issued = store.issue_api_key("sales", label="sdk")
+    client = TestClient(
+        create_app(
+            store=store,
+            config=ApiConfig(host="0.0.0.0", behind_tls_proxy=True),
+        )
+    )
+    authorization = {"Authorization": f"Bearer {issued.credential}"}
+
+    accepted = client.get(
+        "/v1/incidents",
+        headers={**authorization, "X-Earshot-Project-Id": "sales"},
+    )
+    mismatch = client.get(
+        "/v1/incidents",
+        headers={**authorization, "X-Earshot-Project-Id": "support"},
+    )
+
+    assert accepted.status_code == 200
+    assert mismatch.status_code == 403
+    assert mismatch.json() == {
+        "error": {
+            "code": "EARSHOT_PROJECT_MISMATCH",
+            "message": "asserted SDK project does not match the authenticated project",
+        }
+    }
+
+
+def test_remote_viewer_session_preserves_project_scope(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    store.create_project("sales", display_name="Sales")
+    default_bundle = make_valid_bundle(bundle_id="default-viewer-bundle")
+    sales_bundle = make_valid_bundle(bundle_id="sales-viewer-bundle")
+    store.ingest(default_bundle, encode_incident_protobuf(default_bundle))
+    store.ingest(
+        sales_bundle,
+        encode_incident_protobuf(sales_bundle),
+        project_id="sales",
+    )
+    issued = store.issue_api_key("sales", label="viewer")
+    app = create_app(
+        store=store,
+        config=ApiConfig(host="0.0.0.0", behind_tls_proxy=True),
+    )
+
+    with TestClient(app, base_url="https://viewer.example") as client:
+        exchange = client.post(
+            "/v1/auth/session",
+            headers={"Authorization": f"Bearer {issued.credential}"},
+        )
+        assert exchange.status_code == 201
+        page = client.get("/v1/incidents")
+        assert page.status_code == 200
+        assert [item["bundle_id"] for item in page.json()["items"]] == ["sales-viewer-bundle"]
+        assert client.get("/v1/incidents/default-viewer-bundle").status_code == 404
 
 
 def test_remote_listener_requires_tls_proxy_and_a_credential(tmp_path) -> None:
