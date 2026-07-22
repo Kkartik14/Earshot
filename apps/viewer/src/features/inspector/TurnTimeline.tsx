@@ -1,24 +1,50 @@
+import { type CSSProperties } from "react";
 import { formatMs } from "../../lib/format";
 import styles from "./TurnTimeline.module.css";
-import type { StageBar, StageName, Timeline } from "./timeline";
+import {
+  roleColorVar,
+  roleLabel,
+  type OperationRole,
+  type StageBar,
+  type Timeline,
+} from "./timeline";
 
-const LEGEND: StageName[] = ["stt", "llm", "tts"];
 const TICK_COUNT = 6;
 
 export interface Selection {
   turn: number;
-  stage: StageName | null;
+  operationId: string | null;
 }
 
-function Bar({ stage, scale }: { stage: StageBar; scale: number }) {
+/** The role sub-label shown when an operation carries no provider/model. */
+function operationSubtitle(stage: StageBar): string {
+  if (stage.provider != null || stage.model != null) {
+    return `${stage.provider ?? "?"} · ${stage.model ?? "?"}`;
+  }
+  return roleLabel(stage.role);
+}
+
+/** Faithful right-column readout: lead when known, else the observed interval,
+ * else the bare shape. Never a fabricated number. */
+function stageReadout(stage: StageBar): string {
+  if (stage.leadMs != null) return formatMs(stage.leadMs);
+  if (stage.timing === "interval" && stage.startMs != null && stage.endMs != null) {
+    return formatMs(stage.endMs - stage.startMs);
+  }
+  if (stage.timing === "point") return "point";
+  return "not observed";
+}
+
+function Bar({ stage, scale, glow }: { stage: StageBar; scale: number; glow?: boolean }) {
+  const color = { "--c": roleColorVar(stage.role) } as CSSProperties;
   if (stage.startMs == null) {
     return <div className={styles.unplaced} title={`${stage.name} timing unavailable`} />;
   }
   if (stage.timing === "point" || stage.endMs == null) {
     return (
       <div
-        className={`${styles.point} ${styles[stage.name]}`}
-        style={{ left: `${(stage.startMs / scale) * 100}%` }}
+        className={styles.point}
+        style={{ ...color, left: `${(stage.startMs / scale) * 100}%` }}
         title={`${stage.name} point · ${stage.provider ?? "?"} · interval not observed`}
       />
     );
@@ -28,8 +54,9 @@ function Bar({ stage, scale }: { stage: StageBar; scale: number }) {
     width > 0 && stage.leadMs != null ? Math.min(100, (stage.leadMs / width) * 100) : 0;
   return (
     <div
-      className={`${styles.bar} ${styles[stage.name]}`}
+      className={`${styles.bar} ${glow ? styles.glow : ""}`}
       style={{
+        ...color,
         left: `${(stage.startMs / scale) * 100}%`,
         width: `${(width / scale) * 100}%`,
       }}
@@ -63,20 +90,20 @@ function TurnRow({
   open,
   selection,
   onToggle,
-  onStage,
+  onOperation,
 }: {
   turn: Timeline["turns"][number];
   scale: number;
   open: boolean;
   selection: Selection | null;
   onToggle: (index: number) => void;
-  onStage: (index: number, stage: StageName) => void;
+  onOperation: (index: number, operationId: string) => void;
 }) {
   const slow = (turn.firstToken.value ?? 0) > 500;
-  const llm = turn.stages.find((s) => s.name === "llm");
+  const llm = turn.stages.find((s) => s.role === "llm");
   const firstTokenAt =
     llm?.startMs != null && llm.leadMs != null ? llm.startMs + llm.leadMs : null;
-  const turnSelected = selection?.turn === turn.index && selection.stage === null;
+  const turnSelected = selection?.turn === turn.index && selection.operationId === null;
 
   return (
     <>
@@ -100,7 +127,12 @@ function TurnRow({
         </div>
         <div className={styles.gantt}>
           {turn.stages.map((stage) => (
-            <Bar key={stage.name} stage={stage} scale={scale} />
+            <Bar
+              key={stage.operationId}
+              stage={stage}
+              scale={scale}
+              glow={slow && stage.role === "llm"}
+            />
           ))}
           {firstTokenAt != null ? (
             <div
@@ -119,35 +151,30 @@ function TurnRow({
         <div className={styles.kids}>
           {turn.stages.map((stage) => {
             const stageSelected =
-              selection?.turn === turn.index && selection.stage === stage.name;
+              selection?.turn === turn.index &&
+              selection.operationId === stage.operationId;
+            const color = roleColorVar(stage.role);
             return (
               <button
-                key={stage.name}
+                key={stage.operationId}
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onStage(turn.index, stage.name);
+                  onOperation(turn.index, stage.operationId);
                 }}
                 className={`${styles.node} ${styles.stage} ${stageSelected ? styles.sel : ""}`}
               >
                 <div className={styles.lab}>
-                  <span
-                    className={styles.sdot2}
-                    style={{ background: `var(--${stage.name})` }}
-                  />
-                  <span className={styles.nm} style={{ color: `var(--${stage.name})` }}>
+                  <span className={styles.sdot2} style={{ background: color }} />
+                  <span className={styles.nm} style={{ color }}>
                     {stage.name}
                   </span>
-                  <span className={styles.prov}>
-                    {stage.provider ?? "?"} · {stage.model ?? "?"}
-                  </span>
+                  <span className={styles.prov}>{operationSubtitle(stage)}</span>
                 </div>
                 <div className={styles.gantt}>
                   <Bar stage={stage} scale={scale} />
                 </div>
-                <div className={styles.dur}>
-                  {stage.leadMs == null ? "not observed" : formatMs(stage.leadMs)}
-                </div>
+                <div className={styles.dur}>{stageReadout(stage)}</div>
               </button>
             );
           })}
@@ -162,28 +189,47 @@ export function TurnTimeline({
   openTurns,
   selection,
   onToggleTurn,
-  onSelectStage,
+  onSelectOperation,
 }: {
   timeline: Timeline;
   openTurns: Set<number>;
   selection: Selection | null;
   onToggleTurn: (index: number) => void;
-  onSelectStage: (index: number, stage: StageName) => void;
+  onSelectOperation: (index: number, operationId: string) => void;
 }) {
   const scale = timeline.scaleMs;
   const ticks = Array.from({ length: TICK_COUNT + 1 }, (_, i) =>
     Math.round((scale / TICK_COUNT) * i),
   );
 
+  // The legend reflects the roles actually present, in a stable order.
+  const ROLE_ORDER: OperationRole[] = [
+    "stt",
+    "llm",
+    "tts",
+    "agent",
+    "tool",
+    "transport",
+    "render",
+    "vad",
+    "detection",
+    "other",
+  ];
+  const present = new Set<OperationRole>();
+  for (const turn of timeline.turns) {
+    for (const stage of turn.stages) present.add(stage.role);
+  }
+  const legend = ROLE_ORDER.filter((role) => present.has(role));
+
   return (
     <section className={styles.wrap}>
       <div className={styles.panelHead}>
         <h2>Turn timeline</h2>
         <div className={styles.legend}>
-          {LEGEND.map((name) => (
-            <span key={name}>
-              <i className={styles.swatch} style={{ background: `var(--${name})` }} />
-              {name}
+          {legend.map((role) => (
+            <span key={role}>
+              <i className={styles.swatch} style={{ background: roleColorVar(role) }} />
+              {role}
             </span>
           ))}
           <span>
@@ -220,7 +266,7 @@ export function TurnTimeline({
             open={openTurns.has(turn.index)}
             selection={selection}
             onToggle={onToggleTurn}
-            onStage={onSelectStage}
+            onOperation={onSelectOperation}
           />
         ))}
       </div>
