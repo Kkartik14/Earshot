@@ -1,4 +1,5 @@
 docs/private/
+local/
 fixtures/faults/*.incident.json
 pnpm-lock.yaml
 spec/*.json
