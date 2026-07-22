@@ -110,9 +110,7 @@ def _otel_payload() -> bytes:
                                 "attributes": [
                                     {
                                         "key": "elevenlabs.conversation_id",
-                                        "value": {
-                                            "stringValue": "conversation-sensitive-otel"
-                                        },
+                                        "value": {"stringValue": "conversation-sensitive-otel"},
                                     }
                                 ]
                             },
@@ -159,9 +157,7 @@ def _otel_payload() -> bytes:
                                             "attributes": [
                                                 {
                                                     "key": "elevenlabs.tool.result",
-                                                    "value": {
-                                                        "stringValue": "private tool result"
-                                                    },
+                                                    "value": {"stringValue": "private tool result"},
                                                 }
                                             ],
                                         },
@@ -189,9 +185,7 @@ def connector(tmp_path):
     )
     ingestion = HostedProviderIngestion(
         store,
-        secrets=MappingSecretResolver(
-            {"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}
-        ),
+        secrets=MappingSecretResolver({"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}),
         now_unix_seconds=lambda: 1_739_537_300,
     )
     return store, endpoint, ingestion
@@ -219,9 +213,7 @@ def test_signed_transcription_creates_one_private_project_incident(connector) ->
     assert b"conversation-sensitive-456" not in canonical
 
 
-def test_free_form_provider_status_is_rejected_without_persistence(
-    connector, tmp_path
-) -> None:
+def test_free_form_provider_status_is_rejected_without_persistence(connector, tmp_path) -> None:
     store, endpoint, ingestion = connector
 
     with pytest.raises(DeliveryPayloadError):
@@ -258,9 +250,7 @@ def test_same_provider_call_isolated_between_connector_projects(tmp_path) -> Non
     )
     ingestion = HostedProviderIngestion(
         store,
-        secrets=MappingSecretResolver(
-            {"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}
-        ),
+        secrets=MappingSecretResolver({"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}),
         now_unix_seconds=lambda: 1_739_537_300,
     )
     body = _payload()
@@ -355,9 +345,7 @@ def test_connector_rejects_unavailable_normalizer_version(connector) -> None:
     )
 
     with pytest.raises(ConnectorConfigurationError):
-        ingestion.receive(
-            _delivery(incompatible.endpoint_id, _payload())
-        )
+        ingestion.receive(_delivery(incompatible.endpoint_id, _payload()))
 
 
 def test_authentication_precedes_malformed_json_and_rejects_stale_or_duplicate_headers(
@@ -367,15 +355,11 @@ def test_authentication_precedes_malformed_json_and_rejects_stale_or_duplicate_h
     malformed = b'{"private":"never-parse",'
 
     with pytest.raises(DeliveryTrustError):
-        ingestion.receive(
-            _delivery(endpoint.endpoint_id, malformed, secret="wrong")
-        )
+        ingestion.receive(_delivery(endpoint.endpoint_id, malformed, secret="wrong"))
     with pytest.raises(DeliveryPayloadError):
         ingestion.receive(_delivery(endpoint.endpoint_id, malformed))
     with pytest.raises(DeliveryTrustError):
-        ingestion.receive(
-            _delivery(endpoint.endpoint_id, malformed, timestamp=1_739_536_999)
-        )
+        ingestion.receive(_delivery(endpoint.endpoint_id, malformed, timestamp=1_739_536_999))
 
     valid = _delivery(endpoint.endpoint_id, _payload())
     with pytest.raises(DeliveryTrustError):
@@ -424,11 +408,12 @@ def test_signed_otel_transcription_preserves_trace_shape_but_not_payload_text(co
         ("1" * 32, "2" * 16),
         ("1" * 32, "3" * 16),
     ]
-    assert next(
-        operation
-        for operation in bundle.profile.operations
-        if operation.span_id == "3" * 16
-    ).parent_span_id == "2" * 16
+    assert (
+        next(
+            operation for operation in bundle.profile.operations if operation.span_id == "3" * 16
+        ).parent_span_id
+        == "2" * 16
+    )
     facts = store.list_turn_facts(project_id="support")
     assert len(facts) == 1
     assert facts[0].first_token_ms is None
@@ -525,9 +510,7 @@ def test_authenticated_connector_rate_limit_is_bounded_and_retryable(connector) 
     store, endpoint, _ = connector
     ingestion = HostedProviderIngestion(
         store,
-        secrets=MappingSecretResolver(
-            {"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}
-        ),
+        secrets=MappingSecretResolver({"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}),
         now_unix_seconds=lambda: 1_739_537_300,
         now_monotonic=lambda: 10.0,
         max_deliveries_per_minute=1,
@@ -544,9 +527,7 @@ def test_http_retryable_connector_errors_include_retry_after(connector) -> None:
     store, endpoint, _ = connector
     ingestion = HostedProviderIngestion(
         store,
-        secrets=MappingSecretResolver(
-            {"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}
-        ),
+        secrets=MappingSecretResolver({"env:ELEVENLABS_WEBHOOK_SECRET": WEBHOOK_SECRET}),
         now_unix_seconds=lambda: 1_739_537_300,
         now_monotonic=lambda: 10.0,
         max_deliveries_per_minute=1,
@@ -557,11 +538,14 @@ def test_http_retryable_connector_errors_include_retry_after(connector) -> None:
         "content-type": "application/json",
         "elevenlabs-signature": delivery.headers[0][1].decode(),
     }
-    assert client.post(
-        f"/hooks/v1/connectors/{endpoint.endpoint_id}",
-        content=delivery.body,
-        headers=headers,
-    ).status_code == 200
+    assert (
+        client.post(
+            f"/hooks/v1/connectors/{endpoint.endpoint_id}",
+            content=delivery.body,
+            headers=headers,
+        ).status_code
+        == 200
+    )
 
     limited = client.post(
         f"/hooks/v1/connectors/{endpoint.endpoint_id}",
@@ -577,9 +561,7 @@ def test_http_retryable_connector_errors_include_retry_after(connector) -> None:
         def receive(self, _delivery):
             raise DeliveryBusyError(retry_after_seconds=17)
 
-    busy_client = TestClient(
-        create_app(store=store, connector_ingestion=BusyIngestion())
-    )
+    busy_client = TestClient(create_app(store=store, connector_ingestion=BusyIngestion()))
     busy = busy_client.post(
         f"/hooks/v1/connectors/{endpoint.endpoint_id}",
         content=b"{}",
@@ -612,7 +594,7 @@ def test_unexpected_normalizer_failure_is_non_reflective_mapping_error(connector
     store, endpoint, ingestion = connector
 
     class BrokenAdapter:
-        normalizer_version = "1.0.0"
+        normalizer_version = endpoint.normalizer_version
 
         def authenticate(self, *_args, **_kwargs) -> None:
             return None

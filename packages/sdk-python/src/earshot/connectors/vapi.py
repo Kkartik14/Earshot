@@ -18,6 +18,7 @@ from earshot.contract import (
 )
 from earshot.recorder import IncidentRecorder, RecorderConfig
 
+from ..versions import VAPI_NORMALIZER_VERSION
 from .types import (
     DeliveryPayloadError,
     DeliveryTrustError,
@@ -27,7 +28,7 @@ from .types import (
     RawProviderDelivery,
 )
 
-ADAPTER_VERSION = "1.0.0"
+ADAPTER_VERSION = VAPI_NORMALIZER_VERSION
 _METRIC_FIELDS = {
     "modelLatency": "vapi.model_latency",
     "voiceLatency": "vapi.voice_latency",
@@ -171,9 +172,7 @@ class VapiConnectorAdapter:
             if raw_message.get("role") in {"assistant", "bot"}:
                 offset = raw_message.get("secondsFromStart")
                 assistant_offsets.append(
-                    _nonnegative_number(offset, maximum=86_400.0)
-                    if offset is not None
-                    else None
+                    _nonnegative_number(offset, maximum=86_400.0) if offset is not None else None
                 )
 
         session_fingerprint = context.fingerprint("vapi:call", call_id)
@@ -227,9 +226,7 @@ class VapiConnectorAdapter:
             }
             if "vapi.turn_latency" not in values:
                 raise DeliveryPayloadError
-            candidate_offset = (
-                assistant_offsets[index] if index < len(assistant_offsets) else None
-            )
+            candidate_offset = assistant_offsets[index] if index < len(assistant_offsets) else None
             point: TimePoint | None = None
             turn_id: str | None = None
             operation_id: str | None = None
@@ -293,9 +290,7 @@ class VapiConnectorAdapter:
                     session_id=recorder.session_id,
                     quality_kind="provider_latency",
                     sample_window=(
-                        TimeRange(start=point, end=point)
-                        if point is not None
-                        else session_window
+                        TimeRange(start=point, end=point) if point is not None else session_window
                     ),
                     measurements=tuple(
                         QualityMeasurement(
