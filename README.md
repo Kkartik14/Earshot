@@ -1,6 +1,6 @@
 # Earshot
 
-**Portable, evidence-labelled incident artifacts for real-time voice AI sessions.**
+**The open-source Voice Observability SDK.**
 
 Earshot is an open-source SDK, semantic profile, and local backend for recording what
 happened in a voice session—across Pipecat, LiveKit, browser/mobile, native
