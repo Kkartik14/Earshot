@@ -8,7 +8,8 @@ configured.
 ## Reporting a vulnerability
 
 Do not open a public issue containing a working exploit, secret, customer artifact,
-or production identifier. Contact the maintainers privately and include:
+or production identifier. Use [private vulnerability reporting](https://github.com/Kkartik14/Earshot/security/advisories/new)
+and include:
 
 - affected version/commit;
 - impact and required attacker position;
@@ -16,9 +17,8 @@ or production identifier. Contact the maintainers privately and include:
 - whether the issue crosses capture, export, API, storage, analysis, or purge; and
 - any temporary mitigation you verified.
 
-The repository does not yet publish a dedicated security mailbox. Until one is added,
-use the private security-reporting mechanism of the source host and avoid attaching
-real voice-session data.
+The repository does not yet publish a dedicated security mailbox. Private vulnerability
+reports are enabled on GitHub; avoid attaching real voice-session data.
 
 ## Supported posture
 

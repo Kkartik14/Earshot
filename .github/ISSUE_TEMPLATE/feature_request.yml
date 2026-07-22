@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a capability grounded in a concrete voice-observability problem.
+title: "[Feature]: "
+labels: [enhancement, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What voice-observability task cannot be completed today, and by whom?
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Concrete scenario
+      description: Describe the runtime, evidence available, and expected operational decision.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Focus on the public behavior or contract, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and coverage implications
+      description: What is measured, inferred, unavailable, or not observed?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This keeps Earshot an observability SDK rather than making it own the voice runtime.
+          required: true
+        - label: This request contains no real customer or voice-session data.
+          required: true

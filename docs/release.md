@@ -79,9 +79,53 @@ unzip -p "$DIST_DIR"/earshot_observability-*.whl \
 
 The metadata `Name` must be `earshot-observability`; FastAPI and Uvicorn must appear
 only behind extras including `server`; and the wheel must contain the `earshot/` import
-directory and `earshot` console entry point. Publication itself requires the team's
-package-index credentials and is deliberately not performed by the build or test
-workflow.
+directory and `earshot` console entry point.
+
+## Automated release
+
+`.github/workflows/release.yml` is the only publication path. A manual workflow run is a
+dry run: it builds, inspects, and smoke-tests the distributions but cannot publish. A tag
+push publishes only when all of these identities agree:
+
+- the tag is exactly `v<project.version>`;
+- the tagged commit is contained in the repository's default branch;
+- the Python distribution is `earshot-observability`; and
+- the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
+
+The workflow publishes the inspected wheel and source distribution to PyPI using OIDC,
+builds the Linux AMD64 image at `ghcr.io/kkartik14/earshot`, creates provenance
+attestations for both artifact types, and creates a GitHub Release with generated notes.
+No long-lived PyPI or GHCR credential is stored in GitHub.
+
+Before the first tag, create the PyPI pending trusted publisher with these exact claims:
+
+```text
+PyPI project: earshot-observability
+Owner:        Kkartik14
+Repository:   Earshot
+Workflow:     release.yml
+Environment:  pypi
+```
+
+The GitHub `pypi` environment restricts deployments to release tags and should retain a
+required maintainer approval. Claim mismatches fail closed at PyPI. If the repository,
+workflow, or environment is renamed, update PyPI before the next release.
+
+Prepare a release on `main`, update every intentionally coupled version, and let CI pass.
+Then create and push the matching tag:
+
+```bash
+git switch main
+git pull --ff-only
+python scripts/check_release.py --tag v0.1.0 --repository Kkartik14/Earshot
+git tag -a v0.1.0 -m "Earshot 0.1.0"
+git push origin v0.1.0
+```
+
+The first GHCR package may require one visibility check in the package settings. It must
+be linked to this public repository and public before documenting anonymous `docker pull`
+support. Released PyPI files are immutable; never delete and recreate a version. Fix the
+problem, increment the package version, and publish a new release.
 
 ## Supported versions and deprecation policy
 
