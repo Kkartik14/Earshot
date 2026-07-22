@@ -98,9 +98,8 @@ secondary details even though those edges become the permanent SDK contract.
 
 ## Remaining gates and limitations
 
-- Run the complete local release command set after the final diff, then require the new
-  remote CI matrix to pass from a clean checkout. Local success cannot prove Python
-  3.12/3.13, Linux, newest dependency resolution, or the macOS lane.
+- Require the new remote CI matrix to pass from a clean checkout. Local success cannot
+  prove Python 3.12/3.13, Linux, newest dependency resolution, or the macOS lane.
 - The checked-in webhook fixtures are sanitized synthetic deliveries. Do not describe
   them as captured or real; run the existing opt-in tests with operator-supplied payloads
   before claiming provider production compatibility.
@@ -124,6 +123,24 @@ secondary details even though those edges become the permanent SDK contract.
 - This review proves code paths and synthetic fault behavior, not real-world throughput,
   provider drift, operator ergonomics, or product-market fit. External alpha users and a
   sustained fault-injection soak are still required.
+
+## Final local verification
+
+The exact committed tree passed the complete local release gate on 2026-07-22:
+
+- Python/backend: 951 passed, 2 intentionally skipped (the optional Groq headless driver
+  and operator-supplied real provider deliveries).
+- TypeScript: 53 tests passed; uncached type checking and production builds passed for
+  the viewer, schema, and analysis packages.
+- Ruff lint/format, Prettier, generated protobuf/JSON Schema/OpenAPI drift, semantic
+  registry validation, and `git diff --check` all passed.
+- The wheel and source distribution passed content inspection and isolated base/server
+  install smoke tests, including the CLI, API, viewer index, and compiled viewer asset.
+- The production Docker image built from the restricted context and passed its
+  authenticated API and bundled-viewer smoke test.
+
+The in-app browser surface was unavailable, so this is not a substitute for the manual
+compiled-browser and accessibility pass or the clean remote compatibility matrix above.
 
 ## Launch recommendation
 
