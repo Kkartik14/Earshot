@@ -1,5 +1,5 @@
 # 1) Build the viewer SPA (static assets served by the API in the runtime stage).
-FROM node:22-slim AS web
+FROM node:26-slim AS web
 
 WORKDIR /repo
 RUN corepack enable
@@ -20,7 +20,7 @@ COPY apps/viewer/src ./apps/viewer/src
 RUN pnpm --filter @earshot/viewer build
 
 # 2) Build the Python wheel.
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
@@ -31,7 +31,7 @@ COPY packages/sdk-python ./packages/sdk-python
 RUN python -m pip wheel --wheel-dir /wheels '.[server]'
 
 # 3) Runtime: one process serving the SPA and the API from a single port.
-FROM python:3.11-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 ENV EARSHOT_DATA_DIR=/data \
     EARSHOT_PORT=4319 \
