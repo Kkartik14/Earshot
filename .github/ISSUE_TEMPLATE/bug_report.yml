@@ -1,0 +1,80 @@
+name: Bug report
+description: Report a reproducible Earshot defect using synthetic evidence.
+title: "[Bug]: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Earshot. Do not attach real recordings, transcripts,
+        phone numbers, credentials, signed URLs, or customer incident artifacts. Replace
+        every sensitive value with a unique synthetic sentinel.
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and why it is incorrect.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal synthetic reproduction
+      description: Include the smallest code or fixture that reproduces the problem.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Earshot version or commit
+      placeholder: 0.1.0 or git SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Python SDK lifecycle
+        - Incident contract or validation
+        - Export or delivery
+        - Storage or purge
+        - Local API or authentication
+        - Viewer
+        - Analysis or turn facts
+        - Pipecat adapter
+        - LiveKit adapter
+        - Provider connector
+        - Packaging or container
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python/Node version, framework/provider SDK version, and deployment shape.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Include synthetic logs or validation output only when useful.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed all real voice-session content, credentials, and customer identifiers.
+          required: true
+        - label: I searched existing issues before filing this report.
+          required: true

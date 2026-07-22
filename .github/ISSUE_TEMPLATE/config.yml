@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Kkartik14/Earshot/security/advisories/new
+    about: Report vulnerabilities privately. Never put secrets or real voice-session data in an issue.
+  - name: Documentation
+    url: https://github.com/Kkartik14/Earshot/tree/main/docs
+    about: Review the architecture, contracts, adapters, privacy model, and release guidance.

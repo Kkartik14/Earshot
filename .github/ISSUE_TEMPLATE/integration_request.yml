@@ -1,0 +1,47 @@
+name: Integration request
+description: Request support for a voice runtime, provider, or finalized evidence surface.
+title: "[Integration]: "
+labels: [integration, triage]
+body:
+  - type: input
+    id: system
+    attributes:
+      label: Runtime or provider
+      placeholder: Provider and SDK/package name
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions in use
+      placeholder: Package version and relevant API version
+    validations:
+      required: true
+  - type: textarea
+    id: surface
+    attributes:
+      label: Available evidence surface
+      description: Describe native OTel spans, callbacks, finalized payloads, APIs, or documented hooks.
+    validations:
+      required: true
+  - type: textarea
+    id: semantics
+    attributes:
+      label: Voice semantics exposed
+      description: Identify turn boundaries, STT/LLM/TTS timing, interruption, transport, and coverage facts.
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: Primary documentation
+      description: Link official SDK/API documentation and public synthetic examples.
+    validations:
+      required: true
+  - type: checkboxes
+    id: data
+    attributes:
+      label: Data handling
+      options:
+        - label: I will not attach captured production payloads, recordings, transcripts, or credentials.
+          required: true
