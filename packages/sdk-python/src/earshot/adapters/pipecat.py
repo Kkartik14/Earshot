@@ -27,6 +27,7 @@ from ..contract import (
 from ..privacy import sanitize_semantic_label, sanitize_source_label
 from ..recorder import IncidentRecorder
 from ..versions import PIPECAT_ADAPTER_VERSION
+from . import routing
 from .base import AdapterDependencyError, stable_id, value
 
 _EXACT_SPAN_NAMES = {
@@ -168,6 +169,7 @@ class PipecatAdapter:
         self._seen_interruption_frames: set[int] = set()
         self._accepted_interruption_frames: set[int] = set()
         self._seen_source_events: set[str] = set()
+        self._routing_handle: routing.RoutingHandle | None = None
         self._lock = threading.RLock()
         self.recorder.register_adapter(
             Adapter(
@@ -810,10 +812,34 @@ class PipecatAdapter:
             )
         )
 
-    def attach(self, tracer_provider: object) -> object:
-        add = getattr(tracer_provider, "add_span_processor", None)
-        if not callable(add):
-            raise TypeError("tracer provider does not support span processors")
-        processor = self.create_span_processor()
-        add(processor)
-        return processor
+    def _consume_routed_span(self, span: object) -> None:
+        try:
+            self.consume_span(span)
+        except Exception:
+            self._record_coverage_safe("pipecat.span", "unsupported_span_shape")
+
+    def attach(self, tracer_provider: object) -> routing.RoutingHandle:
+        """Route this session's spans through one shared, process-scoped processor.
+
+        Installs exactly one Earshot router processor per provider and registers
+        this recorder as the owning session sink, so concurrent sessions never
+        ingest one another's spans and release routing state on :meth:`detach`.
+        """
+
+        handle = routing.attach_adapter(
+            tracer_provider,
+            "pipecat",
+            self._is_pipecat_span,
+            self.recorder.session_id,
+            self._consume_routed_span,
+        )
+        self._routing_handle = handle
+        return handle
+
+    def detach(self) -> None:
+        """Release this session's routing state from the shared provider."""
+
+        handle = self._routing_handle
+        if handle is not None:
+            handle.close()
+            self._routing_handle = None

@@ -27,6 +27,7 @@ from ..contract import (
 from ..privacy import sanitize_semantic_label, sanitize_source_label
 from ..recorder import IncidentRecorder
 from ..versions import LIVEKIT_ADAPTER_VERSION
+from . import routing
 from .base import AdapterDependencyError, seconds_to_nano, stable_id, value
 
 _METRIC_TYPES = {
@@ -312,6 +313,7 @@ class LiveKitAdapter:
         self._seen_events: set[str] = set()
         self._seen_quality: dict[str, str] = {}
         self._seen_participants: set[str] = set()
+        self._routing_handle: routing.RoutingHandle | None = None
         self._lock = threading.RLock()
         self.recorder.register_adapter(
             Adapter(
@@ -1592,21 +1594,44 @@ class LiveKitAdapter:
 
         return EarshotLiveKitSpanProcessor()
 
-    def attach_span_processor(self, tracer_provider: object) -> object:
-        """Add Earshot to a provider without replacing the provider or exporters."""
+    def _consume_routed_span(self, span: object) -> None:
+        try:
+            self.consume_span(span)
+        except Exception:
+            self._record_coverage_safe("livekit.span", "unsupported_span_shape")
 
-        add = getattr(tracer_provider, "add_span_processor", None)
-        if not callable(add):
-            raise TypeError("tracer provider does not support span processors")
-        processor = self.create_span_processor()
-        add(processor)
+    def attach_span_processor(self, tracer_provider: object) -> routing.RoutingHandle:
+        """Route this session's spans through one shared, process-scoped processor.
+
+        Installs exactly one Earshot router processor per provider (not one per
+        session) and registers this recorder as the owning session sink, so
+        concurrent sessions never ingest one another's spans and old sessions
+        release their routing state on :meth:`detach`.
+        """
+
+        handle = routing.attach_adapter(
+            tracer_provider,
+            "livekit",
+            self._is_livekit_span,
+            self.recorder.session_id,
+            self._consume_routed_span,
+        )
         self._native_spans_enabled = True
-        return processor
+        self._routing_handle = handle
+        return handle
 
-    def attach(self, tracer_provider: object) -> object:
+    def attach(self, tracer_provider: object) -> routing.RoutingHandle:
         """Alias matching the other framework adapter."""
 
         return self.attach_span_processor(tracer_provider)
+
+    def detach(self) -> None:
+        """Release this session's routing state from the shared provider."""
+
+        handle = self._routing_handle
+        if handle is not None:
+            handle.close()
+            self._routing_handle = None
 
     def _record_native_interruption_events(
         self,
