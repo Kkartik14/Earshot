@@ -3,11 +3,18 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
+import { shouldRetryQuery } from "./api/client";
 import "./styles/tokens.css";
 import "./styles/global.css";
 
 const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } },
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      retry: shouldRetryQuery,
+    },
+  },
 });
 
 const root = document.getElementById("root");

@@ -52,3 +52,17 @@ export function useAnalysis(bundleId: string | undefined) {
       ),
   });
 }
+
+/** Backend-authored, evidence-bound timeline facts for one incident. */
+export function useExplanation(bundleId: string | undefined) {
+  return useQuery({
+    queryKey: ["explanation", bundleId],
+    enabled: bundleId != null,
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/incidents/{bundle_id}/explanation", {
+          params: { path: { bundle_id: bundleId as string } },
+        }),
+      ),
+  });
+}
