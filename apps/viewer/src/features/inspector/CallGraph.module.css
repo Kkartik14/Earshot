@@ -10,9 +10,6 @@
 .gn {
   cursor: pointer;
 }
-.gn.term {
-  cursor: default;
-}
 .box {
   fill: var(--panel-2);
   stroke: var(--nc, var(--line));
@@ -22,17 +19,12 @@
   stroke: var(--crit);
   stroke-width: 2;
 }
-.gn:not(.term):hover .box {
+.gn:hover .box {
   fill: color-mix(in oklab, var(--nc) 13%, var(--panel-2));
 }
 .gn:focus-visible .box {
   stroke: var(--acc);
   stroke-width: 2;
-}
-.gn.term .box {
-  fill: transparent;
-  stroke: var(--line);
-  stroke-dasharray: 4 3;
 }
 
 .nm {
@@ -40,9 +32,6 @@
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 600;
-}
-.gn.term .nm {
-  fill: var(--tx-mid);
 }
 .lat {
   fill: var(--tx);
@@ -53,49 +42,15 @@
 .slowLat {
   fill: var(--crit);
 }
-.termLat {
-  fill: var(--tx-low);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-}
 .sub {
   fill: var(--tx-low);
   font-family: var(--mono);
   font-size: 10px;
 }
 
+/* arrival-order hint between consecutive operations (not a causal edge) */
 .edge {
   stroke: var(--tx-low);
   stroke-width: 1.4;
   fill: none;
-}
-.edge.intr {
-  stroke: var(--tts);
-  stroke-width: 1.7;
-  stroke-dasharray: 4 3;
-}
-.elab {
-  fill: var(--tx-low);
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.03em;
-}
-.ilab {
-  fill: var(--tts);
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 700;
-}
-.bargeBox {
-  fill: transparent;
-  stroke: var(--tts);
-  stroke-dasharray: 4 3;
-  stroke-width: 1.5;
-}
-.bargeTx {
-  fill: var(--tts);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  font-weight: 700;
 }

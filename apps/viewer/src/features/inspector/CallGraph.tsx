@@ -1,12 +1,7 @@
 import { useId, type CSSProperties } from "react";
 import styles from "./CallGraph.module.css";
-import type { StageName, TurnDetail } from "./timeline";
+import { roleColorVar, roleLabel, type StageDetail, type TurnDetail } from "./timeline";
 
-const REL: Record<StageName, string> = {
-  stt: "transcribes",
-  llm: "produces",
-  tts: "emits",
-};
 const shortModel = (m?: string) =>
   m == null
     ? "?"
@@ -22,50 +17,62 @@ const NH = 42;
 const PIT = 62;
 const CX = X + NW / 2;
 
-type Row =
-  | { term: false; name: StageName; lat: string; sub: string; slow: boolean; nc: string }
-  | { term: true; name: string; lat: string; sub: string };
+function subtitle(op: StageDetail): string {
+  if (op.provider != null || op.model != null) {
+    return `${op.provider ?? "?"} · ${shortModel(op.model)}`;
+  }
+  return roleLabel(op.role);
+}
 
+/** Faithful timing readout: lead when known, else the observed interval, else
+ * the bare shape. Never a fabricated duration. */
+function readout(op: StageDetail): string {
+  if (op.leadMs != null) return `${Math.round(op.leadMs)}ms`;
+  if (op.timing === "interval" && op.startMs != null && op.endMs != null) {
+    return `${Math.round(op.endMs - op.startMs)}ms`;
+  }
+  if (op.timing === "point") return "point";
+  return "not observed";
+}
+
+/** Renders the actual operations present as a generic vertical flow. There is
+ * no invented cascade, no hardcoded playout node, and no causal edges — the
+ * only connector is an arrival-order hint (which order they were observed in,
+ * not causality). Real causal edges are a later pass. */
 export function CallGraph({
   detail,
   onPick,
 }: {
   detail: TurnDetail;
-  onPick: (stage: StageName) => void;
+  onPick: (operationId: string) => void;
 }) {
   const descriptionId = useId();
   const slowTurn = (detail.firstTokenMs ?? 0) > 500;
-  const rows: Row[] = [
-    ...detail.stages.map((s) => ({
-      term: false as const,
-      name: s.name,
-      lat: s.leadMs == null ? "not observed" : `${Math.round(s.leadMs)}ms`,
-      sub: `${s.provider ?? "?"} · ${shortModel(s.model)}`,
-      slow: s.name === "llm" && slowTurn,
-      nc: `var(--${s.name})`,
-    })),
-    { term: true as const, name: "playout", lat: "not observed", sub: "client render" },
-  ];
+  const ops = detail.stages;
 
-  const H = 8 + (rows.length - 1) * PIT + NH + 8;
-  const W = detail.interrupted ? 348 : NW + X * 2;
-  const description = [
-    "Stage flow: STT transcribes to LLM; LLM produces TTS; TTS emits playout.",
-    "Playout at the client render boundary is not observed.",
-    detail.interrupted ? "A barge-in interrupts TTS." : null,
-  ]
-    .filter((part) => part != null)
-    .join(" ");
+  const H = 8 + Math.max(0, ops.length - 1) * PIT + NH + 8;
+  const W = NW + X * 2;
+
+  const orderNote =
+    ops.length > 1
+      ? " Nodes are shown in arrival order, which does not imply causation."
+      : "";
+  const description =
+    ops.length === 0
+      ? "No operations were observed for this turn."
+      : `Operations in arrival order: ${ops.map((op) => op.name).join(", ")}.` +
+        orderNote +
+        (detail.interrupted ? " An interruption was accepted during this turn." : "");
 
   return (
     <div className={styles.graph}>
       <svg
-        viewBox={`0 0 ${W} ${H}`}
+        viewBox={`0 0 ${W} ${Math.max(H, NH + 16)}`}
         width={W}
-        height={H}
+        height={Math.max(H, NH + 16)}
         xmlns="http://www.w3.org/2000/svg"
         role="group"
-        aria-label="Turn call graph; select a stage to inspect it"
+        aria-label="Turn call graph; select an operation to inspect it"
         aria-describedby={descriptionId}
       >
         <desc id={descriptionId}>{description}</desc>
@@ -80,74 +87,36 @@ export function CallGraph({
           >
             <path d="M0 0L7 3.5L0 7Z" fill="var(--tx-low)" />
           </marker>
-          <marker
-            id="cg-arrow-t"
-            markerWidth="7"
-            markerHeight="7"
-            refX="6"
-            refY="3.5"
-            orient="auto"
-          >
-            <path d="M0 0L7 3.5L0 7Z" fill="var(--tts)" />
-          </marker>
         </defs>
 
-        {rows.map((row, i) => {
+        {ops.map((_, i) => {
           const y = 8 + i * PIT;
-          const next = rows[i + 1];
-          const edge =
-            next != null && !row.term ? (
-              <g key={`e${i}`} aria-hidden="true">
-                <path
-                  className={styles.edge}
-                  d={`M${CX} ${y + NH}L${CX} ${y + PIT}`}
-                  markerEnd="url(#cg-arrow)"
-                />
-                <text
-                  className={styles.elab}
-                  x={CX + 13}
-                  y={(y + NH + (y + PIT)) / 2 + 3.5}
-                >
-                  {REL[row.name]}
-                </text>
-              </g>
-            ) : null;
-          return edge;
+          const next = ops[i + 1];
+          if (next == null) return null;
+          // Arrival-order hint only — not a causal edge.
+          return (
+            <path
+              key={`e${i}`}
+              className={styles.edge}
+              aria-hidden="true"
+              d={`M${CX} ${y + NH}L${CX} ${y + PIT}`}
+              markerEnd="url(#cg-arrow)"
+            />
+          );
         })}
 
-        {rows.map((row, i) => {
+        {ops.map((op, i) => {
           const y = 8 + i * PIT;
-          if (row.term) {
-            return (
-              <g
-                key={`n${i}`}
-                className={`${styles.gn} ${styles.term}`}
-                aria-hidden="true"
-              >
-                <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
-                <text className={styles.nm} x={X + 16} y={y + 19}>
-                  {row.name}
-                </text>
-                <text
-                  className={styles.termLat}
-                  x={X + NW - 13}
-                  y={y + 19}
-                  textAnchor="end"
-                >
-                  {row.lat}
-                </text>
-                <text className={styles.sub} x={X + 16} y={y + 34}>
-                  {row.sub}
-                </text>
-              </g>
-            );
-          }
-          const activate = () => onPick(row.name);
+          const color = roleColorVar(op.role);
+          const slow = op.role === "llm" && slowTurn;
+          const sub = subtitle(op);
+          const lat = readout(op);
+          const activate = () => onPick(op.operationId);
           return (
             <g
-              key={`n${i}`}
-              className={`${styles.gn} ${row.slow ? styles.slow : ""}`}
-              style={{ "--nc": row.nc } as CSSProperties}
+              key={op.operationId}
+              className={`${styles.gn} ${slow ? styles.slow : ""}`}
+              style={{ "--nc": color } as CSSProperties}
               onClick={activate}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -157,70 +126,34 @@ export function CallGraph({
               }}
               role="button"
               tabIndex={0}
-              aria-label={`${row.name} stage, ${row.sub}, ${row.lat}. Open stage detail.`}
+              aria-label={`${op.name} operation, ${sub}, ${lat}. Open operation detail.`}
             >
               <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
-              <rect x={X} y={y + 9} width={3.5} height={NH - 18} rx={2} fill={row.nc} />
+              <rect
+                x={X}
+                y={y + 9}
+                width={3.5}
+                height={NH - 18}
+                rx={2}
+                style={{ fill: color }}
+              />
               <text className={styles.nm} x={X + 16} y={y + 19}>
-                {row.name}
+                {op.name}
               </text>
               <text
-                className={`${styles.lat} ${row.slow ? styles.slowLat : ""}`}
+                className={`${styles.lat} ${slow ? styles.slowLat : ""}`}
                 x={X + NW - 13}
                 y={y + 19}
                 textAnchor="end"
               >
-                {row.lat}
+                {lat}
               </text>
               <text className={styles.sub} x={X + 16} y={y + 34}>
-                {row.sub}
+                {sub}
               </text>
             </g>
           );
         })}
-
-        {detail.interrupted
-          ? (() => {
-              const ttsY = 8 + 2 * PIT;
-              const ty = ttsY + NH / 2;
-              const bx = X + NW + 18;
-              const bw = 98;
-              const by = ty - 16;
-              return (
-                <g aria-hidden="true">
-                  <path
-                    className={`${styles.edge} ${styles.intr}`}
-                    d={`M${bx} ${ty}L${X + NW} ${ty}`}
-                    markerEnd="url(#cg-arrow-t)"
-                  />
-                  <text
-                    className={styles.ilab}
-                    x={bx + bw / 2}
-                    y={by - 6}
-                    textAnchor="middle"
-                  >
-                    interrupts
-                  </text>
-                  <rect
-                    className={styles.bargeBox}
-                    x={bx}
-                    y={by}
-                    width={bw}
-                    height={32}
-                    rx={8}
-                  />
-                  <text
-                    className={styles.bargeTx}
-                    x={bx + bw / 2}
-                    y={by + 20}
-                    textAnchor="middle"
-                  >
-                    ⚡ barge-in
-                  </text>
-                </g>
-              );
-            })()
-          : null}
       </svg>
     </div>
   );
