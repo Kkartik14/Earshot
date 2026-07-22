@@ -49,7 +49,7 @@ python scripts/generate_canonical_vector.py
 python scripts/check_semconv.py
 ```
 
-The contract command compiles `proto/earshot/v1/incident.proto` and regenerates both
+The contract command compiles `proto/earshot/v1alpha1/incident.proto` and regenerates both
 Pydantic JSON Schemas. The OpenAPI command regenerates the backend contract. Commit
 generated outputs and use both `--check` commands in CI to reject drift.
 
@@ -68,7 +68,12 @@ pnpm format:check
 python scripts/generate_contract.py --check
 python scripts/generate_openapi.py --check
 python scripts/check_semconv.py
-python -m pip wheel --no-deps . --wheel-dir /tmp/earshot-dist
+pnpm --filter @earshot/viewer bundle
+python -m build --wheel --sdist --outdir /tmp/earshot-dist
+python scripts/check_wheel.py /tmp/earshot-dist/*.whl
+python scripts/check_sdist.py /tmp/earshot-dist/*.tar.gz
+python scripts/smoke_artifact.py /tmp/earshot-dist/*.whl
+python scripts/smoke_artifact.py /tmp/earshot-dist/*.tar.gz
 ```
 
 Tests intentionally mutate valid fixtures. A passing test should prove a property or
@@ -76,9 +81,10 @@ regression, not merely assert that its own valid sample is valid.
 
 The checked-in [CI workflow](../.github/workflows/ci.yml) runs these gates on every
 push and pull request. Its Python lane installs both bounded framework extras so the
-LiveKit 1.6 and Pipecat 1.5 real-object integration tests cannot silently skip, then
-builds the same PEP 517 wheel users install. Its TypeScript lane uses the committed
-pnpm lockfile and the Node version in `.nvmrc`.
+LiveKit 1.6 and Pipecat 1.5 real-object integration tests cannot silently skip. A
+separate clean-artifact lane bundles the viewer, builds the wheel and sdist together,
+and installs both in isolated base and `[server]` environments. Its TypeScript lane uses
+the committed pnpm lockfile and the Node version in `.nvmrc`.
 
 ## Run locally
 
@@ -89,6 +95,11 @@ curl http://127.0.0.1:4319/healthz
 
 For remote access, terminate HTTPS in a trusted proxy and set `--behind-tls-proxy`.
 Provision a project API key (preferred) or set the legacy default-project bearer token.
+The remote viewer asks for that credential once and exchanges it for a bounded,
+expiring server-side session. The browser receives only an HttpOnly, SameSite=Strict,
+Secure cookie; the credential is not written to localStorage or sessionStorage. Signing
+out revokes the session, and revoking its project API key invalidates it on the next
+request.
 Server startup prints the resolved active data path so operators can verify that the
 intended persistent volume is in use without exposing host paths on the public health API.
 

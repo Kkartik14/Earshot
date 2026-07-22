@@ -154,9 +154,7 @@ def test_final_event_keeps_only_session_metadata_and_pseudonymous_identity(conne
 
 
 @pytest.mark.parametrize("header", ("authorization", "x-webhook-secret"))
-def test_static_subscription_headers_authenticate_at_public_http_seam(
-    connector, header
-) -> None:
+def test_static_subscription_headers_authenticate_at_public_http_seam(connector, header) -> None:
     store, endpoint, ingestion = connector
     client = TestClient(create_app(store=store, connector_ingestion=ingestion))
     delivery = _delivery(endpoint.endpoint_id, _payload(), header=header)
@@ -224,9 +222,7 @@ def test_progress_events_are_authenticated_then_ignored(connector) -> None:
         ("call_sid", "x" * 513),
     ),
 )
-def test_required_session_metadata_is_strictly_validated(
-    connector, field, value
-) -> None:
+def test_required_session_metadata_is_strictly_validated(connector, field, value) -> None:
     store, endpoint, ingestion = connector
     payload = json.loads(_payload())
     payload[field] = value
@@ -258,9 +254,7 @@ def test_rotated_previous_subscription_secret_is_accepted(connector) -> None:
     store, endpoint, _ = connector
     ingestion = HostedProviderIngestion(
         store,
-        secrets=MappingSecretResolver(
-            {"env:RINGG_WEBHOOK_SECRET": ("rotated-current", SECRET)}
-        ),
+        secrets=MappingSecretResolver({"env:RINGG_WEBHOOK_SECRET": ("rotated-current", SECRET)}),
     )
 
     outcome = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))

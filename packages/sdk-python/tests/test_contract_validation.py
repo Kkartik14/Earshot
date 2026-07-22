@@ -137,6 +137,58 @@ def test_network_measurement_aliases_cannot_claim_perceptual_pcm_source(
     )
 
 
+@pytest.mark.parametrize(
+    ("name", "value", "unit"),
+    [
+        ("earshot.turn.response_latency", -250.0, "ms"),
+        ("earshot.duration.audio_seconds", -0.1, "s"),
+        ("earshot.metric.inference.count", -1, "count"),
+        ("earshot.metric.interruption.probability", 1.01, "1"),
+        ("packet_loss_ratio", 1.01, "ratio"),
+    ],
+)
+def test_governed_measurements_enforce_their_numeric_domain(
+    valid_bundle: IncidentBundle,
+    name: str,
+    value: float,
+    unit: str,
+) -> None:
+    sample = QualitySample(
+        sample_id="semantically-invalid",
+        session_id="session-1",
+        quality_kind="provider_metric",
+        sample_window=TimeRange(start=point(1), end=point(1)),
+        measurements=(QualityMeasurement(name=name, value=value, unit=unit),),
+        evidence=Evidence(
+            source="provider",
+            observer="server",
+            method="native_metric",
+            confidence="measured",
+            availability="available",
+        ),
+    )
+
+    assert "EARSHOT_MEASUREMENT_VALUE_OUT_OF_RANGE" in issue_codes(
+        replace_profile(valid_bundle, quality_samples=(sample,))
+    )
+
+
+def test_governed_counter_accepts_integral_float_from_normalized_provider(
+    valid_bundle: IncidentBundle,
+) -> None:
+    sample = QualitySample(
+        sample_id="normalized-provider-count",
+        session_id="session-1",
+        quality_kind="provider_metric",
+        sample_window=TimeRange(start=point(1), end=point(1)),
+        measurements=(QualityMeasurement(name="provider.item_count", value=2.0, unit="count"),),
+    )
+
+    assert "EARSHOT_MEASUREMENT_VALUE_OUT_OF_RANGE" not in issue_codes(
+        replace_profile(valid_bundle, quality_samples=(sample,))
+    )
+
+
 @pytest.mark.parametrize("value", [b"bytes", {1, 2}, object()])
 def test_profile_extensions_must_be_strict_json_values(valid_bundle, value: object) -> None:
     profile = valid_bundle.profile.model_copy(update={"future_extension": value})

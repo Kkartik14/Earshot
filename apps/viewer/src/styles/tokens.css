@@ -1,0 +1,101 @@
+/* Earshot design tokens — cool-ink instrument palette, theme-aware.
+ * Light is the default; dark applies via the OS preference and an explicit
+ * data-theme override wins in both directions. Style components only through
+ * these variables, never with raw hex. */
+
+:root {
+  --bg: #f5f7fb;
+  --rail: #eef2f8;
+  --panel: #ffffff;
+  --panel-2: #f3f6fb;
+  --track: #e7ecf4;
+  --line: #dce3ee;
+  --line-soft: #e8edf4;
+  --tx: #0f1626;
+  --tx-mid: #54607a;
+  --tx-low: #8590a4;
+
+  /* pipeline spectrum: listen -> think -> speak */
+  --stt: #0c90ac;
+  --llm: #b07510;
+  --tts: #7a45d6;
+
+  /* semantic (kept distinct from the accent) */
+  --crit: #d6362b;
+  --good: #12855c;
+  --est: #b07510;
+  --acc: #3b6de0;
+
+  --mono:
+    ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  --r: 7px;
+  --shadow: 0 1px 2px rgba(16, 23, 37, 0.05), 0 8px 24px -12px rgba(16, 23, 37, 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #080b11;
+    --rail: #0b1017;
+    --panel: #0d131d;
+    --panel-2: #111927;
+    --track: #0b1119;
+    --line: #1e2938;
+    --line-soft: #151d29;
+    --tx: #eaeef6;
+    --tx-mid: #95a0b5;
+    --tx-low: #586274;
+    --stt: #47c9e0;
+    --llm: #edb350;
+    --tts: #bb8dff;
+    --crit: #ff6e63;
+    --good: #4fd2a1;
+    --est: #edb350;
+    --acc: #7ca3ff;
+    --shadow:
+      0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.7);
+  }
+}
+
+:root[data-theme="light"] {
+  --bg: #f5f7fb;
+  --rail: #eef2f8;
+  --panel: #ffffff;
+  --panel-2: #f3f6fb;
+  --track: #e7ecf4;
+  --line: #dce3ee;
+  --line-soft: #e8edf4;
+  --tx: #0f1626;
+  --tx-mid: #54607a;
+  --tx-low: #8590a4;
+  --stt: #0c90ac;
+  --llm: #b07510;
+  --tts: #7a45d6;
+  --crit: #d6362b;
+  --good: #12855c;
+  --est: #b07510;
+  --acc: #3b6de0;
+  --shadow: 0 1px 2px rgba(16, 23, 37, 0.05), 0 8px 24px -12px rgba(16, 23, 37, 0.12);
+}
+
+:root[data-theme="dark"] {
+  --bg: #080b11;
+  --rail: #0b1017;
+  --panel: #0d131d;
+  --panel-2: #111927;
+  --track: #0b1119;
+  --line: #1e2938;
+  --line-soft: #151d29;
+  --tx: #eaeef6;
+  --tx-mid: #95a0b5;
+  --tx-low: #586274;
+  --stt: #47c9e0;
+  --llm: #edb350;
+  --tts: #bb8dff;
+  --crit: #ff6e63;
+  --good: #4fd2a1;
+  --est: #edb350;
+  --acc: #7ca3ff;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.02) inset, 0 18px 40px -24px rgba(0, 0, 0, 0.7);
+}

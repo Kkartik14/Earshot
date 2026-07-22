@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import pytest
 
@@ -22,13 +23,21 @@ def test_serve_honors_trusted_proxy_environment(monkeypatch) -> None:
 
 def test_serve_reports_the_active_data_path(monkeypatch, tmp_path, capsys) -> None:
     observed = {}
-    monkeypatch.setattr("earshot.cli.create_app", lambda **_kwargs: object())
+    monkeypatch.setattr("earshot.api.create_app", lambda **_kwargs: object())
     monkeypatch.setattr("uvicorn.run", lambda _app, **kwargs: observed.update(kwargs))
 
     assert main(["serve", "--data-dir", str(tmp_path)]) == 0
 
     assert str(tmp_path.resolve()) in capsys.readouterr().err
     assert observed["host"] == "127.0.0.1"
+
+
+def test_base_install_serve_command_explains_the_server_extra(monkeypatch, capsys) -> None:
+    monkeypatch.setitem(sys.modules, "uvicorn", None)
+
+    assert main(["serve"]) == 2
+
+    assert "earshot-observability[server]" in capsys.readouterr().err
 
 
 def test_validate_json_and_protobuf_files(tmp_path, valid_bundle, capsys) -> None:
@@ -159,9 +168,7 @@ def test_cli_provisions_project_key_and_connector_without_persisting_secrets(
         == 0
     )
     connector = json.loads(capsys.readouterr().out)
-    assert connector["hook_path"] == (
-        f"/hooks/v1/connectors/{connector['endpoint_id']}"
-    )
+    assert connector["hook_path"] == (f"/hooks/v1/connectors/{connector['endpoint_id']}")
     assert connector["secret_ref"] == "env:ELEVENLABS_WEBHOOK_SECRET"
     assert issued["credential"].encode() not in (data_dir / "earshot.sqlite3").read_bytes()
 
@@ -186,3 +193,21 @@ def test_cli_provisions_project_key_and_connector_without_persisting_secrets(
         "project_id": "support",
         "revoked": True,
     }
+
+
+@pytest.mark.parametrize("provider", ("elevenlabs", "vapi", "retell", "ringg"))
+def test_cli_accepts_every_shipped_connector_provider(provider: str) -> None:
+    arguments = _build_parser().parse_args(
+        [
+            "connector",
+            "create",
+            "--project",
+            "support",
+            "--provider",
+            provider,
+            "--secret-env",
+            "PROVIDER_WEBHOOK_SECRET",
+        ]
+    )
+
+    assert arguments.provider == provider

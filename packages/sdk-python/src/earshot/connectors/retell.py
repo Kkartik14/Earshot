@@ -19,6 +19,7 @@ from earshot.contract import (
 )
 from earshot.recorder import IncidentRecorder, RecorderConfig
 
+from ..versions import RETELL_NORMALIZER_VERSION
 from .types import (
     DeliveryPayloadError,
     DeliveryTrustError,
@@ -28,7 +29,7 @@ from .types import (
     RawProviderDelivery,
 )
 
-ADAPTER_VERSION = "1.0.0"
+ADAPTER_VERSION = RETELL_NORMALIZER_VERSION
 _SIGNATURE_PATTERN = re.compile(r"^v=([0-9]+),d=([0-9a-fA-F]{64})$")
 _LATENCY_COMPONENTS = (
     "e2e",
@@ -47,12 +48,7 @@ def _header_values(delivery: RawProviderDelivery, name: bytes) -> tuple[bytes, .
 
 
 def _milliseconds(value: object) -> int:
-    if (
-        not isinstance(value, int)
-        or isinstance(value, bool)
-        or value < 0
-        or value > (1 << 63) - 1
-    ):
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > (1 << 63) - 1:
         raise DeliveryPayloadError
     return value
 

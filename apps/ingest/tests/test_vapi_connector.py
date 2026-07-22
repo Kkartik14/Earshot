@@ -160,9 +160,7 @@ def test_vapi_call_identity_is_idempotent_and_changed_final_report_conflicts(con
 def test_vapi_unknown_units_are_not_capped_as_seconds(connector) -> None:
     store, endpoint, ingestion = connector
 
-    outcome = ingestion.receive(
-        _delivery(endpoint.endpoint_id, _payload(turn_latency=1200.0))
-    )
+    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, _payload(turn_latency=1200.0)))
 
     _, canonical = store.get_artifact(outcome.bundle_id, project_id="support")
     bundle = decode_incident_protobuf(canonical)

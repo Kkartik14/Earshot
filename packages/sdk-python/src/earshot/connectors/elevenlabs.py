@@ -19,6 +19,7 @@ from earshot.contract import (
 )
 from earshot.recorder import IncidentRecorder, RecorderConfig
 
+from ..versions import ELEVENLABS_NORMALIZER_VERSION
 from .types import (
     DeliveryPayloadError,
     DeliveryTrustError,
@@ -28,7 +29,7 @@ from .types import (
     RawProviderDelivery,
 )
 
-ADAPTER_VERSION = "1.0.0"
+ADAPTER_VERSION = ELEVENLABS_NORMALIZER_VERSION
 _HEX_PATTERN = re.compile(r"^[0-9a-f]+$")
 _SESSION_STATUS = {
     "initiated": "in_progress",
@@ -236,16 +237,11 @@ class ElevenLabsConnectorAdapter:
             recorder.record_coverage(signal, "not_exposed", "provider_field_absent")
 
         agent_spans = sorted(
-            (
-                span
-                for span in spans
-                if span.name == "elevenlabs.recv.agent_response"
-            ),
+            (span for span in spans if span.name == "elevenlabs.recv.agent_response"),
             key=lambda span: (span.start_nano, span.span_id),
         )
         turn_by_span = {
-            (span.trace_id, span.span_id): f"turn-{index}"
-            for index, span in enumerate(agent_spans)
+            (span.trace_id, span.span_id): f"turn-{index}" for index, span in enumerate(agent_spans)
         }
         for span in spans:
             turn_id = turn_by_span.get((span.trace_id, span.span_id))
@@ -286,8 +282,7 @@ class ElevenLabsConnectorAdapter:
                 parent_span_id=span.parent_span_id,
                 parent_scope=(
                     "internal"
-                    if span.parent_span_id
-                    and (span.trace_id, span.parent_span_id) in identities
+                    if span.parent_span_id and (span.trace_id, span.parent_span_id) in identities
                     else "external"
                     if span.parent_span_id
                     else "unknown"

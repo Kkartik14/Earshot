@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -84,6 +86,40 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
         assert (await ingest).status_code == 201
 
 
+@pytest.mark.asyncio
+async def test_api_key_verification_does_not_stall_asgi_health(tmp_path, monkeypatch) -> None:
+    store = IncidentStore(tmp_path)
+    issued = store.issue_api_key("default", label="liveness test")
+    original_authenticate = store.authenticate_api_key
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked_authenticate(credential: str):
+        started.set()
+        release.wait(2)
+        return original_authenticate(credential)
+
+    monkeypatch.setattr(store, "authenticate_api_key", blocked_authenticate)
+    app = create_app(store=store, analyzer=analyze_incident)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        started_at = time.monotonic()
+        authenticated = asyncio.create_task(
+            client.get(
+                "/v1/incidents",
+                headers={"Authorization": f"Bearer {issued.credential}"},
+            )
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            health = await asyncio.wait_for(client.get("/healthz"), timeout=0.25)
+            assert health.status_code == 200
+            assert time.monotonic() - started_at < 0.5
+        finally:
+            release.set()
+        assert (await authenticated).status_code == 200
+
+
 @pytest.mark.parametrize(
     ("host", "allowed"),
     [("127.0.0.1", True), ("::1", True), ("localhost", True), ("0.0.0.0", False)],
@@ -109,6 +145,169 @@ def test_tls_proxy_application_requires_a_configured_credential(tmp_path) -> Non
     config = ApiConfig(host="127.0.0.1", behind_tls_proxy=True)
     with pytest.raises(ValueError, match="requires a bearer token or an active project API key"):
         create_app(store=IncidentStore(tmp_path), config=config)
+
+
+def test_project_key_exchanges_for_a_secure_http_only_viewer_session(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    issued = store.issue_api_key("default", label="viewer")
+    app = create_app(
+        store=store,
+        config=ApiConfig(host="0.0.0.0", behind_tls_proxy=True),
+        analyzer=analyze_incident,
+    )
+    with TestClient(app, base_url="https://viewer.example") as client:
+        exchange = client.post(
+            "/v1/auth/session",
+            headers={"Authorization": f"Bearer {issued.credential}"},
+        )
+        assert exchange.status_code == 201
+        cookie = exchange.headers["set-cookie"]
+        assert "HttpOnly" in cookie
+        assert "SameSite=strict" in cookie
+        assert "Secure" in cookie
+        assert issued.credential not in cookie
+        assert issued.credential not in exchange.text
+        assert exchange.json()["project_id"] == "default"
+        assert exchange.json()["csrf_token"]
+
+        session = client.get("/v1/auth/session")
+        assert session.status_code == 200
+        assert session.json()["authenticated"] is True
+        assert session.json()["csrf_token"] == exchange.json()["csrf_token"]
+
+        authenticated = client.get("/v1/incidents")
+        assert authenticated.status_code == 200
+        invalid_bearer = client.get(
+            "/v1/incidents",
+            headers={"Authorization": "Bearer invalid"},
+        )
+        assert invalid_bearer.status_code == 401
+
+
+def test_tokenless_loopback_viewer_can_discover_that_login_is_not_required(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    response = client.get("/v1/auth/session")
+    assert response.status_code == 200
+    assert response.json() == {
+        "authenticated": False,
+        "authentication_required": False,
+        "project_id": "default",
+        "csrf_token": None,
+        "expires_in_seconds": None,
+    }
+
+
+def test_viewer_logout_requires_csrf_and_revokes_the_server_session(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    issued = store.issue_api_key("default", label="viewer logout")
+    app = create_app(
+        store=store,
+        config=ApiConfig(host="0.0.0.0", behind_tls_proxy=True),
+        analyzer=analyze_incident,
+    )
+    with TestClient(app, base_url="https://viewer.example") as client:
+        exchange = client.post(
+            "/v1/auth/session",
+            headers={"Authorization": f"Bearer {issued.credential}"},
+        )
+        csrf = exchange.json()["csrf_token"]
+        session_cookie = client.cookies.get("earshot_session")
+        assert session_cookie
+
+        missing = client.post("/v1/auth/logout")
+        assert missing.status_code == 403
+        assert code(missing) == "EARSHOT_CSRF_REQUIRED"
+
+        logout = client.post(
+            "/v1/auth/logout",
+            headers={"X-Earshot-CSRF": csrf},
+        )
+        assert logout.status_code == 204
+        assert "Max-Age=0" in logout.headers["set-cookie"]
+
+        client.cookies.set("earshot_session", session_cookie, domain="viewer.example", path="/")
+        revoked = client.get("/v1/incidents")
+        assert revoked.status_code == 401
+
+
+def test_viewer_session_expires_server_side(tmp_path, monkeypatch) -> None:
+    now = [10.0]
+    monkeypatch.setattr("earshot.browser_session.time.monotonic", lambda: now[0])
+    store = IncidentStore(tmp_path)
+    issued = store.issue_api_key("default", label="expiring viewer")
+    app = create_app(
+        store=store,
+        config=ApiConfig(
+            host="0.0.0.0",
+            behind_tls_proxy=True,
+            viewer_session_ttl_seconds=1,
+        ),
+        analyzer=analyze_incident,
+    )
+    with TestClient(app, base_url="https://viewer.example") as client:
+        exchange = client.post(
+            "/v1/auth/session",
+            headers={"Authorization": f"Bearer {issued.credential}"},
+        )
+        assert exchange.status_code == 201
+        now[0] = 12.0
+        expired = client.get("/v1/incidents")
+        assert expired.status_code == 401
+
+
+def test_revoking_project_key_invalidates_its_viewer_sessions(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    issued = store.issue_api_key("default", label="revoked viewer")
+    app = create_app(
+        store=store,
+        config=ApiConfig(host="0.0.0.0", behind_tls_proxy=True),
+        analyzer=analyze_incident,
+    )
+    with TestClient(app, base_url="https://viewer.example") as client:
+        exchange = client.post(
+            "/v1/auth/session",
+            headers={"Authorization": f"Bearer {issued.credential}"},
+        )
+        assert exchange.status_code == 201
+        store.revoke_api_key("default", issued.key_id)
+
+        revoked = client.get("/v1/incidents")
+        assert revoked.status_code == 401
+
+
+def test_viewer_session_capacity_evicts_the_oldest_session(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    issued = store.issue_api_key("default", label="bounded viewers")
+    app = create_app(
+        store=store,
+        config=ApiConfig(
+            host="0.0.0.0",
+            behind_tls_proxy=True,
+            viewer_session_capacity=1,
+        ),
+        analyzer=analyze_incident,
+    )
+    with (
+        TestClient(app, base_url="https://viewer.example") as first,
+        TestClient(app, base_url="https://viewer.example") as second,
+    ):
+        assert (
+            first.post(
+                "/v1/auth/session",
+                headers={"Authorization": f"Bearer {issued.credential}"},
+            ).status_code
+            == 201
+        )
+        assert (
+            second.post(
+                "/v1/auth/session",
+                headers={"Authorization": f"Bearer {issued.credential}"},
+            ).status_code
+            == 201
+        )
+
+        assert first.get("/v1/incidents").status_code == 401
+        assert second.get("/v1/incidents").status_code == 200
 
 
 def test_actual_asgi_listener_cannot_bypass_declared_loopback_security(tmp_path) -> None:
@@ -330,12 +529,46 @@ def test_body_limit_is_enforced_before_decode(tmp_path, valid_bundle) -> None:
     assert code(response) == "EARSHOT_BODY_TOO_LARGE"
 
 
-def test_compressed_request_is_explicitly_rejected(tmp_path, valid_bundle) -> None:
+def test_gzip_compressed_incident_is_bounded_and_accepted(tmp_path, valid_bundle) -> None:
+    payload = encode_incident_protobuf(valid_bundle)
+    _, client = app_client(tmp_path)
+    response = client.post(
+        "/v1/incidents",
+        content=gzip.compress(payload, mtime=0),
+        headers={"Content-Type": PROTOBUF_MEDIA_TYPE, "Content-Encoding": "gzip"},
+    )
+    assert response.status_code == 201
+
+
+def test_gzip_decompressed_body_limit_is_enforced(tmp_path, valid_bundle) -> None:
+    payload = encode_incident_json(valid_bundle)
+    _, client = app_client(tmp_path, config=ApiConfig(max_body_bytes=len(payload) - 1))
+    response = client.post(
+        "/v1/incidents",
+        content=gzip.compress(payload, mtime=0),
+        headers={"Content-Type": JSON_MEDIA_TYPE, "Content-Encoding": "gzip"},
+    )
+    assert response.status_code == 413
+    assert code(response) == "EARSHOT_BODY_TOO_LARGE"
+
+
+def test_malformed_gzip_is_rejected_without_decode(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    response = client.post(
+        "/v1/incidents",
+        content=b"not-gzip",
+        headers={"Content-Type": JSON_MEDIA_TYPE, "Content-Encoding": "gzip"},
+    )
+    assert response.status_code == 400
+    assert code(response) == "EARSHOT_MALFORMED_GZIP"
+
+
+def test_unknown_content_encoding_is_explicitly_rejected(tmp_path, valid_bundle) -> None:
     _, client = app_client(tmp_path)
     response = client.post(
         "/v1/incidents",
         content=encode_incident_json(valid_bundle),
-        headers={"Content-Type": JSON_MEDIA_TYPE, "Content-Encoding": "gzip"},
+        headers={"Content-Type": JSON_MEDIA_TYPE, "Content-Encoding": "br"},
     )
     assert response.status_code == 415
     assert code(response) == "EARSHOT_UNSUPPORTED_CONTENT_ENCODING"
@@ -429,6 +662,27 @@ def test_analysis_is_generated_once_and_cached_by_input_digest(tmp_path, valid_b
     assert first.json() == second.json()
     assert calls == 1
     assert first.json()["analyzer_version"] == ANALYZER_VERSION
+
+
+def test_explanation_returns_backend_authored_exact_timeline_facts(tmp_path, valid_bundle) -> None:
+    _, client = app_client(tmp_path)
+    ingested = client.post(
+        "/v1/incidents",
+        content=encode_incident_protobuf(valid_bundle),
+        headers={"Content-Type": PROTOBUF_MEDIA_TYPE},
+    )
+    assert ingested.status_code == 201
+
+    response = client.get("/v1/incidents/bundle-1/explanation")
+
+    assert response.status_code == 200
+    [turn] = response.json()["turns"]
+    llm = next(item for item in turn["operations"] if item["operation_id"] == "op-llm")
+    assert llm["shape"] == "interval"
+    assert llm["start_nano"] == "1050000000"
+    assert llm["end_nano"] == "1300000000"
+    assert llm["duration_nano"] == "250000000"
+    assert response.headers["cache-control"] == "no-store"
 
 
 def test_analysis_accepts_event_turn_inherited_through_trace_span(tmp_path, valid_bundle) -> None:
@@ -531,17 +785,45 @@ def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp
     } <= set(content)
     assert "IncidentBundleJson" in schema["components"]["schemas"]
     assert "StoredAnalysisResponse" in schema["components"]["schemas"]
+    content_encoding = next(
+        parameter
+        for parameter in schema["paths"]["/v1/incidents"]["post"]["parameters"]
+        if parameter["name"] == "Content-Encoding"
+    )
+    assert content_encoding["schema"]["enum"] == ["identity", "gzip"]
+    project_assertion = next(
+        parameter
+        for parameter in schema["paths"]["/v1/incidents"]["post"]["parameters"]
+        if parameter["name"] == "X-Earshot-Project-Id"
+    )
+    assert project_assertion["required"] is False
     assert schema["components"]["securitySchemes"]["BearerAuth"]["scheme"] == "bearer"
+    assert schema["components"]["securitySchemes"]["BrowserSession"] == {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "earshot_session",
+    }
     assert schema["paths"]["/v1/incidents"]["post"]["security"] == [
         {"BearerAuth": []},
+        {"BrowserSession": []},
         {},
     ]
+    assert schema["paths"]["/v1/auth/session"]["post"]["security"] == [{"BearerAuth": []}]
+    assert schema["paths"]["/v1/auth/session"]["get"]["security"] == [
+        {"BrowserSession": []},
+        {},
+    ]
+    assert schema["paths"]["/v1/auth/logout"]["post"]["security"] == [{"BrowserSession": []}]
 
 
-def test_openapi_marks_bearer_auth_mandatory_when_server_has_a_token(tmp_path) -> None:
+def test_openapi_marks_viewer_or_bearer_auth_mandatory_when_server_has_a_token(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="test-token"))
     schema = client.get("/openapi.json").json()
-    assert schema["paths"]["/v1/incidents"]["post"]["security"] == [{"BearerAuth": []}]
+    assert schema["paths"]["/v1/incidents"]["post"]["security"] == [
+        {"BearerAuth": []},
+        {"BrowserSession": []},
+    ]
+    assert schema["paths"]["/v1/auth/session"]["get"]["security"] == [{"BrowserSession": []}]
 
 
 def test_openapi_keeps_connector_trust_separate_and_documents_retryable_errors(
@@ -549,9 +831,9 @@ def test_openapi_keeps_connector_trust_separate_and_documents_retryable_errors(
 ) -> None:
     client = TestClient(create_app(store=IncidentStore(tmp_path)))
 
-    operation = client.get("/openapi.json").json()["paths"][
-        "/hooks/v1/connectors/{endpoint_id}"
-    ]["post"]
+    operation = client.get("/openapi.json").json()["paths"]["/hooks/v1/connectors/{endpoint_id}"][
+        "post"
+    ]
 
     assert "security" not in operation
     expected = {

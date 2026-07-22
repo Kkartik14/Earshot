@@ -15,9 +15,9 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PROTO = ROOT / "proto" / "earshot" / "v1" / "incident.proto"
+PROTO = ROOT / "proto" / "earshot" / "v1alpha1" / "incident.proto"
 GENERATED = ROOT / "packages" / "sdk-python" / "src" / "earshot" / "generated"
-GENERATED_BINDING = GENERATED / "earshot" / "v1" / "incident_pb2.py"
+GENERATED_BINDING = GENERATED / "earshot" / "v1alpha1" / "incident_pb2.py"
 INCIDENT_SCHEMA = ROOT / "spec" / "incident-bundle.schema.json"
 ANALYSIS_SCHEMA = ROOT / "spec" / "derived-analysis.schema.json"
 
@@ -34,7 +34,7 @@ def _protoc(output: Path) -> Path:
         ],
         check=True,
     )
-    return output / "earshot" / "v1" / "incident_pb2.py"
+    return output / "earshot" / "v1alpha1" / "incident_pb2.py"
 
 
 def _schema_bytes(model: object, schema_id: str) -> bytes:
@@ -51,11 +51,11 @@ def _schemas() -> dict[Path, bytes]:
     return {
         INCIDENT_SCHEMA: _schema_bytes(
             IncidentBundleJson,
-            "https://schemas.earshot.dev/v1/incident-bundle.schema.json",
+            "https://schemas.earshot.dev/v1alpha1/incident-bundle.schema.json",
         ),
         ANALYSIS_SCHEMA: _schema_bytes(
             DerivedAnalysis,
-            "https://schemas.earshot.dev/v1/derived-analysis.schema.json",
+            "https://schemas.earshot.dev/v1alpha1/derived-analysis.schema.json",
         ),
     }
 
@@ -78,7 +78,7 @@ def _write() -> None:
     GENERATED.mkdir(parents=True, exist_ok=True)
     (GENERATED / "__init__.py").touch()
     _protoc(GENERATED)
-    for directory in [GENERATED / "earshot", GENERATED / "earshot" / "v1"]:
+    for directory in [GENERATED / "earshot", GENERATED / "earshot" / "v1alpha1"]:
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "__init__.py").touch()
     for path, payload in _schemas().items():

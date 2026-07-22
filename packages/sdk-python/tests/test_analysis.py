@@ -71,6 +71,38 @@ def test_negative_same_clock_delta_is_inconsistent_not_clamped() -> None:
     assert delta.nanoseconds is None
 
 
+def test_turns_use_evidence_time_before_lexical_identifier(valid_bundle) -> None:
+    template = valid_bundle.profile.operations[0]
+    early = template.model_copy(
+        update={
+            "operation_id": "operation-turn-2",
+            "turn_id": "turn-2",
+            "span_id": "6" * 16,
+            "started_at": point(1_000_000_000),
+            "ended_at": point(1_100_000_000),
+        }
+    )
+    later = template.model_copy(
+        update={
+            "operation_id": "operation-turn-10",
+            "turn_id": "turn-10",
+            "span_id": "7" * 16,
+            "started_at": point(2_000_000_000),
+            "ended_at": point(2_100_000_000),
+        }
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(later, early),
+        events=(),
+        quality_samples=(),
+    )
+
+    result = analyze(bundle)
+
+    assert [item.turn_id for item in result.projections.turns] == ["turn-2", "turn-10"]
+
+
 def test_high_fidelity_events_win_over_coarse_operation_starts(valid_bundle) -> None:
     result = analyze(valid_bundle)
     assert metric(result, "first_token_latency")["value"] == 150.0
@@ -175,6 +207,36 @@ def test_untrusted_provider_duration_cannot_overflow_analysis(
     assert "value" not in metric(result, "first_token_latency")
 
 
+def test_analyzer_refuses_semantically_invalid_provider_measurement(valid_bundle) -> None:
+    sample = QualitySample(
+        sample_id="negative-response-latency",
+        session_id="session-1",
+        quality_kind="provider_latency",
+        sample_window=TimeRange(start=point(1), end=point(1)),
+        measurements=(
+            QualityMeasurement(
+                name="earshot.turn.response_latency",
+                value=-250.0,
+                unit="ms",
+            ),
+        ),
+        evidence=Evidence(
+            source="provider",
+            observer="server",
+            method="native_metric",
+            confidence="measured",
+            availability="available",
+        ),
+        attributes={"earshot.turn.id": "turn-1"},
+    )
+    result = analyze(replace_profile(valid_bundle, quality_samples=(sample,)))
+
+    projected = metric(result, "provider_measurements")["earshot.turn.response_latency"]
+    assert projected["availability"] == "unavailable"
+    assert projected["limitation"] == "duration_or_latency_negative"
+    assert "value" not in projected
+
+
 def test_turn_id_propagates_through_complete_otel_parent_graph() -> None:
     from earshot.contract import IncidentProfile
 
@@ -212,7 +274,7 @@ def test_turn_id_propagates_through_complete_otel_parent_graph() -> None:
     bundle = bundle.model_copy(update={"profile": IncidentProfile.model_validate(profile)})
     projection = analyze(bundle).projections["turns"][0]
     assert projection["turn_id"] == "turn-from-parent"
-    assert projection["operation_ids"] == ["child-llm", "parent-turn"]
+    assert projection["operation_ids"] == ["parent-turn", "child-llm"]
 
 
 def test_combined_livekit_span_and_metric_uses_the_operation_with_provider_ttft(

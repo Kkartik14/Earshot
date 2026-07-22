@@ -39,3 +39,6 @@ docs/private/
 # Real captured provider webhook deliveries contain signing secrets + caller PII.
 apps/ingest/tests/fixtures/connectors/*
 !apps/ingest/tests/fixtures/connectors/README.md
+
+# Bundled viewer SPA copied into the Python package by `pnpm bundle`
+packages/sdk-python/src/earshot/web/

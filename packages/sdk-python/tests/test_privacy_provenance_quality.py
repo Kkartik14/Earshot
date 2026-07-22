@@ -1257,6 +1257,43 @@ def test_media_locator_rejects_embedded_credentials(valid_bundle, uri: str) -> N
     assert SECRET_SENTINEL not in str(report)
 
 
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "https://[",
+        "ftp://example.invalid/audio.wav",
+        "https://example.invalid/audio.wav#token=secret",
+        "https://example.invalid/audio.wav;token=secret",
+        "https://example.invalid/audio.wav\nignored",
+    ],
+)
+def test_media_locator_validation_fails_closed_without_raising(valid_bundle, uri: str) -> None:
+    allowed_audio = CaptureClassPolicy(capture_class="audio", decision="allow", captured=True)
+    policies = tuple(
+        allowed_audio if policy.capture_class == "audio" else policy
+        for policy in valid_bundle.profile.privacy.capture_classes
+    )
+    privacy = valid_bundle.profile.privacy.model_copy(update={"capture_classes": policies})
+    media = MediaRef(
+        media_id="media-untrusted-locator",
+        session_id="session-1",
+        stream_id="stream-output",
+        media_kind="audio",
+        content_type="audio/wav",
+        sha256="a" * 64,
+        size_bytes=42,
+        locator=MediaLocator(uri=uri),
+    )
+
+    report = validate_incident(replace_profile(valid_bundle, privacy=privacy, media_refs=(media,)))
+
+    assert not report.ok
+    assert {item.code for item in report.errors} & {
+        "EARSHOT_MEDIA_LOCATOR_CREDENTIAL",
+        "EARSHOT_MEDIA_LOCATOR_INVALID",
+    }
+
+
 def test_public_media_locator_is_not_dereferenced_during_validation(
     valid_bundle, monkeypatch
 ) -> None:
@@ -1571,4 +1608,35 @@ def test_recorder_media_policy_omits_by_default_and_strips_credentials_when_allo
     bundle = allowed.close()
     assert bundle.profile.media_refs[0].locator is None
     assert SECRET_SENTINEL not in encode_incident_json(bundle).decode()
+    assert validate_incident(bundle).ok
+
+
+def test_recorder_strips_a_malformed_media_locator_before_retention() -> None:
+    policy = CapturePolicy(enabled=frozenset({CaptureClass.METADATA, CaptureClass.AUDIO}))
+    recorder = IncidentRecorder(
+        session_id="session-malformed-media",
+        config=RecorderConfig(capture_policy=policy),
+    )
+    recorder.add_participant("participant-1", role="agent")
+    recorder.add_stream(
+        "stream-1",
+        participant_id="participant-1",
+        direction="output",
+    )
+    media = MediaRef(
+        media_id="media-malformed",
+        session_id="session-malformed-media",
+        stream_id="stream-1",
+        media_kind="audio",
+        content_type="audio/wav",
+        sha256="c" * 64,
+        size_bytes=10,
+        locator=MediaLocator(uri="https://["),
+    )
+
+    assert recorder.add_media_ref(media)
+    bundle = recorder.close()
+
+    assert bundle.profile.media_refs[0].locator is None
+    assert bundle.profile.privacy.omissions[-1].reason == "invalid_media_locator"
     assert validate_incident(bundle).ok

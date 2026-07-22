@@ -33,6 +33,14 @@ def main() -> None:
 
     sys.path.insert(0, str(SOURCE))
     from earshot.privacy import _SAFE_EXACT
+    from earshot.versions import SEMANTIC_PROFILE_VERSION
+
+    registry_version = str(document.get("earshot_semantic_profile_version", ""))
+    if registry_version != SEMANTIC_PROFILE_VERSION:
+        raise SystemExit(
+            "semantic registry version drift: "
+            f"registry={registry_version!r}, runtime={SEMANTIC_PROFILE_VERSION!r}"
+        )
 
     required = {key for key in _SAFE_EXACT if key.startswith("earshot.")}
     pattern = re.compile(

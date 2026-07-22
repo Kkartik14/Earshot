@@ -109,19 +109,19 @@ def test_json_rejects_unknown_outer_or_raw_chunk_fields(valid_bundle) -> None:
 
     value = json.loads(encode_incident_json(valid_bundle))
     value["raw_otlp_chunks"][0]["future_chunk"] = True
-    with pytest.raises(IncidentCodecError, match="violates the v1 structure"):
+    with pytest.raises(IncidentCodecError, match="violates the v1alpha1 structure"):
         decode_incident_json(json.dumps(value))
 
     value = json.loads(encode_incident_json(valid_bundle))
     value["raw_otlp_chunks"][0]["payload"] = "shadow-payload"
-    with pytest.raises(IncidentCodecError, match="violates the v1 structure"):
+    with pytest.raises(IncidentCodecError, match="violates the v1alpha1 structure"):
         decode_incident_json(json.dumps(value))
 
 
 def test_json_wire_requires_the_declared_otlp_digest(valid_bundle) -> None:
     value = json.loads(encode_incident_json(valid_bundle))
     value["raw_otlp_chunks"][0].pop("sha256")
-    with pytest.raises(IncidentCodecError, match="violates the v1 structure"):
+    with pytest.raises(IncidentCodecError, match="violates the v1alpha1 structure"):
         decode_incident_json(json.dumps(value))
 
 
@@ -227,7 +227,7 @@ def test_json_decoder_rejects_invalid_base64_without_echoing_value(valid_bundle)
 def test_json_decoder_rejects_chunk_digest_mismatch(valid_bundle) -> None:
     value = json.loads(encode_incident_json(valid_bundle))
     value["raw_otlp_chunks"][0]["sha256"] = "f" * 64
-    with pytest.raises(IncidentCodecError, match="violates v1 invariants"):
+    with pytest.raises(IncidentCodecError, match="violates v1alpha1 invariants"):
         decode_incident_json(json.dumps(value))
 
 
@@ -276,7 +276,7 @@ def test_json_decoder_rejects_coercible_scalar_spellings(valid_bundle, path, val
     for part in path[:-1]:
         target = target[part]
     target[path[-1]] = value
-    with pytest.raises(IncidentCodecError, match="violates the v1 structure"):
+    with pytest.raises(IncidentCodecError, match="violates the v1alpha1 structure"):
         decode_incident_json(json.dumps(document))
 
 
@@ -328,7 +328,7 @@ def test_untrusted_json_rejects_unsafe_link_labels_without_echoing_secret(valid_
 def test_untrusted_json_rejects_raw_otlp_as_a_normalized_capture_class(valid_bundle) -> None:
     document = json.loads(encode_incident_json(valid_bundle))
     document["profile"]["operations"][0]["capture_class"] = "raw_otlp"
-    with pytest.raises(IncidentCodecError, match="violates the v1 structure"):
+    with pytest.raises(IncidentCodecError, match="violates the v1alpha1 structure"):
         decode_incident_json(json.dumps(document))
 
 

@@ -118,9 +118,7 @@ def test_real_provider_delivery_authenticates_and_normalizes(capture_path, tmp_p
 
     expected_disposition = spec.get("expected_disposition", "applied")
     if expected_disposition not in {"applied", "ignored"}:
-        pytest.fail(
-            f"{capture_path.name}: expected_disposition must be 'applied' or 'ignored'"
-        )
+        pytest.fail(f"{capture_path.name}: expected_disposition must be 'applied' or 'ignored'")
     assert outcome.disposition == expected_disposition
     if outcome.disposition != "applied":
         return

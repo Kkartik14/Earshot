@@ -1,6 +1,8 @@
 docs/private/
+local/
 fixtures/faults/*.incident.json
 pnpm-lock.yaml
 spec/*.json
 fixtures/conformance/canonical-vector.*.json
 fixtures/valid/complete.json
+apps/viewer/src/api/schema.d.ts

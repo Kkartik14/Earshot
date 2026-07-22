@@ -173,9 +173,7 @@ class HostedProviderIngestion:
         except DeliveryReceiptConflictError as error:
             raise DeliveryConflictError from error
         except DeliveryInProgressError as error:
-            raise DeliveryBusyError(
-                retry_after_seconds=error.retry_after_seconds
-            ) from error
+            raise DeliveryBusyError(retry_after_seconds=error.retry_after_seconds) from error
         if claim.disposition == "replayed":
             return DeliveryOutcome(
                 receipt_id=claim.receipt_id,
@@ -195,9 +193,7 @@ class HostedProviderIngestion:
                 )
             except (StorageError, sqlite3.Error, OSError) as error:
                 raise DeliveryPublicationError from error
-            return DeliveryOutcome(
-                claim.receipt_id, "ignored", connector.project_id, None, None
-            )
+            return DeliveryOutcome(claim.receipt_id, "ignored", connector.project_id, None, None)
         assert claim.lease_token is not None
         if normalized.bundle is None:
             self._fail_claim(

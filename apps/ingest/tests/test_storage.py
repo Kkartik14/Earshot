@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import shutil
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -442,6 +445,53 @@ def test_ingest_populates_and_restart_reconciles_graph_projection(tmp_path, vali
         )
 
 
+def test_reconciliation_rolls_back_partial_repairs_and_retries_after_cas_restore(
+    tmp_path,
+) -> None:
+    repairable = make_valid_bundle(bundle_id="a-repairable")
+    temporarily_corrupt = make_valid_bundle(bundle_id="z-temporarily-corrupt")
+    repairable_payload = canonical(repairable)
+    corrupt_payload = canonical(temporarily_corrupt)
+    store = IncidentStore(tmp_path)
+    store.ingest(repairable, repairable_payload)
+    corrupt_record = store.ingest(temporarily_corrupt, corrupt_payload).record
+    corrupt_path = store.objects.path_for(corrupt_record.digest)
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("DELETE FROM events WHERE bundle_id = 'a-repairable'")
+        connection.execute("DELETE FROM causal_links WHERE bundle_id = 'a-repairable'")
+        connection.execute("DELETE FROM operations WHERE bundle_id = 'a-repairable'")
+        connection.execute("DELETE FROM turn_metrics WHERE bundle_id = 'a-repairable'")
+    store.close()
+    corrupt_path.write_bytes(b"crash-left partial object")
+
+    with pytest.raises(ArtifactCorruptionError, match="digest mismatch"):
+        IncidentStore(tmp_path)
+
+    with sqlite3.connect(tmp_path / "earshot.sqlite3") as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM operations WHERE bundle_id = 'a-repairable'"
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM turn_metrics WHERE bundle_id = 'a-repairable'"
+            ).fetchone()[0]
+            == 0
+        )
+
+    corrupt_path.write_bytes(corrupt_payload)
+    restarted = IncidentStore(tmp_path)
+
+    assert restarted.get_artifact("a-repairable")[1] == repairable_payload
+    assert restarted.get_artifact("z-temporarily-corrupt")[1] == corrupt_payload
+    assert {fact.bundle_id for fact in restarted.list_turn_facts()} == {
+        "a-repairable",
+        "z-temporarily-corrupt",
+    }
+
+
 def test_retention_deadline_is_indexed_and_expired_incidents_are_purged(
     tmp_path, valid_bundle
 ) -> None:
@@ -746,6 +796,207 @@ def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
+def test_released_v4_catalog_is_migrated_without_losing_canonical_evidence(
+    tmp_path, valid_bundle
+) -> None:
+    payload = canonical(valid_bundle)
+    store = IncidentStore(tmp_path)
+    store.ingest(valid_bundle, payload)
+    store.close()
+    database = tmp_path / "earshot.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.executescript(
+            """
+            DROP INDEX incidents_session_idx;
+            DROP INDEX incidents_project_idx;
+            DROP INDEX incidents_expiry_idx;
+            DROP INDEX incidents_export_local_api_idx;
+            DROP INDEX incidents_export_local_cli_idx;
+            DROP TABLE external_identities;
+            DROP TABLE delivery_receipts;
+            DROP TABLE connectors;
+            DROP TABLE api_keys;
+            DROP TABLE turn_metrics;
+            ALTER TABLE tombstones RENAME TO tombstones_scoped;
+            CREATE TABLE tombstones (
+                bundle_id_sha256 TEXT PRIMARY KEY CHECK (length(bundle_id_sha256) = 64),
+                purged_at_unix_nano INTEGER NOT NULL
+            );
+            INSERT INTO tombstones(bundle_id_sha256, purged_at_unix_nano)
+            SELECT bundle_id_sha256, purged_at_unix_nano FROM tombstones_scoped;
+            DROP TABLE tombstones_scoped;
+            ALTER TABLE incidents DROP COLUMN project_id;
+            ALTER TABLE incidents DROP COLUMN expires_at_unix_nano;
+            ALTER TABLE incidents DROP COLUMN export_allowed_local_api;
+            ALTER TABLE incidents DROP COLUMN export_allowed_local_cli;
+            DROP TABLE projects;
+            CREATE INDEX incidents_session_idx
+                ON incidents(session_id, ingested_at_unix_nano DESC, bundle_id DESC);
+            PRAGMA user_version = 4;
+            """
+        )
+
+    migrated = IncidentStore(tmp_path)
+
+    record, restored = migrated.get_artifact("bundle-1")
+    assert restored == payload
+    assert record.session_id == valid_bundle.profile.manifest.session_id
+    with sqlite3.connect(migrated.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_current_v10_catalog_reopens_without_rewriting_authoritative_rows(
+    tmp_path, valid_bundle
+) -> None:
+    payload = canonical(valid_bundle)
+    store = IncidentStore(tmp_path)
+    created = store.ingest(valid_bundle, payload).record
+    store.close()
+
+    reopened = IncidentStore(tmp_path)
+
+    record, restored = reopened.get_artifact("bundle-1")
+    assert restored == payload
+    assert record == created
+    with sqlite3.connect(reopened.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+
+
+def test_failed_migration_rolls_back_every_catalog_change(tmp_path) -> None:
+    database = tmp_path / "earshot.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            PRAGMA foreign_keys = OFF;
+            CREATE TABLE incidents (
+                bundle_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                object_digest TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                finality TEXT NOT NULL,
+                completeness TEXT NOT NULL,
+                framework TEXT,
+                created_at_unix_nano TEXT NOT NULL,
+                ingested_at_unix_nano INTEGER NOT NULL
+            );
+            CREATE TABLE analyses (
+                bundle_id TEXT NOT NULL REFERENCES incidents(bundle_id) ON DELETE CASCADE,
+                analyzer_version TEXT NOT NULL,
+                input_digest TEXT NOT NULL,
+                generated_at_unix_nano INTEGER NOT NULL,
+                output_json BLOB NOT NULL,
+                PRIMARY KEY (bundle_id, analyzer_version, input_digest)
+            );
+            INSERT INTO analyses VALUES (
+                'missing-incident', 'legacy', 'digest', 123, X'7B7D'
+            );
+            PRAGMA user_version = 2;
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        IncidentStore(tmp_path)
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
+        tables = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        assert tables == {"incidents", "analyses"}
+        assert {
+            row[1]: row[2].upper() for row in connection.execute("PRAGMA table_info(analyses)")
+        }["generated_at_unix_nano"] == "INTEGER"
+
+
+def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -> None:
+    database = tmp_path / "earshot.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE future_catalog_marker (value TEXT NOT NULL);
+            INSERT INTO future_catalog_marker VALUES ('keep-me');
+            PRAGMA user_version = 11;
+            """
+        )
+
+    with pytest.raises(StorageError, match="schema is newer than this binary"):
+        IncidentStore(tmp_path)
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert connection.execute("SELECT value FROM future_catalog_marker").fetchone()[0] == (
+            "keep-me"
+        )
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'"
+            ).fetchone()
+            is None
+        )
+
+
+def test_catalog_recovers_after_process_exit_during_a_schema_transaction(tmp_path) -> None:
+    database = tmp_path / "earshot.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE incidents (
+                bundle_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                object_digest TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                finality TEXT NOT NULL,
+                completeness TEXT NOT NULL,
+                framework TEXT,
+                created_at_unix_nano TEXT NOT NULL,
+                ingested_at_unix_nano INTEGER NOT NULL
+            );
+            PRAGMA user_version = 1;
+            """
+        )
+
+    interrupted = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os, sqlite3, sys; "
+                "c = sqlite3.connect(sys.argv[1]); "
+                "c.execute('PRAGMA journal_mode = WAL'); "
+                "c.execute('BEGIN IMMEDIATE'); "
+                "c.execute('ALTER TABLE incidents ADD COLUMN interrupted TEXT'); "
+                "c.execute('CREATE TABLE partial_migration(value TEXT)'); "
+                "os._exit(17)"
+            ),
+            str(database),
+        ],
+        check=False,
+    )
+    assert interrupted.returncode == 17
+
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
+        assert "interrupted" not in columns
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'partial_migration'"
+            ).fetchone()
+            is None
+        )
+
+    migrated = IncidentStore(tmp_path)
+    with sqlite3.connect(migrated.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+
+
 def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None:
     store = IncidentStore(tmp_path)
     before = store.fingerprint("test", "provider-value")
@@ -757,3 +1008,79 @@ def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None
     key_path = tmp_path / "instance-correlation.key"
     assert key_path.stat().st_mode & 0o777 == 0o600
     assert len(key_path.read_bytes()) == 32
+
+
+def test_complete_persistence_unit_backup_restores_identity_authority_and_evidence(
+    tmp_path,
+) -> None:
+    source = tmp_path / "source"
+    backup = tmp_path / "backup"
+    restored_path = tmp_path / "restored"
+    bundle = make_valid_bundle(bundle_id="restored-sales-incident")
+    payload = canonical(bundle)
+    store = IncidentStore(source)
+    store.create_project("sales", display_name="Sales")
+    store.ingest(bundle, payload, project_id="sales")
+    issued = store.issue_api_key("sales", label="restored key")
+    connector = store.create_connector(
+        "sales",
+        provider="vapi",
+        secret_ref="env:VAPI_WEBHOOK_SECRET",
+        endpoint_id="connector_backup_restore",
+    )
+    identity_before = store.fingerprint("vapi.call", "provider-call-123")
+    delivery_identity = store.fingerprint("vapi.delivery", "delivery-123")
+    claim = store.claim_delivery(
+        connector,
+        delivery_key_hmac=delivery_identity,
+        body_sha256="a" * 64,
+        event_type="end-of-call-report",
+        now_unix_nano=100,
+    )
+    assert claim.lease_token is not None
+    store.complete_delivery(
+        claim.receipt_id,
+        state="ignored",
+        completed_at_unix_nano=200,
+        lease_token=claim.lease_token,
+    )
+    store.close()
+
+    shutil.copytree(source, backup)
+    shutil.copytree(backup, restored_path)
+
+    restored = IncidentStore(restored_path)
+
+    assert restored.get_artifact("restored-sales-incident", project_id="sales")[1] == payload
+    principal = restored.authenticate_api_key(issued.credential)
+    assert principal is not None
+    assert principal.project_id == "sales"
+    assert restored.get_connector(connector.endpoint_id) == connector
+    assert restored.fingerprint("vapi.call", "provider-call-123") == identity_before
+    replay = restored.claim_delivery(
+        connector,
+        delivery_key_hmac=restored.fingerprint("vapi.delivery", "delivery-123"),
+        body_sha256="a" * 64,
+        event_type="end-of-call-report",
+        now_unix_nano=300,
+    )
+    assert replay.disposition == "replayed"
+    assert replay.receipt_id == claim.receipt_id
+    assert (restored_path / "instance-correlation.key").read_bytes() == (
+        backup / "instance-correlation.key"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize("retain_cas", [True, False])
+def test_existing_catalog_without_instance_correlation_key_fails_closed(
+    tmp_path, valid_bundle, retain_cas: bool
+) -> None:
+    store = IncidentStore(tmp_path)
+    record = store.ingest(valid_bundle, canonical(valid_bundle)).record
+    store.close()
+    if not retain_cas:
+        store.objects.path_for(record.digest).unlink()
+    (tmp_path / "instance-correlation.key").unlink()
+
+    with pytest.raises(StorageError, match=r"restore instance-correlation\.key"):
+        IncidentStore(tmp_path)

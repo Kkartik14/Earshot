@@ -1,6 +1,6 @@
 """Earshot Python SDK contract surface."""
 
-from .codec import (
+from .codec import (  # noqa: F401 - legacy direct attributes; import from earshot.codec
     JSON_MEDIA_TYPE,
     PROTOBUF_MEDIA_TYPE,
     IncidentCodecError,
@@ -16,7 +16,15 @@ from .codec import (
     encode_json,
     encode_protobuf,
 )
-from .contract import (
+from .context import (  # noqa: F401 - legacy direct attributes; import from earshot.context
+    ContextSnapshot,
+    current_context,
+    current_conversation,
+    current_operation,
+    is_instrumentation_suppressed,
+    suppress_instrumentation,
+)
+from .contract import (  # noqa: F401 - legacy direct attributes; import from earshot.contract
     SCHEMA_VERSION,
     SEMANTIC_PROFILE_VERSION,
     Adapter,
@@ -62,8 +70,8 @@ from .contract import (
     TurnMetrics,
     TurnProjection,
 )
-from .pipeline import PipelineSession, TurnRecorder, pipeline
-from .privacy import (
+from .pipeline import PipelineSession, TurnRecorder, pipeline  # noqa: F401
+from .privacy import (  # noqa: F401 - legacy direct attributes; import from earshot.privacy
     CaptureClass,
     CaptureGovernance,
     CapturePolicy,
@@ -74,9 +82,22 @@ from .privacy import (
     RetentionConfig,
     assert_export_allowed,
 )
-from .recorder import IncidentRecorder, RecorderConfig
-from .sdk import SdkConfig, configure, session, shutdown
-from .validation import (
+from .recorder import IncidentRecorder, RecorderConfig, RecorderStatus  # noqa: F401
+from .sdk import (  # noqa: F401 - configure remains a compatibility attribute
+    Client,
+    ClientStatus,
+    SamplingDecision,
+    SdkConfig,
+    configure,
+    conversation,
+    flush,
+    get_client,
+    init,
+    session,
+    shutdown,
+    status,
+)
+from .validation import (  # noqa: F401 - legacy; import from earshot.validation
     IncidentValidationError,
     ValidationIssue,
     ValidationReport,
@@ -86,86 +107,19 @@ from .validation import (
 )
 
 __all__ = [
-    "JSON_MEDIA_TYPE",
-    "PROTOBUF_MEDIA_TYPE",
-    "SCHEMA_VERSION",
-    "SEMANTIC_PROFILE_VERSION",
-    "Adapter",
-    "AnalysisMetric",
-    "AnalysisProjections",
-    "AnalysisSummary",
-    "AudioFormat",
-    "AudioStream",
-    "BundleManifest",
-    "ByteRange",
     "CaptureClass",
-    "CaptureClassPolicy",
-    "CaptureGovernance",
     "CapturePolicy",
-    "CausalLink",
-    "ClockDomain",
-    "ConsentConfig",
-    "ConsentRecord",
-    "Coverage",
-    "DerivedAnalysis",
-    "Diagnosis",
-    "ErrorRecord",
-    "Event",
-    "Evidence",
-    "ExportConfig",
-    "ExportPolicy",
-    "ExportPolicyError",
-    "IncidentBundle",
-    "IncidentBundleJson",
-    "IncidentCodecError",
-    "IncidentDepthError",
-    "IncidentProfile",
-    "IncidentRecorder",
-    "IncidentValidationError",
-    "InterruptionProjection",
-    "JsonRawOtlpChunk",
-    "MediaLocator",
-    "MediaRef",
-    "Omission",
-    "Operation",
-    "Participant",
-    "PipelineSession",
-    "PrivacyManifest",
-    "Producer",
-    "QualityMeasurement",
-    "QualitySample",
-    "RawOtlpChunk",
-    "RecorderConfig",
-    "RedactionConfig",
-    "RedactionRecord",
-    "RetentionConfig",
-    "RetentionPolicy",
+    "Client",
+    "ClientStatus",
+    "SamplingDecision",
     "SdkConfig",
-    "Session",
-    "TimePoint",
-    "TimeRange",
-    "ToolAnalysis",
-    "TurnMetrics",
-    "TurnProjection",
-    "TurnRecorder",
-    "ValidationIssue",
-    "ValidationReport",
-    "analysis_input_sha256",
-    "assert_export_allowed",
-    "assert_valid_incident",
-    "canonical_profile_json",
-    "configure",
-    "decode_incident_json",
-    "decode_incident_protobuf",
-    "decode_json",
-    "decode_protobuf",
-    "encode_incident_json",
-    "encode_incident_protobuf",
-    "encode_json",
-    "encode_protobuf",
+    "conversation",
+    "flush",
+    "get_client",
+    "init",
     "pipeline",
     "session",
     "shutdown",
-    "validate_derived_analysis",
-    "validate_incident",
+    "status",
+    "suppress_instrumentation",
 ]

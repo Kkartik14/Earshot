@@ -1,0 +1,32 @@
+.inspector {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.inspector[data-open] {
+  grid-template-columns: minmax(0, 1fr) clamp(330px, 30vw, 400px);
+}
+
+.main {
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.drawerCol {
+  min-height: 0;
+  min-width: 0;
+}
+
+@media (max-width: 900px) {
+  .inspector[data-open] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .drawerCol {
+    position: fixed;
+    inset: 0 0 0 auto;
+    width: min(92vw, 380px);
+    z-index: 20;
+    box-shadow: var(--shadow);
+  }
+}

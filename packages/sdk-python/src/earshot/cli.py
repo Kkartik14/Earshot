@@ -11,7 +11,6 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .analysis import ANALYZER_VERSION, analyze_incident
-from .api import ApiConfig, create_app
 from .codec import (
     IncidentCodecError,
     decode_incident_json,
@@ -184,7 +183,17 @@ def _connector_create_command(arguments: argparse.Namespace) -> int:
 
 
 def _serve_command(arguments: argparse.Namespace) -> int:
-    import uvicorn
+    try:
+        import uvicorn
+
+        from .api import ApiConfig, create_app
+    except ModuleNotFoundError:
+        print(
+            "earshot: server dependencies are not installed; "
+            "install 'earshot-observability[server]'",
+            file=sys.stderr,
+        )
+        return 2
 
     token = arguments.token or os.environ.get("EARSHOT_TOKEN")
     data_dir = _data_dir(arguments.data_dir).expanduser().resolve()
@@ -193,18 +202,26 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         token=token,
         max_body_bytes=arguments.max_body_bytes,
         max_connector_body_bytes=arguments.max_connector_body_bytes,
-        max_connector_deliveries_per_minute=(
-            arguments.max_connector_deliveries_per_minute
-        ),
+        max_connector_deliveries_per_minute=(arguments.max_connector_deliveries_per_minute),
         analyzer_version=ANALYZER_VERSION,
         behind_tls_proxy=arguments.behind_tls_proxy,
+        trust_local_network=arguments.trust_local_network,
     )
     app = create_app(
         data_dir=data_dir,
         analyzer=analyze_incident,
         config=config,
+        web_dir=arguments.web_dir,
     )
     print(f"Earshot data path: {data_dir}", file=sys.stderr)
+    print(f"Earshot listening: http://{arguments.host}:{arguments.port}/", file=sys.stderr)
+    if arguments.trust_local_network:
+        print(
+            "Earshot warning: API authentication is disabled "
+            "(--trust-local-network); keep this listener on a trusted boundary "
+            "such as `docker -p 127.0.0.1:PORT`, never a public interface.",
+            file=sys.stderr,
+        )
     uvicorn.run(
         app,
         host=arguments.host,
@@ -281,7 +298,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     connector_create.add_argument("--project", required=True)
     connector_create.add_argument(
-        "--provider", required=True, choices=("elevenlabs", "vapi", "retell")
+        "--provider", required=True, choices=("elevenlabs", "vapi", "retell", "ringg")
     )
     connector_create.add_argument("--secret-env", required=True)
     connector_create.add_argument("--data-dir")
@@ -291,12 +308,27 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--data-dir")
     serve.add_argument("--host", default=os.environ.get("EARSHOT_HOST", "127.0.0.1"))
     serve.add_argument("--port", type=int, default=int(os.environ.get("EARSHOT_PORT", "4319")))
+    serve.add_argument(
+        "--web-dir",
+        default=os.environ.get("EARSHOT_WEB_DIR"),
+        help="serve a built viewer SPA from this directory at the site root",
+    )
     serve.add_argument("--token")
     serve.add_argument(
         "--behind-tls-proxy",
         action="store_true",
         default=_boolean_environment("EARSHOT_BEHIND_TLS_PROXY"),
         help="confirm that a same-host proxy exposes the loopback listener over HTTPS",
+    )
+    serve.add_argument(
+        "--trust-local-network",
+        action="store_true",
+        default=_boolean_environment("EARSHOT_TRUST_LOCAL_NETWORK"),
+        help=(
+            "serve the API without authentication on a listener confined to a "
+            "trusted local boundary (e.g. `docker -p 127.0.0.1:PORT`); never on "
+            "a public interface"
+        ),
     )
     serve.add_argument(
         "--max-body-bytes",
@@ -306,16 +338,12 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--max-connector-body-bytes",
         type=int,
-        default=int(
-            os.environ.get("EARSHOT_MAX_CONNECTOR_BODY_BYTES", str(2 * 1024 * 1024))
-        ),
+        default=int(os.environ.get("EARSHOT_MAX_CONNECTOR_BODY_BYTES", str(2 * 1024 * 1024))),
     )
     serve.add_argument(
         "--max-connector-deliveries-per-minute",
         type=int,
-        default=int(
-            os.environ.get("EARSHOT_MAX_CONNECTOR_DELIVERIES_PER_MINUTE", "120")
-        ),
+        default=int(os.environ.get("EARSHOT_MAX_CONNECTOR_DELIVERIES_PER_MINUTE", "120")),
     )
     serve.add_argument("--log-level", default="info")
     serve.set_defaults(handler=_serve_command)

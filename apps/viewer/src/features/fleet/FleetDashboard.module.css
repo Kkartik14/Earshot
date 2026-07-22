@@ -1,0 +1,193 @@
+.page {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.head {
+  padding: 16px 20px 16px;
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 3;
+}
+.titleRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--tx-mid);
+}
+
+.controls {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.control span {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+}
+.control select {
+  appearance: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--tx);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 26px 6px 10px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 4l3 3 3-3' stroke='%23808a9e' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+.control select:hover {
+  border-color: var(--tx-low);
+}
+.control select:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+
+.tiles {
+  display: flex;
+  gap: 22px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.tileLabel {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+}
+.tileValue {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 19px;
+  font-weight: 600;
+}
+.flag .tileValue {
+  color: var(--crit);
+}
+
+.body {
+  padding: 8px 20px 40px;
+}
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+.table th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+}
+.table tbody tr:hover {
+  background: color-mix(in oklab, var(--acc) 5%, transparent);
+}
+.group {
+  font-family: var(--mono);
+  color: var(--tx);
+}
+.num {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--tx-mid);
+  white-space: nowrap;
+}
+
+.p95col {
+  text-align: left;
+  width: 34%;
+  min-width: 180px;
+}
+th.p95col {
+  text-align: left;
+}
+.p95cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.barTrack {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--track);
+  overflow: hidden;
+}
+.barFill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--acc);
+}
+.barCrit {
+  background: var(--crit);
+}
+.p95val {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--tx);
+  min-width: 56px;
+  text-align: right;
+}
+.crit {
+  color: var(--crit);
+  font-weight: 600;
+}
+
+.note {
+  margin-top: 16px;
+  font-size: 11.5px;
+  color: var(--tx-mid);
+  line-height: 1.5;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--acc);
+  padding: 9px 11px;
+  border-radius: 6px;
+  max-width: 640px;
+}

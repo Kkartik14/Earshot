@@ -134,3 +134,59 @@ maintenance cleanup after investigating it.
 The store is single-node. Advisory locking and SQLite are not a distributed
 consensus protocol; a multi-node service should preserve these publication and erasure
 semantics using its own transactional object/index infrastructure.
+
+## Catalog compatibility and migration recovery
+
+Catalog migration is forward-only. Startup refuses a catalog whose `user_version` is
+newer than the binary and does not attempt to downgrade or modify it. For an older
+catalog, all DDL, data copying, index replacement, and the final `user_version` update
+run in one `BEGIN IMMEDIATE` transaction. A constraint failure or process exit therefore
+leaves the old catalog intact; the next startup can retry the migration.
+
+The evidence-backed historical layouts are:
+
+- v1: the baseline Incident catalog;
+- v2: derived analysis generation time stored as SQLite `INTEGER`;
+- v3: purge tombstones containing plaintext bundle identifiers;
+- v4: the first committed catalog, with hashed unscoped tombstones and graph indexes;
+- v9: the next committed layout, adding Projects, scoped tombstones, Connectors,
+  Delivery Receipts, External Identities, and wide Turn Facts; and
+- v10: the current layout, rebuilding Turn Facts with STT language as a fleet dimension.
+
+Version numbers 5–8 were internal development markers folded into the v9 change. There
+is no independently committed or released schema for those numbers, so Earshot does not
+invent fixture definitions for them. Structural migration still recognizes the narrow
+development-era Turn Fact projection and rebuilds it from canonical Incidents.
+
+Derived graph and Turn Fact projections are rebuilt transactionally from canonical CAS
+artifacts during startup. If any referenced artifact is missing, corrupt, or belongs to a
+different Incident, reconciliation fails and rolls back every projection repair from that
+attempt. Restore the correct CAS object and reopen the store to retry. Startup preserves
+unreferenced objects because it cannot prove whether they are crash-left evidence or a
+catalog restore mismatch.
+
+## Backup and restore procedure
+
+There is currently no online snapshot API. For a coherent backup:
+
+1. Stop every Earshot process using the data directory and wait for it to close.
+2. Copy the complete directory as one unit: `earshot.sqlite3` (and any WAL/SHM files),
+   `objects/`, and `instance-correlation.key`.
+3. Restore that complete unit into an empty directory; do not combine components from
+   different backup times.
+4. Open the restored directory with the same or a newer Earshot binary. Startup verifies
+   catalog integrity, referenced CAS digests and identities, repairs rebuildable
+   projections, and hardens file permissions.
+
+Test the restored store before replacing the original. A missing catalog with CAS data,
+or a populated catalog without its correlation key, fails closed with a restore
+instruction. CAS alone cannot reconstruct ordering, tombstones, Projects, credentials,
+or provider replay state.
+
+`instance-correlation.key` has no supported in-place rotation seam. Delivery Receipt and
+External Identity HMACs are deliberately non-reversible, so replacing the file would
+silently break correlation and replay identity, and the original provider identifiers
+are unavailable for a correct rewrite. Keep the key under the same backup and access
+controls as the catalog. A future rotation feature requires an explicit dual-key migration
+protocol at provider-ingest time; until then, use a new empty store when a new correlation
+domain is required.

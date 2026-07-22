@@ -86,6 +86,20 @@ Primary sources: [secure webhook](https://docs.retellai.com/features/secure-webh
 [webhook events](https://docs.retellai.com/features/webhook-overview),
 [latency semantics](https://docs.retellai.com/reliability/check-actual-latency).
 
+## Ringg
+
+- Accepts the consolidated terminal `all_processing_completed` delivery; progress
+  deliveries authenticate and produce an ignored Receipt.
+- Trust uses exactly one configured static subscription credential, either
+  `Authorization: Bearer ...` or `X-Webhook-Secret`. Ambiguous dual headers are rejected.
+- Provider call IDs are retained only as instance-keyed HMAC correlations. Transcript,
+  phone numbers, recordings, analysis, tool logs, agent/workspace IDs, and custom values
+  are discarded.
+- Call duration, overall latency, and first utterance are retained as provider session
+  aggregates in seconds. They do not author per-turn timing or client-render claims.
+
+Primary source: [webhook request and response payloads](https://docs.ringg.ai/webhooks/payloads).
+
 ## Provisioning
 
 ```bash

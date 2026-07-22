@@ -280,6 +280,21 @@ def test_advanced_authoring_keeps_each_fact_evidence_independent() -> None:
     assert analysis.projections.turns[0].metrics.response_latency.value == 410
 
 
+def test_advanced_authoring_rejects_invalid_governed_measurement_atomically() -> None:
+    sess = earshot.pipeline(session_id="invalid-native-fact", started_at_unix_nano=START)
+    with sess.turn() as turn, pytest.raises(ValueError, match="semantic domain"):
+        turn.record_measurement(
+            "earshot.turn.response_latency",
+            -250,
+            unit="ms",
+            source="provider",
+            confidence="measured",
+        )
+
+    bundle = sess.close()
+    assert bundle.profile.quality_samples == ()
+
+
 def test_closed_session_rejects_new_turns() -> None:
     sess = earshot.pipeline(session_id="closed-call", started_at_unix_nano=START)
     sess.close()

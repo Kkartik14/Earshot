@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import contextlib
 import math
+import uuid
+import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from typing import Any
@@ -39,11 +41,12 @@ from .contract import (
     TimePoint,
     TimeRange,
 )
+from .measurement_semantics import measurement_value_limitation
 from .privacy import CaptureClass
 from .recorder import IncidentRecorder, RecorderConfig
 from .sdk import _runtime_snapshot
+from .versions import PIPELINE_ADAPTER_VERSION
 
-PIPELINE_ADAPTER_VERSION = "1.0.0"
 _MS_TO_NANO = 1_000_000
 _DEFAULT_TURN_GAP_MS = 500.0
 _USER = "participant-user"
@@ -96,7 +99,10 @@ class TurnRecorder:
         final_ms = self._optional_ms(final_ms, "stt final")
         duration = self._duration(final_ms, ttfb_ms)
         operation_id = self._operation(
-            "stt", provider, model=model, attributes=attributes,
+            "stt",
+            provider,
+            model=model,
+            attributes=attributes,
         )
         if ttfb_ms is not None:
             self._measurement(
@@ -126,7 +132,10 @@ class TurnRecorder:
         completion_ms = self._optional_ms(completion_ms, "llm completion")
         duration = self._duration(completion_ms, ttft_ms)
         operation_id = self._operation(
-            "llm", provider, model=model, attributes=attributes,
+            "llm",
+            provider,
+            model=model,
+            attributes=attributes,
         )
         if ttft_ms is not None:
             self._measurement(
@@ -159,7 +168,10 @@ class TurnRecorder:
             stage_attributes["earshot.tts.voice"] = voice
         duration = self._duration(first_audio_ms, ttfb_ms)
         operation_id = self._operation(
-            "tts", provider, model=model, attributes=stage_attributes,
+            "tts",
+            provider,
+            model=model,
+            attributes=stage_attributes,
         )
         if ttfb_ms is not None:
             self._measurement(
@@ -311,14 +323,17 @@ class TurnRecorder:
         name = self._label(name, "measurement name")
         normalized_value = self._finite_number(value, name)
         unit = self._label(unit, "measurement unit")
+        limitation = measurement_value_limitation(name, normalized_value, unit)
+        if limitation is not None:
+            raise ValueError(f"{name} is outside its governed semantic domain: {limitation}")
         operation_id = self._optional_label(operation_id, "operation id")
         source = self._label(source, "evidence source")
         confidence = self._confidence(confidence)
         source_field = self._label(source_field or name, "source field")
         basis = self._optional_label(basis, "measurement basis")
         quality_kind = self._label(quality_kind, "quality kind")
-        offset = self._cursor_ms if at_ms is None else self._required_ms(
-            at_ms, "measurement offset"
+        offset = (
+            self._cursor_ms if at_ms is None else self._required_ms(at_ms, "measurement offset")
         )
 
         sample_attributes: dict[str, Any] = dict(attributes or {})
@@ -337,9 +352,7 @@ class TurnRecorder:
                 session_id=self._session.session_id,
                 quality_kind=quality_kind,
                 sample_window=TimeRange(start=point, end=point),
-                measurements=(
-                    QualityMeasurement(name=name, value=normalized_value, unit=unit),
-                ),
+                measurements=(QualityMeasurement(name=name, value=normalized_value, unit=unit),),
                 evidence=self._fact_evidence(source, confidence, source_field),
                 participant_id=_AGENT,
                 attributes=sample_attributes,
@@ -531,7 +544,14 @@ class PipelineSession:
             started_at_unix_nano if started_at_unix_nano is not None else _time.time_ns()
         )
         self._clock = ManualClock(wall=self.start_wall_nano, monotonic=0)
-        runtime_config, exporter = _runtime_snapshot()
+        resolved_session_id = session_id or f"session-{uuid.uuid4().hex}"
+        (
+            runtime_config,
+            exporter,
+            release_runtime,
+            record_runtime_status,
+            runtime_diagnostic,
+        ) = _runtime_snapshot(resolved_session_id)
         pipeline_adapter = Adapter(
             name="earshot.pipeline",
             version=PIPELINE_ADAPTER_VERSION,
@@ -543,19 +563,31 @@ class PipelineSession:
                 producer_version=PIPELINE_ADAPTER_VERSION,
                 capture_policy=runtime_config.capture_policy,
                 adapters=(pipeline_adapter,),
+                max_records=runtime_config.max_records,
+                max_capture_bytes=runtime_config.max_capture_bytes,
+                max_raw_otlp_bytes=runtime_config.max_raw_otlp_bytes,
+                max_value_bytes=runtime_config.max_value_bytes,
             )
         else:
             adapters = config.adapters
             if not any(adapter.name == pipeline_adapter.name for adapter in adapters):
                 adapters = (*adapters, pipeline_adapter)
             recorder_config = replace(config, adapters=adapters)
-        self.recorder = IncidentRecorder(
-            session_id=session_id,
-            bundle_id=bundle_id,
-            clock=self._clock,
-            config=recorder_config,
-            exporter=exporter,
-        )
+        try:
+            self.recorder = IncidentRecorder(
+                session_id=resolved_session_id,
+                bundle_id=bundle_id,
+                clock=self._clock,
+                config=recorder_config,
+                exporter=exporter,
+                on_close=release_runtime,
+                on_status=record_runtime_status,
+                diagnostic=runtime_diagnostic,
+            )
+        except BaseException:
+            release_runtime()
+            raise
+        weakref.finalize(self.recorder, release_runtime)
         self.recorder.add_participant(_USER, role="user", endpoint_kind="app")
         self.recorder.add_participant(_AGENT, role="agent", endpoint_kind="app")
         # A self-instrumented server pipeline cannot see the client's playout.
@@ -606,9 +638,7 @@ class PipelineSession:
         try:
             yield recorder
         finally:
-            turn_span_nano = int(recorder._max_ms * _MS_TO_NANO) + int(
-                normalized_gap * _MS_TO_NANO
-            )
+            turn_span_nano = int(recorder._max_ms * _MS_TO_NANO) + int(normalized_gap * _MS_TO_NANO)
             self._cursor_nano += turn_span_nano
 
     def close(self, status: str = "completed") -> IncidentBundle:

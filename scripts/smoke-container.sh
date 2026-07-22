@@ -57,6 +57,16 @@ authorized="$(curl --silent --output /dev/null --write-out '%{http_code}' \
 test "$unauthorized" = "401"
 test "$authorized" = "200"
 
+viewer="$(curl --fail --silent --show-error "http://127.0.0.1:$port/")"
+printf '%s' "$viewer" | grep --quiet '<div id="root"></div>'
+viewer_asset="$(
+  printf '%s' "$viewer" \
+    | sed -n 's/.*src="\([^"]*\/assets\/[^"]*\.js\)".*/\1/p' \
+    | head -n 1
+)"
+test -n "$viewer_asset"
+curl --fail --silent --show-error "http://127.0.0.1:$port$viewer_asset" >/dev/null
+
 created="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   --request POST \
   --header "Authorization: Bearer $token" \

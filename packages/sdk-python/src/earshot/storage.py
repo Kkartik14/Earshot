@@ -28,6 +28,13 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from .contract import DerivedAnalysis
+from .versions import (
+    ELEVENLABS_NORMALIZER_VERSION,
+    RETELL_NORMALIZER_VERSION,
+    RINGG_NORMALIZER_VERSION,
+    TURN_FACT_PROJECTION_VERSION,
+    VAPI_NORMALIZER_VERSION,
+)
 
 try:  # Unix file locking protects multiple local server processes sharing a store.
     import fcntl
@@ -75,12 +82,17 @@ class DeliveryInProgressError(StorageError):
 
 
 DEFAULT_PROJECT_ID = "default"
+_CONNECTOR_NORMALIZER_VERSIONS = {
+    "elevenlabs": ELEVENLABS_NORMALIZER_VERSION,
+    "vapi": VAPI_NORMALIZER_VERSION,
+    "retell": RETELL_NORMALIZER_VERSION,
+    "ringg": RINGG_NORMALIZER_VERSION,
+}
 _PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _API_KEY_PREFIX = "earshot_sk_"
 # This version owns the wide Turn Fact semantics, not only the underlying
 # deterministic analyzer. Bump it whenever projection meanings or evidence
 # selection rules change.
-TURN_FACT_PROJECTION_VERSION = "2.1.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -558,6 +570,21 @@ CREATE TABLE IF NOT EXISTS external_identities (
 """
 
 
+def _execute_sql_script(connection: sqlite3.Connection, script: str) -> None:
+    """Execute a static SQL script without sqlite3.executescript's implicit commit."""
+
+    pending: list[str] = []
+    for line in script.splitlines(keepends=True):
+        pending.append(line)
+        statement = "".join(pending)
+        if sqlite3.complete_statement(statement):
+            if statement.strip():
+                connection.execute(statement)
+            pending.clear()
+    if "".join(pending).strip():
+        raise StorageError("incident database schema script is incomplete")
+
+
 def _sha256(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -585,7 +612,7 @@ def _fsync_file(path: Path) -> None:
         os.close(descriptor)
 
 
-def _load_or_create_instance_key(path: Path) -> bytes:
+def _load_or_create_instance_key(path: Path, *, allow_create: bool) -> bytes:
     """Return the stable local key used only for non-reversible correlation fingerprints."""
 
     try:
@@ -596,6 +623,13 @@ def _load_or_create_instance_key(path: Path) -> bytes:
             raise StorageError("instance correlation key is missing or corrupt") from None
         os.chmod(path, 0o600)
         return value
+    if not allow_create:
+        os.close(descriptor)
+        path.unlink(missing_ok=True)
+        raise StorageError(
+            "existing store is missing its correlation key; restore "
+            "instance-correlation.key from the same backup as the catalog"
+        )
     value = secrets.token_bytes(32)
     try:
         os.write(descriptor, value)
@@ -934,18 +968,18 @@ class IncidentStore:
             self.database_path = str(database)
         self.objects = ContentAddressedObjects(self.data_dir / "objects" / "sha256")
         try:
-            if (
-                not self._database_uri
-                and self.objects.has_objects()
-                and not self._existing_catalog_is_valid()
-            ):
+            existing_catalog = not self._database_uri and self._existing_catalog_is_valid()
+            existing_objects = self.objects.has_objects()
+            existing_correlation_state = self._catalog_has_correlation_state()
+            if not self._database_uri and existing_objects and not existing_catalog:
                 raise StorageError(
                     "incident catalog is missing or invalid while CAS evidence exists; "
                     "restore the SQLite catalog before opening this store"
                 )
             self._initialize()
             self._identity_key = _load_or_create_instance_key(
-                self.data_dir / "instance-correlation.key"
+                self.data_dir / "instance-correlation.key",
+                allow_create=not existing_correlation_state and not existing_objects,
             )
             self._reconcile()
         except Exception:
@@ -976,6 +1010,31 @@ class IncidentStore:
                 return "incidents" in tables
         except (OSError, sqlite3.Error, ValueError):
             return False
+
+    def _catalog_has_correlation_state(self) -> bool:
+        if self._database_uri:
+            return False
+        database = Path(self.database_path)
+        if not database.is_file() or database.stat().st_size == 0:
+            return False
+        try:
+            uri = database.as_uri() + "?mode=ro"
+            with sqlite3.connect(uri, timeout=1.0, uri=True) as connection:
+                tables = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    ).fetchall()
+                }
+                for table in ("incidents", "delivery_receipts", "external_identities"):
+                    if (
+                        table in tables
+                        and connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                    ):
+                        return True
+        except (OSError, sqlite3.Error, ValueError):
+            return False
+        return False
 
     @contextlib.contextmanager
     def _mutation(self) -> Iterator[None]:
@@ -1019,16 +1078,21 @@ class IncidentStore:
             if version > _SCHEMA_VERSION:
                 raise StorageError("incident database schema is newer than this binary")
             connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("BEGIN IMMEDIATE")
             # Project ownership is needed by later migrations (notably scoped
             # tombstones), so establish the authorization root before inspecting
             # or rebuilding any legacy table that now references it.
-            connection.executescript(
+            connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS projects (
                     project_id TEXT PRIMARY KEY,
                     display_name TEXT NOT NULL,
                     created_at_unix_nano INTEGER NOT NULL
-                );
+                )
+                """
+            )
+            connection.execute(
+                """
                 INSERT OR IGNORE INTO projects(
                     project_id, display_name, created_at_unix_nano
                 ) VALUES ('default', 'Default', 0);
@@ -1155,8 +1219,7 @@ class IncidentStore:
                 )
                 connection.execute("DROP TABLE tombstones_unscoped")
             turn_metric_columns = {
-                row["name"]
-                for row in connection.execute("PRAGMA table_info(turn_metrics)")
+                row["name"] for row in connection.execute("PRAGMA table_info(turn_metrics)")
             }
             if turn_metric_columns and not {
                 "stt_finalization_ms",
@@ -1167,7 +1230,7 @@ class IncidentStore:
                 # rows during a migration; reconciliation below repopulates it
                 # from the canonical Incident artifacts.
                 connection.execute("DROP TABLE turn_metrics")
-            connection.executescript(_SCHEMA)
+            _execute_sql_script(connection, _SCHEMA)
             connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             connection.commit()
         self._harden_database_permissions()
@@ -1290,9 +1353,12 @@ class IncidentStore:
             secret.encode("utf-8"), salt=salt, n=1 << 14, r=8, p=1, dklen=32
         )
         with self._mutation(), self._connect() as connection:
-            if connection.execute(
-                "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
+                ).fetchone()
+                is None
+            ):
                 raise ValueError("project does not exist")
             connection.execute(
                 """
@@ -1361,6 +1427,21 @@ class IncidentStore:
             connection.commit()
         return ApiPrincipal(project_id=row["project_id"], key_id=key_id)
 
+    def api_key_is_active(self, project_id: str, key_id: str) -> bool:
+        """Check whether a key-backed browser session still has an active issuer."""
+
+        with self._connect() as connection:
+            return (
+                connection.execute(
+                    """
+                    SELECT 1 FROM api_keys
+                    WHERE project_id = ? AND key_id = ? AND revoked_at_unix_nano IS NULL
+                    """,
+                    (project_id, key_id),
+                ).fetchone()
+                is not None
+            )
+
     def revoke_api_key(self, project_id: str, key_id: str) -> None:
         with self._mutation(), self._connect() as connection:
             result = connection.execute(
@@ -1381,19 +1462,23 @@ class IncidentStore:
         provider: str,
         secret_ref: str,
         endpoint_id: str | None = None,
-        normalizer_version: str = "1.0.0",
+        normalizer_version: str | None = None,
     ) -> ConnectorRecord:
-        if provider not in {"elevenlabs", "vapi", "retell", "ringg"}:
+        if provider not in _CONNECTOR_NORMALIZER_VERSIONS:
             raise ValueError("unsupported connector provider")
         if not re.fullmatch(r"env:[A-Z][A-Z0-9_]{0,127}", secret_ref):
             raise ValueError("secret_ref must name a portable environment secret")
         identifier = endpoint_id or f"connector_{secrets.token_urlsafe(18)}"
+        selected_normalizer = normalizer_version or _CONNECTOR_NORMALIZER_VERSIONS[provider]
         if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", identifier):
             raise ValueError("endpoint_id must be an opaque portable identifier")
         with self._mutation(), self._connect() as connection:
-            if connection.execute(
-                "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
+                ).fetchone()
+                is None
+            ):
                 raise ValueError("project does not exist")
             connection.execute(
                 """
@@ -1407,7 +1492,7 @@ class IncidentStore:
                     project_id,
                     provider,
                     secret_ref,
-                    normalizer_version,
+                    selected_normalizer,
                     time.time_ns(),
                 ),
             )
@@ -1496,9 +1581,7 @@ class IncidentStore:
                     (now_unix_nano + lease_nano, row["receipt_id"]),
                 )
                 connection.commit()
-                return DeliveryClaim(
-                    row["receipt_id"], "claimed", None, None, next_attempt
-                )
+                return DeliveryClaim(row["receipt_id"], "claimed", None, None, next_attempt)
 
             receipt_id = f"receipt_{secrets.token_urlsafe(18)}"
             connection.execute(
@@ -1629,9 +1712,7 @@ class IncidentStore:
                 or stored_connector["provider"] != connector.provider
                 or incident["project_id"] != connector.project_id
             ):
-                raise StorageError(
-                    "external identity cannot cross connector and incident projects"
-                )
+                raise StorageError("external identity cannot cross connector and incident projects")
             connection.execute(
                 """
                 INSERT OR IGNORE INTO external_identities(
@@ -1814,9 +1895,7 @@ class IncidentStore:
             if bundle.profile.manifest.adapters
             else None
         )
-        coverage_by_signal = {
-            item.signal: item for item in bundle.profile.coverage
-        }
+        coverage_by_signal = {item.signal: item for item in bundle.profile.coverage}
 
         def metric_values(metric: Any) -> tuple[object, ...]:
             value_ms: float | None = None
@@ -1891,9 +1970,7 @@ class IncidentStore:
                     delta.limitation or limitation,
                 )
             confidence = delta.confidence
-            evidence_confidences = {
-                item.confidence for item in evidence if item is not None
-            }
+            evidence_confidences = {item.confidence for item in evidence if item is not None}
             if "inferred" in evidence_confidences:
                 confidence = "inferred"
             elif "estimated" in evidence_confidences:
@@ -1942,17 +2019,12 @@ class IncidentStore:
                 if operation_id in operation_by_id
             ]
             events = [
-                event_by_id[event_id]
-                for event_id in turn.event_ids
-                if event_id in event_by_id
+                event_by_id[event_id] for event_id in turn.event_ids if event_id in event_by_id
             ]
             wall_times = [
                 value
                 for value in (
-                    *(
-                        operation.started_at.source_time_unix_nano
-                        for operation in operations
-                    ),
+                    *(operation.started_at.source_time_unix_nano for operation in operations),
                     *(event.time.source_time_unix_nano for event in events),
                 )
                 if value is not None
@@ -2009,8 +2081,7 @@ class IncidentStore:
             status = (
                 "failed"
                 if any(
-                    operation.status in {"error", "failed", "timeout"}
-                    for operation in operations
+                    operation.status in {"error", "failed", "timeout"} for operation in operations
                 )
                 else "completed"
             )
@@ -2031,9 +2102,7 @@ class IncidentStore:
                 basis="speech_end_to_transcript_final",
             )
             if stt_finalization is None:
-                provider_stt = metrics.provider_measurements.get(
-                    "lk.eou.transcription_delay"
-                )
+                provider_stt = metrics.provider_measurements.get("lk.eou.transcription_delay")
                 stt_finalization = (
                     provider_metric_values(
                         provider_stt,
@@ -2055,9 +2124,7 @@ class IncidentStore:
                 basis="speech_end_to_turn_commit",
             )
             if eou is None:
-                provider_eou = metrics.provider_measurements.get(
-                    "lk.eou.endpointing_delay"
-                )
+                provider_eou = metrics.provider_measurements.get("lk.eou.endpointing_delay")
                 eou = (
                     provider_metric_values(
                         provider_eou,
@@ -2098,9 +2165,7 @@ class IncidentStore:
                 )
 
             interruption_events = [
-                event
-                for event in events
-                if event.event_name.startswith("earshot.interruption.")
+                event for event in events if event.event_name.startswith("earshot.interruption.")
             ]
             accepted_interruptions = [
                 event
@@ -2146,8 +2211,7 @@ class IncidentStore:
                     "interruption.per_turn"
                 ) or coverage_by_signal.get("interruption")
                 unassigned_interruption = any(
-                    event.event_name.startswith("earshot.interruption.")
-                    and event.turn_id is None
+                    event.event_name.startswith("earshot.interruption.") and event.turn_id is None
                     for event in bundle.profile.events
                 )
                 if (
@@ -2217,34 +2281,72 @@ class IncidentStore:
             )
 
         columns = (
-            "project_id", "bundle_id", "session_id", "turn_id", "turn_index",
-            "started_at_unix_nano", "framework", "provider", "model", "language",
+            "project_id",
+            "bundle_id",
+            "session_id",
+            "turn_id",
+            "turn_index",
+            "started_at_unix_nano",
+            "framework",
+            "provider",
+            "model",
+            "language",
             "status",
-            "stt_finalization_ms", "stt_finalization_availability",
-            "stt_finalization_basis", "stt_finalization_confidence",
-            "stt_finalization_limitation", "eou_ms", "eou_availability",
-            "eou_basis", "eou_confidence", "eou_limitation",
-            "first_token_ms", "first_token_availability", "first_token_basis",
-            "first_token_confidence", "first_token_limitation",
-            "generated_response_ms", "generated_response_availability",
-            "generated_response_basis", "generated_response_confidence",
-            "generated_response_limitation", "sent_response_ms",
-            "sent_response_availability", "sent_response_basis",
-            "sent_response_confidence", "sent_response_limitation",
-            "received_response_ms", "received_response_availability",
-            "received_response_basis", "received_response_confidence",
-            "received_response_limitation", "render_start_response_ms",
-            "render_start_response_availability", "render_start_response_basis",
-            "render_start_response_confidence", "render_start_response_limitation",
-            "response_ms", "response_availability", "response_basis",
-            "response_confidence", "response_limitation", "turn_duration_ms",
-            "turn_duration_availability", "turn_duration_basis",
-            "turn_duration_confidence", "turn_duration_limitation",
+            "stt_finalization_ms",
+            "stt_finalization_availability",
+            "stt_finalization_basis",
+            "stt_finalization_confidence",
+            "stt_finalization_limitation",
+            "eou_ms",
+            "eou_availability",
+            "eou_basis",
+            "eou_confidence",
+            "eou_limitation",
+            "first_token_ms",
+            "first_token_availability",
+            "first_token_basis",
+            "first_token_confidence",
+            "first_token_limitation",
+            "generated_response_ms",
+            "generated_response_availability",
+            "generated_response_basis",
+            "generated_response_confidence",
+            "generated_response_limitation",
+            "sent_response_ms",
+            "sent_response_availability",
+            "sent_response_basis",
+            "sent_response_confidence",
+            "sent_response_limitation",
+            "received_response_ms",
+            "received_response_availability",
+            "received_response_basis",
+            "received_response_confidence",
+            "received_response_limitation",
+            "render_start_response_ms",
+            "render_start_response_availability",
+            "render_start_response_basis",
+            "render_start_response_confidence",
+            "render_start_response_limitation",
+            "response_ms",
+            "response_availability",
+            "response_basis",
+            "response_confidence",
+            "response_limitation",
+            "turn_duration_ms",
+            "turn_duration_availability",
+            "turn_duration_basis",
+            "turn_duration_confidence",
+            "turn_duration_limitation",
             "tool_operation_count",
-            "tool_total_work_ms", "interruption_count", "interruption_availability",
-            "interruption_basis", "interruption_confidence", "interruption_limitation",
+            "tool_total_work_ms",
+            "interruption_count",
+            "interruption_availability",
+            "interruption_basis",
+            "interruption_confidence",
+            "interruption_limitation",
             "provider_measurements_json",
-            "projection_version", "contract_version",
+            "projection_version",
+            "contract_version",
         )
         placeholders = ", ".join("?" for _ in columns)
         connection.executemany(
@@ -2289,9 +2391,12 @@ class IncidentStore:
             try:
                 with self._connect() as connection:
                     connection.execute("BEGIN IMMEDIATE")
-                    if connection.execute(
-                        "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
-                    ).fetchone() is None:
+                    if (
+                        connection.execute(
+                            "SELECT 1 FROM projects WHERE project_id = ?", (project_id,)
+                        ).fetchone()
+                        is None
+                    ):
                         raise ValueError("project does not exist")
                     tombstone = connection.execute(
                         "SELECT project_id FROM tombstones WHERE bundle_id_sha256 = ?",

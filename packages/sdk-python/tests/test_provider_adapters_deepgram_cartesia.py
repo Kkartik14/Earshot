@@ -70,9 +70,7 @@ def test_deepgram_final_result_records_stt_without_fabricating_ttfb() -> None:
 
     update = adapter.adapt(payload, received_at_ms=2_100)
     assert isinstance(update, AdapterUpdate)
-    captured = tuple(
-        cell.cell_contents for cell in (update._apply_update.__closure__ or ())
-    )
+    captured = tuple(cell.cell_contents for cell in (update._apply_update.__closure__ or ()))
     assert "customer secret" not in repr(captured)
 
     session = earshot.pipeline(session_id="deepgram", started_at_unix_nano=START)
@@ -309,9 +307,7 @@ def test_deepgram_flux_start_can_conditionally_detect_interruption() -> None:
 def test_deepgram_flux_conflicting_sequence_identity_is_rejected() -> None:
     adapter = DeepgramAdapter(model="flux-general-en", identity_key=b"f" * 32)
     payload = _flux_turn("StartOfTurn", 7)
-    assert adapter.adapt(payload, received_at_ms=100) is adapter.adapt(
-        payload, received_at_ms=200
-    )
+    assert adapter.adapt(payload, received_at_ms=100) is adapter.adapt(payload, received_at_ms=200)
     with pytest.raises(ValueError, match="conflicting provider update identity"):
         adapter.adapt(dict(payload, transcript="different private"), received_at_ms=200)
 
@@ -561,9 +557,7 @@ def test_cartesia_timestamp_frames_keep_only_counts_and_timing(
         },
         received_at_ms=200,
     )
-    captured = tuple(
-        cell.cell_contents for cell in (update._apply_update.__closure__ or ())
-    )
+    captured = tuple(cell.cell_contents for cell in (update._apply_update.__closure__ or ()))
     assert "private" not in repr(captured)
     session = earshot.pipeline(session_id=f"cartesia-{event_type}", started_at_unix_nano=START)
     with session.turn() as turn:
@@ -665,9 +659,7 @@ def test_cartesia_error_retains_codes_but_not_provider_messages_or_ids() -> None
         },
         received_at_ms=80,
     )
-    captured = tuple(
-        cell.cell_contents for cell in (update._apply_update.__closure__ or ())
-    )
+    captured = tuple(cell.cell_contents for cell in (update._apply_update.__closure__ or ()))
     assert "Private diagnostic" not in repr(captured)
 
     assert update.terminal is True

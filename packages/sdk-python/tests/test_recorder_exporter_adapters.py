@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import gzip
+import os
+import select
 import threading
+import time
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -12,6 +16,7 @@ import pytest
 from earshot.adapters import LiveKitAdapter, PipecatAdapter
 from earshot.adapters.base import AdapterDependencyError, seconds_to_nano
 from earshot.clock import ManualClock
+from earshot.context import is_instrumentation_suppressed
 from earshot.contract import ErrorRecord, Evidence
 from earshot.exporter import (
     BoundedAsyncExporter,
@@ -19,6 +24,7 @@ from earshot.exporter import (
     ExportItem,
     HttpExportTransport,
     PermanentExportError,
+    RetryableExportError,
 )
 from earshot.privacy import CaptureClass, CapturePolicy
 from earshot.recorder import IncidentRecorder, RecorderConfig
@@ -68,6 +74,10 @@ def test_exporter_rejects_invalid_capacity_and_attempt_count() -> None:
         BoundedAsyncExporter(transport, capacity=0)
     with pytest.raises(ValueError, match="max_attempts"):
         BoundedAsyncExporter(transport, max_attempts=0)
+    with pytest.raises(ValueError, match="base_backoff"):
+        BoundedAsyncExporter(transport, base_backoff=-0.1)
+    with pytest.raises(ValueError, match="total_attempt_deadline"):
+        BoundedAsyncExporter(transport, total_attempt_deadline=0)
 
 
 def test_submit_is_nonblocking_and_queue_overflow_is_observable() -> None:
@@ -116,6 +126,12 @@ def test_exporter_retries_bounded_number_of_times_without_duplicate_success() ->
     assert exporter.shutdown()
     assert transport.attempts == 3
     assert [(item.attempt, item.retryable) for item in diagnostics] == [(1, True), (2, True)]
+    status = exporter.status()
+    assert status.retried == 2
+    assert status.last_success_at_unix_nano is not None
+    assert status.last_failure == "transport.failure"
+    assert status.in_flight_bytes == 0
+    assert status.oldest_age_seconds is None
 
 
 def test_permanent_export_rejection_is_not_retried() -> None:
@@ -158,6 +174,7 @@ def test_http_transport_posts_canonical_content_type_auth_and_idempotency(monkey
     def urlopen(request, *, timeout):
         captured["request"] = request
         captured["timeout"] = timeout
+        captured["suppressed"] = is_instrumentation_suppressed()
         return Response()
 
     transport = HttpExportTransport("http://localhost:4319/", token="token", timeout=2.5)
@@ -171,6 +188,95 @@ def test_http_transport_posts_canonical_content_type_auth_and_idempotency(monkey
     assert request.get_header("Authorization") == "Bearer token"
     assert request.get_header("Idempotency-key") == "bundle-id"
     assert captured["timeout"] == 2.5
+    assert captured["suppressed"] is True
+
+
+def test_http_transport_gzips_large_payload_without_changing_identity(monkeypatch) -> None:
+    captured = {}
+
+    class Response:
+        status = 201
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+    transport = HttpExportTransport(
+        "http://localhost:4319",
+        compression_threshold_bytes=8,
+    )
+
+    def open_request(request, **_kwargs):
+        captured["request"] = request
+        return Response()
+
+    monkeypatch.setattr(transport._opener, "open", open_request)
+    item = ExportItem("stable-bundle-id", b"canonical-payload")
+
+    transport.send(item)
+
+    request = captured["request"]
+    assert request.get_header("Content-encoding") == "gzip"
+    assert request.get_header("Idempotency-key") == item.bundle_id
+    assert request.get_header("Content-length") == str(len(request.data))
+    assert gzip.decompress(request.data) == item.payload
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://user:password@localhost:4319",
+        "http://localhost:4319?token=secret",
+        "http://localhost:4319#fragment",
+    ],
+)
+def test_http_transport_rejects_ambiguous_or_credential_bearing_urls(endpoint: str) -> None:
+    with pytest.raises(ValueError, match=r"userinfo|query|fragment"):
+        HttpExportTransport(endpoint)
+
+
+def test_http_transport_repr_never_contains_bearer_token() -> None:
+    transport = HttpExportTransport("http://localhost:4319", token=SECRET_SENTINEL)
+    assert not hasattr(transport, "token")
+    assert SECRET_SENTINEL not in repr(transport)
+
+
+def test_http_transport_rejects_nonpositive_timeout() -> None:
+    with pytest.raises(ValueError, match="timeout"):
+        HttpExportTransport("http://localhost:4319", timeout=0)
+    with pytest.raises(ValueError, match="compression_threshold_bytes"):
+        HttpExportTransport("http://localhost:4319", compression_threshold_bytes=0)
+
+
+def test_export_queue_is_bounded_by_payload_bytes() -> None:
+    transport = BlockingTransport()
+    diagnostics: list[ExportDiagnostic] = []
+    exporter = BoundedAsyncExporter(
+        transport,
+        capacity=10,
+        max_queue_bytes=9,
+        diagnostic=diagnostics.append,
+    )
+    try:
+        assert exporter.submit(ExportItem("one", b"1234"))
+        assert transport.started.wait(2)
+        assert exporter.submit(ExportItem("two", b"12345"))
+        assert not exporter.submit(ExportItem("three", b"1"))
+        status = exporter.status()
+        assert status.accepted == 2
+        assert status.dropped == 1
+        assert status.queued_bytes == 5
+        assert status.in_flight_bytes == 4
+        assert status.high_water_bytes == 9
+        assert status.oldest_age_seconds is not None
+        assert status.oldest_age_seconds >= 0
+        assert status.overflow == 1
+        assert diagnostics[-1].code == "exporter.queue_bytes_full"
+    finally:
+        transport.release.set()
+        assert exporter.shutdown()
 
 
 @pytest.mark.parametrize("status", [400, 409, 422])
@@ -184,15 +290,120 @@ def test_http_transport_classifies_client_rejection_as_permanent(monkeypatch, st
         transport.send(ExportItem("bundle", b"payload"))
 
 
-@pytest.mark.parametrize("status", [429, 500, 503])
+@pytest.mark.parametrize("status", [408, 429, 500, 503])
 def test_http_transport_leaves_retryable_http_failures_retryable(monkeypatch, status: int) -> None:
     def urlopen(*_args, **_kwargs):
         raise urllib.error.HTTPError("http://localhost", status, "retry", {}, None)
 
     transport = HttpExportTransport("http://localhost")
     monkeypatch.setattr(transport._opener, "open", urlopen)
-    with pytest.raises(urllib.error.HTTPError):
+    with pytest.raises(RetryableExportError):
         transport.send(ExportItem("bundle", b"payload"))
+
+
+def test_http_transport_preserves_retry_after_hint(monkeypatch) -> None:
+    def urlopen(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "http://localhost",
+            429,
+            "retry",
+            {"Retry-After": "3.5"},
+            None,
+        )
+
+    transport = HttpExportTransport("http://localhost")
+    monkeypatch.setattr(transport._opener, "open", urlopen)
+    with pytest.raises(RetryableExportError) as raised:
+        transport.send(ExportItem("bundle", b"payload"))
+    assert raised.value.retry_after == 3.5
+
+
+def test_http_transport_accepts_http_date_retry_after(monkeypatch) -> None:
+    def urlopen(*_args, **_kwargs):
+        raise urllib.error.HTTPError(
+            "http://localhost",
+            503,
+            "retry",
+            {"Retry-After": "Thu, 01 Jan 1970 00:00:05 GMT"},
+            None,
+        )
+
+    transport = HttpExportTransport("http://localhost")
+    monkeypatch.setattr(transport._opener, "open", urlopen)
+    monkeypatch.setattr("earshot.exporter.time.time", lambda: 2.0)
+    with pytest.raises(RetryableExportError) as raised:
+        transport.send(ExportItem("bundle", b"payload"))
+    assert raised.value.retry_after == 3.0
+
+
+def test_exporter_uses_jitter_and_retry_after_without_blocking_submit(monkeypatch) -> None:
+    class RetryAfterTransport:
+        attempts = 0
+
+        def send(self, _item) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RetryableExportError("busy", retry_after=0.02)
+
+    transport = RetryAfterTransport()
+    monkeypatch.setattr("earshot.exporter.random.uniform", lambda low, high: high)
+    exporter = BoundedAsyncExporter(
+        transport,
+        max_attempts=2,
+        base_backoff=0.1,
+        jitter_ratio=0.25,
+    )
+    started = time.monotonic()
+    assert exporter.submit(ExportItem("bundle", b"payload"))
+    assert exporter.flush(timeout=2)
+    assert exporter.shutdown()
+    assert transport.attempts == 2
+    assert time.monotonic() - started >= 0.02
+
+
+def test_shutdown_interrupts_retry_after_backoff_and_accounts_failure() -> None:
+    attempted = threading.Event()
+
+    class RetryAfterTransport:
+        def send(self, _item) -> None:
+            attempted.set()
+            raise RetryableExportError("busy", retry_after=30.0)
+
+    exporter = BoundedAsyncExporter(
+        RetryAfterTransport(), max_attempts=3, total_attempt_deadline=60
+    )
+    assert exporter.submit(ExportItem("bundle", b"payload"))
+    assert attempted.wait(2)
+
+    started = time.monotonic()
+    assert exporter.shutdown(timeout=0.5)
+
+    assert time.monotonic() - started < 0.5
+    status = exporter.status()
+    assert status.failed == 1
+    assert status.retried == 1
+    assert status.last_failure == "exporter.shutdown_during_retry"
+
+
+def test_total_attempt_deadline_stops_retrying_before_next_backoff() -> None:
+    transport = FlakyTransport(failures=100)
+    exporter = BoundedAsyncExporter(
+        transport,
+        max_attempts=10,
+        base_backoff=0.03,
+        jitter_ratio=0,
+        total_attempt_deadline=0.05,
+    )
+    assert exporter.submit(ExportItem("deadline", b"payload"))
+
+    assert exporter.flush(timeout=1)
+    assert exporter.shutdown()
+
+    status = exporter.status()
+    assert transport.attempts == 2
+    assert status.failed == 1
+    assert status.retried == 1
+    assert status.last_failure == "exporter.attempt_deadline_exceeded"
 
 
 def test_http_transport_rejects_unexpected_success_status(monkeypatch) -> None:
@@ -220,6 +431,40 @@ def test_shutdown_and_submit_after_shutdown_are_idempotent() -> None:
     assert diagnostics[-1].code == "exporter.closed"
 
 
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX fork")
+def test_exporter_restarts_its_worker_after_fork() -> None:
+    exporter = BoundedAsyncExporter(RecordingTransport(), base_backoff=0)
+    read_fd, write_fd = os.pipe()
+    child_pid = os.fork()
+    if child_pid == 0:  # pragma: no cover - assertions run in the parent
+        try:
+            os.close(read_fd)
+            submitted = exporter.submit(ExportItem("child", b"payload"))
+            flushed = exporter.flush(timeout=2)
+            child_status = exporter.status()
+            result = f"{submitted},{flushed},{child_status.pid},{child_status.sent}"
+            os.write(write_fd, result.encode())
+            exporter.shutdown(timeout=1)
+        finally:
+            os.close(write_fd)
+            os._exit(0)
+
+    os.close(write_fd)
+    try:
+        readable, _, _ = select.select([read_fd], [], [], 5)
+        assert readable, "forked exporter child did not make progress"
+        submitted, flushed, reported_pid, sent = os.read(read_fd, 256).decode().split(",")
+        assert (submitted, flushed) == ("True", "True")
+        assert int(reported_pid) == child_pid
+        assert sent == "1"
+        waited_pid, wait_status = os.waitpid(child_pid, 0)
+        assert waited_pid == child_pid
+        assert os.waitstatus_to_exitcode(wait_status) == 0
+    finally:
+        os.close(read_fd)
+        exporter.shutdown()
+
+
 def test_recorder_uses_injected_monotonic_clock_and_closes_once() -> None:
     clock = ManualClock(wall=1_800_000_000_000_000_000, monotonic=50_000)
     recorder = IncidentRecorder(
@@ -242,6 +487,18 @@ def test_recorder_uses_injected_monotonic_clock_and_closes_once() -> None:
     assert validate_incident(first).ok
 
 
+def test_manual_operations_share_one_session_trace_without_reusing_spans() -> None:
+    recorder = IncidentRecorder(session_id="manual-trace")
+    with recorder.operation("stt"):
+        pass
+    with recorder.operation("llm"):
+        pass
+
+    first, second = recorder.close().profile.operations
+    assert first.trace_id == second.trace_id
+    assert first.span_id != second.span_id
+
+
 def test_context_manager_marks_session_failed_and_reraises_without_message_leak() -> None:
     recorder = IncidentRecorder()
     secret = "context-secret"
@@ -249,6 +506,8 @@ def test_context_manager_marks_session_failed_and_reraises_without_message_leak(
         raise ValueError(secret)
     bundle = recorder.close()
     assert bundle.profile.session.status == "failed"
+    assert bundle.profile.manifest.finality == "final"
+    assert bundle.profile.manifest.completeness == "incomplete"
     assert bundle.profile.operations[0].status == "error"
     assert bundle.profile.operations[0].error is not None
     assert bundle.profile.operations[0].error.message is None

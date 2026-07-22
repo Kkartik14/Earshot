@@ -34,7 +34,7 @@ to implement another producer or consumer without access to `docs/private`.
 
 The machine-readable contract consists of:
 
-- [`proto/earshot/v1/incident.proto`](../proto/earshot/v1/incident.proto)
+- [`proto/earshot/v1alpha1/incident.proto`](../proto/earshot/v1alpha1/incident.proto)
 - [`semconv/earshot.yaml`](../semconv/earshot.yaml)
 - [`spec/incident-bundle.schema.json`](../spec/incident-bundle.schema.json)
 - [`spec/derived-analysis.schema.json`](../spec/derived-analysis.schema.json)

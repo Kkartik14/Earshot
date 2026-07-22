@@ -23,11 +23,10 @@ from .contract import (
     QualitySample,
     TimePoint,
 )
+from .measurement_semantics import measurement_value_limitation
+from .versions import ANALYZER_VERSION
 
 ANALYZER_NAME = "earshot.deterministic"
-# Provider-stage latency aliases changed the deterministic projection. Bump the
-# cache identity so stores never return the older runtime-specific result.
-ANALYZER_VERSION = "1.0.4"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
 
 
@@ -99,6 +98,32 @@ def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
     return Delta("available", value, basis, confidence)
 
 
+def _coordinate_sort_key(point: TimePoint) -> tuple[int, str, int, int]:
+    """Return a canonical coordinate-group key without cross-clock subtraction.
+
+    Clock domain and representation group incomparable evidence. Numeric ordering
+    therefore happens only after those fields match. The leading unavailable flag
+    keeps records without an orderable coordinate deterministic but last.
+    """
+
+    domain = point.clock_domain_id
+    if domain is not None and point.monotonic_time_nano is not None:
+        return (0, domain, 0, int(point.monotonic_time_nano))
+    if domain is not None and point.source_time_unix_nano is not None:
+        return (0, domain, 1, int(point.source_time_unix_nano))
+    if domain is not None and point.observed_time_unix_nano is not None:
+        return (0, domain, 2, int(point.observed_time_unix_nano))
+    return (1, domain or "", 3, 0)
+
+
+def _operation_sort_key(operation: Operation) -> tuple[int, str, int, int, str]:
+    return (*_coordinate_sort_key(operation.started_at), operation.operation_id)
+
+
+def _event_sort_key(event: Event) -> tuple[int, str, int, int, str]:
+    return (*_coordinate_sort_key(event.time), event.event_id)
+
+
 def _earliest_event(events: Iterable[Event], names: set[str]) -> Event | None:
     candidates = [event for event in events if event.event_name in names]
     if not candidates:
@@ -119,7 +144,7 @@ def _earliest_event(events: Iterable[Event], names: set[str]) -> Event | None:
                 ),
             )
     # There is no honest temporal order across incomparable representations.
-    return min(candidates, key=lambda event: event.event_id)
+    return None
 
 
 def _operation_point_event(
@@ -219,8 +244,17 @@ def _first_provider_latency_event(
 
 def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[str, object]]:
     grouped: dict[str, list[tuple[str, int | float, str, str, str]]] = defaultdict(list)
+    invalid: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for sample in sorted(samples, key=lambda item: item.sample_id):
         for measurement in sample.measurements:
+            limitation = measurement_value_limitation(
+                measurement.name,
+                measurement.value,
+                measurement.unit,
+            )
+            if limitation is not None:
+                invalid[measurement.name].append((sample.sample_id, limitation))
+                continue
             if not isinstance(measurement.value, (int, float)) or isinstance(
                 measurement.value, bool
             ):
@@ -255,7 +289,25 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
         "inferred": 2,
         "unavailable": 3,
     }
-    for name, entries in sorted(grouped.items()):
+    for name in sorted(set(grouped) | set(invalid)):
+        entries = grouped[name]
+        rejected = invalid.get(name, [])
+        if rejected:
+            limitations = sorted({limitation for _, limitation in rejected})
+            projected[name] = {
+                "availability": "unavailable",
+                "basis": "provider_measurement",
+                "confidence": "unavailable",
+                "limitation": (
+                    limitations[0]
+                    if len(limitations) == 1
+                    else "multiple_semantic_value_violations"
+                ),
+                "evidence_ids": sorted(
+                    {entry[0] for entry in entries} | {sample_id for sample_id, _ in rejected}
+                ),
+            }
+            continue
         aggregations = {entry[3] for entry in entries}
         evidence_ids = sorted({entry[0] for entry in entries})
         if aggregations == {"delta"}:
@@ -365,7 +417,7 @@ def _first_operation(operations: Sequence[Operation], names: set[str]) -> Operat
                     operation.operation_id,
                 ),
             )
-    return min(candidates, key=lambda operation: operation.operation_id)
+    return None
 
 
 def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> dict[str, object]:
@@ -641,8 +693,10 @@ def _turn_projection(
 
     return {
         "turn_id": turn_id,
-        "operation_ids": sorted(item.operation_id for item in operations),
-        "event_ids": sorted(item.event_id for item in events),
+        "operation_ids": [
+            item.operation_id for item in sorted(operations, key=_operation_sort_key)
+        ],
+        "event_ids": [item.event_id for item in sorted(events, key=_event_sort_key)],
         "metrics": {
             "first_token_latency": first_token_latency,
             "generated_response_latency": generated_response_latency,
@@ -738,7 +792,20 @@ def analyze_incident(
         else:
             unassigned_quality.append(sample)
 
-    turn_ids = sorted(set(turn_operations) | set(turn_events) | set(turn_quality))
+    turn_ids = set(turn_operations) | set(turn_events) | set(turn_quality)
+
+    def turn_sort_key(turn_id: str) -> tuple[int, str, int, int, str]:
+        coordinates = [
+            _coordinate_sort_key(operation.started_at) for operation in turn_operations[turn_id]
+        ]
+        coordinates.extend(_coordinate_sort_key(event.time) for event in turn_events[turn_id])
+        coordinates.extend(
+            _coordinate_sort_key(sample.sample_window.start) for sample in turn_quality[turn_id]
+        )
+        coordinate = min(coordinates) if coordinates else (1, "", 3, 0)
+        return (*coordinate, turn_id)
+
+    ordered_turn_ids = sorted(turn_ids, key=turn_sort_key)
     turns = [
         _turn_projection(
             turn_id,
@@ -746,7 +813,7 @@ def analyze_incident(
             tuple(turn_events[turn_id]),
             tuple(turn_quality[turn_id]),
         )
-        for turn_id in turn_ids
+        for turn_id in ordered_turn_ids
     ]
 
     diagnoses: list[Diagnosis] = []
@@ -780,7 +847,7 @@ def analyze_incident(
             else "render_evidence_not_observed"
         )
         # Missing evidence is a limitation, not a diagnosed failure. Coverage has
-        # no fact identity in v1, so inventing an evidence-free diagnosis would
+        # no fact identity in v1alpha1, so inventing an evidence-free diagnosis would
         # violate the analysis contract.
         limitations.append(limitation)
 

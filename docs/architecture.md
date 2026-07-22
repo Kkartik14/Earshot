@@ -33,7 +33,7 @@ CLI, and the local API. This avoids two semantic authorities while the contract 
 still alpha. Browser/viewer clients consume generated JSON Schema/protobuf bindings
 and shared conformance fixtures.
 
-The earlier TypeScript packages remain an M0 prototype and are not the v1 authority.
+The earlier TypeScript packages remain an M0 prototype and are not the contract authority.
 
 ## Artifact versus telemetry export
 
@@ -124,7 +124,7 @@ gateway/carrier evidence for calls. Neither transport is required by the core mo
 ## Repository map
 
 ```text
-proto/earshot/v1/incident.proto       protobuf envelope
+proto/earshot/v1alpha1/incident.proto protobuf envelope
 semconv/earshot.yaml                  authoring vocabulary
 spec/incident-bundle.schema.json      generated debug-JSON schema
 spec/derived-analysis.schema.json     closed analysis-sidecar schema

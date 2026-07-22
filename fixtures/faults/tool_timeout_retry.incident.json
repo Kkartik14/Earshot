@@ -80,8 +80,8 @@
         "name": "earshot-fault-corpus",
         "version": "1.0.0"
       },
-      "schema_version": "1.0.0",
-      "semantic_profile_version": "1.0.0",
+      "schema_version": "0.1.0",
+      "semantic_profile_version": "0.1.0",
       "session_id": "fixture-session"
     },
     "media_refs": [],

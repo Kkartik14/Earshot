@@ -390,7 +390,7 @@
       "type": "object"
     }
   },
-  "$id": "https://schemas.earshot.dev/v1/derived-analysis.schema.json",
+  "$id": "https://schemas.earshot.dev/v1alpha1/derived-analysis.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {

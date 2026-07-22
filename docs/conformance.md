@@ -135,6 +135,40 @@ With framework extras installed, the integration lane must also construct curren
 LiveKit metrics objects and consume real OpenTelemetry `ReadableSpan` sibling topology
 under the pinned Pipecat instrumentation scope.
 
+## Adapter conformance and compatibility matrix
+
+`packages/sdk-python/tests/adapter_conformance.py` is the reusable public-seam
+conformance harness. It is applied to every shipped adapter family:
+
+- Deepgram, Cartesia, OpenAI Realtime, and Sarvam use sanitized synthetic streaming
+  payloads through `adapt -> apply -> close`.
+- ElevenLabs, Vapi, Retell, and Ringg use the checked-in sanitized synthetic finalized
+  Delivery builders through `HostedProviderIngestion`. These are not represented as
+  captured provider deliveries; the opt-in real-delivery test retains its explicit skip
+  when no operator-supplied payload is present.
+- Pipecat and LiveKit consume their golden public surfaces, while installed-dependency
+  lanes additionally construct real framework metric/span objects.
+
+The harness validates canonical JSON/protobuf stability, deterministic normalized
+output, native trace/span identity and parentage, sensitive-value absence, privacy
+manifest behavior, complete and incomplete close, and semantic validation. Streaming
+adapters record field-level omissions. Finalized connectors discard sensitive provider
+fields before recorder admission, so their gate instead requires every sensitive
+capture class to be `deny`/not-captured and scans both codecs for sentinels.
+
+Recorder operation contexts are covered for exception and `CancelledError` identity:
+closing cannot replace the application exception. Earshot does not ship a callable
+decorator/wrapper, so callable return-value preservation is currently not applicable;
+any future wrapper must add that assertion before release.
+
+CI runs dependency-free adapter conformance on Linux with Python 3.11, 3.12, and 3.13.
+It runs Pipecat and LiveKit in separate jobs against both their exact supported minimums
+and the newest versions resolvable inside the declared ranges. Separate minimum jobs are
+required because the frameworks impose different effective OpenTelemetry lower bounds.
+One current-dependency Python 3.12 macOS smoke lane covers the combined install.
+Dependency-version lanes are CI gates; a local environment normally proves only the
+single set of versions it has installed.
+
 The release gate is:
 
 ```text
@@ -159,4 +193,7 @@ python scripts/generate_fault_fixtures.py
 python scripts/generate_contract.py --check
 python scripts/generate_openapi.py --check
 python scripts/check_semconv.py
+pytest -q packages/sdk-python/tests/test_adapter_conformance.py
+pytest -q apps/ingest/tests/test_finalized_adapter_conformance.py
+pytest -q apps/ingest/tests/test_framework_integrations.py
 ```

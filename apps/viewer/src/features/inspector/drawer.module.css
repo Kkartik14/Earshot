@@ -1,0 +1,291 @@
+.drawer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+}
+
+.head {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  position: relative;
+  flex: none;
+}
+.close {
+  position: absolute;
+  top: 13px;
+  right: 14px;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--tx-mid);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.close:hover {
+  color: var(--tx);
+  border-color: var(--tx-low);
+}
+.close:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+
+.kind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.title {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+.chip {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.barge {
+  color: var(--tts);
+  background: color-mix(in oklab, var(--tts) 16%, transparent);
+}
+.slow {
+  color: var(--crit);
+  background: color-mix(in oklab, var(--crit) 16%, transparent);
+}
+.kindTag {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  border: 1px dashed var(--line);
+  padding: 3px 7px;
+  border-radius: 5px;
+}
+
+.hero {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.big {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.big small {
+  font-size: 15px;
+  color: var(--tx-low);
+  font-weight: 500;
+}
+.critical {
+  color: var(--crit);
+}
+.heroLbl {
+  font-size: 12px;
+  color: var(--tx-mid);
+}
+
+.body {
+  padding: 6px 18px 28px;
+  overflow-y: auto;
+  flex: 1;
+}
+.sec {
+  margin-top: 20px;
+}
+.secLabel {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+  padding-bottom: 8px;
+  display: block;
+  border-bottom: 1px solid var(--line-soft);
+  margin: 0 0 8px;
+}
+
+/* derived metrics + coverage rows */
+.metricLine {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.metricLine:first-child {
+  border-top: 0;
+}
+.mln {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--tx);
+}
+.mlv {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
+  min-width: 70px;
+}
+.na {
+  color: var(--tx-low);
+  font-weight: 500;
+}
+.mlb {
+  font-size: 10px;
+  color: var(--tx-low);
+  font-family: var(--mono);
+}
+
+/* events */
+.evrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.evrow:first-child {
+  border-top: 0;
+}
+.glyph {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.en {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--tx);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.et {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx-low);
+}
+
+/* stage detail */
+.kv {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 4px 12px;
+  padding: 4px 0;
+  align-items: baseline;
+}
+.kk {
+  font-size: 11.5px;
+  color: var(--tx-mid);
+}
+.vv {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--tx);
+  text-align: right;
+  word-break: break-word;
+}
+.mrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  margin-bottom: 6px;
+}
+.mn {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--tx);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mv {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.conf {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.measured {
+  color: var(--good);
+  background: color-mix(in oklab, var(--good) 15%, transparent);
+}
+.estimated {
+  color: var(--est);
+  background: color-mix(in oklab, var(--est) 15%, transparent);
+}
+.inferred {
+  color: var(--acc);
+  background: color-mix(in oklab, var(--acc) 15%, transparent);
+}
+.unavailable {
+  color: var(--tx-low);
+  background: var(--track);
+}
+.provFlow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx-mid);
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.provFlow b {
+  color: var(--tx);
+  font-weight: 600;
+}
+.ar {
+  color: var(--tx-low);
+}
+.note {
+  font-size: 11.5px;
+  color: var(--tx-mid);
+  line-height: 1.5;
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--acc);
+  padding: 9px 11px;
+  border-radius: 6px;
+  margin-top: 6px;
+}

@@ -1,4 +1,4 @@
-# Earshot semantic profile v1.
+# Earshot semantic profile v0.1.
 #
 # This is the authoring source for the voice-specific vocabulary carried over
 # OTLP. Values intentionally remain open strings: adapters must preserve unknown
@@ -10,7 +10,7 @@
 # status means adapters must pin the semconv revision they implement. This file
 # vendors the session.id definition from OpenTelemetry semantic-conventions
 # v1.41.1 (git ead83b9b0fa36540c1642fce46e874f002ac23f1, verified 2026-07-11).
-# Earshot semantic profile version: 1.0.0
+earshot_semantic_profile_version: 0.1.0
 groups:
   - id: registry.earshot
     type: attribute_group
