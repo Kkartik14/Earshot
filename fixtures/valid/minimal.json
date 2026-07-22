@@ -1,7 +1,7 @@
 {
   "profile": {
     "manifest": {
-      "schema_version": "1.0.0",
+      "schema_version": "0.1.0",
       "bundle_id": "fixture-minimal",
       "session_id": "fixture-session",
       "created_at_unix_nano": "1800000000000000000",
