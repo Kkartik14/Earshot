@@ -124,12 +124,12 @@ record must also fit the codec's 64-level profile depth before recorder state ch
 
 Every recorder has frozen, non-secret limits. The `0.1.0` defaults are exactly:
 
-| Setting / environment variable | Default | Meaning |
-| --- | ---: | --- |
-| `max_records` / `EARSHOT_MAX_RECORDS` | 10,000 | admitted evidence records, including adapters and explicit coverage/omissions |
-| `max_capture_bytes` / `EARSHOT_MAX_CAPTURE_BYTES` | 16 MiB | deterministic logical size of retained records and their privacy ledger |
-| `max_raw_otlp_bytes` / `EARSHOT_MAX_RAW_OTLP_BYTES` | 8 MiB | cumulative raw OTLP payload bytes inside that total |
-| `max_value_bytes` / `EARSHOT_MAX_VALUE_BYTES` | 64 KiB | one structural attribute/extension value before copying |
+| Setting / environment variable                      | Default | Meaning                                                                       |
+| --------------------------------------------------- | ------: | ----------------------------------------------------------------------------- |
+| `max_records` / `EARSHOT_MAX_RECORDS`               |  10,000 | admitted evidence records, including adapters and explicit coverage/omissions |
+| `max_capture_bytes` / `EARSHOT_MAX_CAPTURE_BYTES`   |  16 MiB | deterministic logical size of retained records and their privacy ledger       |
+| `max_raw_otlp_bytes` / `EARSHOT_MAX_RAW_OTLP_BYTES` |   8 MiB | cumulative raw OTLP payload bytes inside that total                           |
+| `max_value_bytes` / `EARSHOT_MAX_VALUE_BYTES`       |  64 KiB | one structural attribute/extension value before copying                       |
 
 The byte count is a deterministic portable-structure estimate, not CPython heap size.
 An oversized nested value is omitted before deep-copy/model work and its enclosing
@@ -139,7 +139,7 @@ prefix-preserving freeze prevents a dropped parent from being followed by retain
 children and makes the final incomplete bundle graph-valid and exportable. Capacity is
 fail-open: it never raises into application or voice code. Boolean capture methods return
 `False`; void methods become no-ops. Methods whose historical return type is a contract
-record return the normalized *attempted* record, which is not proof of retention.
+record return the normalized _attempted_ record, which is not proof of retention.
 `IncidentRecorder.status()` is the authoritative source of truth and reports capture
 bytes/records, freeze state, first stable limit reason, fixed-size aggregate counters,
 and estimated omitted bytes.
