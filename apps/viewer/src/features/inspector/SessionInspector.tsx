@@ -14,7 +14,6 @@ import {
   getCoverage,
   type ExplanationLike,
   type IncidentLike,
-  type StageName,
 } from "./timeline";
 
 export function SessionInspector() {
@@ -101,12 +100,12 @@ export function SessionInspector() {
       next.has(i) ? next.delete(i) : next.add(i);
       return next;
     });
-    setSelection({ turn: i, stage: null });
+    setSelection({ turn: i, operationId: null });
   };
-  const selectStage = (i: number, stage: StageName) => {
+  const selectOperation = (i: number, operationId: string) => {
     rememberTrigger();
     openTurn(i);
-    setSelection({ turn: i, stage });
+    setSelection({ turn: i, operationId });
   };
 
   const sel = selection != null && details[selection.turn] != null ? selection : null;
@@ -120,24 +119,38 @@ export function SessionInspector() {
           openTurns={openTurns}
           selection={sel}
           onToggleTurn={toggleTurn}
-          onSelectStage={selectStage}
+          onSelectOperation={selectOperation}
         />
       </div>
       {sel ? (
         <div className={styles.drawerCol}>
-          {sel.stage == null ? (
+          {sel.operationId == null ? (
             <TurnDrawer
               detail={details[sel.turn]}
               coverage={coverage}
               onClose={() => setSelection(null)}
-              onPickStage={(stage) => selectStage(sel.turn, stage)}
+              onPickStage={(operationId) => selectOperation(sel.turn, operationId)}
             />
           ) : (
-            <StageDrawer
-              index={sel.turn}
-              stage={details[sel.turn].stages.find((s) => s.name === sel.stage)!}
-              onClose={() => setSelection(null)}
-            />
+            (() => {
+              const op = details[sel.turn].stages.find(
+                (s) => s.operationId === sel.operationId,
+              );
+              return op == null ? (
+                <TurnDrawer
+                  detail={details[sel.turn]}
+                  coverage={coverage}
+                  onClose={() => setSelection(null)}
+                  onPickStage={(operationId) => selectOperation(sel.turn, operationId)}
+                />
+              ) : (
+                <StageDrawer
+                  index={sel.turn}
+                  stage={op}
+                  onClose={() => setSelection(null)}
+                />
+              );
+            })()
           )}
         </div>
       ) : null}

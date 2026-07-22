@@ -1,6 +1,7 @@
+import { formatMeasurement } from "../../lib/format";
 import { CallGraph } from "./CallGraph";
 import styles from "./drawer.module.css";
-import type { CoverageRow, StageName, TurnDetail } from "./timeline";
+import type { CoverageRow, TurnDetail } from "./timeline";
 import { useInitialFocus } from "./useInitialFocus";
 
 const short = (name: string) => name.replace(/^earshot\./, "");
@@ -21,7 +22,7 @@ export function TurnDrawer({
   detail: TurnDetail;
   coverage: CoverageRow[];
   onClose: () => void;
-  onPickStage: (stage: StageName) => void;
+  onPickStage: (operationId: string) => void;
 }) {
   const ft = detail.firstTokenMs;
   const slow = (ft ?? 0) > 500;
@@ -80,7 +81,9 @@ export function TurnDrawer({
             <div key={m.key} className={styles.metricLine}>
               <span className={styles.mln}>{m.key}</span>
               <span className={`${styles.mlv} ${m.value == null ? styles.na : ""}`}>
-                {m.value == null ? humanize(m.availability) : `${m.value}ms`}
+                {m.value == null
+                  ? humanize(m.availability)
+                  : formatMeasurement(m.value, "ms")}
               </span>
               <span className={styles.mlb}>{m.basis}</span>
             </div>
