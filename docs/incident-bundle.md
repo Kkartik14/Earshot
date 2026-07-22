@@ -1,6 +1,6 @@
-# Incident bundle contract v1
+# Incident bundle contract v1alpha1
 
-Status: **v1 alpha**. Wrapper versions use semantic versioning; the Earshot semantic
+Status: **pre-v1 alpha**. Wrapper versions use semantic versioning; the Earshot semantic
 profile has an independently pinned version.
 
 ## One immutable snapshot
@@ -101,7 +101,7 @@ forward compatibility.
   source and observed timestamps; their resource/scope provenance is preserved too.
 - Quality samples are numeric/boolean observations with explicit units and aggregation,
   preserve resource/scope provenance, and require evidence provenance. Arbitrary string
-  values and raw counters are not quality data in v1.
+  values and raw counters are not quality data in v1alpha1.
 
 Operation/event/framework/provider names use an open semantic-code vocabulary. Unknown
 future values and non-null profile extensions are preserved only under the explicit
