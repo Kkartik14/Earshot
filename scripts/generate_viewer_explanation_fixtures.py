@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-
-from earshot.analysis import analyze_incident
-from earshot.codec import analysis_input_sha256, decode_incident_json
-from earshot.explanation import explain_incident
-from earshot.validation import validate_derived_analysis, validate_explanation
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "sdk-python" / "src"))
+
+from earshot.analysis import analyze_incident  # noqa: E402
+from earshot.codec import analysis_input_sha256, decode_incident_json  # noqa: E402
+from earshot.explanation import explain_incident  # noqa: E402
+from earshot.validation import validate_derived_analysis, validate_explanation  # noqa: E402
+
 FAULTS = ROOT / "fixtures" / "faults"
 OUTPUT = ROOT / "apps" / "viewer" / "src" / "features" / "inspector" / "__fixtures__" / "faults"
 

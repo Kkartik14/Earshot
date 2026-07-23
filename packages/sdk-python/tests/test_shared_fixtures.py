@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -11,6 +14,32 @@ from earshot.validation import validate_incident
 
 pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_viewer_fixture_generator_imports_sdk_from_its_own_checkout(tmp_path: Path) -> None:
+    fake_package = tmp_path / "earshot"
+    fake_package.mkdir()
+    (fake_package / "__init__.py").write_text(
+        "raise RuntimeError('generator imported an unrelated checkout')\n"
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(tmp_path)
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "generate_viewer_explanation_fixtures.py"),
+            "--check",
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def _replace_pointer(document: object, pointer: str, value: object) -> None:
