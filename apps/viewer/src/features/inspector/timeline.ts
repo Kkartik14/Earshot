@@ -232,7 +232,7 @@ export interface TurnView {
   interrupted: boolean;
   /** Whether an STT->LLM->TTS chain is present (optional cascade projection). */
   hasCascade: boolean;
-  totalMs: number;
+  totalMs: number | null;
 }
 export interface Timeline {
   turns: TurnView[];
@@ -414,6 +414,9 @@ export function buildTimeline(explanation: ExplanationLike): Timeline {
       statusView: operationStatus(w.op),
       startUncertaintyMs: uncertaintyMs(w.op.start_uncertainty_nano),
     }));
+    const placedBoundaries = stages
+      .map((stage) => stage.endMs ?? stage.startMs)
+      .filter((value): value is number => value != null);
     return {
       turnId: t.turn_id,
       index,
@@ -423,10 +426,13 @@ export function buildTimeline(explanation: ExplanationLike): Timeline {
       response: view(t.metrics.response_latency),
       interrupted: isInterrupted(t),
       hasCascade: hasCascadeChain(stages),
-      totalMs: stages.reduce((max, s) => Math.max(max, s.endMs ?? s.startMs ?? 0), 0),
+      totalMs: placedBoundaries.length > 0 ? Math.max(...placedBoundaries) : null,
     };
   });
-  return { turns, scaleMs: roundUp(Math.max(1, ...turns.map((t) => t.totalMs)), 250) };
+  const knownDurations = turns
+    .map((turn) => turn.totalMs)
+    .filter((value): value is number => value != null);
+  return { turns, scaleMs: roundUp(Math.max(1, ...knownDurations), 250) };
 }
 
 // -- drawer detail ----------------------------------------------------------

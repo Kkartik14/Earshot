@@ -312,6 +312,52 @@ describe("Turn timeline truthfulness", () => {
       screen.getByTitle("llm observed interval · groq").getAttribute("class"),
     ).not.toMatch(/glow/i);
   });
+
+  it("renders an unavailable turn duration without inventing a zero", () => {
+    const metric = {
+      value: null,
+      availability: "not_observed",
+      basis: "clock_domain",
+      confidence: "unavailable",
+    };
+    const timeline: Timeline = {
+      scaleMs: 250,
+      turns: [
+        {
+          turnId: "turn-cross-clock",
+          index: 0,
+          stages: [
+            stage("llm", {
+              startMs: null,
+              endMs: null,
+              leadMs: null,
+              timing: "unavailable",
+            }),
+          ],
+          firstToken: metric,
+          generated: metric,
+          response: metric,
+          interrupted: false,
+          hasCascade: false,
+          totalMs: null,
+        },
+      ],
+    };
+
+    render(
+      <TurnTimeline
+        timeline={timeline}
+        openTurns={new Set()}
+        selection={null}
+        onToggleTurn={() => {}}
+        onSelectOperation={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("not observed")).toBeInTheDocument();
+    expect(screen.queryByText("+0ms")).not.toBeInTheDocument();
+    expect(screen.queryByText("+—")).not.toBeInTheDocument();
+  });
 });
 
 describe("Interruption attachment", () => {

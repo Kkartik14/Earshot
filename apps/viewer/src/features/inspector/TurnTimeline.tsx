@@ -132,7 +132,9 @@ function TurnRow({
             />
           ) : null}
         </div>
-        <div className={styles.dur}>+{formatMs(turn.totalMs)}</div>
+        <div className={styles.dur}>
+          {turn.totalMs == null ? "not observed" : `+${formatMs(turn.totalMs)}`}
+        </div>
       </button>
 
       {open ? (

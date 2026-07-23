@@ -222,12 +222,13 @@ describe("buildTimeline", () => {
       ],
     });
 
-    const [, llm] = buildTimeline(crossClockExplanation).turns[0].stages;
-    const [stt] = buildTimeline(crossClockExplanation).turns[0].stages;
+    const [crossClockTurn] = buildTimeline(crossClockExplanation).turns;
+    const [stt, llm] = crossClockTurn.stages;
     expect(stt.timing).toBe("unavailable");
     expect(stt.startMs).toBeNull();
     expect(llm.timing).toBe("unavailable");
     expect(llm.startMs).toBeNull();
+    expect(crossClockTurn.totalMs).toBeNull();
   });
 
   it("surfaces the measured first-token latency, including the slow turn", () => {
@@ -242,10 +243,11 @@ describe("buildTimeline", () => {
   });
 
   it("computes a shared axis that covers the longest turn", () => {
+    const knownDurations = timeline.turns
+      .map((turn) => turn.totalMs)
+      .filter((value): value is number => value != null);
     expect(timeline.scaleMs % 250).toBe(0);
-    expect(timeline.scaleMs).toBeGreaterThanOrEqual(
-      Math.max(...timeline.turns.map((t) => t.totalMs)),
-    );
+    expect(timeline.scaleMs).toBeGreaterThanOrEqual(Math.max(...knownDurations));
   });
 });
 
