@@ -151,6 +151,8 @@ def _consume_tar_end(stream: BinaryIO, path: pathlib.Path) -> None:
                 f"{path}: source archive end padding is too large: "
                 f"{trailing_zero_bytes} bytes exceeds {MAX_TRAILING_ZERO_BYTES}"
             )
+    if trailing_zero_bytes % TAR_BLOCK_BYTES:
+        raise SystemExit(f"{path}: source archive end padding is not block-aligned")
 
 
 def _prescan_tar_headers(path: pathlib.Path) -> None:

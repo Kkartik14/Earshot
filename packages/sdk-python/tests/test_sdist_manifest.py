@@ -397,6 +397,33 @@ def test_sdist_checker_rejects_nonzero_payload_after_end_marker(tmp_path: Path) 
     assert "non-zero data after source archive end marker" in result.stderr
 
 
+def test_sdist_checker_rejects_non_block_aligned_end_padding(tmp_path: Path) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    with gzip.open(archive, mode="rb") as stream:
+        release_tar = stream.read()
+    with gzip.open(archive, mode="wb") as stream:
+        stream.write(release_tar)
+        stream.write(b"\0")
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "end padding is not block-aligned" in result.stderr
+
+
 def test_sdist_checker_rejects_excessive_file_count(tmp_path: Path) -> None:
     root = "earshot_observability-0.1.0"
     archive = tmp_path / f"{root}.tar.gz"
