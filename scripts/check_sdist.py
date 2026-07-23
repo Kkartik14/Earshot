@@ -64,6 +64,7 @@ TAR_BLOCK_BYTES = 512
 TAR_DIRECTORY_TYPE = b"5"
 TAR_LOCAL_PAX_TYPE = b"x"
 TAR_REGULAR_TYPES = frozenset({b"\0", b"0"})
+ALLOWED_LOCAL_PAX_KEYS = frozenset({"path"})
 
 
 def _archive_path(name: str) -> tuple[str, str]:
@@ -130,6 +131,52 @@ def _discard(stream: BinaryIO, count: int, path: pathlib.Path) -> None:
         if not chunk:
             raise SystemExit(f"{path}: truncated source archive")
         remaining -= len(chunk)
+
+
+def _read_exact(stream: BinaryIO, count: int, path: pathlib.Path) -> bytes:
+    chunks: list[bytes] = []
+    remaining = count
+    while remaining:
+        chunk = stream.read(min(remaining, 64 * 1024))
+        if not chunk:
+            raise SystemExit(f"{path}: truncated source archive")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _validate_local_pax(payload: bytes, path: pathlib.Path) -> None:
+    """Allow only unambiguous UTF-8 path records needed by the built sdist."""
+
+    if not payload:
+        raise SystemExit(f"{path}: empty local archive metadata")
+    offset = 0
+    seen: set[str] = set()
+    while offset < len(payload):
+        separator = payload.find(b" ", offset)
+        raw_length = payload[offset:separator] if separator >= 0 else b""
+        if not raw_length or any(byte not in b"0123456789" for byte in raw_length):
+            raise SystemExit(f"{path}: malformed local archive metadata")
+        record_length = int(raw_length)
+        record_end = offset + record_length
+        if record_end > len(payload) or record_length <= separator - offset + 2:
+            raise SystemExit(f"{path}: malformed local archive metadata")
+        record = payload[separator + 1 : record_end]
+        if not record.endswith(b"\n"):
+            raise SystemExit(f"{path}: malformed local archive metadata")
+        try:
+            assignment = record[:-1].decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise SystemExit(f"{path}: malformed local archive metadata") from error
+        key, delimiter, value = assignment.partition("=")
+        if not delimiter or not key or not value:
+            raise SystemExit(f"{path}: malformed local archive metadata")
+        if key not in ALLOWED_LOCAL_PAX_KEYS:
+            raise SystemExit(f"{path}: unsupported local archive metadata key: {key!r}")
+        if key in seen:
+            raise SystemExit(f"{path}: duplicate local archive metadata key: {key!r}")
+        seen.add(key)
+        offset = record_end
 
 
 def _consume_tar_end(stream: BinaryIO, path: pathlib.Path) -> None:
@@ -206,6 +253,9 @@ def _prescan_tar_headers(path: pathlib.Path) -> None:
                             f"{path}: source archive header metadata is too large: "
                             f"{metadata_bytes} bytes exceeds {MAX_HEADER_BYTES}"
                         )
+                    payload = _read_exact(stream, size, path)
+                    _validate_local_pax(payload, path)
+                    _discard(stream, padded_size - size, path)
                 elif member_type in TAR_REGULAR_TYPES:
                     unpacked_bytes += size
                     if unpacked_bytes > MAX_UNPACKED_BYTES:
@@ -215,7 +265,8 @@ def _prescan_tar_headers(path: pathlib.Path) -> None:
                         )
                 elif size:
                     raise SystemExit(f"{path}: source archive directory carries payload bytes")
-                _discard(stream, padded_size, path)
+                if member_type != TAR_LOCAL_PAX_TYPE:
+                    _discard(stream, padded_size, path)
     except (EOFError, OSError) as error:
         raise SystemExit(f"{path}: unreadable compressed source archive") from error
 

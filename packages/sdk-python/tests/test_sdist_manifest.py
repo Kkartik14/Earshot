@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import gzip
 import io
+import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -18,6 +20,63 @@ REQUIRED_NAMES = [
     "packages/sdk-python/src/earshot/web/index.html",
     "packages/sdk-python/src/earshot/web/assets/index.js",
 ]
+
+
+def _hostile_pythonpath(tmp_path: Path) -> dict[str, str]:
+    fake_package = tmp_path / "hostile-pythonpath" / "earshot"
+    fake_package.mkdir(parents=True)
+    (fake_package / "__init__.py").write_text(
+        "raise RuntimeError('release tool imported an unrelated checkout')\n"
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(fake_package.parent)
+    return environment
+
+
+def test_fault_fixture_generator_imports_sdk_from_its_own_checkout(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    script = checkout / "scripts" / "generate_fault_fixtures.py"
+    package = checkout / "packages" / "sdk-python" / "src" / "earshot"
+    script.parent.mkdir(parents=True)
+    package.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / script.name, script)
+    shutil.copytree(ROOT / "packages" / "sdk-python" / "src" / "earshot", package)
+
+    completed = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=checkout,
+        env=_hostile_pythonpath(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert (checkout / "fixtures" / "faults" / "slow_endpointing.incident.json").is_file()
+
+
+def test_capture_scrubber_imports_sdk_from_its_own_checkout(tmp_path: Path) -> None:
+    destination = tmp_path / "scrubbed.incident.json"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "scrub_captured_fixture.py"),
+            str(ROOT / "fixtures" / "captured" / "deepgram.incident.json"),
+            str(destination),
+            "--surface",
+            "hostile-path-test",
+        ],
+        cwd=ROOT,
+        env=_hostile_pythonpath(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert destination.is_file()
 
 
 def test_sdist_package_manifest_matches_runtime_tree() -> None:
@@ -43,6 +102,7 @@ def _write_archive(
     directories: list[str] | None = None,
     links: list[tuple[str, str]] | None = None,
     pax_headers: dict[str, str] | None = None,
+    local_pax_headers: dict[str, dict[str, str]] | None = None,
 ) -> None:
     with tarfile.open(
         path,
@@ -54,6 +114,7 @@ def _write_archive(
         for name in names:
             member = tarfile.TarInfo(name)
             member.size = payload_size
+            member.pax_headers = (local_pax_headers or {}).get(name, {})
             archive.addfile(member, io.BytesIO(b"x" * payload_size))
         for name, payload in (payloads or {}).items():
             member = tarfile.TarInfo(name)
@@ -519,6 +580,27 @@ def test_sdist_checker_rejects_global_pax_metadata_before_payload_parse(
     assert archive.stat().st_size < 8 * 1024 * 1024
     assert result.returncode != 0
     assert "global archive metadata" in result.stderr
+
+
+def test_sdist_checker_rejects_unknown_local_pax_metadata(tmp_path: Path) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    pyproject = f"{root}/pyproject.toml"
+    _write_archive(
+        archive,
+        [f"{root}/{name}" for name in REQUIRED_NAMES],
+        local_pax_headers={pyproject: {"comment": "unexpected release metadata"}},
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "unsupported local archive metadata key" in result.stderr
 
 
 def test_sdist_checker_rejects_excessive_compressed_size_before_parsing(

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
-from earshot.codec import encode_incident_json
-from earshot.contract import (
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "sdk-python" / "src"))
+
+from earshot.codec import encode_incident_json  # noqa: E402
+from earshot.contract import (  # noqa: E402
     Adapter,
     AudioStream,
     BundleManifest,
@@ -29,7 +33,6 @@ from earshot.contract import (
     TimeRange,
 )
 
-ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "fixtures" / "faults"
 WALL_ORIGIN = 1_800_000_000_000_000_000
 CLOCK_DOMAIN = "fault-fixture-clock"

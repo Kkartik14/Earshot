@@ -7,11 +7,15 @@ import hashlib
 import json
 import pathlib
 import re
+import sys
 from collections.abc import Iterator
 from typing import Any
 
-from earshot.codec import decode_incident_json, encode_incident_json
-from earshot.validation import validate_incident
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "packages" / "sdk-python" / "src"))
+
+from earshot.codec import decode_incident_json, encode_incident_json  # noqa: E402
+from earshot.validation import validate_incident  # noqa: E402
 
 _IDENTITY_KEYS = {
     "bundle_id": "bundle",
