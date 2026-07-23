@@ -16,12 +16,14 @@ their import namespaces collide.
 
 The release publishes both a wheel and source distribution. Both artifacts carry the
 same compiled viewer produced immediately before the Python build. Hatch has explicit
-wheel rules and an sdist source allowlist. The sdist checker independently rejects paths
-outside that manifest, development/private directory prefixes, more than 512 files, more
-than 32 MiB unpacked content, or archives missing the viewer, generated protobuf module,
-package entry point, or required source files. CI adds a forbidden dirty-tree sentinel
-before building, so an accidental return to VCS-wide sdist discovery fails the artifact
-lane.
+wheel rules and an sdist source allowlist. The sdist checker streams the archive and
+independently rejects paths outside that manifest; forbidden development/private path
+segments at any depth; anything under `earshot/web` except `index.html` and direct
+compiled `.js`/`.css` assets; more than 8 MiB compressed content, 1,024 total members,
+1 MiB of tar header metadata, 512 files, or 32 MiB unpacked content; and archives missing
+the viewer, generated protobuf module, package entry point, or required source files. CI
+adds a forbidden dirty-tree sentinel before building, so an accidental return to
+VCS-wide sdist discovery fails the artifact lane.
 
 The base install is the SDK and evidence core only:
 
