@@ -136,10 +136,14 @@ privacy omissions, finality/completeness, and analyzer limitations. The viewer p
 these facts but does not invent stage duration or cross-clock ordering.
 
 The explanation response is a closed API contract. API `0.2.0` adds each event's explicit
-`operation_id`, `trace_id`, and `span_id` when observed and validates the complete response
-against its exact source-derived projection. This is an API-version change; the independent
-analyzer version remains unchanged. Pre-v1 clients pinned to API `0.1.x` must regenerate
-their response types before consuming `0.2.x` explanations.
+`operation_id`, `trace_id`, and `span_id` when observed, plus an exact per-turn
+`measurements` lane distinct from derived metrics. Operation-owned, turn-owned, and
+ownerless measurement facts are mutually exclusive; repeated observations retain their
+source values and provenance. Validation checks exposed session, operation, event,
+measurement, coverage, omission, diagnosis, ownership, and evidence fields independently
+of the projection implementation. API and analyzer versions evolve independently. Pre-v1
+clients pinned to API `0.1.x` must regenerate their response types before consuming
+`0.2.x` explanations.
 
 ### `DELETE /v1/incidents/{bundle_id}`
 

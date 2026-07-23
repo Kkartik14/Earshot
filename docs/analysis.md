@@ -18,7 +18,7 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
-The current deterministic analyzer identity is `earshot.deterministic@1.0.3`.
+The current deterministic analyzer identity is `earshot.deterministic@0.2.0`.
 Analyzer version is part of the storage cache key; behavior changes such as delta-window
 aggregation therefore cannot reuse a projection produced by an older analyzer.
 
@@ -37,6 +37,17 @@ without float coercion; a total outside the interoperable I-JSON integer domain 
 unavailable instead of rounded. Instant and cumulative observations remain snapshots.
 Unassigned provider samples stay separate: analysis does not manufacture session or
 turn correlation merely to aggregate them.
+
+The explanation read model keeps derived metrics separate from exact measurement
+facts. A sample with an authored operation owner appears on that operation; an
+operation-less sample with an authored turn owner appears in that turn's
+`measurements`; only a genuinely ownerless sample appears in top-level
+`unassigned_measurements`. Repeated instant/cumulative observations are never replaced
+by the analyzer's selected scalar. Independent validation compares value type, value,
+unit, aggregation, owner, evidence ID, limitation, confidence, and every provenance
+field exposed by `ExplainedEvidence`. The immutable bundle remains authoritative for
+quality-sample windows/resources and evidence attributes that the presentation schema
+does not expose.
 
 The response anchor preference is:
 
@@ -75,6 +86,12 @@ Cross-clock subtraction requires the same explicit clock domain. Reversed compar
 time is `inconsistent`; missing/incomparable time is unavailable, never clamped to
 zero. Parallel tool output reports total work plus union elapsed time separately for
 each source clock/basis.
+
+Projection arrays use a permutation-invariant presentation order: comparable points
+are grouped canonically by clock domain and timestamp basis and sorted numerically only
+inside that group; equal or unlocated points use their stable identity. Array position
+between different groups is a serialization rule and does not assert temporal or
+causal order across clocks.
 
 ## Current diagnosis boundary
 
