@@ -54,6 +54,7 @@ alone never advances response, turn, or first-audio state.
 | `DeepgramAdapter`       | Nova `Results`/cursor events; Flux v2 `TurnInfo` lifecycle                    | STT stage; segment/cursor measurements; speculative Flux transitions; final transcript; committed/forced finality           |
 | `CartesiaAdapter`       | `chunk`, word/phoneme timestamps, `done`, `error`                             | Per-chunk `step_time`; app request-to-first-chunk TTFB; timestamp counts/durations; terminal/error metadata                 |
 | `OpenAIRealtimeAdapter` | speech start/stop, transcription, response create/audio delta/audio done/done | Fused `agent` interval; response-bound receipt latency; verified cancellation acceptance; terminal status                   |
+| `GeminiLiveAdapter`     | `setupComplete`, `serverContent` (model turn/audio/transcription/interrupted/turn end), `toolCall`/`toolCallCancellation`, `usageMetadata`, `goAway`, `sessionResumptionUpdate`, and the client's own `realtimeInput`/`clientContent` turn signals | Fused `agent` interval; client-stop-to-first-audio receipt latency; verified barge-in acceptance; tool operations; per-modality `gen_ai.usage.*` tokens; terminal status |
 | `SarvamAdapter`         | `events`, transcription `data`, `error`                                       | VAD receipt boundaries; native audio/processing measurements; final transcript; language code/probability; failed STT stage |
 
 Deepgram's `start`, `duration`, and `last_word_end` are audio-stream coordinates,
@@ -77,6 +78,23 @@ conflicting STT language values become the `unknown` group; they are never guess
 Configure `SarvamAdapter(language_code="unknown")` for auto-detection; a detected
 BCP-47 language and probability are then accepted. A fixed configured language
 rejects a provider probability as a schema conflict.
+
+Gemini Live is a native speech-to-speech runtime like OpenAI Realtime: one model
+turn projects into one fused `agent` operation, never invented STT, LLM, or TTS
+stages. Gemini emits no server `speech_stopped` message and no per-response id, so
+response latency is anchored on the client turn signal the application already owns
+on its upstream half of the bidi socket (`realtimeInput.activityEnd` or
+`clientContent.turnComplete`), and the fused response is correlated by an opaque
+session-scoped id. First received audio (`serverContent.modelTurn.inlineData`)
+authors `earshot.audio.first_packet_received` and the receipt-to-first-audio
+`earshot.turn.response_latency`; it is never client render, so `client.render`
+stays unobserved. Interruption acceptance is authored only when a real client
+speech gesture (`realtimeInput.activityStart`) during an open response is later cut
+off by a provider `serverContent.interrupted` signal — a bare `interrupted` frame
+with no preceding gesture is detection, never acceptance. Per-modality
+`usageMetadata` token counts reuse the canonical `gen_ai.usage.*` names, so a Gemini
+session and a framework session aggregate identically, and `functionCalls` project
+into `tool` operations with their arguments omitted.
 
 ## Advanced facade
 
@@ -113,6 +131,7 @@ stage look provider-measured.
   packages/sdk-python/tests/test_pipeline_facade.py \
   packages/sdk-python/tests/test_provider_adapters_deepgram_cartesia.py \
   packages/sdk-python/tests/test_provider_adapters_openai_sarvam.py \
+  packages/sdk-python/tests/test_provider_adapters_gemini.py \
   packages/sdk-python/tests/test_provider_adapter_parity.py
 ```
 
@@ -124,4 +143,5 @@ Primary references: [Deepgram streaming STT](https://developers.deepgram.com/ref
 [Deepgram Flux v2](https://developers.deepgram.com/reference/speech-to-text/listen-flux),
 [Cartesia WebSocket TTS](https://docs.cartesia.ai/api-reference/tts/websocket),
 [OpenAI Realtime WebSocket lifecycle](https://developers.openai.com/api/docs/guides/realtime-conversations#handling-audio-with-websockets),
+[Gemini Live BidiGenerateContent](https://ai.google.dev/api/live),
 and [Sarvam streaming STT schema](https://docs.sarvam.ai/api-reference/speech-to-text/transcribe/ws.md).
