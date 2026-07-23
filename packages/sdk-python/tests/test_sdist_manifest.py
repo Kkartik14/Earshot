@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import io
 import subprocess
 import sys
@@ -362,6 +363,38 @@ def test_sdist_checker_rejects_duplicate_archive_paths(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "duplicate archive path" in result.stderr
+
+
+def test_sdist_checker_rejects_nonzero_payload_after_end_marker(tmp_path: Path) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    with gzip.open(archive, mode="rb") as stream:
+        release_tar = stream.read()
+    hidden_tar = io.BytesIO()
+    with tarfile.open(fileobj=hidden_tar, mode="w") as trailing_archive:
+        member = tarfile.TarInfo(f"{root}/hidden/secret.txt")
+        member.size = 6
+        trailing_archive.addfile(member, io.BytesIO(b"secret"))
+    with gzip.open(archive, mode="wb") as stream:
+        stream.write(release_tar)
+        stream.write(hidden_tar.getvalue())
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "non-zero data after source archive end marker" in result.stderr
 
 
 def test_sdist_checker_rejects_excessive_file_count(tmp_path: Path) -> None:

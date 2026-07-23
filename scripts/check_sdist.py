@@ -59,6 +59,7 @@ MAX_FILE_COUNT = 512
 MAX_HEADER_BYTES = 1 * 1024 * 1024
 MAX_MEMBER_COUNT = 1_024
 MAX_UNPACKED_BYTES = 32 * 1024 * 1024
+MAX_TRAILING_ZERO_BYTES = 64 * 1024
 TAR_BLOCK_BYTES = 512
 TAR_DIRECTORY_TYPE = b"5"
 TAR_LOCAL_PAX_TYPE = b"x"
@@ -131,6 +132,27 @@ def _discard(stream: BinaryIO, count: int, path: pathlib.Path) -> None:
         remaining -= len(chunk)
 
 
+def _consume_tar_end(stream: BinaryIO, path: pathlib.Path) -> None:
+    """Require the canonical two-block marker and bounded zero-only padding."""
+
+    second_marker = stream.read(TAR_BLOCK_BYTES)
+    if len(second_marker) != TAR_BLOCK_BYTES:
+        raise SystemExit(f"{path}: source archive has no complete end marker")
+    if any(second_marker):
+        raise SystemExit(f"{path}: non-zero data after source archive end marker")
+
+    trailing_zero_bytes = 2 * TAR_BLOCK_BYTES
+    while chunk := stream.read(64 * 1024):
+        if any(chunk):
+            raise SystemExit(f"{path}: non-zero data after source archive end marker")
+        trailing_zero_bytes += len(chunk)
+        if trailing_zero_bytes > MAX_TRAILING_ZERO_BYTES:
+            raise SystemExit(
+                f"{path}: source archive end padding is too large: "
+                f"{trailing_zero_bytes} bytes exceeds {MAX_TRAILING_ZERO_BYTES}"
+            )
+
+
 def _prescan_tar_headers(path: pathlib.Path) -> None:
     """Bound metadata before tarfile can materialize hidden extension records."""
 
@@ -146,6 +168,7 @@ def _prescan_tar_headers(path: pathlib.Path) -> None:
                 if len(header) != TAR_BLOCK_BYTES:
                     raise SystemExit(f"{path}: truncated source archive header")
                 if header == b"\0" * TAR_BLOCK_BYTES:
+                    _consume_tar_end(stream, path)
                     return
 
                 member_count += 1
