@@ -50,12 +50,12 @@ otel = ["opentelemetry-api>=1.30,<2", "opentelemetry-sdk>=1.30,<2"]
 pipecat = [
   "opentelemetry-api>=1.30,<2",
   "opentelemetry-sdk>=1.30,<2",
-  "pipecat-ai[tracing]>=1.5.0,<1.6",
+  "pipecat-ai[tracing]>=1.5.0,<1.7",
 ]
 pipecat-groq = [
   "opentelemetry-api>=1.30,<2",
   "opentelemetry-sdk>=1.30,<2",
-  "pipecat-ai[groq,tracing]>=1.5.0,<1.6",
+  "pipecat-ai[groq,tracing]>=1.5.0,<1.7",
 ]
 livekit = [
   "livekit-agents>=1.6.5,<1.7",
