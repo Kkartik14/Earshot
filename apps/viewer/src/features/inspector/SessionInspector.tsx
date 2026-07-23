@@ -25,31 +25,14 @@ export function SessionInspector() {
   const [selection, setSelection] = useState<Selection | null>(null);
   // The control that opened the detail dialog; focus returns here on close.
   const restoreFocus = useRef<HTMLElement | null>(null);
-  const initializedExplanationFor = useRef<string | undefined>(undefined);
 
   // A session change invalidates both the current detail and its invoking
   // control. A same-session data refresh must preserve them.
   useEffect(() => {
     setSelection(null);
     restoreFocus.current = null;
-    initializedExplanationFor.current = undefined;
     setOpenTurns(new Set());
   }, [bundleId]);
-
-  // Open the slow turn once when this session's explanation first arrives.
-  // Background refreshes update the open detail without closing it or
-  // disturbing the user's expansion state.
-  useEffect(() => {
-    if (explanation.data == null || initializedExplanationFor.current === bundleId) {
-      return;
-    }
-    initializedExplanationFor.current = bundleId;
-    const turns = explanation.data?.turns ?? [];
-    const slow = turns.findIndex(
-      (t) => (t.metrics?.first_token_latency?.value ?? 0) > 500,
-    );
-    setOpenTurns(slow >= 0 ? new Set([slow]) : new Set());
-  }, [bundleId, explanation.data]);
 
   useEffect(() => {
     if (selection == null) {

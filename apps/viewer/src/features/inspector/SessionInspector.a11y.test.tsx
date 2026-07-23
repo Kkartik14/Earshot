@@ -113,6 +113,18 @@ function renderInspector() {
 }
 
 describe("SessionInspector focus management", () => {
+  it("does not invent a latency budget from measured first-token values", () => {
+    renderInspector();
+
+    expect(screen.getByRole("button", { name: /^T03/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByText("p95 first-token").parentElement?.className).not.toMatch(
+      /flagged/,
+    );
+  });
+
   it("opens a dialog focused on close and restores focus on Escape", () => {
     renderInspector();
     const turn = screen.getByRole("button", { name: /^T00/ });

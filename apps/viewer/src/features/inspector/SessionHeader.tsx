@@ -3,9 +3,9 @@ import { statusTone } from "../../lib/status";
 import styles from "./SessionHeader.module.css";
 import type { SessionSummary } from "./timeline";
 
-function Stat({ label, value, flag }: { label: string; value: string; flag?: boolean }) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className={`${styles.stat} ${flag ? styles.flagged : ""}`}>
+    <div className={styles.stat}>
       <span className={styles.statLabel}>{label}</span>
       <span className={styles.statValue}>{value}</span>
     </div>
@@ -34,11 +34,7 @@ export function SessionHeader({ summary }: { summary: SessionSummary }) {
       <div className={styles.stats}>
         <Stat label="Turns" value={String(summary.turns)} />
         <Stat label="Duration" value={formatDuration(summary.durationMs)} />
-        <Stat
-          label="p95 first-token"
-          value={formatMs(summary.p95FirstTokenMs)}
-          flag={(summary.p95FirstTokenMs ?? 0) > 500}
-        />
+        <Stat label="p95 first-token" value={formatMs(summary.p95FirstTokenMs)} />
         <Stat label="Interruptions" value={String(summary.interruptions)} />
       </div>
     </header>
