@@ -248,6 +248,7 @@ class SpanRouter:
                     identity_collision = True
                     self._trace_to_session[trace_id] = _AMBIGUOUS_TRACE
                     self._trace_to_session.move_to_end(trace_id)
+                    self._trim_trace_map_locked()
                 self._span_to_session[span_identity] = decision
                 self._span_to_session.move_to_end(span_identity)
                 while len(self._span_to_session) > _MAX_SPAN_STASH:
@@ -270,8 +271,7 @@ class SpanRouter:
                     # routes correctly; any missing exact entry fails closed.
                     self._trace_to_session[trace_id] = _AMBIGUOUS_TRACE
                 self._trace_to_session.move_to_end(trace_id)
-                while len(self._trace_to_session) > _MAX_TRACE_MAP:
-                    self._trace_to_session.popitem(last=False)
+                self._trim_trace_map_locked()
 
     def on_end(self, span: Any) -> None:
         if self._stale or not self._predicate(span):
@@ -378,6 +378,10 @@ class SpanRouter:
 
     def _route_has_inflight_span_locked(self, route_key: str) -> bool:
         return any(decision.route_key == route_key for decision in self._span_to_session.values())
+
+    def _trim_trace_map_locked(self) -> None:
+        while len(self._trace_to_session) > _MAX_TRACE_MAP:
+            self._trace_to_session.popitem(last=False)
 
     def _discard_retired_route_locked(self, route_key: str) -> None:
         """Release a retired sink only after no exact late span can reference it."""

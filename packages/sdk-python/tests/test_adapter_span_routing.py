@@ -15,6 +15,7 @@ import select
 import signal
 import threading
 import weakref
+from types import SimpleNamespace
 
 import pytest
 
@@ -369,6 +370,28 @@ def test_colliding_active_span_identity_quarantines_every_owner() -> None:
         assert _span_ids(bundle) == set()
         assert SECRET not in bundle.model_dump_json()
         assert handle.status.quarantined_span_count == 2
+
+
+def test_colliding_unattributed_trace_state_remains_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collision tombstones obey the same bound as learned trace ownership."""
+
+    from earshot.adapters import routing
+
+    monkeypatch.setattr(routing, "_MAX_TRACE_MAP", 1)
+    router = routing.SpanRouter(lambda span: True)
+    for trace_id in (1, 2):
+        span = SimpleNamespace(
+            get_span_context=lambda trace_id=trace_id: SimpleNamespace(
+                trace_id=trace_id,
+                span_id=42,
+            )
+        )
+        router.on_start(span, None)
+        router.on_start(span, None)
+
+    assert len(router._trace_to_session) == 1
 
 
 def test_evicted_exact_decision_disables_later_trace_reassignment(
