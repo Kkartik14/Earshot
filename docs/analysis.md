@@ -79,8 +79,8 @@ labels a fallback `receive_estimate`, `transport_estimate`, or `tts_estimate`.
 Operation-derived boundaries fail closed to the known `ok`, `completed`, and OTel
 `unset` statuses; other status spellings never author synthetic endpointing,
 provider-output, transport, receive, or render boundaries. When stream ownership is
-present, user anchors require input ownership and audio-response facts require output
-ownership. Ownership can come from the record's stream or participant, or from its
+present, user anchors require input ownership and text/audio response facts require
+output ownership. Ownership can come from the record's stream or participant, or from its
 linked operation; conflicting or opposite ownership fails closed. Generic transport
 fallbacks require explicit output ownership. A provider duration also cannot project
 beyond a comparable recorded operation end, and a stage fallback reuses only the exact
