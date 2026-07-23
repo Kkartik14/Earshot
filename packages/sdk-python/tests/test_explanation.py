@@ -445,6 +445,32 @@ def test_validate_explanation_accepts_faithful_projection() -> None:
         assert report.ok, [issue.code for issue in report.errors]
 
 
+def test_validate_explanation_rejects_changed_operation_status() -> None:
+    bundle = _fault("tool_timeout_retry")
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    [turn] = explanation.turns
+    failed = next(
+        operation for operation in turn.operations if operation.operation_id == "op-tool-attempt-1"
+    )
+    changed = failed.model_copy(update={"status": "ok"})
+    tampered_turn = turn.model_copy(
+        update={
+            "operations": tuple(
+                changed if operation.operation_id == changed.operation_id else operation
+                for operation in turn.operations
+            )
+        }
+    )
+    tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_explanation(bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
