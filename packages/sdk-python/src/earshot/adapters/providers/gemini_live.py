@@ -18,6 +18,7 @@ speech-started gesture that ends in a cancelled response.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from ...pipeline import TurnRecorder
@@ -87,6 +88,20 @@ def _flag(mapping: Mapping[str, object], *names: str) -> bool:
     return value
 
 
+@dataclass(slots=True)
+class _PendingToolCall:
+    """A Gemini ``toolCall`` REQUEST awaiting correlated outcome evidence.
+
+    Gemini emits a ``toolCall`` to ask the client to run a function; it is not
+    evidence the function ran. The request stays pending, correlated by its
+    function-call id, until a ``toolCallCancellation`` or client ``toolResponse``
+    for that id resolves it, or the turn ends with it still unresolved.
+    """
+
+    requested_ms: float
+    correlation_id: str
+
+
 class GeminiLiveAdapter(ProviderAdapter):
     """Map one Gemini Live stream into fused ``agent`` response evidence."""
 
@@ -98,6 +113,17 @@ class GeminiLiveAdapter(ProviderAdapter):
     ) -> None:
         super().__init__("gemini", identity_key=identity_key)
         self.model = sanitize_semantic_label(require_string(model, "model"))
+        self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
+        """Clear the fused-response, gesture, and tool-request state per session.
+
+        Every field here is per-session provider lifecycle state. Resetting all of
+        it at the session boundary keeps an unfinished session A from leaking a
+        stale open response (a false interruption) or a pending tool call into a
+        session B that reuses this adapter.
+        """
+
         self._pending_speech_stopped_ms: float | None = None
         self._response_open = False
         self._response_started_ms: float | None = None
@@ -105,6 +131,11 @@ class GeminiLiveAdapter(ProviderAdapter):
         self._response_speech_stopped_ms: float | None = None
         self._open_response_gesture: int | None = None
         self._next_gesture = 0
+        # Tool calls are REQUESTS correlated by function-call id; each entry stays
+        # pending until a cancellation or tool response resolves it, or the turn
+        # ends unresolved. The counter names id-less calls uniquely per session.
+        self._pending_tool_calls: dict[str, _PendingToolCall] = {}
+        self._anonymous_tool_calls = 0
 
     def adapt(
         self,
@@ -135,6 +166,11 @@ class GeminiLiveAdapter(ProviderAdapter):
         if cancellation is not _MISSING:
             return self._tool_call_cancellation(
                 payload, require_mapping(cancellation, "toolCallCancellation"), receipt_ms
+            )
+        tool_response = _pluck(payload, "toolResponse", "tool_response")
+        if tool_response is not _MISSING:
+            return self._tool_response(
+                payload, require_mapping(tool_response, "toolResponse"), receipt_ms
             )
         usage = _pluck(payload, "usageMetadata", "usage_metadata")
         if usage is not _MISSING:
@@ -282,6 +318,10 @@ class GeminiLiveAdapter(ProviderAdapter):
                         source_field="serverContent.generationComplete",
                         attributes=attributes,
                     )
+                # The turn/response ended: any tool still awaiting an outcome is
+                # unresolved, never a fabricated success.
+                if interrupted or turn_complete or generation_complete:
+                    self._flush_pending_tool_calls(turn)
 
             return AdapterUpdate(
                 provider=self.provider,
@@ -314,26 +354,19 @@ class GeminiLiveAdapter(ProviderAdapter):
 
         def create_update(update_id: str) -> AdapterUpdate:
             correlation_id = self._opaque_id("tool_call", base_native or update_id)
-            attributes = safe_attributes(correlation_id, event_type)
 
             def apply_update(turn: TurnRecorder) -> None:
-                for _native_id, args_present, index in parsed:
+                # A toolCall REQUESTS that the client run the function; it is not
+                # evidence the function ran. Ledger the arguments as omitted and
+                # register the request as pending -- author NO outcome until real
+                # evidence (a cancellation or client toolResponse) correlates to it.
+                for native_id, args_present, index in parsed:
                     if args_present:
                         turn.record_omission(
                             f"gemini.live.toolCall.functionCalls[{index}].args",
                             capture_class="tool_payload",
                         )
-                    turn.record_stage(
-                        "tool",
-                        "gemini",
-                        model=self.model,
-                        status="ok",
-                        at_ms=receipt_ms,
-                        source="app",
-                        confidence="estimated",
-                        source_field="toolCall.functionCalls",
-                        attributes=attributes,
-                    )
+                    self._register_pending_tool_call(native_id, receipt_ms)
 
             return AdapterUpdate(
                 provider=self.provider,
@@ -362,20 +395,74 @@ class GeminiLiveAdapter(ProviderAdapter):
 
         def create_update(update_id: str) -> AdapterUpdate:
             correlation_id = self._opaque_id("tool_call", cancelled_ids[0])
-            attributes = safe_attributes(correlation_id, event_type)
 
             def apply_update(turn: TurnRecorder) -> None:
-                for _native_id in cancelled_ids:
-                    turn.record_stage(
-                        "tool",
-                        "gemini",
-                        model=self.model,
+                # A cancellation RESOLVES the original pending request as cancelled;
+                # it never spawns a second operation for the same id.
+                for native_id in cancelled_ids:
+                    self._resolve_tool_call(
+                        turn,
+                        native_id,
                         status="cancelled",
-                        at_ms=receipt_ms,
-                        source="app",
-                        confidence="estimated",
+                        receipt_ms=receipt_ms,
+                        event_type=event_type,
                         source_field="toolCallCancellation.ids",
-                        attributes=attributes,
+                    )
+
+            return AdapterUpdate(
+                provider=self.provider,
+                event_type=event_type,
+                update_id=update_id,
+                correlation_id=correlation_id,
+                _apply_update=apply_update,
+            )
+
+        return self._remember(payload, create_update, observed_at_ms=receipt_ms)
+
+    def _tool_response(
+        self,
+        payload: Mapping[str, object],
+        tool_response: Mapping[str, object],
+        receipt_ms: float,
+    ) -> AdapterUpdate:
+        responses = _pluck(tool_response, "functionResponses", "function_responses")
+        if (
+            not isinstance(responses, Sequence)
+            or isinstance(responses, (str, bytes))
+            or not responses
+        ):
+            raise ValueError("toolResponse.functionResponses must be a non-empty array")
+        parsed: list[tuple[str, bool, int]] = []
+        for index, item in enumerate(responses):
+            response = require_mapping(item, f"toolResponse.functionResponses[{index}]")
+            raw_id = _pluck(response, "id")
+            native_id = require_string(
+                None if raw_id is _MISSING else raw_id,
+                f"toolResponse.functionResponses[{index}].id",
+            )
+            parsed.append((native_id, _present(response, "response"), index))
+        event_type = "toolResponse"
+
+        def create_update(update_id: str) -> AdapterUpdate:
+            correlation_id = self._opaque_id("tool_call", parsed[0][0])
+
+            def apply_update(turn: TurnRecorder) -> None:
+                # A client toolResponse is the correlated outcome the request was
+                # waiting for: it RESOLVES the same pending operation with real
+                # timing. The returned payload is content-free omitted evidence.
+                for native_id, response_present, index in parsed:
+                    if response_present:
+                        turn.record_omission(
+                            f"gemini.live.toolResponse.functionResponses[{index}].response",
+                            capture_class="tool_payload",
+                        )
+                    self._resolve_tool_call(
+                        turn,
+                        native_id,
+                        status="ok",
+                        receipt_ms=receipt_ms,
+                        event_type=event_type,
+                        source_field="toolResponse.functionResponses",
                     )
 
             return AdapterUpdate(
@@ -440,6 +527,9 @@ class GeminiLiveAdapter(ProviderAdapter):
                     source_field="goAway",
                     attributes=attributes,
                 )
+                # The session is ending: any tool still awaiting an outcome is
+                # unresolved.
+                self._flush_pending_tool_calls(turn)
 
             return AdapterUpdate(
                 provider=self.provider,
@@ -589,6 +679,9 @@ class GeminiLiveAdapter(ProviderAdapter):
                         attributes=attributes,
                     )
                     self._pending_speech_stopped_ms = receipt_ms
+                    # The client closed the turn: any tool still awaiting an
+                    # outcome is unresolved.
+                    self._flush_pending_tool_calls(turn)
 
             return AdapterUpdate(
                 provider=self.provider,
@@ -682,6 +775,89 @@ class GeminiLiveAdapter(ProviderAdapter):
         self._response_first_audio = False
         self._response_speech_stopped_ms = None
         self._open_response_gesture = None
+
+    # -- tool call lifecycle -------------------------------------------------
+
+    def _register_pending_tool_call(self, native_id: str | None, receipt_ms: float) -> None:
+        """Record a tool-call REQUEST as pending, correlated by its function id.
+
+        An id-less call can never be correlated to a cancellation or response, so
+        it is tracked under a synthetic per-session key and can only ever resolve
+        as unresolved at the turn boundary.
+        """
+
+        if native_id is not None:
+            key = native_id
+        else:
+            self._anonymous_tool_calls += 1
+            key = f"__anonymous-{self._anonymous_tool_calls}"
+        correlation_id = self._opaque_id("tool_call", key)
+        # Under replay the same request re-registers harmlessly; keep the earliest
+        # observed request receipt as the operation start.
+        self._pending_tool_calls.setdefault(
+            key, _PendingToolCall(requested_ms=receipt_ms, correlation_id=correlation_id)
+        )
+
+    def _resolve_tool_call(
+        self,
+        turn: TurnRecorder,
+        native_id: str,
+        *,
+        status: str,
+        receipt_ms: float,
+        event_type: str,
+        source_field: str,
+    ) -> None:
+        """Resolve the pending request for ``native_id`` as one timed operation.
+
+        The request receipt anchors the start; the resolving evidence anchors the
+        end. A resolution for an id that is not pending (never requested, or
+        already resolved) authors nothing -- it cannot invent a request it never
+        observed, and the first resolution for an id is terminal.
+        """
+
+        pending = self._pending_tool_calls.pop(native_id, None)
+        if pending is None:
+            return
+        attributes = safe_attributes(pending.correlation_id, event_type)
+        turn.record_stage(
+            "tool",
+            "gemini",
+            model=self.model,
+            status=status,
+            at_ms=pending.requested_ms,
+            ended_at_ms=receipt_ms,
+            source="app",
+            confidence="estimated",
+            source_field=source_field,
+            attributes=attributes,
+        )
+
+    def _flush_pending_tool_calls(self, turn: TurnRecorder) -> None:
+        """Author every still-pending request as unresolved at a turn boundary.
+
+        A tool call unanswered when its turn ends never received outcome evidence.
+        It is recorded honestly as an open (untimed) operation with an unresolved
+        status -- never a fabricated success and never an invented duration.
+        """
+
+        if not self._pending_tool_calls:
+            return
+        for pending in self._pending_tool_calls.values():
+            attributes = safe_attributes(pending.correlation_id, "toolCall")
+            turn.record_stage(
+                "tool",
+                "gemini",
+                model=self.model,
+                status="unresolved",
+                at_ms=pending.requested_ms,
+                ended_at_ms=None,
+                source="app",
+                confidence="estimated",
+                source_field="toolCall.functionCalls",
+                attributes=attributes,
+            )
+        self._pending_tool_calls.clear()
 
     # -- parsing helpers -----------------------------------------------------
 

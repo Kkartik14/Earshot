@@ -78,6 +78,20 @@ def _normal_events() -> list[tuple[dict[str, object], int]]:
         ),
         (
             {
+                "toolResponse": {
+                    "functionResponses": [
+                        {
+                            "id": PRIVATE_TOOL_ID,
+                            "name": "lookup",
+                            "response": {"out": PRIVATE_TOOL_ARG},
+                        }
+                    ]
+                }
+            },
+            1_470,
+        ),
+        (
+            {
                 "serverContent": {"turnComplete": True, "generationComplete": True},
                 "usageMetadata": _usage_metadata(),
             },
@@ -363,3 +377,152 @@ def test_gemini_and_openai_native_s2s_project_the_same_governed_turn_facts() -> 
 
     assert "openai.realtime.audio_end" in _native_measurements(openai_bundle, "openai.")
     assert not _native_measurements(gemini_bundle, "openai.")
+
+
+# -- F3: a reused adapter must not leak one session's lifecycle state into the next
+
+
+def test_gemini_session_close_isolates_lifecycle_state() -> None:
+    adapter = GeminiLiveAdapter(model=MODEL, identity_key=IDENTITY_KEY)
+
+    # Session A opens a fused response and is abandoned mid-turn (no turnComplete).
+    session_a = earshot.pipeline(session_id="gemini-iso-a", started_at_unix_nano=START)
+    with session_a.turn() as turn:
+        adapter.adapt({"realtimeInput": {"activityEnd": {}}}, received_at_ms=1_000).apply(turn)
+        adapter.adapt(
+            {"serverContent": {"modelTurn": {"parts": [{"inlineData": {"data": PRIVATE_AUDIO}}]}}},
+            received_at_ms=1_410,
+        ).apply(turn)
+    session_a.close()
+
+    adapter.close()
+
+    # close() must reset EVERY per-session lifecycle field, not just replay bookkeeping.
+    assert adapter._response_open is False
+    assert adapter._response_started_ms is None
+    assert adapter._response_speech_stopped_ms is None
+    assert adapter._response_first_audio is False
+    assert adapter._open_response_gesture is None
+    assert adapter._pending_speech_stopped_ms is None
+    assert adapter._next_gesture == 0
+    assert adapter._pending_tool_calls == {}
+
+    # Session B reuses the adapter; a user gesture must NOT be attributed to A's
+    # unfinished response as an interruption.
+    session_b = earshot.pipeline(session_id="gemini-iso-b", started_at_unix_nano=START)
+    with session_b.turn() as turn:
+        adapter.adapt({"realtimeInput": {"activityStart": {}}}, received_at_ms=2_000).apply(turn)
+        adapter.adapt({"serverContent": {"turnComplete": True}}, received_at_ms=2_100).apply(turn)
+    bundle_b = session_b.close()
+
+    events_b = [event.event_name for event in bundle_b.profile.events]
+    assert "earshot.speech.started" in events_b
+    assert "earshot.interruption.detected" not in events_b
+
+
+# -- F4: a Gemini toolCall is a REQUEST resolved only by correlated evidence
+
+
+def _tool_ops(bundle: earshot.IncidentBundle):
+    return [op for op in bundle.profile.operations if op.operation_name == "tool"]
+
+
+def _offset_ms(time_point) -> float:
+    return (int(time_point.source_time_unix_nano) - START) / 1_000_000
+
+
+def test_gemini_tool_call_is_requested_not_a_zero_duration_success() -> None:
+    bundle = _drive(
+        [
+            ({"realtimeInput": {"activityEnd": {}}}, 1_000),
+            ({"toolCall": {"functionCalls": [{"id": "call-1", "name": "lookup"}]}}, 1_100),
+            ({"serverContent": {"turnComplete": True}}, 1_300),
+        ],
+        session_id="gemini-tool-requested",
+    )
+
+    assert validate_incident(bundle).ok
+    tools = _tool_ops(bundle)
+    assert len(tools) == 1
+    [tool] = tools
+    # A request is not evidence of a successful, instantaneous execution.
+    assert tool.status != "ok"
+    assert tool.ended_at is None
+
+
+def test_gemini_tool_call_cancellation_resolves_the_same_operation() -> None:
+    bundle = _drive(
+        [
+            ({"realtimeInput": {"activityEnd": {}}}, 1_000),
+            ({"toolCall": {"functionCalls": [{"id": "call-1", "name": "lookup"}]}}, 1_100),
+            ({"toolCallCancellation": {"ids": ["call-1"]}}, 1_200),
+            ({"serverContent": {"turnComplete": True}}, 1_300),
+        ],
+        session_id="gemini-tool-cancelled",
+    )
+
+    assert validate_incident(bundle).ok
+    tools = _tool_ops(bundle)
+    # The cancellation resolves the ORIGINAL request; it never spawns a second op.
+    assert len(tools) == 1
+    [tool] = tools
+    assert tool.status == "cancelled"
+    # Real timing: the request receipt starts it, the cancellation receipt ends it.
+    assert tool.ended_at is not None
+    assert _offset_ms(tool.started_at) == 1_100
+    assert _offset_ms(tool.ended_at) == 1_200
+
+
+def test_gemini_tool_response_resolves_with_real_timing() -> None:
+    bundle = _drive(
+        [
+            ({"realtimeInput": {"activityEnd": {}}}, 1_000),
+            ({"toolCall": {"functionCalls": [{"id": "call-1", "name": "lookup"}]}}, 1_100),
+            (
+                {
+                    "toolResponse": {
+                        "functionResponses": [
+                            {
+                                "id": "call-1",
+                                "name": "lookup",
+                                "response": {"out": PRIVATE_TOOL_ARG},
+                            }
+                        ]
+                    }
+                },
+                1_180,
+            ),
+            ({"serverContent": {"turnComplete": True}}, 1_300),
+        ],
+        session_id="gemini-tool-responded",
+    )
+
+    assert validate_incident(bundle).ok
+    tools = _tool_ops(bundle)
+    assert len(tools) == 1
+    [tool] = tools
+    assert tool.status == "ok"
+    assert tool.ended_at is not None
+    assert _offset_ms(tool.started_at) == 1_100
+    assert _offset_ms(tool.ended_at) == 1_180
+    # The tool response payload never survives as retained content.
+    assert PRIVATE_TOOL_ARG.encode() not in encode_incident_json(bundle)
+
+
+def test_gemini_unanswered_tool_call_stays_unresolved() -> None:
+    bundle = _drive(
+        [
+            ({"realtimeInput": {"activityEnd": {}}}, 1_000),
+            ({"toolCall": {"functionCalls": [{"id": "call-1", "name": "lookup"}]}}, 1_100),
+            ({"serverContent": {"turnComplete": True}}, 1_300),
+        ],
+        session_id="gemini-tool-unresolved",
+    )
+
+    assert validate_incident(bundle).ok
+    tools = _tool_ops(bundle)
+    assert len(tools) == 1
+    [tool] = tools
+    # No outcome evidence ever arrived: honest unknown, never fabricated success.
+    assert tool.status == "unresolved"
+    assert tool.ended_at is None
