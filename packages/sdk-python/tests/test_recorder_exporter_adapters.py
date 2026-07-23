@@ -1114,6 +1114,138 @@ def test_pipecat_same_span_callback_is_idempotent_not_a_duplicate_fact() -> None
     assert validate_incident(bundle).ok
 
 
+def test_pipecat_all_identity_ledgers_stay_bounded_under_high_volume() -> None:
+    with pytest.raises(ValueError, match="max_tracking_entries"):
+        PipecatAdapter(_pipecat_recorder(), max_tracking_entries=0)
+
+    source_recorder = IncidentRecorder(
+        config=RecorderConfig(
+            clock_domain_id="server-clock",
+            max_records=20_000,
+            max_capture_bytes=64 * 1024 * 1024,
+        )
+    )
+    adapter = PipecatAdapter(source_recorder, max_tracking_entries=64)
+    first_span = {
+        "name": "llm",
+        "trace_id": f"{1:032x}",
+        "span_id": f"{1:016x}",
+        "status": "ok",
+        "started_at": point(1).model_dump(mode="json"),
+        "ended_at": point(2).model_dump(mode="json"),
+        "events": tuple(
+            {
+                "name": "provider.event",
+                "timestamp": index + 1,
+                "attributes": {},
+            }
+            for index in range(1_000)
+        ),
+    }
+    adapter.consume_span(first_span)
+    for index in range(1, 1_000):
+        adapter.consume_span(
+            {
+                "name": "llm",
+                "trace_id": f"{index + 1:032x}",
+                "span_id": f"{index + 1:016x}",
+                "status": "ok",
+                "started_at": point(1).model_dump(mode="json"),
+                "ended_at": point(2).model_dump(mode="json"),
+                "events": (),
+            }
+        )
+
+    first_interruption = {"type": "InterruptionFrame", "id": 0}
+    first_event_id = adapter.consume_interruption_frame(
+        first_interruption,
+        observed_at=None,
+        bot_was_speaking=True,
+    )
+    for index in range(1, 1_000):
+        adapter.consume_interruption_frame(
+            {"type": "InterruptionFrame", "id": index},
+            observed_at=None,
+            bot_was_speaking=True,
+        )
+
+    status = adapter.tracking_status()
+    assert status.limit_per_ledger == 64
+    assert dict(status.entries) == {
+        "accepted_interruption_frames": 64,
+        "interruption_frames": 64,
+        "source_events": 64,
+        "spans": 64,
+    }
+    assert status.saturated_ledgers == (
+        "interruption_frames",
+        "source_events",
+        "spans",
+    )
+    assert source_recorder.status().captured_records <= 200
+
+    captured_before_replay = source_recorder.status().captured_records
+    assert adapter.consume_span(first_span) is not None
+    assert (
+        adapter.consume_interruption_frame(
+            first_interruption,
+            observed_at=None,
+            bot_was_speaking=False,
+        )
+        == first_event_id
+    )
+    assert (
+        adapter.consume_interruption_frame(
+            {"type": "InterruptionFrame", "id": 1_001},
+            observed_at=None,
+            bot_was_speaking=True,
+        )
+        is None
+    )
+    assert source_recorder.status().captured_records == captured_before_replay
+
+    bundle = source_recorder.close()
+    assert len(bundle.profile.operations) == 64
+    assert len(bundle.profile.events) == 128
+    assert {
+        (item.signal, item.availability, item.reason) for item in bundle.profile.coverage
+    }.issuperset(
+        {
+            ("pipecat.tracking.interruption_frames", "partial", "max_tracking_entries"),
+            ("pipecat.tracking.source_events", "partial", "max_tracking_entries"),
+            ("pipecat.tracking.spans", "partial", "max_tracking_entries"),
+        }
+    )
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_span_tracking_bound_is_atomic_for_unique_concurrent_spans() -> None:
+    recorder = _pipecat_recorder()
+    adapter = PipecatAdapter(recorder, max_tracking_entries=64)
+    spans = [
+        {
+            "name": "llm",
+            "trace_id": f"{index + 1:032x}",
+            "span_id": f"{index + 1:016x}",
+            "status": "ok",
+            "started_at": point(1).model_dump(mode="json"),
+            "ended_at": point(2).model_dump(mode="json"),
+        }
+        for index in range(1_000)
+    ]
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        operation_ids = list(pool.map(adapter.consume_span, spans))
+
+    assert len(operation_ids) == 1_000
+    status = adapter.tracking_status()
+    assert dict(status.entries)["spans"] == 64
+    assert status.saturated_ledgers == ("spans",)
+    bundle = recorder.close()
+    assert len(bundle.profile.operations) == 64
+    assert validate_incident(bundle).ok
+
+
 def test_pipecat_conflicting_duplicate_identity_is_rejected_without_second_fact() -> None:
     recorder = _pipecat_recorder()
     adapter = PipecatAdapter(recorder)
@@ -1567,6 +1699,76 @@ def test_pipecat_interruption_frame_is_classified_on_first_observation() -> None
     asyncio.run(observe())
     bundle = recorder.close()
     assert bundle.profile.events == ()
+    assert validate_incident(bundle).ok
+
+
+def test_pipecat_observer_identity_ledgers_fail_closed_at_the_bound() -> None:
+    pytest.importorskip("pipecat")
+    from pipecat.frames.frames import (
+        BotStartedSpeakingFrame,
+        EndFrame,
+        InterruptionFrame,
+        StartFrame,
+    )
+    from pipecat.observers.base_observer import FramePushed
+    from pipecat.processors.frame_processor import FrameDirection
+
+    recorder = _pipecat_recorder()
+    adapter = PipecatAdapter(recorder, framework_version="1.5.0", max_tracking_entries=64)
+    turn_observer = adapter.create_observer()
+    playout_observer = adapter.create_observer()
+    source = SimpleNamespace(name="source")
+    destination = SimpleNamespace(name="destination")
+
+    async def push(observer: object, frame: object, timestamp: int) -> None:
+        await observer.on_push_frame(  # type: ignore[attr-defined]
+            FramePushed(
+                source=source,
+                destination=destination,
+                frame=frame,
+                direction=FrameDirection.DOWNSTREAM,
+                timestamp=timestamp,
+            )
+        )
+
+    async def observe() -> None:
+        for index in range(65):
+            await push(turn_observer, StartFrame(), index)
+            await push(playout_observer, BotStartedSpeakingFrame(), index)
+        # The playout observer had active bot state before saturation. Once it
+        # can no longer track frame identities, End/Start must not re-enable it
+        # and it must not infer an interruption from stale or new playout state.
+        await push(playout_observer, EndFrame(), 98)
+        await push(playout_observer, StartFrame(), 99)
+        await push(playout_observer, BotStartedSpeakingFrame(), 100)
+        await push(playout_observer, InterruptionFrame(), 101)
+
+    asyncio.run(observe())
+    turn_status = turn_observer.tracking_status()
+    playout_status = playout_observer.tracking_status()
+    assert dict(turn_status.entries) == {"playout_frames": 0, "turn_frames": 64}
+    assert turn_status.saturated_ledgers == ("turn_frames",)
+    assert dict(playout_status.entries) == {"playout_frames": 64, "turn_frames": 0}
+    assert playout_status.saturated_ledgers == ("playout_frames",)
+
+    bundle = recorder.close()
+    assert bundle.profile.events == ()
+    assert {
+        (item.signal, item.availability, item.reason) for item in bundle.profile.coverage
+    }.issuperset(
+        {
+            (
+                "pipecat.tracking.observer.playout_frames",
+                "partial",
+                "max_tracking_entries",
+            ),
+            (
+                "pipecat.tracking.observer.turn_frames",
+                "partial",
+                "max_tracking_entries",
+            ),
+        }
+    )
     assert validate_incident(bundle).ok
 
 

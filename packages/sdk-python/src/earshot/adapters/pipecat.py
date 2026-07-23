@@ -28,7 +28,14 @@ from ..privacy import sanitize_semantic_label, sanitize_source_label
 from ..recorder import IncidentRecorder
 from ..versions import PIPECAT_ADAPTER_VERSION
 from . import routing
-from .base import AdapterDependencyError, stable_id, value
+from .base import (
+    DEFAULT_ADAPTER_TRACKING_ENTRIES,
+    AdapterDependencyError,
+    AdapterTrackingStatus,
+    stable_id,
+    validate_tracking_limit,
+    value,
+)
 
 _EXACT_SPAN_NAMES = {
     # Current Pipecat native speech-to-speech tool telemetry. Exact matching is
@@ -161,14 +168,22 @@ def _normalize_native_attributes(span: object, attributes: dict[str, object]) ->
 
 
 class PipecatAdapter:
-    def __init__(self, recorder: IncidentRecorder, *, framework_version: str = "unknown"):
+    def __init__(
+        self,
+        recorder: IncidentRecorder,
+        *,
+        framework_version: str = "unknown",
+        max_tracking_entries: int = DEFAULT_ADAPTER_TRACKING_ENTRIES,
+    ):
         self.recorder = recorder
         self.framework_version = framework_version
+        self._max_tracking_entries = validate_tracking_limit(max_tracking_entries)
         self._render_coverage_written = False
         self._seen: dict[tuple[str, str], str] = {}
         self._seen_interruption_frames: set[int] = set()
         self._accepted_interruption_frames: set[int] = set()
         self._seen_source_events: set[str] = set()
+        self._saturated_ledgers: set[str] = set()
         self._routing_handle: routing.RoutingHandle | None = None
         self._lock = threading.RLock()
         self.recorder.register_adapter(
@@ -179,6 +194,48 @@ class PipecatAdapter:
                 framework_version=framework_version,
             )
         )
+
+    def tracking_status(self) -> AdapterTrackingStatus:
+        """Return content-free sizes for all persistent identity ledgers."""
+
+        with self._lock:
+            return AdapterTrackingStatus(
+                limit_per_ledger=self._max_tracking_entries,
+                entries=(
+                    (
+                        "accepted_interruption_frames",
+                        len(self._accepted_interruption_frames),
+                    ),
+                    ("interruption_frames", len(self._seen_interruption_frames)),
+                    ("source_events", len(self._seen_source_events)),
+                    ("spans", len(self._seen)),
+                ),
+                saturated_ledgers=tuple(sorted(self._saturated_ledgers)),
+            )
+
+    def _tracking_has_capacity_locked(
+        self,
+        ledger_name: str,
+        ledger: Mapping[object, object] | set[object],
+    ) -> bool:
+        if len(ledger) < self._max_tracking_entries:
+            return True
+        if ledger_name not in self._saturated_ledgers:
+            self._saturated_ledgers.add(ledger_name)
+            self._record_tracking_saturation(ledger_name)
+        return False
+
+    def _record_tracking_saturation(self, ledger_name: str) -> None:
+        """Best-effort, content-free notice that identity tracking is partial."""
+
+        try:
+            self.recorder.record_coverage(
+                f"pipecat.tracking.{ledger_name}",
+                "partial",
+                "max_tracking_entries",
+            )
+        except Exception:
+            return
 
     def consume_span(self, span: object) -> str:
         """Consume a normalized/native Pipecat span-shaped object."""
@@ -313,6 +370,8 @@ class PipecatAdapter:
             if previous is not None:
                 if previous != fingerprint:
                     raise ValueError("conflicting duplicate Pipecat span identity")
+                return operation_id
+            if not self._tracking_has_capacity_locked("spans", self._seen):
                 return operation_id
             evidence = Evidence(
                 source="pipecat",
@@ -487,6 +546,11 @@ class PipecatAdapter:
             )
             if event_id in self._seen_source_events:
                 continue
+            if not self._tracking_has_capacity_locked(
+                "source_events",
+                self._seen_source_events,
+            ):
+                break
             native_attributes = dict(value(native_event, "attributes", {}) or {})
             native_attributes["earshot.source.event.name"] = sanitize_source_label(native_name)
             self.recorder.record_event(
@@ -577,6 +641,11 @@ class PipecatAdapter:
         with self._lock:
             if canonical_id in self._seen_interruption_frames:
                 return event_id if canonical_id in self._accepted_interruption_frames else None
+            if not self._tracking_has_capacity_locked(
+                "interruption_frames",
+                self._seen_interruption_frames,
+            ):
+                return None
             # Classify the broadcast on first observation. Without this guard, a
             # normal first-turn frame could traverse another edge after bot
             # playout starts and be retroactively mislabeled as a barge-in.
@@ -634,6 +703,46 @@ class PipecatAdapter:
                 self._pending_interrupted_turn: str | None = None
                 self._seen_playout_frames: set[int] = set()
                 self._seen_turn_frames: set[int] = set()
+                self._saturated_ledgers: set[str] = set()
+                self._tracking_disabled = False
+                self._tracking_lock = threading.RLock()
+
+            def tracking_status(self) -> AdapterTrackingStatus:
+                """Return content-free sizes for this observer's ledgers."""
+
+                with self._tracking_lock:
+                    return AdapterTrackingStatus(
+                        limit_per_ledger=adapter._max_tracking_entries,
+                        entries=(
+                            ("playout_frames", len(self._seen_playout_frames)),
+                            ("turn_frames", len(self._seen_turn_frames)),
+                        ),
+                        saturated_ledgers=tuple(sorted(self._saturated_ledgers)),
+                    )
+
+            def _reset_state(self) -> None:
+                self._active_bot_playouts = 0
+                self._current_turn_number = None
+                self._has_bot_spoken = False
+                self._turn_bot_speaking = False
+                self._pending_interrupted_turn = None
+
+            def _admit_frame(
+                self,
+                ledger_name: str,
+                ledger: set[int],
+                canonical_id: int,
+            ) -> bool:
+                if canonical_id in ledger or self._tracking_disabled:
+                    return False
+                if len(ledger) >= adapter._max_tracking_entries:
+                    self._saturated_ledgers.add(ledger_name)
+                    self._tracking_disabled = True
+                    self._reset_state()
+                    adapter._record_tracking_saturation(f"observer.{ledger_name}")
+                    return False
+                ledger.add(canonical_id)
+                return True
 
             @staticmethod
             def _canonical_frame_id(frame: object) -> int:
@@ -651,75 +760,80 @@ class PipecatAdapter:
 
             async def on_push_frame(self, data: FramePushed) -> None:
                 try:
-                    if isinstance(data.frame, (EndFrame, CancelFrame)):
-                        self._active_bot_playouts = 0
-                        self._current_turn_number = None
-                        self._has_bot_spoken = False
-                        self._turn_bot_speaking = False
-                        self._pending_interrupted_turn = None
-                        return
-                    if isinstance(data.frame, StartFrame):
-                        canonical_id = self._canonical_frame_id(data.frame)
-                        if canonical_id in self._seen_turn_frames:
+                    with self._tracking_lock:
+                        if isinstance(data.frame, (EndFrame, CancelFrame)):
+                            self._reset_state()
                             return
-                        self._seen_turn_frames.add(canonical_id)
-                        self._active_bot_playouts = 0
-                        self._current_turn_number = 1
-                        self._has_bot_spoken = False
-                        self._turn_bot_speaking = False
-                        self._pending_interrupted_turn = None
-                        return
-                    if isinstance(data.frame, UserStartedSpeakingFrame):
-                        canonical_id = self._canonical_frame_id(data.frame)
-                        if canonical_id in self._seen_turn_frames:
+                        if self._tracking_disabled:
                             return
-                        self._seen_turn_frames.add(canonical_id)
-                        if self._current_turn_number is None:
+                        if isinstance(data.frame, StartFrame):
+                            canonical_id = self._canonical_frame_id(data.frame)
+                            if not self._admit_frame(
+                                "turn_frames",
+                                self._seen_turn_frames,
+                                canonical_id,
+                            ):
+                                return
+                            self._reset_state()
                             self._current_turn_number = 1
-                        if self._turn_bot_speaking:
-                            self._pending_interrupted_turn = str(self._current_turn_number)
-                            self._current_turn_number += 1
-                            self._has_bot_spoken = False
-                            self._turn_bot_speaking = False
-                        elif self._has_bot_spoken:
-                            self._current_turn_number += 1
-                            self._has_bot_spoken = False
-                        return
-                    if isinstance(
-                        data.frame,
-                        (BotStartedSpeakingFrame, BotStoppedSpeakingFrame),
-                    ):
-                        canonical_id = self._canonical_frame_id(data.frame)
-                        if canonical_id in self._seen_playout_frames:
                             return
-                        self._seen_playout_frames.add(canonical_id)
-                        if isinstance(data.frame, BotStartedSpeakingFrame):
+                        if isinstance(data.frame, UserStartedSpeakingFrame):
+                            canonical_id = self._canonical_frame_id(data.frame)
+                            if not self._admit_frame(
+                                "turn_frames",
+                                self._seen_turn_frames,
+                                canonical_id,
+                            ):
+                                return
                             if self._current_turn_number is None:
                                 self._current_turn_number = 1
-                            self._active_bot_playouts += 1
-                            self._has_bot_spoken = True
-                            self._turn_bot_speaking = True
-                        else:
-                            self._active_bot_playouts = max(
-                                0,
-                                self._active_bot_playouts - 1,
-                            )
-                            self._turn_bot_speaking = self._active_bot_playouts > 0
-                            if self._active_bot_playouts == 0:
-                                self._pending_interrupted_turn = None
-                        return
-                    if not isinstance(data.frame, InterruptionFrame):
-                        return
-                    interrupted_turn = self._pending_interrupted_turn
-                    if interrupted_turn is None and self._current_turn_number is not None:
-                        interrupted_turn = str(self._current_turn_number)
-                    adapter.consume_interruption_frame(
-                        data.frame,
-                        observed_at=None,
-                        bot_was_speaking=self._active_bot_playouts > 0,
-                        interrupted_turn_id=interrupted_turn,
-                    )
-                    self._pending_interrupted_turn = None
+                            if self._turn_bot_speaking:
+                                self._pending_interrupted_turn = str(self._current_turn_number)
+                                self._current_turn_number += 1
+                                self._has_bot_spoken = False
+                                self._turn_bot_speaking = False
+                            elif self._has_bot_spoken:
+                                self._current_turn_number += 1
+                                self._has_bot_spoken = False
+                            return
+                        if isinstance(
+                            data.frame,
+                            (BotStartedSpeakingFrame, BotStoppedSpeakingFrame),
+                        ):
+                            canonical_id = self._canonical_frame_id(data.frame)
+                            if not self._admit_frame(
+                                "playout_frames",
+                                self._seen_playout_frames,
+                                canonical_id,
+                            ):
+                                return
+                            if isinstance(data.frame, BotStartedSpeakingFrame):
+                                if self._current_turn_number is None:
+                                    self._current_turn_number = 1
+                                self._active_bot_playouts += 1
+                                self._has_bot_spoken = True
+                                self._turn_bot_speaking = True
+                            else:
+                                self._active_bot_playouts = max(
+                                    0,
+                                    self._active_bot_playouts - 1,
+                                )
+                                self._turn_bot_speaking = self._active_bot_playouts > 0
+                                if self._active_bot_playouts == 0:
+                                    self._pending_interrupted_turn = None
+                            return
+                        if not isinstance(data.frame, InterruptionFrame):
+                            return
+                        interrupted_turn = self._pending_interrupted_turn
+                        if interrupted_turn is None and self._current_turn_number is not None:
+                            interrupted_turn = str(self._current_turn_number)
+                        adapter.consume_interruption_frame(
+                            data.frame,
+                            observed_at=None,
+                            bot_was_speaking=self._active_bot_playouts > 0,
+                            interrupted_turn_id=interrupted_turn,
+                        )
+                        self._pending_interrupted_turn = None
                 except Exception:
                     adapter._record_coverage_safe(
                         "pipecat.interruption",
