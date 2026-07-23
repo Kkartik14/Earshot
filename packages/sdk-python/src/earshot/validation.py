@@ -11,9 +11,12 @@ from __future__ import annotations
 import hashlib
 import math
 from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+
+if TYPE_CHECKING:
+    from .explanation import IncidentExplanation
 
 from .contract import (
     SCHEMA_VERSION,
@@ -2232,4 +2235,217 @@ def validate_derived_analysis(
                         ),
                     )
                 )
+    return ValidationReport(issues=tuple(issues))
+
+
+def validate_explanation(
+    bundle: IncidentBundle,
+    analysis: DerivedAnalysis,
+    explanation: IncidentExplanation,
+) -> ValidationReport:
+    """Validate a UI explanation against its exact evidence graph and analysis.
+
+    The explanation is a read model derived from an already-governed bundle and
+    its analysis sidecar. This re-checks the closed shape, then asserts that every
+    citation resolves to real evidence, that diagnoses mirror the analysis without
+    invention, that no source operation is silently dropped, and that no interval
+    or duration is manufactured across incomparable clocks.
+    """
+
+    from .explanation import IncidentExplanation as _IncidentExplanation
+    from .explanation import _coordinate
+
+    issues: list[ValidationIssue] = []
+    try:
+        explanation = _IncidentExplanation.model_validate(
+            explanation.model_dump(mode="python", warnings=False)
+        )
+    except ValidationError as error:
+        for item in error.errors(include_input=False, include_url=False):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_STRUCTURAL_INVALID",
+                    path=("explanation", *tuple(item.get("loc", ()))),
+                    message="explanation violates the closed IncidentExplanation contract",
+                )
+            )
+        return ValidationReport(issues=tuple(issues))
+
+    operations = {item.operation_id: item for item in bundle.profile.operations}
+    events = {item.event_id: item for item in bundle.profile.events}
+    quality_samples = {item.sample_id: item for item in bundle.profile.quality_samples}
+    media_ids = {item.media_id for item in bundle.profile.media_refs}
+    operation_ids = set(operations)
+    evidence_ids = operation_ids | set(events) | set(quality_samples) | media_ids
+
+    def check_refs(
+        references: tuple[str, ...],
+        allowed: set[str],
+        path: tuple[str | int, ...],
+    ) -> None:
+        for reference_index, reference in enumerate(references):
+            if reference not in allowed:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_EXPLANATION_DANGLING_REF",
+                        path=path + (reference_index,),
+                        message="explanation cites evidence absent from the input artifact",
+                    )
+                )
+
+    def check_operation(operation: Any, path: tuple[str | int, ...]) -> None:
+        check_refs(operation.evidence_ids, evidence_ids, path + ("evidence_ids",))
+        for measurement_index, measurement in enumerate(operation.measurements):
+            check_refs(
+                measurement.evidence_ids,
+                evidence_ids,
+                path + ("measurements", measurement_index, "evidence_ids"),
+            )
+        for link_index, link in enumerate(operation.links):
+            if (
+                link.target_operation_id is not None
+                and link.target_scope != "external"
+                and link.target_operation_id not in operation_ids
+            ):
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_EXPLANATION_DANGLING_REF",
+                        path=path + ("links", link_index, "target_operation_id"),
+                        message="explained causal link targets an unknown operation",
+                    )
+                )
+        source = operations.get(operation.operation_id)
+        if source is None:
+            return
+        # Never manufacture an interval: an end coordinate is only honest when the
+        # source recorded one in the same clock representation and it is not before
+        # the start. Recompute from the immutable source rather than trusting the
+        # flattened projection.
+        start_basis, start_domain, start_value = _coordinate(source.started_at)
+        if operation.shape == "interval":
+            if (
+                source.ended_at is None
+                or operation.end_nano is None
+                or operation.duration_nano is None
+            ):
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_EXPLANATION_MANUFACTURED_INTERVAL",
+                        path=path,
+                        message="explained interval has no comparable source end boundary",
+                    )
+                )
+                return
+            end_basis, end_domain, end_value = _coordinate(source.ended_at)
+            if (
+                (end_basis, end_domain) != (start_basis, start_domain)
+                or int(end_value) < int(start_value)
+                or operation.end_nano != end_value
+                or operation.duration_nano != str(int(end_value) - int(start_value))
+            ):
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_EXPLANATION_MANUFACTURED_INTERVAL",
+                        path=path,
+                        message="explained interval is not the exact same-clock source delta",
+                    )
+                )
+
+    projected_operation_ids: list[str] = []
+    for turn_index, turn in enumerate(explanation.turns):
+        for operation_index, operation in enumerate(turn.operations):
+            projected_operation_ids.append(operation.operation_id)
+            check_operation(
+                operation,
+                ("explanation", "turns", turn_index, "operations", operation_index),
+            )
+    for operation_index, operation in enumerate(explanation.unassigned_operations):
+        projected_operation_ids.append(operation.operation_id)
+        check_operation(
+            operation,
+            ("explanation", "unassigned_operations", operation_index),
+        )
+
+    # Completeness: the union of turn-owned and unassigned operations must be
+    # exactly the source operation set. Nothing is silently dropped or invented.
+    projected_set = set(projected_operation_ids)
+    for _missing in sorted(operation_ids - projected_set):
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_OPERATION_DROPPED",
+                path=("explanation", "operations"),
+                message="source operation is absent from the explanation",
+            )
+        )
+    for extra_index, operation_id in enumerate(projected_operation_ids):
+        if operation_id not in operation_ids:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_DANGLING_REF",
+                    path=("explanation", "operations", extra_index),
+                    message="explained operation is absent from the source bundle",
+                )
+            )
+
+    for measurement_index, measurement in enumerate(explanation.unassigned_measurements):
+        check_refs(
+            measurement.evidence_ids,
+            evidence_ids,
+            ("explanation", "unassigned_measurements", measurement_index, "evidence_ids"),
+        )
+
+    # Diagnoses must mirror the analysis exactly: same identities and fields, with
+    # no invented and no dropped findings.
+    def diagnosis_shape(
+        diagnosis_id: str,
+        code: str,
+        summary: str,
+        confidence: str,
+        evidence: tuple[str, ...],
+        limitations: tuple[str, ...],
+    ) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...]]:
+        return (diagnosis_id, code, summary, confidence, evidence, limitations)
+
+    analysis_diagnoses = {
+        diagnosis.diagnosis_id: diagnosis_shape(
+            diagnosis.diagnosis_id,
+            diagnosis.code,
+            diagnosis.summary,
+            diagnosis.confidence,
+            tuple(diagnosis.evidence_refs),
+            tuple(diagnosis.limitations),
+        )
+        for diagnosis in analysis.diagnoses
+    }
+    explained_diagnoses: dict[str, tuple] = {}
+    for diagnosis_index, diagnosis in enumerate(explanation.diagnoses):
+        path = ("explanation", "diagnoses", diagnosis_index)
+        check_refs(diagnosis.evidence_ids, evidence_ids, path + ("evidence_ids",))
+        shape = diagnosis_shape(
+            diagnosis.diagnosis_id,
+            diagnosis.code,
+            diagnosis.summary,
+            diagnosis.confidence,
+            tuple(diagnosis.evidence_ids),
+            tuple(diagnosis.limitations),
+        )
+        explained_diagnoses[diagnosis.diagnosis_id] = shape
+        if analysis_diagnoses.get(diagnosis.diagnosis_id) != shape:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_DIAGNOSIS_MISMATCH",
+                    path=path,
+                    message="explanation diagnosis does not mirror the analysis diagnosis",
+                )
+            )
+    for diagnosis_id in analysis_diagnoses:
+        if diagnosis_id not in explained_diagnoses:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_DIAGNOSIS_MISMATCH",
+                    path=("explanation", "diagnoses"),
+                    message="analysis diagnosis is missing from the explanation",
+                )
+            )
+
     return ValidationReport(issues=tuple(issues))
