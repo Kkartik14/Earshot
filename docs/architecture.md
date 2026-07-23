@@ -48,6 +48,30 @@ cross-request finalization and is outside M1. M1 adapters normalize ended spans 
 callbacks into the profile; exact raw OTLP is retained only when a caller explicitly
 supplies filtered bytes through the SDK.
 
+## The two pluggable seams
+
+Everything that produces evidence meets earshot at one boundary, and everything that
+consumes an incident leaves through another. Both are named so an integration is a
+registration rather than a change inside earshot.
+
+**`ObservationSink` (`observation.py`) is where evidence enters.** A capture source --
+the server pipeline, a provider stream adapter, a WebRTC/audio-graph engine, and in
+future a browser, native, or backend collector -- authors governed facts through five
+verbs and nothing else: `record_measurement`, `record_event`, `record_coverage`,
+`record_omission`, `register_clock_domain`. Stage/operation authoring is deliberately
+outside the protocol: minting an operation id and advancing a turn cursor is pipeline
+bookkeeping that a fact-only collector has no way to model. `TurnRecorder` satisfies
+the protocol structurally, so a capture source never depends on the pipeline session,
+its turn ids, or its clock.
+
+**A named exporter (`exporters/registry.py`) is where an incident leaves.** An
+exporter takes a finished `IncidentBundle` and returns the document a backend
+understands; built-ins register as `otlp` and `openinference`, and a user registers
+their own beside them. The SDK client (`earshot.export(bundle, format=...)`) and the
+CLI (`earshot export --format`) both select by name, and every named export is checked
+against the exporter's declared export destination before it is projected. Registration
+fills a dict and nothing else -- no network, no environment, no import-order effects.
+
 ## Trust boundaries
 
 ### Framework/runtime process
@@ -134,9 +158,12 @@ packages/sdk-python/src/earshot/
   validation.py                       cross-record invariant validator
   codec.py                            canonical JSON/protobuf codec
   privacy.py                          metadata allowlist and omission ledger
+  observation.py                      ObservationSink capture seam
   recorder.py                         framework-neutral SDK recorder
   exporter.py                         bounded fail-open exporter
+  exporters/registry.py               named, pluggable incident projections
   adapters/                           Pipecat and LiveKit mappings
+  engines/                            deterministic browser-telemetry engines
   connectors/                         hosted-provider trust + normalization
   analysis.py                         deterministic projections/diagnoses
   storage.py                          SQLite + content-addressed store

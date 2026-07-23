@@ -36,11 +36,13 @@ packages/sdk-python/src/earshot/exporters/__init__.py
 packages/sdk-python/src/earshot/exporters/openinference.py
 packages/sdk-python/src/earshot/exporters/otlp.py
 packages/sdk-python/src/earshot/exporters/push.py
+packages/sdk-python/src/earshot/exporters/registry.py
 packages/sdk-python/src/earshot/generated/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/incident_pb2.py
 packages/sdk-python/src/earshot/measurement_semantics.py
+packages/sdk-python/src/earshot/observation.py
 packages/sdk-python/src/earshot/pipeline.py
 packages/sdk-python/src/earshot/privacy.py
 packages/sdk-python/src/earshot/py.typed

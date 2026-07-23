@@ -293,6 +293,58 @@ flush explicitly.
 - retries 408, 429, and 5xx responses with bounded jitter and `Retry-After`; and
 - classifies other 4xx responses as permanent.
 
+## Capture seam: `ObservationSink`
+
+A capture source authors governed facts through `earshot.observation.ObservationSink`
+and depends on nothing else in the recorder. The protocol is exactly five verbs --
+`record_measurement`, `record_event`, `record_coverage`, `record_omission`,
+`register_clock_domain` -- and `TurnRecorder` satisfies it structurally, so no capture
+source is required to own a pipeline session.
+
+That is what makes the WebRTC and audio-graph engines runnable anywhere: `apply_*`
+takes a sink, not a turn.
+
+```python
+from earshot.engines.webrtc import apply_webrtc_stats
+
+class CollectorSink:  # a browser/native/backend collector's own sink
+    def record_measurement(self, name, value, **fact): ...
+    def record_event(self, name, **fact): ...
+    def record_coverage(self, signal, availability, reason=None): ...
+    def record_omission(self, field_name, *, capture_class, reason="adapter_payload_omitted"): ...
+    def register_clock_domain(self, domain): ...
+
+apply_webrtc_stats(CollectorSink(), snapshots)
+```
+
+Stage/operation authoring (`record_stage`) is intentionally not part of the protocol:
+it mints an operation id and advances the pipeline's turn cursor, which is turn
+bookkeeping rather than an observation.
+
+## Export seam: named exporters
+
+A finished incident leaves through a _named_ exporter. `otlp` and `openinference` are
+registered built-ins; a user registers their own beside them and selects it the same
+way, from the client or the CLI, without importing a projection module.
+
+```python
+import earshot
+
+document = earshot.export(bundle, format="otlp")
+
+earshot.register_exporter("acme", lambda bundle: {"acme": ...})
+earshot.export(bundle, format="acme")
+earshot.exporter_formats()  # ('acme', 'openinference', 'otlp')
+```
+
+`register_exporter(name, exporter, *, destination=None, replace=False)` defaults the
+export destination to the exporter's own name, so a new exporter never inherits a
+permission written for another backend; both built-ins declare `otlp`. A named export
+is checked with `assert_export_allowed` against that destination before the projection
+runs, and a duplicate name is an error unless `replace=True`. Registration performs no
+I/O. `earshot.exporters.to_otlp` / `to_openinference` remain importable and unchanged;
+the caller who imports them directly is then the one holding the export policy.
+
 ## Framework adapters
 
 Pipecat and LiveKit adapters are duck typed, so importing `earshot` does not import the
