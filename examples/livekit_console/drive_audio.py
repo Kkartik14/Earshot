@@ -83,6 +83,7 @@ async def _run() -> int:
     earshot.configure()
     recorder = earshot.session(session_id="headless-full-pipeline")
     provider: TracerProvider | None = None
+    routing_handle = None
     session: AgentSession | None = None
     sink = NullAudioOutput(sample_rate=SR)
     reply_done = asyncio.Event()
@@ -96,7 +97,7 @@ async def _run() -> int:
         provider = TracerProvider()
         telemetry.set_tracer_provider(provider)
         adapter = LiveKitAdapter(recorder, framework_version=LIVEKIT_AGENTS_VERSION)
-        adapter.attach_span_processor(provider)
+        routing_handle = adapter.attach_span_processor(provider)
         frames = await build_frames()
         input_synthesized = True
         stt, llm, tts, stack_label = voice_stack()
@@ -116,32 +117,33 @@ async def _run() -> int:
                 transcript["agent"] = getattr(item, "text_content", "") or ""
                 reply_done.set()
 
-        await session.start(agent=Agent(instructions="Answer in one short word."))
-        session.output.audio = sink
-        session.input.audio = WavAudioInput(frames)
-        session.input.set_audio_enabled(True)
+        with routing_handle.session_scope():
+            await session.start(agent=Agent(instructions="Answer in one short word."))
+            session.output.audio = sink
+            session.input.audio = WavAudioInput(frames)
+            session.input.set_audio_enabled(True)
 
-        try:
-            await asyncio.wait_for(reply_done.wait(), timeout=45)
-        except TimeoutError:
-            lifecycle_status = "timed_out"
-            print("[driver] timed out waiting for the agent reply", file=sys.stderr)
-
-        if lifecycle_status != "timed_out":
             try:
-                await asyncio.wait_for(session.wait_for_idle(), timeout=15)
+                await asyncio.wait_for(reply_done.wait(), timeout=45)
             except TimeoutError:
                 lifecycle_status = "timed_out"
-                print("[driver] timed out waiting for session idle", file=sys.stderr)
+                print("[driver] timed out waiting for the agent reply", file=sys.stderr)
 
-        if lifecycle_status != "timed_out":
-            if not transcript.get("user"):
-                raise RuntimeError("the audio pipeline produced no final STT transcript")
-            if not transcript.get("agent"):
-                raise RuntimeError("the audio pipeline produced no assistant reply")
-            if not sink.saw_audio:
-                raise RuntimeError("the audio pipeline produced no TTS audio")
-            lifecycle_status = "completed"
+            if lifecycle_status != "timed_out":
+                try:
+                    await asyncio.wait_for(session.wait_for_idle(), timeout=15)
+                except TimeoutError:
+                    lifecycle_status = "timed_out"
+                    print("[driver] timed out waiting for session idle", file=sys.stderr)
+
+            if lifecycle_status != "timed_out":
+                if not transcript.get("user"):
+                    raise RuntimeError("the audio pipeline produced no final STT transcript")
+                if not transcript.get("agent"):
+                    raise RuntimeError("the audio pipeline produced no assistant reply")
+                if not sink.saw_audio:
+                    raise RuntimeError("the audio pipeline produced no TTS audio")
+                lifecycle_status = "completed"
     except Exception as error:
         lifecycle_status = "failed"
         print(f"[driver] audio pipeline failed: {error!r}", file=sys.stderr)
@@ -164,6 +166,9 @@ async def _run() -> int:
             if not flushed:
                 lifecycle_status = "failed"
                 print("[driver] trace-provider flush timed out", file=sys.stderr)
+
+        if routing_handle is not None:
+            routing_handle.close()
 
         try:
             bundle = recorder.close(lifecycle_status)
