@@ -2,7 +2,32 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
+
+DEFAULT_ADAPTER_TRACKING_ENTRIES = 4_096
+MAX_ADAPTER_TRACKING_ENTRIES = 65_536
+
+@dataclass(frozen=True, slots=True)
+class AdapterTrackingStatus:
+    """Content-free sizes for an adapter's bounded identity ledgers."""
+
+    limit_per_ledger: int
+    entries: tuple[tuple[str, int], ...]
+    saturated_ledgers: tuple[str, ...] = ()
+
+
+def validate_tracking_limit(limit: int) -> int:
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= MAX_ADAPTER_TRACKING_ENTRIES
+    ):
+        raise ValueError(
+            "max_tracking_entries must be an integer between 1 and "
+            f"{MAX_ADAPTER_TRACKING_ENTRIES}"
+        )
+    return limit
 
 
 class AdapterDependencyError(RuntimeError):

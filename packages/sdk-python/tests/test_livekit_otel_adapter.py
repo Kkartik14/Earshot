@@ -347,6 +347,138 @@ def test_livekit_span_callback_is_idempotent_and_conflicts_are_rejected() -> Non
     assert len(adapter.recorder.close().profile.operations) == 1
 
 
+def test_livekit_span_identity_tracking_has_a_configured_bound() -> None:
+    with pytest.raises(ValueError, match="max_tracking_entries"):
+        LiveKitAdapter(recorder(), max_tracking_entries=0)
+
+    adapter = LiveKitAdapter(recorder(), max_tracking_entries=2)
+    spans = [
+        {
+            "name": "llm_node",
+            "trace_id": f"{index + 1:032x}",
+            "span_id": f"{index + 1:016x}",
+            "status": "ok",
+            "start_time": 1_800_000_000_000_000_000 + index,
+            "end_time": 1_800_000_000_100_000_000 + index,
+        }
+        for index in range(3)
+    ]
+    for span in spans:
+        adapter.consume_span(span)
+
+    status = adapter.tracking_status()
+    assert status.limit_per_ledger == 2
+    assert dict(status.entries)["spans"] == 2
+    assert status.saturated_ledgers == ("spans",)
+    captured_before_replay = adapter.recorder.status().captured_records
+    adapter.consume_span(spans[0])
+    assert adapter.recorder.status().captured_records == captured_before_replay
+    assert dict(adapter.tracking_status().entries)["spans"] == 2
+    bundle = adapter.recorder.close()
+    assert len(bundle.profile.operations) == 2
+    assert (
+        "livekit.tracking.spans",
+        "partial",
+        "max_tracking_entries",
+    ) in {
+        (item.signal, item.availability, item.reason) for item in bundle.profile.coverage
+    }
+    assert validate_incident(bundle).ok
+
+
+def test_livekit_all_identity_ledgers_stay_bounded_under_high_volume() -> None:
+    source_recorder = IncidentRecorder(
+        config=RecorderConfig(
+            clock_domain_id="server-clock",
+            max_records=20_000,
+            max_capture_bytes=64 * 1024 * 1024,
+        )
+    )
+    adapter = LiveKitAdapter(source_recorder, max_tracking_entries=64)
+    event_span = {
+        "name": "llm_node",
+        "trace_id": f"{1:032x}",
+        "span_id": f"{1:016x}",
+        "participant_id": "participant-0",
+        "status": "ok",
+        "start_time": 1_800_000_000_000_000_000,
+        "end_time": 1_800_000_000_100_000_000,
+        "events": tuple(
+            {
+                "name": "provider.event",
+                "timestamp": 1_800_000_000_000_000_000 + index,
+                "attributes": {},
+            }
+            for index in range(1_000)
+        ),
+    }
+    adapter.consume_span(event_span)
+
+    first_metric = None
+    for index in range(1_000):
+        if index:
+            adapter.consume_span(
+                {
+                    "name": "llm_node",
+                    "trace_id": f"{index + 1:032x}",
+                    "span_id": f"{index + 1:016x}",
+                    "participant_id": f"participant-{index}",
+                    "status": "ok",
+                    "start_time": 1_800_000_000_000_000_000 + index,
+                    "end_time": 1_800_000_000_100_000_000 + index,
+                    "events": (),
+                }
+            )
+        metric = {
+            "type": "llm_metrics",
+            "request_id": f"request-{index}",
+            "speech_id": f"turn-{index}",
+            "duration": 0.01,
+            "ttft": 0.001,
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+        }
+        first_metric = first_metric or metric
+        adapter.consume_metric(metric, observed_at=point(200_000_000 + index))
+
+    # VAD bypasses the operation ledger and independently proves quality saturation.
+    adapter.consume_metric(
+        {
+            "type": "vad_metrics",
+            "timestamp": 1_800_000_100.0,
+            "inference_duration_total": 0.01,
+            "inference_count": 1,
+        },
+        observed_at=point(300_000_000),
+    )
+
+    status = adapter.tracking_status()
+    assert dict(status.entries) == {
+        "events": 64,
+        "operations": 64,
+        "participants": 64,
+        "quality": 64,
+        "spans": 64,
+    }
+    assert status.saturated_ledgers == (
+        "events",
+        "operations",
+        "participants",
+        "quality",
+        "spans",
+    )
+    assert source_recorder.status().captured_records <= 330
+
+    captured_before_replay = source_recorder.status().captured_records
+    adapter.consume_span(event_span)
+    assert first_metric is not None
+    adapter.consume_metric(first_metric, observed_at=point(200_000_000))
+    assert source_recorder.status().captured_records == captured_before_replay
+    bundle = source_recorder.close()
+    assert validate_incident(bundle).ok
+
+
 def test_livekit_native_span_event_is_correlated_and_drops_event_payload() -> None:
     secret = "SENSITIVE_TRANSCRIPT_SENTINEL"
     adapter = LiveKitAdapter(recorder())

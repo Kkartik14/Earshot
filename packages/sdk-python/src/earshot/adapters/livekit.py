@@ -8,6 +8,7 @@ explicitly unobserved until a client collector supplies that evidence.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
@@ -28,7 +29,15 @@ from ..privacy import sanitize_semantic_label, sanitize_source_label
 from ..recorder import IncidentRecorder
 from ..versions import LIVEKIT_ADAPTER_VERSION
 from . import routing
-from .base import AdapterDependencyError, seconds_to_nano, stable_id, value
+from .base import (
+    DEFAULT_ADAPTER_TRACKING_ENTRIES,
+    AdapterDependencyError,
+    AdapterTrackingStatus,
+    seconds_to_nano,
+    stable_id,
+    validate_tracking_limit,
+    value,
+)
 
 _METRIC_TYPES = {
     "vadmetrics": "vad",
@@ -301,9 +310,16 @@ def _otel_id(raw: object, width: int) -> str | None:
 
 
 class LiveKitAdapter:
-    def __init__(self, recorder: IncidentRecorder, *, framework_version: str = "unknown"):
+    def __init__(
+        self,
+        recorder: IncidentRecorder,
+        *,
+        framework_version: str = "unknown",
+        max_tracking_entries: int = DEFAULT_ADAPTER_TRACKING_ENTRIES,
+    ):
         self.recorder = recorder
         self.framework_version = framework_version
+        self._max_tracking_entries = validate_tracking_limit(max_tracking_entries)
         self._render_coverage_written = False
         self._native_spans_enabled = False
         self._session_listeners_enabled = False
@@ -313,6 +329,7 @@ class LiveKitAdapter:
         self._seen_events: set[str] = set()
         self._seen_quality: dict[str, str] = {}
         self._seen_participants: set[str] = set()
+        self._saturated_ledgers: set[str] = set()
         self._routing_handle: routing.RoutingHandle | None = None
         self._lock = threading.RLock()
         self.recorder.register_adapter(
@@ -323,6 +340,39 @@ class LiveKitAdapter:
                 framework_version=framework_version,
             )
         )
+
+    def tracking_status(self) -> AdapterTrackingStatus:
+        """Return content-free sizes for all identity ledgers."""
+
+        with self._lock:
+            return AdapterTrackingStatus(
+                limit_per_ledger=self._max_tracking_entries,
+                entries=(
+                    ("events", len(self._seen_events)),
+                    ("operations", len(self._seen_operations)),
+                    ("participants", len(self._seen_participants)),
+                    ("quality", len(self._seen_quality)),
+                    ("spans", len(self._seen_spans)),
+                ),
+                saturated_ledgers=tuple(sorted(self._saturated_ledgers)),
+            )
+
+    def _tracking_has_capacity_locked(
+        self,
+        ledger_name: str,
+        ledger: Mapping[object, object] | set[object],
+    ) -> bool:
+        if len(ledger) < self._max_tracking_entries:
+            return True
+        if ledger_name not in self._saturated_ledgers:
+            self._saturated_ledgers.add(ledger_name)
+            with contextlib.suppress(Exception):
+                self.recorder.record_coverage(
+                    f"livekit.tracking.{ledger_name}",
+                    "partial",
+                    "max_tracking_entries",
+                )
+        return False
 
     def consume_span(self, span: object) -> str:
         """Normalize one ended LiveKit ``ReadableSpan`` without changing its identity."""
@@ -435,20 +485,25 @@ class LiveKitAdapter:
             )
             with self._lock:
                 if participant_id not in self._seen_participants:
-                    self.recorder.add_participant(
-                        participant_id,
-                        role="agent" if "agent" in kind_label else "participant",
-                        endpoint_kind=kind_label,
-                        attributes={
-                            "lk.participant_id": participant_id,
-                            **(
-                                {"lk.participant_kind": participant_kind}
-                                if participant_kind is not None
-                                else {}
-                            ),
-                        },
-                    )
-                    self._seen_participants.add(participant_id)
+                    if not self._tracking_has_capacity_locked(
+                        "participants", self._seen_participants
+                    ):
+                        participant_id = None
+                    else:
+                        self.recorder.add_participant(
+                            participant_id,
+                            role="agent" if "agent" in kind_label else "participant",
+                            endpoint_kind=kind_label,
+                            attributes={
+                                "lk.participant_id": participant_id,
+                                **(
+                                    {"lk.participant_kind": participant_kind}
+                                    if participant_kind is not None
+                                    else {}
+                                ),
+                            },
+                        )
+                        self._seen_participants.add(participant_id)
         evidence = Evidence(
             source="livekit",
             observer="server",
@@ -496,6 +551,8 @@ class LiveKitAdapter:
             if previous is not None:
                 if previous != fingerprint:
                     raise ValueError("conflicting duplicate LiveKit span identity")
+                return operation_id
+            if not self._tracking_has_capacity_locked("spans", self._seen_spans):
                 return operation_id
             self.recorder.record_operation(
                 operation_id=operation_id,
@@ -620,6 +677,8 @@ class LiveKitAdapter:
                 event_time.source_time_unix_nano or event_time.monotonic_time_nano or "",
             )
             if event_id in self._seen_events:
+                continue
+            if not self._tracking_has_capacity_locked("events", self._seen_events):
                 continue
             native_attributes = dict(value(native_event, "attributes", {}) or {})
             native_attributes["earshot.source.event.name"] = sanitize_source_label(native_name)
@@ -831,6 +890,8 @@ class LiveKitAdapter:
                 if previous != fingerprint:
                     raise ValueError("conflicting duplicate LiveKit provider metric identity")
                 return sample_id
+            if not self._tracking_has_capacity_locked("quality", self._seen_quality):
+                return sample_id
             self.recorder.record_quality_sample(
                 QualitySample(
                     sample_id=sample_id,
@@ -890,6 +951,8 @@ class LiveKitAdapter:
             attributes["earshot.duration.turn_callback_seconds"] = callback_delay
         event_id = stable_id("livekit-turn-committed", turn_id)
         if event_id in self._seen_events:
+            return event_id
+        if not self._tracking_has_capacity_locked("events", self._seen_events):
             return event_id
         self.recorder.record_event(
             "earshot.turn.committed",
@@ -952,6 +1015,8 @@ class LiveKitAdapter:
         if previous is not None:
             if previous != fingerprint:
                 raise ValueError("conflicting duplicate LiveKit span metric identity")
+            return sample_id
+        if not self._tracking_has_capacity_locked("quality", self._seen_quality):
             return sample_id
         self.recorder.record_quality_sample(
             QualitySample(
@@ -1030,6 +1095,8 @@ class LiveKitAdapter:
             value(metric, "timestamp"),
         )
         if event_id in self._seen_events:
+            return event_id
+        if not self._tracking_has_capacity_locked("events", self._seen_events):
             return event_id
         self.recorder.record_event(
             "earshot.response.first_audio_generated",
@@ -1202,6 +1269,8 @@ class LiveKitAdapter:
             if previous is not None:
                 if previous != fingerprint:
                     raise ValueError("conflicting duplicate LiveKit metric identity")
+                return operation_id
+            if not self._tracking_has_capacity_locked("operations", self._seen_operations):
                 return operation_id
             self.recorder.record_operation(
                 operation_id=operation_id,
@@ -1408,6 +1477,8 @@ class LiveKitAdapter:
             if previous is not None:
                 if previous != fingerprint:
                     raise ValueError("conflicting duplicate LiveKit turn metrics identity")
+                return sample_id
+            if not self._tracking_has_capacity_locked("quality", self._seen_quality):
                 return sample_id
             self.recorder.record_quality_sample(
                 QualitySample(
@@ -1741,6 +1812,8 @@ class LiveKitAdapter:
         ).hexdigest()
         event_id = stable_id("livekit-event", fingerprint)
         if event_id in self._seen_events:
+            return event_id
+        if not self._tracking_has_capacity_locked("events", self._seen_events):
             return event_id
         self.recorder.record_event(
             event_name,
