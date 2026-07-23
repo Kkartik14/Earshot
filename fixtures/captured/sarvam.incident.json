@@ -1,0 +1,345 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "captured-sarvam-id-0001",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "0",
+        "observer": "earshot.sdk",
+        "synchronization_method": "same_process_sample",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1784505160311603000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "server_cannot_observe_client_render",
+        "signal": "client.render"
+      }
+    ],
+    "events": [
+      {
+        "attributes": {
+          "earshot.correlation": "provider_request",
+          "earshot.language.code": "hi-IN",
+          "earshot.language.probability": 1.0,
+          "earshot.request.id": "captured-sarvam-id-0002",
+          "earshot.source.event.name": "data",
+          "earshot.stt.mode": "translate"
+        },
+        "capture_class": "metadata",
+        "event_id": "captured-sarvam-id-0003",
+        "event_name": "earshot.transcript.final",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sarvam.data"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "captured-sarvam-id-0004",
+        "resource": {},
+        "session_id": "captured-sarvam-session",
+        "time": {
+          "clock_domain_id": "captured-sarvam-id-0001",
+          "monotonic_time_nano": "1115955625",
+          "source_time_unix_nano": "1784505161427558625",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "captured-sarvam-id-0005"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "custom_pipeline",
+          "name": "earshot.pipeline",
+          "version": "1.0.0"
+        }
+      ],
+      "attributes": {},
+      "bundle_id": "captured-sarvam-2026-07",
+      "completeness": "complete",
+      "created_at_unix_nano": "1784505160311603000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot.pipeline",
+        "sdk_version": "1.0.0",
+        "version": "1.0.0"
+      },
+      "schema_version": "0.1.0",
+      "semantic_profile_version": "0.1.0",
+      "session_id": "captured-sarvam-session"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {
+          "earshot.correlation": "provider_request",
+          "earshot.language.code": "hi-IN",
+          "earshot.language.probability": 1.0,
+          "earshot.request.id": "captured-sarvam-id-0002",
+          "earshot.source.event.name": "data",
+          "earshot.stt.mode": "translate",
+          "gen_ai.provider.name": "sarvam",
+          "gen_ai.request.model": "saaras:v3"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "sarvam.data.receipt"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "captured-sarvam-id-0006",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "participant_id": "captured-sarvam-id-0007",
+        "resource": {},
+        "session_id": "captured-sarvam-session",
+        "started_at": {
+          "clock_domain_id": "captured-sarvam-id-0001",
+          "monotonic_time_nano": "1115955625",
+          "source_time_unix_nano": "1784505161427558625",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "captured-sarvam-id-0005"
+      }
+    ],
+    "participants": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "app",
+        "participant_id": "captured-sarvam-id-0004",
+        "role": "user",
+        "session_id": "captured-sarvam-session"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "app",
+        "participant_id": "captured-sarvam-id-0007",
+        "role": "agent",
+        "session_id": "captured-sarvam-session"
+      }
+    ],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [
+        {
+          "attributes": {
+            "field_key_sha256": "bea7dc44fde4f2a283bc6f06a9afb802eacfe6fca070f7ec418a8ed1eaef0496"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-sarvam-id-0008",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        }
+      ],
+      "policy_id": "earshot.metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.language.code": "hi-IN",
+          "earshot.language.probability": 1.0,
+          "earshot.metric.basis": "provider_schema_seconds",
+          "earshot.operation.id": "captured-sarvam-id-0006",
+          "earshot.request.id": "captured-sarvam-id-0002",
+          "earshot.source.event.name": "data",
+          "earshot.stt.mode": "translate",
+          "earshot.turn.id": "captured-sarvam-id-0005"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "metrics.audio_duration"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "sarvam.stt.audio_duration",
+            "unit": "s",
+            "value": 3.68
+          }
+        ],
+        "participant_id": "captured-sarvam-id-0007",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-sarvam-id-0009",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-sarvam-id-0001",
+            "monotonic_time_nano": "1115955625",
+            "source_time_unix_nano": "1784505161427558625",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "captured-sarvam-id-0001",
+            "monotonic_time_nano": "1115955625",
+            "source_time_unix_nano": "1784505161427558625",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-sarvam-session"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "provider_turn_scalar",
+          "earshot.language.code": "hi-IN",
+          "earshot.language.probability": 1.0,
+          "earshot.metric.basis": "provider_schema_seconds_converted_once",
+          "earshot.operation.id": "captured-sarvam-id-0006",
+          "earshot.request.id": "captured-sarvam-id-0002",
+          "earshot.source.event.name": "data",
+          "earshot.stt.mode": "translate",
+          "earshot.turn.id": "captured-sarvam-id-0005"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "1.0.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "metrics.processing_latency"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "sarvam.stt.processing_latency",
+            "unit": "ms",
+            "value": 155.3807258605957
+          }
+        ],
+        "participant_id": "captured-sarvam-id-0007",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-sarvam-id-0010",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-sarvam-id-0001",
+            "monotonic_time_nano": "1115955625",
+            "source_time_unix_nano": "1784505161427558625",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "captured-sarvam-id-0001",
+            "monotonic_time_nano": "1115955625",
+            "source_time_unix_nano": "1784505161427558625",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-sarvam-session"
+      }
+    ],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "captured-sarvam-id-0001",
+        "monotonic_time_nano": "1615955625",
+        "source_time_unix_nano": "1784505161927558625"
+      },
+      "session_id": "captured-sarvam-session",
+      "started_at": {
+        "clock_domain_id": "captured-sarvam-id-0001",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1784505160311603000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}
