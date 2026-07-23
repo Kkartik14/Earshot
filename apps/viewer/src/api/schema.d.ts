@@ -1705,10 +1705,31 @@ export interface components {
              * @default []
              */
             evidence_ids: string[];
+            /**
+             * Limitation
+             * @default null
+             */
+            limitation: string | null;
             /** Operation Count */
             operation_count: number;
+            /**
+             * Timed Operation Count
+             * @default 0
+             */
+            timed_operation_count: number;
+            /**
+             * Total Work Completeness
+             * @default complete
+             * @enum {string}
+             */
+            total_work_completeness: "complete" | "partial" | "unavailable";
             /** Total Work Ms */
             total_work_ms: number;
+            /**
+             * Untimed Operation Count
+             * @default 0
+             */
+            untimed_operation_count: number;
         };
         /** TurnMetricGroupResponse */
         TurnMetricGroupResponse: {
