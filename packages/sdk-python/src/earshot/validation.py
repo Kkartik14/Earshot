@@ -1857,6 +1857,29 @@ def validate_derived_analysis(
                 message="analysis input digest does not match the immutable evidence artifact",
             )
         )
+
+    # The current Earshot analyzer has source-defined metric semantics that this
+    # checkout can reproduce exactly. Custom analyzers and historical Earshot
+    # versions remain replaceable sidecars: their evidence bindings are validated
+    # below, but their calculations must not be reinterpreted by newer code.
+    from .analysis import ANALYZER_NAME as BUILTIN_ANALYZER_NAME
+    from .analysis import analyze_incident
+    from .versions import ANALYZER_VERSION as BUILTIN_ANALYZER_VERSION
+
+    expected_builtin_turns: dict[str, Any] = {}
+    expected_builtin_unassigned: Any | None = None
+    if (
+        expected_digest is not None
+        and analysis.analyzer_name == BUILTIN_ANALYZER_NAME
+        and analysis.analyzer_version == BUILTIN_ANALYZER_VERSION
+    ):
+        expected_builtin = analyze_incident(
+            bundle,
+            input_sha256=expected_digest,
+            generated_at_unix_nano=analysis.generated_at_unix_nano,
+        )
+        expected_builtin_turns = {turn.turn_id: turn for turn in expected_builtin.projections.turns}
+        expected_builtin_unassigned = expected_builtin.projections.unassigned_provider_measurements
     projection_session = analysis.projections.session_id
     if projection_session is not None and projection_session != bundle.profile.manifest.session_id:
         issues.append(
@@ -2063,6 +2086,7 @@ def validate_derived_analysis(
     )
     for turn_index, turn in enumerate(analysis.projections.turns):
         turn_path = ("analysis", "projections", "turns", turn_index)
+        expected_builtin_turn = expected_builtin_turns.get(turn.turn_id)
         if turn.turn_id in projected_turns:
             issues.append(
                 ValidationIssue(
@@ -2132,6 +2156,19 @@ def validate_derived_analysis(
                 turn.turn_id,
                 turn_path + ("metrics", metric_name, "evidence_ids"),
             )
+            if expected_builtin_turn is not None and metric != getattr(
+                expected_builtin_turn.metrics, metric_name
+            ):
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_ANALYSIS_LATENCY_MISMATCH",
+                        path=turn_path + ("metrics", metric_name),
+                        message=(
+                            "current built-in latency projection differs from exact "
+                            "source-derived truth"
+                        ),
+                    )
+                )
         tool_analysis = turn.metrics.tools
         source_tools = sorted(
             (
@@ -2244,6 +2281,21 @@ def validate_derived_analysis(
                 turn.turn_id,
                 turn_path + ("metrics", "provider_measurements", metric_name, "evidence_ids"),
             )
+        if (
+            expected_builtin_turn is not None
+            and turn.metrics.provider_measurements
+            != expected_builtin_turn.metrics.provider_measurements
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_ANALYSIS_PROVIDER_MEASUREMENT_MISMATCH",
+                    path=turn_path + ("metrics", "provider_measurements"),
+                    message=(
+                        "current built-in provider measurements differ from exact "
+                        "source-derived truth"
+                    ),
+                )
+            )
         clock_domain_ids = {domain.clock_domain_id for domain in bundle.profile.clock_domains}
         for clock_domain_id in turn.metrics.tools.elapsed_ms_by_clock_domain:
             if clock_domain_id not in clock_domain_ids:
@@ -2321,6 +2373,20 @@ def validate_derived_analysis(
         sample_id for sample_id, owner in quality_turns.items() if owner is None
     }
     projected_unassigned_quality_ids = set(analysis.projections.unassigned_provider_measurements)
+    if (
+        expected_builtin_unassigned is not None
+        and analysis.projections.unassigned_provider_measurements != expected_builtin_unassigned
+    ):
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_ANALYSIS_PROVIDER_MEASUREMENT_MISMATCH",
+                path=("analysis", "projections", "unassigned_provider_measurements"),
+                message=(
+                    "current built-in unassigned provider measurements differ from exact "
+                    "source-derived truth"
+                ),
+            )
+        )
     for _missing_sample_id in sorted(
         expected_unassigned_quality_ids - projected_unassigned_quality_ids
     ):
