@@ -1268,6 +1268,9 @@ def create_app(
                     JSON_MEDIA_TYPE: {
                         "schema": {"$ref": "#/components/schemas/IncidentBundleJson"}
                     },
+                    "application/json": {
+                        "schema": {"$ref": "#/components/schemas/IncidentBundleJson"}
+                    },
                     PROTOBUF_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}},
                 }
             },

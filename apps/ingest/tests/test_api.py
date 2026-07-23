@@ -785,6 +785,12 @@ def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp
     } <= set(content)
     assert "IncidentBundleJson" in schema["components"]["schemas"]
     assert "StoredAnalysisResponse" in schema["components"]["schemas"]
+    incident_response_content = schema["paths"]["/v1/incidents/{bundle_id}"]["get"][
+        "responses"
+    ]["200"]["content"]
+    incident_schema = {"$ref": "#/components/schemas/IncidentBundleJson"}
+    assert incident_response_content["application/json"]["schema"] == incident_schema
+    assert incident_response_content[JSON_MEDIA_TYPE]["schema"] == incident_schema
     content_encoding = next(
         parameter
         for parameter in schema["paths"]["/v1/incidents"]["post"]["parameters"]
