@@ -28,6 +28,9 @@
                 "values": [
                   {
                     "stringValue": "clock domain and relation definitions are dropped by OTLP"
+                  },
+                  {
+                    "stringValue": "the source did not trace this incident; every span with no recorded trace context shares one trace id derived deterministically from the incident id"
                   }
                 ]
               }
@@ -101,6 +104,18 @@
                   "key": "earshot.projection.synthetic",
                   "value": {
                     "boolValue": true
+                  }
+                },
+                {
+                  "key": "earshot.projection.synthetic_span_id",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
                   }
                 },
                 {
@@ -184,6 +199,12 @@
                       "key": "earshot.participant.id",
                       "value": {
                         "stringValue": "participant-user"
+                      }
+                    },
+                    {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
                       }
                     },
                     {
@@ -298,6 +319,12 @@
                       "key": "earshot.participant.id",
                       "value": {
                         "stringValue": "participant-user"
+                      }
+                    },
+                    {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
                       }
                     },
                     {
@@ -421,6 +448,12 @@
                       }
                     },
                     {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
+                      }
+                    },
+                    {
                       "key": "earshot.quality.aggregation",
                       "value": {
                         "stringValue": "instant"
@@ -481,9 +514,9 @@
               ],
               "kind": 1,
               "name": "earshot.session",
-              "spanId": "717c75724c57f0dd",
+              "spanId": "767e8ff34363cf8a",
               "startTimeUnixNano": "1800000000000000000",
-              "traceId": "cf0b2260d0ca3537c2dce5a699d7ceb0"
+              "traceId": "9aa1ec66d7e141b81416b88109e7d281"
             }
           ]
         }

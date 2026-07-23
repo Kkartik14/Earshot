@@ -134,6 +134,12 @@
                   }
                 },
                 {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
+                  }
+                },
+                {
                   "key": "earshot.span.parent_scope",
                   "value": {
                     "stringValue": "external"
@@ -235,6 +241,12 @@
                   "key": "earshot.privacy.capture_class",
                   "value": {
                     "stringValue": "metadata"
+                  }
+                },
+                {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
                   }
                 },
                 {
@@ -361,6 +373,12 @@
                   }
                 },
                 {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
+                  }
+                },
+                {
                   "key": "earshot.span.parent_scope",
                   "value": {
                     "stringValue": "external"
@@ -447,6 +465,12 @@
                       "key": "earshot.privacy.capture_class",
                       "value": {
                         "stringValue": "metadata"
+                      }
+                    },
+                    {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
                       }
                     },
                     {
