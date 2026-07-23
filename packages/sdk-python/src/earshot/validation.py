@@ -2442,9 +2442,8 @@ def validate_derived_analysis(
                             ),
                         )
                     )
-        chain = turn.interruption_chain
-        if chain is not None:
-            chain_path = turn_path + ("interruption_chain",)
+        for chain_index, chain in enumerate(turn.interruption_chains):
+            chain_path = turn_path + ("interruption_chains", chain_index)
             if chain.turn_id != turn.turn_id:
                 issues.append(
                     ValidationIssue(

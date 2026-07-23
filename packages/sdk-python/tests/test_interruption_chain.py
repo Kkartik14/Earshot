@@ -17,8 +17,9 @@ import pytest
 
 from earshot.analysis import analyze_incident
 from earshot.codec import analysis_input_sha256, decode_incident_json
-from earshot.contract import ClockDomain, ClockRelation, TimePoint
+from earshot.contract import ClockDomain, ClockRelation, Event, Evidence, TimePoint
 from earshot.validation import validate_derived_analysis, validate_incident
+from incident_factory import make_valid_bundle, point
 
 pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[3]
@@ -57,7 +58,7 @@ def _analyze(bundle):
 
 
 def _chain(bundle):
-    return _analyze(bundle).projections.turns[0].interruption_chain
+    return _analyze(bundle).projections.turns[0].interruption_chains[0]
 
 
 def _by_stage(chain) -> dict:
@@ -78,7 +79,7 @@ def test_chain_carries_every_canonical_stage_once_in_order() -> None:
 def test_full_chain_observes_every_stage_with_a_measured_effectiveness() -> None:
     bundle = _fault("full_barge_in_chain")
     analysis = _analyze(bundle)
-    chain = analysis.projections.turns[0].interruption_chain
+    chain = analysis.projections.turns[0].interruption_chains[0]
 
     assert chain is not None
     assert chain.turn_id == "turn-1"
@@ -108,13 +109,107 @@ def test_full_chain_observes_every_stage_with_a_measured_effectiveness() -> None
     assert validate_derived_analysis(bundle, analysis).ok
 
 
+# --- F6(b): a tool is attributed only through an explicit causal link ---------
+
+
+def _strip_tool_links(bundle):
+    profile = bundle.profile
+    operations = tuple(
+        operation.model_copy(update={"links": ()})
+        if operation.operation_id == "op-tool"
+        else operation
+        for operation in profile.operations
+    )
+    return bundle.model_copy(
+        update={"profile": profile.model_copy(update={"operations": operations})}
+    )
+
+
+def test_causally_linked_tool_is_attributed_as_the_interruption_outcome() -> None:
+    # op-tool carries an explicit ``cancelled_by`` edge to the cancelled agent turn.
+    stages = _by_stage(_chain(_fault("full_barge_in_chain")))
+    assert stages["tool_outcome"].observed
+    assert stages["tool_outcome"].evidence_id == "op-tool"
+    assert stages["tool_outcome"].outcome == "cancelled"
+
+
+def test_same_turn_tool_without_causal_link_is_not_attributed() -> None:
+    # Remove the causal edge: the tool now merely shares the turn. Co-occurrence is
+    # not causality, so it must not be attributed as the interruption's outcome.
+    stripped = _strip_tool_links(_fault("full_barge_in_chain"))
+    tool_stage = _by_stage(_chain(stripped))["tool_outcome"]
+    assert not tool_stage.observed
+    assert tool_stage.coverage_reason == "no_causally_linked_tool"
+    assert tool_stage.evidence_id is None
+    assert tool_stage.outcome is None
+
+
+# --- F6(a): two episodes in one turn are two chains, never one spliced --------
+
+
+def _two_episode_bundle():
+    def _ev(event_id: str, name: str, nano: int) -> Event:
+        return Event(
+            event_id=event_id,
+            session_id="session-1",
+            event_name=name,
+            time=point(nano),
+            turn_id="turn-1",
+            participant_id="participant-user",
+            evidence=Evidence(
+                source="framework_otel",
+                observer="server",
+                method="native_span",
+                confidence="measured",
+                availability="available",
+            ),
+        )
+
+    events = (
+        # Episode 1 has an overlap but never observes a render stop.
+        _ev("ep1-overlap", "earshot.interruption.detected", 900_000_000),
+        _ev("ep1-accept", "earshot.interruption.accepted", 940_000_000),
+        _ev("ep1-cancel", "earshot.model.cancelled", 950_000_000),
+        # Episode 2 has its own overlap and its own render stop, 2s later.
+        _ev("ep2-overlap", "earshot.interruption.detected", 2_900_000_000),
+        _ev("ep2-accept", "earshot.interruption.accepted", 2_940_000_000),
+        _ev("ep2-render-stop", "earshot.audio.render.stopped", 3_000_000_000),
+    )
+    bundle = make_valid_bundle()
+    profile = bundle.profile.model_copy(update={"events": events, "operations": ()})
+    return bundle.model_copy(update={"profile": profile})
+
+
+def test_two_episodes_in_one_turn_produce_two_separated_chains() -> None:
+    turn = _analyze(_two_episode_bundle()).projections.turns[0]
+    chains = turn.interruption_chains
+    assert len(chains) == 2
+
+    episode_one = _by_stage(chains[0])
+    episode_two = _by_stage(chains[1])
+
+    # Episode 1 keeps its own overlap and, having no render stop of its own, has an
+    # unknown effectiveness -- episode 2's render stop is never spliced onto it.
+    assert episode_one["overlap_observed"].evidence_id == "ep1-overlap"
+    assert not episode_one["render_stopped"].observed
+    assert episode_one["render_stopped"].evidence_id is None
+    assert chains[0].effectiveness.availability != "available"
+    assert chains[0].effectiveness.value is None
+
+    # Episode 2 owns its overlap and its render stop; its effectiveness is its own.
+    assert episode_two["overlap_observed"].evidence_id == "ep2-overlap"
+    assert episode_two["render_stopped"].evidence_id == "ep2-render-stop"
+    assert chains[1].effectiveness.availability == "available"
+    assert chains[1].effectiveness.value == 100.0
+
+
 # --- barge_in: partial chain, same-clock effectiveness available --------------
 
 
 def test_clean_barge_in_partial_chain_has_available_effectiveness() -> None:
     bundle = _fault("barge_in")
     analysis = _analyze(bundle)
-    chain = analysis.projections.turns[0].interruption_chain
+    chain = analysis.projections.turns[0].interruption_chains[0]
 
     assert chain is not None
     assert chain.classification == "accepted"
@@ -159,7 +254,7 @@ def test_barge_in_reads_model_cancel_as_the_effective_stop_when_alone() -> None:
 def test_false_interruption_chain_is_false_and_stops_at_classified() -> None:
     bundle = _fault("false_interruption")
     analysis = _analyze(bundle)
-    chain = analysis.projections.turns[0].interruption_chain
+    chain = analysis.projections.turns[0].interruption_chains[0]
 
     assert chain is not None
     assert chain.classification == "false"
@@ -189,7 +284,7 @@ def test_false_interruption_chain_is_false_and_stops_at_classified() -> None:
 def test_native_s2s_chain_is_accepted_with_only_the_classify_stage() -> None:
     bundle = _fault("native_s2s_interruption")
     analysis = _analyze(bundle)
-    chain = analysis.projections.turns[0].interruption_chain
+    chain = analysis.projections.turns[0].interruption_chains[0]
 
     assert chain is not None
     assert chain.classification == "accepted"
@@ -211,13 +306,13 @@ def test_native_s2s_chain_is_accepted_with_only_the_classify_stage() -> None:
 def test_turn_without_interruption_has_no_chain() -> None:
     bundle = _fault("fast_endpointing")
     analysis = _analyze(bundle)
-    assert analysis.projections.turns[0].interruption_chain is None
+    assert analysis.projections.turns[0].interruption_chains == ()
     assert validate_derived_analysis(bundle, analysis).ok
 
 
 def test_no_interruption_valid_bundle_has_no_chain(valid_bundle) -> None:
     analysis = _analyze(valid_bundle)
-    assert all(turn.interruption_chain is None for turn in analysis.projections.turns)
+    assert all(turn.interruption_chains == () for turn in analysis.projections.turns)
 
 
 # --- Cross-clock effectiveness honors calibration -----------------------------
@@ -274,7 +369,7 @@ def test_cross_clock_effectiveness_is_estimated_with_a_calibration() -> None:
     bundle = _cross_clock_bundle(relations=(_calibration(),))
     assert validate_incident(bundle).ok, validate_incident(bundle)
     analysis = _analyze(bundle)
-    chain = analysis.projections.turns[0].interruption_chain
+    chain = analysis.projections.turns[0].interruption_chains[0]
 
     assert chain is not None
     # The render stop is still observed; only its coordinate moved domains.
@@ -294,7 +389,7 @@ def test_cross_clock_effectiveness_refuses_without_a_calibration() -> None:
     bundle = _cross_clock_bundle(relations=())
     assert validate_incident(bundle).ok, validate_incident(bundle)
     analysis = _analyze(bundle)
-    chain = analysis.projections.turns[0].interruption_chain
+    chain = analysis.projections.turns[0].interruption_chains[0]
 
     assert chain is not None
     # render_stopped is observed, but the two clocks cannot be subtracted.

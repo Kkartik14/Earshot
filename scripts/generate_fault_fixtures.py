@@ -511,7 +511,23 @@ def scenarios() -> dict[str, IncidentBundle]:
                     span_digit="3",
                 ),
                 # A tool still running when the barge-in lands is cancelled with it.
-                operation("op-tool", "tool", 700, 1_000, status="cancelled", span_digit="4"),
+                # Its cancellation is attributed to the interruption only through an
+                # explicit causal edge to the cancelled agent turn, not co-occurrence.
+                operation(
+                    "op-tool",
+                    "tool",
+                    700,
+                    1_000,
+                    status="cancelled",
+                    span_digit="4",
+                    links=(
+                        CausalLink(
+                            relationship="cancelled_by",
+                            target_scope="internal",
+                            target_operation_id="op-agent",
+                        ),
+                    ),
+                ),
             ),
             events=(
                 event("event-overlap", "earshot.interruption.detected", 900),

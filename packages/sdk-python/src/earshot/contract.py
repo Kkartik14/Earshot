@@ -9,6 +9,7 @@ they can return stable, language-independent issue codes.
 
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -326,6 +327,19 @@ class ClockRelation(ContractModel):
             and int(self.valid_to_unix_nano) < int(self.valid_from_unix_nano)
         ):
             raise ValueError("clock relation validity window ends before it begins")
+        if self.drift_ppm is not None and not math.isfinite(self.drift_ppm):
+            # A NaN/inf drift rate has no affine meaning and would poison every
+            # cross-clock alignment it touches; a rate must be a finite number.
+            raise ValueError("clock relation drift_ppm must be finite")
+        if (
+            self.drift_ppm is not None
+            and self.drift_ppm != 0.0
+            and self.reference_unix_nano is None
+        ):
+            # Drift is a rate about an anchor instant. Without a reference the
+            # correction ``drift_ppm * (t - reference)`` is undefined, so a
+            # non-zero drift requires the reference it is measured from.
+            raise ValueError("clock relation drift_ppm requires reference_unix_nano")
         return self
 
 
@@ -706,7 +720,7 @@ class TurnProjection(AnalysisContractModel):
     event_ids: tuple[OpaqueId, ...] = ()
     metrics: TurnMetrics
     interruptions: tuple[InterruptionProjection, ...] = ()
-    interruption_chain: InterruptionChainProjection | None = None
+    interruption_chains: tuple[InterruptionChainProjection, ...] = ()
 
 
 class AnalysisSummary(AnalysisContractModel):

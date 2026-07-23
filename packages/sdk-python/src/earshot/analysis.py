@@ -224,6 +224,22 @@ def _shared_time_deltas(start: TimePoint, end: TimePoint) -> tuple[tuple[str, in
     )
 
 
+class _AmbiguousAlignment:
+    """Sentinel: in-window calibrations disagree beyond their combined uncertainty.
+
+    Two declared relations can both place a cross-clock instant, and when they
+    disagree by more than they claim to know, there is no honest way to pick one.
+    The aligner returns this rather than silently choosing a lexical winner, so
+    ``comparable_delta`` reports the cross-clock result as unavailable/ambiguous.
+    """
+
+    __slots__ = ()
+
+
+_AMBIGUOUS_ALIGNMENT = _AmbiguousAlignment()
+_Alignment = tuple[int, int]
+
+
 class _ClockAligner:
     """Convert a wall timestamp between clock domains using declared calibrations.
 
@@ -239,11 +255,16 @@ class _ClockAligner:
             key = (relation.from_clock_domain_id, relation.to_clock_domain_id)
             self._by_pair[key].append(relation)
 
-    def align(self, point: TimePoint, target_domain: str) -> tuple[int, int] | None:
-        """Return ``(aligned_unix_nano, added_uncertainty_nano)`` or ``None``.
+    def align(
+        self, point: TimePoint, target_domain: str
+    ) -> _Alignment | _AmbiguousAlignment | None:
+        """Return ``(aligned_unix_nano, added_uncertainty_nano)``, ``None``, or ambiguous.
 
-        A direct ``point.domain -> target`` relation is applied forward; failing
-        that, an inverse ``target -> point.domain`` relation is applied in reverse.
+        Every declared ``point.domain -> target`` relation is applied forward and
+        every ``target -> point.domain`` relation is applied in reverse (its exact
+        affine inverse). Among the in-window results the alignment is decided by a
+        principled, deterministic rule; when two results disagree beyond their
+        combined uncertainty the answer is :data:`_AMBIGUOUS_ALIGNMENT`.
         """
 
         domain = point.clock_domain_id
@@ -255,33 +276,88 @@ class _ClockAligner:
         ):
             return None
         wall = int(point.source_time_unix_nano)
+        candidates: list[tuple[int, int, str]] = []
         for relation in self._by_pair.get((domain, target_domain), ()):
-            aligned = self._apply(relation, wall, forward=True)
-            if aligned is not None:
-                return aligned
+            applied = self._apply(relation, wall, forward=True)
+            if applied is not None:
+                candidates.append((applied[0], applied[1], relation.relation_id))
         for relation in self._by_pair.get((target_domain, domain), ()):
-            aligned = self._apply(relation, wall, forward=False)
-            if aligned is not None:
-                return aligned
-        return None
+            applied = self._apply(relation, wall, forward=False)
+            if applied is not None:
+                candidates.append((applied[0], applied[1], relation.relation_id))
+        return self._reconcile(candidates)
 
     @staticmethod
-    def _apply(relation: ClockRelation, wall: int, *, forward: bool) -> tuple[int, int] | None:
-        # The validity window bounds the point's own timestamp; outside it the
-        # calibration is not trusted and no alignment is offered.
-        if relation.valid_from_unix_nano is not None and wall < int(relation.valid_from_unix_nano):
+    def _reconcile(
+        candidates: list[tuple[int, int, str]],
+    ) -> _Alignment | _AmbiguousAlignment | None:
+        if not candidates:
             return None
-        if relation.valid_to_unix_nano is not None and wall > int(relation.valid_to_unix_nano):
+        # Deterministic, principled selection: prefer the tightest calibration
+        # (smallest own uncertainty), then the smaller aligned value, then the
+        # relation id. This is a stable serialization rule, not a quality claim.
+        ordered = sorted(candidates, key=lambda item: (item[1], item[0], item[2]))
+        # Honesty over guessing: if any two in-window calibrations place the same
+        # instant more than their combined uncertainty apart, the cross-clock
+        # alignment is not decidable from declared evidence -- refuse.
+        for index_a in range(len(ordered)):
+            value_a, uncertainty_a, _ = ordered[index_a]
+            for index_b in range(index_a + 1, len(ordered)):
+                value_b, uncertainty_b, _ = ordered[index_b]
+                if abs(value_a - value_b) > uncertainty_a + uncertainty_b:
+                    return _AMBIGUOUS_ALIGNMENT
+        value, uncertainty, _ = ordered[0]
+        return (value, uncertainty)
+
+    @staticmethod
+    def _apply(relation: ClockRelation, wall: int, *, forward: bool) -> _Alignment | None:
+        aligned = _ClockAligner._map_wall(relation, wall, forward=forward)
+        if aligned is None:
             return None
+        # The validity window is declared in the relation's ``from`` domain. On the
+        # forward path the input ``wall`` already lives there; on the inverse path
+        # the ``from``-domain coordinate is the inverse's *output*, so the window
+        # must be checked against ``aligned``, not against the ``to``-domain input.
+        from_coordinate = wall if forward else aligned
+        if relation.valid_from_unix_nano is not None and from_coordinate < int(
+            relation.valid_from_unix_nano
+        ):
+            return None
+        if relation.valid_to_unix_nano is not None and from_coordinate > int(
+            relation.valid_to_unix_nano
+        ):
+            return None
+        added_uncertainty = int(relation.uncertainty_nano or "0")
+        return (aligned, added_uncertainty)
+
+    @staticmethod
+    def _map_wall(relation: ClockRelation, wall: int, *, forward: bool) -> int | None:
+        """Map ``wall`` across the relation's affine calibration, or ``None``.
+
+        The forward transform of a ``from``-domain instant ``t`` is
+        ``f(t) = t + offset + drift * (t - reference)`` with ``drift = drift_ppm/1e6``.
+        That is affine with slope ``1 + drift``; its exact inverse is
+        ``t = reference + (u - offset - reference) / (1 + drift)``. A zero slope
+        makes ``f`` non-injective (a would-be divide-by-zero), so the inverse is
+        refused rather than crashing. Small integer offsets from ``reference`` keep
+        the float arithmetic away from the ~1e18 magnitude of absolute nanoseconds.
+        """
+
+        offset = int(relation.offset_nano)
+        drift_ppm = relation.drift_ppm
+        if not drift_ppm:  # None or exactly 0.0: a pure offset; reference is irrelevant.
+            return wall + offset if forward else wall - offset
+        drift = drift_ppm / 1e6
+        slope = 1.0 + drift
+        # A non-zero drift always carries a reference (enforced by the contract).
         reference = (
             int(relation.reference_unix_nano) if relation.reference_unix_nano is not None else wall
         )
-        correction = int(relation.offset_nano)
-        if relation.drift_ppm is not None:
-            correction += int(relation.drift_ppm * (wall - reference) / 1e6)
-        aligned = wall + correction if forward else wall - correction
-        added_uncertainty = int(relation.uncertainty_nano or "0")
-        return (aligned, added_uncertainty)
+        if forward:
+            return wall + offset + round(drift * (wall - reference))
+        if slope == 0.0 or not math.isfinite(slope):
+            return None
+        return reference + round((wall - offset - reference) / slope)
 
 
 def comparable_delta(
@@ -341,7 +417,17 @@ def comparable_delta(
         and end.source_time_unix_nano is not None
     ):
         aligned = aligner.align(end, start.clock_domain_id)
-        if aligned is not None:
+        if aligned is _AMBIGUOUS_ALIGNMENT:
+            # Two in-window calibrations disagree beyond their uncertainty: there is
+            # no honest single alignment, so the latency stays unavailable.
+            return Delta(
+                "unavailable",
+                None,
+                "cross_clock_calibrated",
+                "unavailable",
+                "cross_clock_ambiguous",
+            )
+        if isinstance(aligned, tuple):
             aligned_end, added_uncertainty = aligned
             value = aligned_end - int(start.source_time_unix_nano)
             if value < 0:
@@ -956,6 +1042,12 @@ _RENDER_STOPPED_EVENT_NAMES = {"earshot.audio.render.stopped"}
 _RESUMED_EVENT_NAMES = {"earshot.interruption.resumed"}
 _INTERRUPTION_PROBABILITY_MEASUREMENT = "earshot.metric.interruption.probability"
 _INTERRUPTION_RESUMED_MEASUREMENT = "earshot.metric.interruption.resumed"
+# CausalLink relationships that assert a tool was cut off by an interruption. A
+# tool is attributed to the barge-in only through such an explicit causal edge;
+# merely sharing the turn is co-occurrence, not causality.
+_INTERRUPTION_TOOL_RELATIONSHIPS = frozenset(
+    {"cancelled_by", "canceled_by", "interrupted_by", "aborted_by", "preempted_by"}
+)
 
 
 def _first_named_event(events: Sequence[Event], names: set[str]) -> Event | None:
@@ -1054,17 +1146,48 @@ def _point_at_or_after(candidate: TimePoint, reference: TimePoint) -> bool | Non
     return None
 
 
+def _tool_linked_to_interruption(
+    tool: Operation,
+    episode_operation_ids: set[str],
+    operations_by_otel: Mapping[tuple[str, str], Operation],
+) -> bool:
+    """Return whether ``tool`` carries an explicit causal edge to this episode.
+
+    The edge is a ``CausalLink`` whose relationship asserts an interruption cut the
+    tool off and whose target resolves to an operation in this interruption episode.
+    Absent such an edge, the tool merely co-occurred and is not attributed.
+    """
+
+    for link in tool.links:
+        if link.relationship not in _INTERRUPTION_TOOL_RELATIONSHIPS:
+            continue
+        if (
+            link.target_operation_id is not None
+            and link.target_operation_id in episode_operation_ids
+        ):
+            return True
+        if (
+            link.trace_id is not None
+            and link.span_id is not None
+            and (link.trace_id, link.span_id) in operations_by_otel
+        ):
+            return True
+    return False
+
+
 def _tool_outcome_stage(
     operations: Sequence[Operation],
     overlap_event: Event | None,
 ) -> dict:
     """Attribute the disposition of a tool the interruption reached, if any.
 
-    A tool is eligible when it is still active at or after the overlap: its end
-    coordinate is not strictly before the overlap. When the overlap and the tool
-    are not comparable, the tool is not excluded on time. Among eligible tools the
-    earliest by coordinate is chosen deterministically, and its status is recorded
-    as the outcome (ok/error/timeout/cancelled/...).
+    A tool is eligible only when it satisfies both tests: it is still active at or
+    after the overlap (its end coordinate is not strictly before the overlap; when
+    the two are not comparable it is not excluded on time), AND it carries an
+    explicit ``CausalLink`` naming this interruption episode as its cause -- sharing
+    the turn is co-occurrence, not causality. Among eligible tools the earliest by
+    coordinate is chosen deterministically, and its status is recorded as the
+    outcome (ok/error/timeout/cancelled/...).
     """
 
     tools = list(
@@ -1077,16 +1200,29 @@ def _tool_outcome_stage(
     if not tools:
         return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_in_turn")
     if overlap_event is not None:
-        eligible = [
+        temporally_eligible = [
             operation
             for operation in tools
             if _point_at_or_after(operation.ended_at or operation.started_at, overlap_event.time)
             is not False
         ]
     else:
-        eligible = tools
-    if not eligible:
+        temporally_eligible = list(tools)
+    if not temporally_eligible:
         return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_after_interruption")
+    episode_operation_ids = {operation.operation_id for operation in operations}
+    operations_by_otel = {
+        (operation.trace_id, operation.span_id): operation
+        for operation in operations
+        if operation.trace_id is not None and operation.span_id is not None
+    }
+    eligible = [
+        operation
+        for operation in temporally_eligible
+        if _tool_linked_to_interruption(operation, episode_operation_ids, operations_by_otel)
+    ]
+    if not eligible:
+        return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_causally_linked_tool")
     chosen = eligible[0]
     return _observed_stage(
         _STAGE_TOOL_OUTCOME,
@@ -1096,17 +1232,104 @@ def _tool_outcome_stage(
     )
 
 
-def _interruption_chain(
+def _segment_interruption_episodes(events: Sequence[Event]) -> list[tuple[Event, ...]]:
+    """Partition a turn's events into one bucket per interruption episode.
+
+    An episode is anchored by an interruption trigger: each overlap detection starts
+    one, and a classification (accept/ignore) starts one only when it is not the
+    first classification of the current overlap-anchored episode (a native accept
+    with no detection is its own episode). Every other event is assigned to the
+    latest anchor at or before it, so a later episode's teardown is never spliced
+    onto an earlier episode's overlap. With a single anchor the whole turn is one
+    episode -- identical to the un-segmented projection, including cross-clock
+    events that cannot be ordered against the anchor.
+    """
+
+    triggers = _order_by_comparable_time(
+        (
+            event
+            for event in events
+            if event.event_name in _OVERLAP_EVENT_NAMES
+            or event.event_name in _CLASSIFIED_EVENT_NAMES
+        ),
+        point=lambda event: event.time,
+        identity=lambda event: event.event_id,
+    )
+    if not triggers:
+        return []
+
+    anchors: list[Event] = []
+    open_is_overlap = False
+    open_has_classification = False
+    for trigger in triggers:
+        if trigger.event_name in _OVERLAP_EVENT_NAMES:
+            anchors.append(trigger)
+            open_is_overlap = True
+            open_has_classification = False
+        elif anchors and open_is_overlap and not open_has_classification:
+            # The classify decision of the current overlap-anchored episode.
+            open_has_classification = True
+        else:
+            anchors.append(trigger)
+            open_is_overlap = False
+            open_has_classification = True
+
+    if len(anchors) == 1:
+        # Exactly one episode: keep every event, so single-interruption turns (and
+        # their cross-clock teardown) project exactly as before segmentation.
+        return [tuple(events)]
+
+    buckets: list[list[Event]] = [[] for _ in anchors]
+    for event in events:
+        assigned: int | None = None
+        for index, anchor in enumerate(anchors):
+            at_or_after = _point_at_or_after(event.time, anchor.time)
+            if at_or_after is True:
+                assigned = index
+            elif at_or_after is False:
+                break
+            # ``None`` (not comparable to this anchor): cannot place it here; an
+            # event comparable to no anchor is left unassigned rather than guessed.
+        if assigned is not None:
+            buckets[assigned].append(event)
+    return [tuple(bucket) for bucket in buckets]
+
+
+def _interruption_chains(
+    turn_id: str,
+    operations: Sequence[Operation],
+    events: Sequence[Event],
+    quality_samples: Sequence[QualitySample],
+    aligner: _ClockAligner | None,
+) -> list[dict]:
+    """Build one ordered causal chain per interruption episode in the turn.
+
+    Each episode's chain is scoped to that episode's own events, so stages are
+    never merged across distinct interruptions. A turn that observed no interruption
+    yields no chains.
+    """
+
+    chains: list[dict] = []
+    for episode_events in _segment_interruption_episodes(events):
+        chain = _build_interruption_chain(
+            turn_id, operations, episode_events, quality_samples, aligner
+        )
+        if chain is not None:
+            chains.append(chain)
+    return chains
+
+
+def _build_interruption_chain(
     turn_id: str,
     operations: Sequence[Operation],
     events: Sequence[Event],
     quality_samples: Sequence[QualitySample],
     aligner: _ClockAligner | None,
 ) -> dict | None:
-    """Build the ordered causal chain a turn's interruption produced, or ``None``.
+    """Build the ordered causal chain a single interruption episode produced.
 
-    A chain exists only for a turn that actually observed an interruption -- an
-    overlap detection or a recorded accept/ignore decision. Downstream teardown
+    A chain exists only when the episode's events actually observed an interruption
+    -- an overlap detection or a recorded accept/ignore decision. Downstream teardown
     signals alone (a model cancel, a render stop) never conjure one.
     """
 
@@ -1397,7 +1620,7 @@ def _turn_projection(
             {"event_name": event.event_name, "evidence_ids": [event.event_id]}
             for event in interruption_events
         ],
-        "interruption_chain": _interruption_chain(
+        "interruption_chains": _interruption_chains(
             turn_id, operations, events, quality_samples, aligner
         ),
     }
