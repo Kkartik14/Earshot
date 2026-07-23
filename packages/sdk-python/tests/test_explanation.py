@@ -827,6 +827,18 @@ def test_validate_explanation_rejects_changed_turn_measurements() -> None:
     assert "EARSHOT_EXPLANATION_TURN_MISMATCH" in {issue.code for issue in report.errors}
 
 
+def test_validate_explanation_rejects_changed_session_source_fields(valid_bundle) -> None:
+    analysis = _analyze(valid_bundle)
+    explanation = explain_incident(valid_bundle, analysis)
+    tampered = explanation.model_copy(update={"session_status": "failed"})
+
+    report = validate_explanation(valid_bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_SOURCE_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)

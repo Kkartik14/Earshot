@@ -2279,6 +2279,14 @@ def validate_explanation(
     operation_ids = set(operations)
     evidence_ids = operation_ids | set(events) | set(quality_samples) | media_ids
     expected_explanation = _project_explanation(bundle, analysis)
+    if explanation != expected_explanation:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_SOURCE_MISMATCH",
+                path=("explanation",),
+                message="explanation differs from the exact source-derived read model",
+            )
+        )
     expected_operations = {
         operation.operation_id: operation
         for turn in expected_explanation.turns
