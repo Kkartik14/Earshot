@@ -31,6 +31,7 @@ from .contract import (
     CaptureClassPolicy,
     CausalLink,
     ClockDomain,
+    ClockRelation,
     ConsentRecord,
     Coverage,
     ErrorRecord,
@@ -84,6 +85,10 @@ DEFAULT_MAX_RECORDS = 10_000
 DEFAULT_MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_RAW_OTLP_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_VALUE_BYTES = 64 * 1024
+# Defensive bounds on declared clock metadata (one browser domain + a handful of
+# calibrations per session is normal; these only guard against pathological input).
+_MAX_EXTRA_CLOCK_DOMAINS = 16
+_MAX_CLOCK_RELATIONS = 64
 _MAX_COUNTER = 9_223_372_036_854_775_807
 _RECORD_KINDS = (
     "adapter",
@@ -272,6 +277,11 @@ class IncidentRecorder:
         self._adapters: list[Adapter] = []
         self._raw_otlp_chunks: list[RawOtlpChunk] = []
         self._omissions: list[Omission] = []
+        # Additional clock domains (e.g. a browser's monotonic clock) and any
+        # declared calibrations relating them to the server clock. These are
+        # small governed metadata; deduped by id and bounded below.
+        self._extra_clock_domains: list[ClockDomain] = []
+        self._clock_relations: list[ClockRelation] = []
         self._retained_classes: set[CaptureClass] = {CaptureClass.METADATA}
         self._status = "running"
         self._closed = False
@@ -602,6 +612,47 @@ class IncidentRecorder:
                     self._retained_classes.add(CaptureClass(record_class))
         self._emit_pending_truncation_diagnostic()
         return result
+
+    def register_clock_domain(self, domain: ClockDomain) -> None:
+        """Declare an additional clock domain (e.g. a browser's monotonic clock).
+
+        Idempotent by ``clock_domain_id``: registering the same id twice is a
+        no-op, and a re-registration with a conflicting definition is rejected so
+        a domain's identity cannot silently change mid-session. The process clock
+        domain is implicit and never re-declared here.
+        """
+
+        with self._lock:
+            self._require_open()
+            if domain.clock_domain_id == self.clock_domain_id:
+                return
+            for existing in self._extra_clock_domains:
+                if existing.clock_domain_id == domain.clock_domain_id:
+                    if existing != domain:
+                        raise ValueError("conflicting duplicate clock domain identity")
+                    return
+            if len(self._extra_clock_domains) >= _MAX_EXTRA_CLOCK_DOMAINS:
+                return  # defensive bound; extra domains beyond the cap are ignored
+            self._extra_clock_domains.append(domain.model_copy(deep=True))
+
+    def register_clock_relation(self, relation: ClockRelation) -> None:
+        """Declare a calibration relating two clock domains.
+
+        The relation is what lets the analyzer align cross-clock timestamps into
+        an honestly *estimated* latency; without one, cross-clock latency stays
+        unavailable. Idempotent by ``relation_id`` with the same conflict guard.
+        """
+
+        with self._lock:
+            self._require_open()
+            for existing in self._clock_relations:
+                if existing.relation_id == relation.relation_id:
+                    if existing != relation:
+                        raise ValueError("conflicting duplicate clock relation identity")
+                    return
+            if len(self._clock_relations) >= _MAX_CLOCK_RELATIONS:
+                return
+            self._clock_relations.append(relation.model_copy(deep=True))
 
     def record_coverage(self, signal: str, availability: str, reason: str | None = None) -> None:
         safe_signal = sanitize_semantic_label(signal) or "unknown"
@@ -1488,7 +1539,9 @@ class IncidentRecorder:
                         uncertainty_nano="0",
                         synchronization_method="same_process_sample",
                     ),
+                    *self._extra_clock_domains,
                 ),
+                clock_relations=tuple(self._clock_relations),
                 coverage=profile_coverage,
                 operations=tuple(self._operations),
                 events=tuple(self._events),

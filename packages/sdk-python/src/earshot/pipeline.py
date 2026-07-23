@@ -35,6 +35,8 @@ from typing import Any
 from .clock import Clock
 from .contract import (
     Adapter,
+    ClockDomain,
+    ClockRelation,
     Evidence,
     IncidentBundle,
     QualityMeasurement,
@@ -329,8 +331,18 @@ class TurnRecorder:
         confidence: str = "estimated",
         source_field: str = "pipeline.event",
         attributes: Mapping[str, Any] | None = None,
+        browser_clock_domain_id: str | None = None,
+        browser_monotonic_ms: float | None = None,
+        browser_uncertainty_nano: int | None = None,
+        browser_wall_origin_nano: int | None = None,
     ) -> None:
-        """Author a turn-relative point event with fact-specific evidence."""
+        """Author a point event with fact-specific evidence.
+
+        A browser-derived fact (``browser_clock_domain_id`` set) is placed in that
+        browser clock domain at its RAW monotonic timestamp, never on the server
+        turn clock -- so it does not advance the server-clock turn extent and is
+        not comparable to a server event without a declared ClockRelation.
+        """
 
         name = self._label(name, "event name")
         offset = self._required_ms(at_ms, "event offset")
@@ -339,16 +351,26 @@ class TurnRecorder:
         confidence = self._confidence(confidence)
         source_field = self._label(source_field, "source field")
         self._sequence += 1
+        if browser_clock_domain_id is not None:
+            time = self._browser_point(
+                browser_monotonic_ms,
+                browser_clock_domain_id,
+                browser_uncertainty_nano,
+                browser_wall_origin_nano,
+            )
+        else:
+            time = self._point(offset)
         self._session.recorder.record_event(
             name,
             event_id=f"event-{self._turn_index}-{self._sequence}",
-            time=self._point(offset),
+            time=time,
             participant_id=participant_id,
             turn_id=self._turn_id,
             evidence=self._fact_evidence(source, confidence, source_field),
             attributes=attributes,
         )
-        self._max_ms = max(self._max_ms, offset)
+        if browser_clock_domain_id is None:
+            self._max_ms = max(self._max_ms, offset)
 
     def record_measurement(
         self,
@@ -364,8 +386,17 @@ class TurnRecorder:
         at_ms: float | None = None,
         quality_kind: str = "provider_metric",
         attributes: Mapping[str, Any] | None = None,
+        browser_clock_domain_id: str | None = None,
+        browser_monotonic_ms: float | None = None,
+        browser_uncertainty_nano: int | None = None,
+        browser_wall_origin_nano: int | None = None,
     ) -> None:
-        """Author a provider-native or standard scalar without relabeling its meaning."""
+        """Author a provider-native or standard scalar without relabeling its meaning.
+
+        A browser-derived measurement (``browser_clock_domain_id`` set) is placed
+        in that browser clock domain at its RAW monotonic timestamp, never on the
+        server turn clock.
+        """
 
         name = self._label(name, "measurement name")
         normalized_value = self._finite_number(value, name)
@@ -392,7 +423,15 @@ class TurnRecorder:
         if basis is not None:
             sample_attributes["earshot.metric.basis"] = basis
         self._sequence += 1
-        point = self._point(offset)
+        if browser_clock_domain_id is not None:
+            point = self._browser_point(
+                browser_monotonic_ms,
+                browser_clock_domain_id,
+                browser_uncertainty_nano,
+                browser_wall_origin_nano,
+            )
+        else:
+            point = self._point(offset)
         self._session.recorder.record_quality_sample(
             QualitySample(
                 sample_id=f"quality-{self._turn_index}-{self._sequence}",
@@ -405,7 +444,8 @@ class TurnRecorder:
                 attributes=sample_attributes,
             )
         )
-        self._max_ms = max(self._max_ms, offset)
+        if browser_clock_domain_id is None:
+            self._max_ms = max(self._max_ms, offset)
 
     def record_omission(
         self,
@@ -512,6 +552,11 @@ class TurnRecorder:
             availability="available",
         )
 
+    def register_clock_domain(self, domain: ClockDomain) -> None:
+        """Declare an additional clock domain (e.g. a browser's) on the session."""
+
+        self._session.register_clock_domain(domain)
+
     def _point(self, offset_ms: float) -> TimePoint:
         absolute_nano = self._session.turn_origin_nano(self._turn_index) + int(
             offset_ms * _MS_TO_NANO
@@ -521,6 +566,38 @@ class TurnRecorder:
             monotonic_time_nano=str(absolute_nano),
             clock_domain_id=self._session.clock_domain_id,
             uncertainty_nano="1000000",
+        )
+
+    def _browser_point(
+        self,
+        monotonic_ms: float | None,
+        clock_domain_id: str,
+        uncertainty_nano: int | None,
+        wall_origin_nano: int | None = None,
+    ) -> TimePoint:
+        """A TimePoint in a browser clock domain at a RAW monotonic reading.
+
+        The monotonic value is domain-local and is never aligned across domains.
+        A browser-wall ``source_time_unix_nano`` is set ONLY when the browser's
+        wall origin is known (``performance.timeOrigin``); it is the sole component
+        a declared ClockRelation can align to the server clock. Absent a relation
+        the wall value is still in a foreign domain, so cross-clock latency stays
+        honestly unavailable -- we never manufacture a server-clock timestamp.
+        """
+
+        monotonic = self._required_ms(monotonic_ms, "browser monotonic reading")
+        uncertainty = 0 if uncertainty_nano is None else int(uncertainty_nano)
+        if uncertainty < 0:
+            raise ValueError("browser uncertainty must be non-negative")
+        monotonic_nano = int(monotonic * _MS_TO_NANO)
+        source_wall = (
+            None if wall_origin_nano is None else str(int(wall_origin_nano) + monotonic_nano)
+        )
+        return TimePoint(
+            source_time_unix_nano=source_wall,
+            monotonic_time_nano=str(monotonic_nano),
+            clock_domain_id=self._label(clock_domain_id, "clock domain id"),
+            uncertainty_nano=str(uncertainty),
         )
 
     @staticmethod
@@ -666,6 +743,26 @@ class PipelineSession:
     @property
     def clock_domain_id(self) -> str:
         return self.recorder.clock_domain_id
+
+    def register_clock_domain(self, domain: ClockDomain) -> None:
+        """Declare an additional clock domain (idempotent by id).
+
+        Browser-derived facts live in their own monotonic clock domain; declaring
+        it here is what keeps the analyzer honest -- a browser timestamp is never
+        silently treated as a server-clock observation.
+        """
+
+        self.recorder.register_clock_domain(domain)
+
+    def register_clock_relation(self, relation: ClockRelation) -> None:
+        """Declare a calibration relating two clock domains (idempotent by id).
+
+        Supplying a real client<->server calibration is what turns an otherwise
+        *unavailable* cross-clock latency into an honestly *estimated* one, via the
+        existing ClockRelation alignment path -- earshot never invents the offset.
+        """
+
+        self.recorder.register_clock_relation(relation)
 
     def turn_origin_nano(self, turn_index: int) -> int:
         return self._turn_origins_nano[turn_index]

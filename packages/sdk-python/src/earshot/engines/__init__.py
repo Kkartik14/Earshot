@@ -19,11 +19,12 @@ paired ``apply_*`` derives and records onto a
 
 from __future__ import annotations
 
-from .base import EngineCoverage, EngineEvent, EngineMeasurement
+from .base import BrowserClockDomain, EngineCoverage, EngineEvent, EngineMeasurement
 from .device import DeviceFacts, analyze_audio_graph, apply_audio_graph
 from .webrtc import WebRtcFacts, analyze_webrtc_stats, apply_webrtc_stats
 
 __all__ = [
+    "BrowserClockDomain",
     "DeviceFacts",
     "EngineCoverage",
     "EngineEvent",

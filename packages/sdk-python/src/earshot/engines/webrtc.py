@@ -29,9 +29,11 @@ from typing import Any
 
 from ..pipeline import TurnRecorder
 from .base import (
+    BrowserClockDomain,
     EngineCoverage,
     EngineEvent,
     EngineMeasurement,
+    _AppliedClock,
     _CoverageLedger,
     apply_facts,
 )
@@ -80,19 +82,34 @@ class WebRtcFacts:
     jitter_buffer_growth: bool = False
     reconnected: bool = False
     route_changed: bool = False
+    clock: _AppliedClock | None = None
 
     def apply(self, turn: TurnRecorder) -> None:
-        """Write every derived fact onto ``turn`` (coverage, then samples, events)."""
+        """Write every derived fact onto ``turn`` (coverage, then samples, events).
 
-        apply_facts(turn, self.coverage, self.measurements, self.events)
+        When a browser clock domain was supplied to :func:`analyze_webrtc_stats`,
+        the samples/events land in that domain at their raw browser timestamps.
+        """
+
+        apply_facts(turn, self.coverage, self.measurements, self.events, self.clock)
 
 
-def analyze_webrtc_stats(snapshots: Sequence[Mapping[str, Any]]) -> WebRtcFacts:
+def analyze_webrtc_stats(
+    snapshots: Sequence[Mapping[str, Any]],
+    *,
+    clock_domain: BrowserClockDomain | None = None,
+) -> WebRtcFacts:
     """Derive governed facts from ordered ``{timestamp_ms, stats}`` snapshots.
 
     ``stats`` maps a stat id to an ``RTCStats``-shaped dict carrying a ``type``
     (``inbound-rtp``, ``remote-inbound-rtp``, ``candidate-pair``, ``transport``,
     ``local-candidate``). Malformed snapshots are skipped (fail-open, no raise).
+
+    ``clock_domain`` declares the browser clock the ``timestamp_ms`` values belong
+    to. When supplied, applying the facts places them in that clock domain at their
+    RAW browser timestamps (this batch's own origin is preserved), never rebased
+    onto the server clock -- so the analyzer keeps browser and server time in
+    separate domains and refuses cross-clock latency absent a ClockRelation.
     """
 
     normalized = _normalize_snapshots(snapshots)
@@ -150,13 +167,19 @@ def analyze_webrtc_stats(snapshots: Sequence[Mapping[str, Any]]) -> WebRtcFacts:
         jitter_buffer_growth=jitter_buffer_growth,
         reconnected=reconnected,
         route_changed=route_changed,
+        clock=None if clock_domain is None else _AppliedClock(clock_domain, base_ms),
     )
 
 
-def apply_webrtc_stats(turn: TurnRecorder, snapshots: Sequence[Mapping[str, Any]]) -> WebRtcFacts:
+def apply_webrtc_stats(
+    turn: TurnRecorder,
+    snapshots: Sequence[Mapping[str, Any]],
+    *,
+    clock_domain: BrowserClockDomain | None = None,
+) -> WebRtcFacts:
     """Derive and record ``getStats`` facts onto ``turn``; return the facts."""
 
-    facts = analyze_webrtc_stats(snapshots)
+    facts = analyze_webrtc_stats(snapshots, clock_domain=clock_domain)
     facts.apply(turn)
     return facts
 
@@ -308,7 +331,13 @@ def _connection_state(stats: Mapping[str, Mapping[str, Any]]) -> str | None:
 def _selected_route(
     stats: Mapping[str, Mapping[str, Any]],
 ) -> tuple[str | None, str | None]:
-    """Return ``(selected_candidate_pair_id, local_network_type)`` (either may be None)."""
+    """Return ``(selected_candidate_pair_id, local_network_type)`` for the ACTIVE pair.
+
+    The network type is read ONLY from the selected pair's own local candidate --
+    never from an arbitrary local-candidate stat -- so an unrelated candidate
+    appearing or changing its ``networkType`` is not misread as a route change.
+    When no pair is actually selected, the route's network type is unknown.
+    """
 
     pair_id: str | None = None
     network_type: str | None = None
@@ -322,15 +351,28 @@ def _selected_route(
             local = stats.get(local_id)
             if isinstance(local, Mapping):
                 network_type = _string(local, "networkType")
-    if network_type is None:
-        for stat in _by_type(stats, "local-candidate"):
-            network_type = _string(stat, "networkType") or network_type
     return pair_id, network_type
 
 
 def _selected_pair(stats: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any] | None:
-    """The nominated/selected candidate pair, chosen deterministically."""
+    """The transport's SELECTED candidate pair, resolved honestly (no arbitrary guess).
 
+    Resolution order:
+      1. the pair the transport names via ``selectedCandidatePairId``;
+      2. failing that, a pair that marks itself ``selected``/``nominated``
+         (deterministic by stat id).
+    When neither exists the active pair is *unknown* and this returns ``None`` --
+    it never falls back to an arbitrary pair, which would attribute a route/RTT to
+    a candidate the ICE agent never selected.
+    """
+
+    selected_id: str | None = None
+    for stat in _by_type(stats, "transport"):
+        selected_id = _string(stat, "selectedCandidatePairId") or selected_id
+    if selected_id is not None:
+        pair = stats.get(selected_id)
+        if isinstance(pair, Mapping) and _type(pair) == "candidate-pair":
+            return pair
     pairs = sorted(
         ((stat_id, stat) for stat_id, stat in stats.items() if _type(stat) == "candidate-pair"),
         key=lambda item: item[0],
@@ -338,7 +380,7 @@ def _selected_pair(stats: Mapping[str, Mapping[str, Any]]) -> Mapping[str, Any] 
     for _stat_id, stat in pairs:
         if _bool(stat, "selected") or _bool(stat, "nominated"):
             return stat
-    return pairs[0][1] if pairs else None
+    return None
 
 
 def _route_changed(

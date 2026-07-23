@@ -27,9 +27,11 @@ from typing import Any
 
 from ..pipeline import TurnRecorder
 from .base import (
+    BrowserClockDomain,
     EngineCoverage,
     EngineEvent,
     EngineMeasurement,
+    _AppliedClock,
     _CoverageLedger,
     apply_facts,
 )
@@ -55,9 +57,16 @@ _PERMISSION_TYPES = frozenset({"permission", "permission_denied", "getusermedia"
 _CONTEXT_TYPES = frozenset(
     {"audiocontext_state", "statechange", "audiocontext", "audiocontextstatechange"}
 )
-_DEVICE_CHANGE_TYPES = frozenset(
-    {"device_change", "devicechange", "sink_change", "sinkchange", "output_change"}
-)
+# An explicit output-sink switch always concerns the ACTIVE render device.
+_SINK_CHANGE_TYPES = frozenset({"sink_change", "sinkchange", "output_change"})
+# The global ``devicechange`` fires for ANY device add/remove -- including a USB
+# drive or a second monitor -- so it is only a route change with evidence it
+# touched the active input/output device (a tracked device/sink hash).
+_DEVICE_CHANGE_TYPES = frozenset({"device_change", "devicechange"})
+
+# A benign, honestly-labeled note for a devicechange that did not touch the
+# active route (an unrelated device was added/removed). Never a fault.
+_DEVICE_INVENTORY = "device.inventory"
 _SAMPLE_RATE_TYPES = frozenset({"sample_rate_mismatch", "samplerate_mismatch", "sample_rate"})
 _UNDERRUN_TYPES = frozenset({"underrun", "glitch", "dropped_frames", "xrun", "buffer_underrun"})
 _LATENCY_TYPES = frozenset({"latency", "audiocontext_latency", "audio_latency"})
@@ -74,18 +83,32 @@ class DeviceFacts:
     context_suspended: bool = False
     route_changed: bool = False
     stale: bool = False
+    clock: _AppliedClock | None = None
 
     def apply(self, turn: TurnRecorder) -> None:
-        """Write every derived fact onto ``turn`` (coverage, then samples, events)."""
+        """Write every derived fact onto ``turn`` (coverage, then samples, events).
 
-        apply_facts(turn, self.coverage, self.measurements, self.events)
+        When a browser clock domain was supplied to :func:`analyze_audio_graph`,
+        the samples/events land in that domain at their raw browser timestamps.
+        """
+
+        apply_facts(turn, self.coverage, self.measurements, self.events, self.clock)
 
 
-def analyze_audio_graph(events: Sequence[Mapping[str, Any]]) -> DeviceFacts:
+def analyze_audio_graph(
+    events: Sequence[Mapping[str, Any]],
+    *,
+    clock_domain: BrowserClockDomain | None = None,
+) -> DeviceFacts:
     """Derive governed facts from ordered AudioContext/device lifecycle events.
 
     Each event is a ``{type, timestamp_ms, ...}`` mapping. Unknown or malformed
     events are skipped (fail-open, no raise).
+
+    ``clock_domain`` declares the browser clock the ``timestamp_ms`` values belong
+    to; when supplied the facts are placed in that domain at their raw browser
+    timestamps, never rebased onto the server clock (see
+    :func:`~earshot.engines.webrtc.analyze_webrtc_stats`).
     """
 
     normalized = _normalize_events(events)
@@ -110,13 +133,19 @@ def analyze_audio_graph(events: Sequence[Mapping[str, Any]]) -> DeviceFacts:
         context_suspended=flags["context_suspended"],
         route_changed=flags["route"],
         stale=flags["stale"],
+        clock=None if clock_domain is None else _AppliedClock(clock_domain, base_ms),
     )
 
 
-def apply_audio_graph(turn: TurnRecorder, events: Sequence[Mapping[str, Any]]) -> DeviceFacts:
+def apply_audio_graph(
+    turn: TurnRecorder,
+    events: Sequence[Mapping[str, Any]],
+    *,
+    clock_domain: BrowserClockDomain | None = None,
+) -> DeviceFacts:
     """Derive and record audio-graph facts onto ``turn``; return the facts."""
 
-    facts = analyze_audio_graph(events)
+    facts = analyze_audio_graph(events, clock_domain=clock_domain)
     facts.apply(turn)
     return facts
 
@@ -145,9 +174,20 @@ def _dispatch(
             emitted.append(_device_event(_CONTEXT_SUSPENDED, at_ms, "AudioContext.state"))
             flags["context_suspended"] = True
         return
-    if event_type in _DEVICE_CHANGE_TYPES:
-        emitted.append(_device_event(_DEVICE_ROUTE_CHANGED, at_ms, "devicechange"))
+    if event_type in _SINK_CHANGE_TYPES:
+        # A sink switch is an explicit active-output route change.
+        emitted.append(_device_event(_DEVICE_ROUTE_CHANGED, at_ms, "sink_change"))
         flags["route"] = True
+        return
+    if event_type in _DEVICE_CHANGE_TYPES:
+        if _affects_active_device(event):
+            emitted.append(_device_event(_DEVICE_ROUTE_CHANGED, at_ms, "devicechange"))
+            flags["route"] = True
+        else:
+            # A bare devicechange with no evidence it touched the active input or
+            # output device is a device-inventory change, not a route failure.
+            # Record it honestly as benign coverage -- never a fault.
+            coverage.note(_DEVICE_INVENTORY, "available", "unrelated_device_change")
         return
     if event_type in _SAMPLE_RATE_TYPES:
         if _is_sample_rate_mismatch(event):
@@ -160,6 +200,18 @@ def _dispatch(
         return
     if event_type in _LATENCY_TYPES:
         _emit_latency(event, at_ms, measurements)
+
+
+def _affects_active_device(event: Mapping[str, Any]) -> bool:
+    """True when a ``devicechange`` carries evidence it touched the active device.
+
+    The client attaches a ``deviceHash`` when the *tracked* input track ends and a
+    ``sinkHash`` when the active output sink switches. Their presence is the
+    evidence that this change concerns the device the session is actually using;
+    a bare event (a global inventory change) carries neither.
+    """
+
+    return _string(event, "deviceHash") is not None or _string(event, "sinkHash") is not None
 
 
 def _is_sample_rate_mismatch(event: Mapping[str, Any]) -> bool:
@@ -274,6 +326,11 @@ def _first_number(event: Mapping[str, Any], keys: Iterable[str]) -> float | None
             continue
         return float(value)
     return None
+
+
+def _string(event: Mapping[str, Any], key: str) -> str | None:
+    value = event.get(key)
+    return value if isinstance(value, str) and value else None
 
 
 def _lower(value: Any) -> str | None:

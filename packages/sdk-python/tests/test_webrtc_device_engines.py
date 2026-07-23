@@ -248,6 +248,68 @@ def test_candidate_pair_change_emits_a_route_change_event() -> None:
     assert [e.name for e in facts.events] == ["earshot.transport.route_changed"]
 
 
+def test_transport_selected_pair_change_emits_route_change() -> None:
+    # No pair marks itself selected/nominated; the transport names the active
+    # pair. A change to that named pair is a real route change.
+    snapshots = [
+        _snap(
+            0,
+            {
+                "T": {"type": "transport", "selectedCandidatePairId": "CP1"},
+                "CP1": {"type": "candidate-pair", "localCandidateId": "LCP1"},
+                "CP2": {"type": "candidate-pair", "localCandidateId": "LCP2"},
+                "LCP1": {"type": "local-candidate", "networkType": "wifi"},
+                "LCP2": {"type": "local-candidate", "networkType": "cellular"},
+            },
+        ),
+        _snap(
+            1000,
+            {
+                "T": {"type": "transport", "selectedCandidatePairId": "CP2"},
+                "CP1": {"type": "candidate-pair", "localCandidateId": "LCP1"},
+                "CP2": {"type": "candidate-pair", "localCandidateId": "LCP2"},
+                "LCP1": {"type": "local-candidate", "networkType": "wifi"},
+                "LCP2": {"type": "local-candidate", "networkType": "cellular"},
+            },
+        ),
+    ]
+    facts = analyze_webrtc_stats(snapshots)
+    assert facts.route_changed is True
+    assert [e.name for e in facts.events] == ["earshot.transport.route_changed"]
+
+
+def test_unrelated_candidate_pair_change_is_not_a_route_change() -> None:
+    # The active pair (named by the transport) is CP2/cellular in BOTH snapshots.
+    # An UNRELATED, non-selected pair CP1 flips its local networkType. The old
+    # arbitrary-first-pair fallback would track CP1 and cry route change; the
+    # honest resolver tracks only the selected CP2, which never changed.
+    snapshots = [
+        _snap(
+            0,
+            {
+                "T": {"type": "transport", "selectedCandidatePairId": "CP2"},
+                "CP1": {"type": "candidate-pair", "localCandidateId": "LCP1"},
+                "CP2": {"type": "candidate-pair", "localCandidateId": "LCP2"},
+                "LCP1": {"type": "local-candidate", "networkType": "wifi"},
+                "LCP2": {"type": "local-candidate", "networkType": "cellular"},
+            },
+        ),
+        _snap(
+            1000,
+            {
+                "T": {"type": "transport", "selectedCandidatePairId": "CP2"},
+                "CP1": {"type": "candidate-pair", "localCandidateId": "LCP1"},
+                "CP2": {"type": "candidate-pair", "localCandidateId": "LCP2"},
+                "LCP1": {"type": "local-candidate", "networkType": "ethernet"},
+                "LCP2": {"type": "local-candidate", "networkType": "cellular"},
+            },
+        ),
+    ]
+    facts = analyze_webrtc_stats(snapshots)
+    assert facts.route_changed is False
+    assert [e.name for e in facts.events] == []
+
+
 def test_route_change_alone_is_not_a_reconnect() -> None:
     snapshots = [
         _snap(
@@ -407,11 +469,42 @@ def test_output_latency_is_estimated_and_base_latency_is_measured() -> None:
     assert output.value == pytest.approx(0.02)
 
 
-def test_device_route_change_is_reported() -> None:
-    events = [{"type": "devicechange", "timestamp_ms": 0, "kind": "audiooutput"}]
+def test_devicechange_touching_active_device_is_a_route_change() -> None:
+    # A devicechange carrying the tracked device hash (the active input track
+    # ended) is real evidence the active route changed.
+    events = [{"type": "devicechange", "timestamp_ms": 0, "deviceHash": "dev_1a2b3c4d"}]
     facts = analyze_audio_graph(events)
     assert facts.route_changed is True
     assert [e.name for e in facts.events] == ["earshot.device.route_changed"]
+
+
+def test_sink_change_is_an_active_output_route_change() -> None:
+    events = [{"type": "sink_change", "timestamp_ms": 0, "sinkHash": "sink_9f8e7d6c"}]
+    facts = analyze_audio_graph(events)
+    assert facts.route_changed is True
+    assert [e.name for e in facts.events] == ["earshot.device.route_changed"]
+
+
+def test_unrelated_devicechange_is_not_a_route_failure() -> None:
+    # A bare global devicechange (a USB drive was plugged in) touches no active
+    # audio device: it must NOT be a route change / fault, only benign coverage.
+    events = [{"type": "devicechange", "timestamp_ms": 0}]
+    facts = analyze_audio_graph(events)
+    assert facts.route_changed is False
+    assert facts.events == ()
+    inventory = [c for c in facts.coverage if c.signal == "device.inventory"]
+    assert inventory and inventory[0].availability == "available"
+    assert inventory[0].reason == "unrelated_device_change"
+
+
+@pytest.mark.integration
+def test_unrelated_devicechange_does_not_fire_device_unavailable() -> None:
+    events = [{"type": "devicechange", "timestamp_ms": 0}]
+    bundle = _record(lambda turn: apply_audio_graph(turn, events))
+    assert validate_incident(bundle).ok
+    analysis = _analyze(bundle)
+    assert "device.unavailable" not in _codes(analysis)
+    assert validate_derived_analysis(bundle, analysis).ok
 
 
 # -- Determinism and clean-input discipline ------------------------------------
