@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .contract import (
+    CausalLink,
     DerivedAnalysis,
+    Diagnosis,
+    ErrorRecord,
     Evidence,
     IncidentBundle,
+    Operation,
+    QualityMeasurement,
     QualitySample,
     TimePoint,
     TurnMetrics,
 )
+from .measurement_semantics import measurement_value_limitation
 
 
 class ExplanationModel(BaseModel):
@@ -30,11 +37,41 @@ class ExplainedEvidence(ExplanationModel):
     source_field: str | None = None
 
 
+class ExplainedLink(ExplanationModel):
+    relationship: str
+    target_scope: str = "unknown"
+    target_operation_id: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
+
+
+class ExplainedError(ExplanationModel):
+    code: str
+    category: str
+    capture_class: str
+    # ``diagnostic_payload`` is gated off in v1alpha1; the raw operator-authored
+    # message is never surfaced. The field exists so the shape is stable, but it
+    # is always omitted.
+    message: str | None = None
+
+
+class ExplainedDiagnosis(ExplanationModel):
+    diagnosis_id: str
+    code: str
+    summary: str
+    confidence: str
+    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    limitations: tuple[str, ...] = ()
+
+
 class ExplainedMeasurement(ExplanationModel):
     name: str
     value: bool | int | float
     unit: str
     aggregation: str
+    basis: str = "provider_measurement"
+    confidence: str
+    limitation: str | None = None
     evidence: ExplainedEvidence | None = None
     evidence_ids: tuple[str, ...]
 
@@ -49,11 +86,19 @@ class ExplainedOperation(ExplanationModel):
     start_nano: str
     end_nano: str | None = None
     duration_nano: str | None = None
+    start_uncertainty_nano: str | None = None
+    end_uncertainty_nano: str | None = None
     limitation: str | None = None
     participant_id: str | None = None
     stream_id: str | None = None
     provider: str | None = None
     model: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    parent_scope: str = "unknown"
+    links: tuple[ExplainedLink, ...] = ()
+    error: ExplainedError | None = None
     evidence: ExplainedEvidence | None = None
     measurements: tuple[ExplainedMeasurement, ...]
     evidence_ids: tuple[str, ...]
@@ -106,6 +151,9 @@ class IncidentExplanation(ExplanationModel):
     coverage: tuple[ExplainedCoverage, ...]
     omissions: tuple[ExplainedOmission, ...]
     limitations: tuple[str, ...]
+    diagnoses: tuple[ExplainedDiagnosis, ...] = ()
+    unassigned_operations: tuple[ExplainedOperation, ...] = ()
+    unassigned_measurements: tuple[ExplainedMeasurement, ...] = ()
 
 
 def _evidence(value: Evidence | None) -> ExplainedEvidence | None:
@@ -122,6 +170,39 @@ def _evidence(value: Evidence | None) -> ExplainedEvidence | None:
     )
 
 
+def _link(value: CausalLink) -> ExplainedLink:
+    return ExplainedLink(
+        relationship=value.relationship,
+        target_scope=value.target_scope,
+        target_operation_id=value.target_operation_id,
+        trace_id=value.trace_id,
+        span_id=value.span_id,
+    )
+
+
+def _error(value: ErrorRecord | None) -> ExplainedError | None:
+    if value is None:
+        return None
+    # Project only the governed, allowlisted metadata. The raw ``message`` is a
+    # diagnostic_payload channel that stays closed in v1alpha1.
+    return ExplainedError(
+        code=value.code,
+        category=value.category,
+        capture_class=value.capture_class,
+    )
+
+
+def _diagnosis(value: Diagnosis) -> ExplainedDiagnosis:
+    return ExplainedDiagnosis(
+        diagnosis_id=value.diagnosis_id,
+        code=value.code,
+        summary=value.summary,
+        confidence=value.confidence,
+        evidence_ids=value.evidence_refs,
+        limitations=value.limitations,
+    )
+
+
 def _coordinate(
     value: TimePoint,
 ) -> tuple[Literal["monotonic", "source_wall", "observed_wall"], str | None, str]:
@@ -135,7 +216,7 @@ def _coordinate(
 
 def _sample_belongs_to_operation(
     sample: QualitySample,
-    operation,
+    operation: Operation,
     *,
     matching_stage_count: int,
 ) -> bool:
@@ -147,8 +228,37 @@ def _sample_belongs_to_operation(
     )
 
 
+def _explained_measurement(
+    sample: QualitySample,
+    measurement: QualityMeasurement,
+) -> ExplainedMeasurement:
+    """Project one owned provider scalar without aggregating or renaming it.
+
+    The value, unit, and aggregation are copied verbatim from the source
+    measurement. ``limitation`` routes through the same semantic boundary the
+    analyzer uses, and ``confidence`` is copied from the sample's evidence.
+    """
+
+    confidence = sample.evidence.confidence if sample.evidence is not None else "unavailable"
+    return ExplainedMeasurement(
+        name=measurement.name,
+        value=measurement.value,
+        unit=measurement.unit,
+        aggregation=measurement.aggregation,
+        basis="provider_measurement",
+        confidence=confidence,
+        limitation=measurement_value_limitation(
+            measurement.name,
+            measurement.value,
+            measurement.unit,
+        ),
+        evidence=_evidence(sample.evidence),
+        evidence_ids=(sample.sample_id,),
+    )
+
+
 def _operation(
-    value,
+    value: Operation,
     samples: tuple[QualitySample, ...],
     *,
     matching_stage_count: int,
@@ -170,16 +280,8 @@ def _operation(
     attributes = value.attributes
     provider = attributes.get("gen_ai.provider.name")
     model = attributes.get("gen_ai.request.model")
-    measurement_prefix = f"earshot.{value.operation_name}."
     measurements = tuple(
-        ExplainedMeasurement(
-            name=measurement.name,
-            value=measurement.value,
-            unit=measurement.unit,
-            aggregation=measurement.aggregation,
-            evidence=_evidence(sample.evidence),
-            evidence_ids=(sample.sample_id,),
-        )
+        _explained_measurement(sample, measurement)
         for sample in samples
         if _sample_belongs_to_operation(
             sample,
@@ -187,7 +289,6 @@ def _operation(
             matching_stage_count=matching_stage_count,
         )
         for measurement in sample.measurements
-        if measurement.name.startswith(measurement_prefix)
     )
     return ExplainedOperation(
         operation_id=value.operation_id,
@@ -199,11 +300,21 @@ def _operation(
         start_nano=start,
         end_nano=end,
         duration_nano=duration,
+        start_uncertainty_nano=value.started_at.uncertainty_nano,
+        end_uncertainty_nano=(
+            value.ended_at.uncertainty_nano if value.ended_at is not None else None
+        ),
         limitation=limitation,
         participant_id=value.participant_id,
         stream_id=value.stream_id,
         provider=provider if isinstance(provider, str) else None,
         model=model if isinstance(model, str) else None,
+        trace_id=value.trace_id,
+        span_id=value.span_id,
+        parent_span_id=value.parent_span_id,
+        parent_scope=value.parent_scope,
+        links=tuple(_link(link) for link in value.links),
+        error=_error(value.error),
         evidence=_evidence(value.evidence),
         measurements=measurements,
         evidence_ids=(value.operation_id,),
@@ -275,6 +386,57 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
         )
         for turn in analysis.projections.turns
     )
+
+    # Completeness: any source operation not claimed by a turn projection is
+    # surfaced verbatim rather than silently dropped. Ownership mirrors the
+    # analyzer, which is the sole authority on turn membership.
+    assigned_operation_ids = {
+        operation_id for turn in analysis.projections.turns for operation_id in turn.operation_ids
+    }
+    unassigned_source_operations = sorted(
+        (
+            operation
+            for operation in profile.operations
+            if operation.operation_id not in assigned_operation_ids
+        ),
+        key=_operation_order,
+    )
+    unassigned_stage_counts = Counter(
+        (operation.turn_id, operation.operation_name) for operation in unassigned_source_operations
+    )
+    unassigned_operations = tuple(
+        _operation(
+            operation,
+            samples,
+            matching_stage_count=unassigned_stage_counts[
+                (operation.turn_id, operation.operation_name)
+            ],
+        )
+        for operation in unassigned_source_operations
+    )
+
+    # Provider scalars the analyzer could not bind to a turn. The analyzer is the
+    # authority on which samples are unassigned; we project their measurements
+    # faithfully and sort so the output is invariant to source ordering.
+    sample_by_id = {sample.sample_id: sample for sample in samples}
+    unassigned_measurements = tuple(
+        sorted(
+            (
+                _explained_measurement(sample_by_id[sample_id], measurement)
+                for sample_id in analysis.projections.unassigned_provider_measurements
+                if sample_id in sample_by_id
+                for measurement in sample_by_id[sample_id].measurements
+            ),
+            key=lambda item: (
+                item.evidence_ids[0],
+                item.name,
+                item.unit,
+                item.aggregation,
+                str(item.value),
+            ),
+        )
+    )
+
     return IncidentExplanation(
         bundle_id=profile.manifest.bundle_id,
         session_id=profile.manifest.session_id,
@@ -305,4 +467,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
             for item in profile.privacy.omissions
         ),
         limitations=analysis.projections.limitations,
+        diagnoses=tuple(_diagnosis(item) for item in analysis.diagnoses),
+        unassigned_operations=unassigned_operations,
+        unassigned_measurements=unassigned_measurements,
     )

@@ -103,6 +103,7 @@ from .validation import (  # noqa: F401 - legacy; import from earshot.validation
     ValidationReport,
     assert_valid_incident,
     validate_derived_analysis,
+    validate_explanation,
     validate_incident,
 )
 
