@@ -2352,6 +2352,14 @@
             "title": "Turns",
             "type": "array"
           },
+          "unassigned_events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExplainedEvent"
+            },
+            "title": "Unassigned Events",
+            "type": "array"
+          },
           "unassigned_measurements": {
             "default": [],
             "items": {

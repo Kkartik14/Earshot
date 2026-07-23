@@ -5,9 +5,16 @@ from pathlib import Path
 import earshot
 from earshot.analysis import ANALYZER_VERSION, analyze_incident
 from earshot.codec import analysis_input_sha256, decode_incident_json
-from earshot.contract import ErrorRecord, QualityMeasurement, QualitySample, TimeRange
+from earshot.contract import (
+    ErrorRecord,
+    Event,
+    Evidence,
+    QualityMeasurement,
+    QualitySample,
+    TimeRange,
+)
 from earshot.explanation import ExplainedDiagnosis, ExplainedError, explain_incident
-from earshot.validation import validate_explanation
+from earshot.validation import validate_explanation, validate_incident
 from incident_factory import LLM_SPAN_ID, ROOT_SPAN_ID, TRACE_ID, point
 from test_contract_validation import replace_profile
 
@@ -93,6 +100,41 @@ def test_explanation_preserves_event_operation_and_otel_identity(valid_bundle) -
     assert token.operation_id == "op-llm"
     assert token.trace_id == TRACE_ID
     assert token.span_id == LLM_SPAN_ID
+
+
+def test_explanation_preserves_unassigned_session_event_and_validates_exactly(
+    valid_bundle,
+) -> None:
+    session_event = Event(
+        event_id="evt-session-reconnecting",
+        session_id=valid_bundle.profile.session.session_id,
+        event_name="earshot.transport.reconnecting",
+        time=point(800_000_000),
+        evidence=Evidence(
+            source="websocket",
+            observer="server",
+            method="connection_state_callback",
+            confidence="measured",
+            availability="available",
+        ),
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        events=(*valid_bundle.profile.events, session_event),
+    )
+    assert validate_incident(bundle).ok
+
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+
+    assert [event.event_id for event in explanation.unassigned_events] == [
+        "evt-session-reconnecting"
+    ]
+    assert validate_explanation(bundle, analysis, explanation).ok
+
+    dropped = explanation.model_copy(update={"unassigned_events": ()})
+    report = validate_explanation(bundle, analysis, dropped)
+    assert "EARSHOT_EXPLANATION_SOURCE_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_explanation_authors_stage_measurement_associations() -> None:

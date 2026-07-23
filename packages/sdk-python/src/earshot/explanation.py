@@ -155,6 +155,7 @@ class IncidentExplanation(ExplanationModel):
     limitations: tuple[str, ...]
     diagnoses: tuple[ExplainedDiagnosis, ...] = ()
     unassigned_operations: tuple[ExplainedOperation, ...] = ()
+    unassigned_events: tuple[ExplainedEvent, ...] = ()
     unassigned_measurements: tuple[ExplainedMeasurement, ...] = ()
 
 
@@ -393,6 +394,17 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
         _operation(operation, samples) for operation in unassigned_source_operations
     )
 
+    assigned_event_ids = {
+        event_id for turn in analysis.projections.turns for event_id in turn.event_ids
+    }
+    unassigned_events = tuple(
+        _event(event)
+        for event in sorted(
+            (event for event in profile.events if event.event_id not in assigned_event_ids),
+            key=_event_order,
+        )
+    )
+
     # Provider scalars the analyzer could not bind to a turn. The analyzer is the
     # authority on which samples are unassigned; we project their measurements
     # faithfully and sort so the output is invariant to source ordering.
@@ -447,5 +459,6 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
         limitations=analysis.projections.limitations,
         diagnoses=tuple(_diagnosis(item) for item in analysis.diagnoses),
         unassigned_operations=unassigned_operations,
+        unassigned_events=unassigned_events,
         unassigned_measurements=unassigned_measurements,
     )

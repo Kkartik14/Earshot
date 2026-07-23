@@ -1041,6 +1041,11 @@ export interface components {
             /** Turns */
             turns: components["schemas"]["ExplainedTurn"][];
             /**
+             * Unassigned Events
+             * @default []
+             */
+            unassigned_events: components["schemas"]["ExplainedEvent"][];
+            /**
              * Unassigned Measurements
              * @default []
              */
