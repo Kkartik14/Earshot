@@ -19,6 +19,7 @@ from .codec import (
     encode_incident_protobuf,
 )
 from .privacy import ExportPolicyError, assert_export_allowed
+from .query import EvidenceQuery, compare_incidents
 from .storage import DEFAULT_PROJECT_ID, IncidentStore, StorageError
 from .validation import validate_incident
 
@@ -182,6 +183,30 @@ def _connector_create_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _query_command(arguments: argparse.Namespace) -> int:
+    bundle = _decode_file(Path(arguments.path))
+    query = EvidenceQuery(bundle)
+    if arguments.turn is not None:
+        _print_json(query.known_about_turn(arguments.turn).as_dict())
+    else:
+        _print_json(query.summary().as_dict())
+    return 0
+
+
+def _contradictions_command(arguments: argparse.Namespace) -> int:
+    bundle = _decode_file(Path(arguments.path))
+    query = EvidenceQuery(bundle)
+    _print_json({"contradictions": [item.as_dict() for item in query.contradictions()]})
+    return 0
+
+
+def _diff_command(arguments: argparse.Namespace) -> int:
+    incident = _decode_file(Path(arguments.incident))
+    known_good = _decode_file(Path(arguments.known_good))
+    _print_json(compare_incidents(incident, known_good).as_dict())
+    return 0
+
+
 def _serve_command(arguments: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -303,6 +328,29 @@ def _build_parser() -> argparse.ArgumentParser:
     connector_create.add_argument("--secret-env", required=True)
     connector_create.add_argument("--data-dir")
     connector_create.set_defaults(handler=_connector_create_command)
+
+    query = commands.add_parser(
+        "query", help="query an incident's evidence graph (summary or one turn)"
+    )
+    query.add_argument("path")
+    query.add_argument("--turn", help="report everything known about this turn id")
+    query.add_argument(
+        "--json",
+        action="store_true",
+        help="emit structured JSON (the default and only output form)",
+    )
+    query.set_defaults(handler=_query_command)
+
+    contradictions = commands.add_parser(
+        "contradictions", help="detect evidence-linked contradictions in an incident"
+    )
+    contradictions.add_argument("path")
+    contradictions.set_defaults(handler=_contradictions_command)
+
+    diff = commands.add_parser("diff", help="diff an incident against a known-good incident")
+    diff.add_argument("incident")
+    diff.add_argument("known_good")
+    diff.set_defaults(handler=_diff_command)
 
     serve = commands.add_parser("serve", help="run the local ingest API")
     serve.add_argument("--data-dir")
