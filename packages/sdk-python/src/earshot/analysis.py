@@ -148,6 +148,7 @@ def _matches_stream_direction(
         return directions == {expected_direction}
     return not require_explicit
 
+
 # --- Boundary-attribution SLO recipe -----------------------------------------
 # Deterministic thresholds that turn a governed measurement into a boundary
 # hypothesis. Every default is a conservative, real-time-voice-oriented value; a
@@ -967,7 +968,10 @@ def _first_named_event(events: Sequence[Event], names: set[str]) -> Event | None
     candidates = [event for event in events if event.event_name in names]
     if not candidates:
         return None
-    return min(candidates, key=_event_sort_key)
+    ordered = _order_by_comparable_time(
+        candidates, point=lambda event: event.time, identity=lambda event: event.event_id
+    )
+    return ordered[0]
 
 
 def _first_measurement_sample(
@@ -1063,9 +1067,12 @@ def _tool_outcome_stage(
     as the outcome (ok/error/timeout/cancelled/...).
     """
 
-    tools = sorted(
-        (operation for operation in operations if operation.operation_name == "tool"),
-        key=_operation_sort_key,
+    tools = list(
+        _order_by_comparable_time(
+            (operation for operation in operations if operation.operation_name == "tool"),
+            point=lambda operation: operation.started_at,
+            identity=lambda operation: operation.operation_id,
+        )
     )
     if not tools:
         return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_in_turn")

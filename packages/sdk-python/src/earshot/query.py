@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 
 from .analysis import (
     _ClockAligner,
-    _coordinate_sort_key,
+    _comparable_coordinate,
     analyze_incident,
     comparable_delta,
 )
@@ -43,6 +43,22 @@ from .contract import (
     QualitySample,
     TimePoint,
 )
+
+
+def _coordinate_sort_key(point: TimePoint) -> tuple[int, str, str, int]:
+    """A sortable key over the analyzer's canonical coordinate.
+
+    Orderable points sort by ``(0, domain, basis, value)``; a point with no
+    comparable coordinate sorts last as ``(1, "", "", 0)`` so an incomparable
+    boundary never masquerades as the earliest one.
+    """
+
+    coordinate = _comparable_coordinate(point)
+    if coordinate is None:
+        return (1, "", "", 0)
+    domain, basis, value = coordinate
+    return (0, domain, basis, value)
+
 
 # The turn-relative latency metrics an agent can compare, in a stable order.
 LATENCY_METRICS: tuple[str, ...] = (
@@ -444,7 +460,7 @@ class EvidenceQuery:
 
     # -- first_abnormal_boundary -------------------------------------------- #
 
-    def _boundary_coordinate(self, diagnosis: Diagnosis) -> tuple[int, str, int, int] | None:
+    def _boundary_coordinate(self, diagnosis: Diagnosis) -> tuple[int, str, str, int] | None:
         """The earliest canonical coordinate among a diagnosis's cited evidence."""
 
         keys = [
@@ -499,7 +515,7 @@ class EvidenceQuery:
         )
 
     def _coordinate_dict(self, diagnosis: Diagnosis) -> dict[str, object] | None:
-        best: tuple[tuple[int, str, int, int], TimePoint] | None = None
+        best: tuple[tuple[int, str, str, int], TimePoint] | None = None
         for evidence_id in diagnosis.evidence_refs:
             point = self._index.anchor_point(evidence_id)
             if point is None:
