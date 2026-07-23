@@ -226,6 +226,7 @@ interface ExplainedOperation {
 interface ExplainedEvent {
   event_name: string;
   event_id?: string | null;
+  operation_id?: string | null;
   time_basis: "monotonic" | "source_wall" | "observed_wall";
   clock_domain_id?: string | null;
   at_nano: string;
@@ -738,6 +739,7 @@ function resolveLinks(windows: OperationWindow[]): {
  * references instead of a hardcoded row; an ambiguous or absent stream_id leaves
  * the event at the turn level. */
 function attachEventsToOps(windows: OperationWindow[], events: ExplainedEvent[]) {
+  const operationIds = new Set(windows.map((window) => window.operationId));
   const opsByStream = new Map<string, string[]>();
   for (const w of windows) {
     const stream = w.op.stream_id;
@@ -747,6 +749,9 @@ function attachEventsToOps(windows: OperationWindow[], events: ExplainedEvent[])
     opsByStream.set(stream, list);
   }
   const eventTarget = (event: ExplainedEvent): string | null => {
+    if (event.operation_id != null) {
+      return operationIds.has(event.operation_id) ? event.operation_id : null;
+    }
     if (event.stream_id == null) return null;
     const ops = opsByStream.get(event.stream_id);
     return ops != null && ops.length === 1 ? ops[0] : null;

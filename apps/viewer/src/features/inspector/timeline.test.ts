@@ -359,6 +359,7 @@ describe("getCoverage", () => {
 interface RawOp {
   operation_id?: string;
   operation_name: string;
+  stream_id?: string;
   status?: string;
   shape?: "point" | "interval";
   start_nano?: string;
@@ -391,6 +392,7 @@ function turnOf(operations: RawOp[]): ExplanationLike {
         operations: operations.map((raw, i) => ({
           operation_id: raw.operation_id,
           operation_name: raw.operation_name,
+          stream_id: raw.stream_id,
           status: raw.status ?? "ok",
           shape: raw.shape ?? "interval",
           time_basis: "monotonic" as const,
@@ -695,6 +697,54 @@ describe("unassigned session-level facts", () => {
 });
 
 describe("interruption attachment", () => {
+  it("attaches an event only to its explicit operation identity", () => {
+    const source = turnOf([
+      {
+        operation_id: "op-target",
+        operation_name: "agent",
+        stream_id: "shared-stream",
+      },
+      {
+        operation_id: "op-other",
+        operation_name: "transport_send",
+        stream_id: "shared-stream",
+      },
+    ]);
+    const [turn] = source.turns;
+    const explanation = asExplanation({
+      ...source,
+      turns: [
+        {
+          ...turn,
+          events: [
+            {
+              event_id: "evt-interruption",
+              event_name: "earshot.interruption.accepted",
+              operation_id: "op-target",
+              stream_id: "shared-stream",
+              time_basis: "monotonic",
+              clock_domain_id: "generic-clock",
+              at_nano: "1500",
+              evidence_ids: ["evt-interruption"],
+            },
+          ],
+        },
+      ],
+    });
+
+    const [detail] = buildTurnDetails(explanation);
+
+    expect(detail.events[0].attachedOperationId).toBe("op-target");
+    expect(
+      detail.stages.find((stage) => stage.operationId === "op-target")
+        ?.interruptedByEvent,
+    ).toBe("earshot.interruption.accepted");
+    expect(
+      detail.stages.find((stage) => stage.operationId === "op-other")
+        ?.interruptedByEvent,
+    ).toBeUndefined();
+  });
+
   it("keeps a stream-less interruption event turn-level, attached to no operation", () => {
     const detail = buildTurnDetails(asExplanation(nativeInterruption))[0];
     const interruption = detail.events.find((e) => e.name.includes("interruption"));
