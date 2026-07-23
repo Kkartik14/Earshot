@@ -2792,7 +2792,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["IncidentBundleJson"];
                     "application/vnd.earshot.incident+json": components["schemas"]["IncidentBundleJson"];
                     "application/vnd.earshot.incident+protobuf": string;
                 };

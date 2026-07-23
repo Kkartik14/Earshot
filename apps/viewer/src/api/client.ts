@@ -3,7 +3,7 @@ import type { paths } from "./schema";
 
 /** Typed client for the Earshot backend. Same-origin: proxied in dev, served by
  *  FastAPI in production. */
-export const api = createClient<paths>({ baseUrl: "/" });
+export const api = createClient<paths, "application/json">({ baseUrl: "/" });
 
 export class ApiError extends Error {
   constructor(
