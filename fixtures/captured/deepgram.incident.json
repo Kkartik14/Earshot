@@ -5,13 +5,13 @@
     "clock_domains": [
       {
         "attributes": {},
-        "clock_domain_id": "captured-deepgram-id-0001",
+        "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
         "kind": "process_monotonic",
-        "monotonic_origin_nano": "0",
+        "monotonic_origin_nano": "697453581878416",
         "observer": "earshot.sdk",
         "synchronization_method": "same_process_sample",
         "uncertainty_nano": "0",
-        "wall_origin_unix_nano": "1784504850553768000"
+        "wall_origin_unix_nano": "1784817805268679000"
       }
     ],
     "coverage": [
@@ -25,189 +25,189 @@
     "events": [
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0002",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-2",
           "earshot.source.event.name": "SpeechStarted"
         },
         "capture_class": "metadata",
-        "event_id": "captured-deepgram-id-0003",
+        "event_id": "captured-deepgram-event-1",
         "event_name": "deepgram.speech_started",
         "evidence": {
           "attributes": {},
           "availability": "available",
           "confidence": "estimated",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.SpeechStarted.receipt"
         },
         "instrumentation_scope_attributes": {},
-        "participant_id": "captured-deepgram-id-0004",
+        "participant_id": "captured-deepgram-participant-1",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "time": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "1730359875",
-          "source_time_unix_nano": "1784504852284127875",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "1334447792",
+          "source_time_unix_nano": "1784817806603126792",
           "uncertainty_nano": "1000000"
         },
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results"
         },
         "capture_class": "metadata",
-        "event_id": "captured-deepgram-id-0007",
+        "event_id": "captured-deepgram-event-2",
         "event_name": "earshot.transcript.final",
         "evidence": {
           "attributes": {},
           "availability": "available",
           "confidence": "estimated",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results.is_final.receipt"
         },
         "instrumentation_scope_attributes": {},
-        "participant_id": "captured-deepgram-id-0004",
+        "participant_id": "captured-deepgram-participant-1",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "time": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "3555998916",
-          "source_time_unix_nano": "1784504854109766916",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "3173414957",
+          "source_time_unix_nano": "1784817808442093957",
           "uncertainty_nano": "1000000"
         },
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results"
         },
         "capture_class": "metadata",
-        "event_id": "captured-deepgram-id-0008",
+        "event_id": "captured-deepgram-event-3",
         "event_name": "earshot.turn.committed",
         "evidence": {
           "attributes": {},
           "availability": "available",
           "confidence": "estimated",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results.speech_final.receipt"
         },
         "instrumentation_scope_attributes": {},
-        "participant_id": "captured-deepgram-id-0004",
+        "participant_id": "captured-deepgram-participant-1",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "time": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "3555998916",
-          "source_time_unix_nano": "1784504854109766916",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "3173414957",
+          "source_time_unix_nano": "1784817808442093957",
           "uncertainty_nano": "1000000"
         },
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0002",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-2",
           "earshot.source.event.name": "SpeechStarted"
         },
         "capture_class": "metadata",
-        "event_id": "captured-deepgram-id-0009",
+        "event_id": "captured-deepgram-event-4",
         "event_name": "deepgram.speech_started",
         "evidence": {
           "attributes": {},
           "availability": "available",
           "confidence": "estimated",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.SpeechStarted.receipt"
         },
         "instrumentation_scope_attributes": {},
-        "participant_id": "captured-deepgram-id-0004",
+        "participant_id": "captured-deepgram-participant-1",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "time": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "3747610667",
-          "source_time_unix_nano": "1784504854301378667",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "3354820374",
+          "source_time_unix_nano": "1784817808623499374",
           "uncertainty_nano": "1000000"
         },
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results"
         },
         "capture_class": "metadata",
-        "event_id": "captured-deepgram-id-0010",
+        "event_id": "captured-deepgram-event-5",
         "event_name": "earshot.transcript.final",
         "evidence": {
           "attributes": {},
           "availability": "available",
           "confidence": "estimated",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results.is_final.receipt"
         },
         "instrumentation_scope_attributes": {},
-        "participant_id": "captured-deepgram-id-0004",
+        "participant_id": "captured-deepgram-participant-1",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "time": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "5779813707",
-          "source_time_unix_nano": "1784504856333581707",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "5432155207",
+          "source_time_unix_nano": "1784817810700834207",
           "uncertainty_nano": "1000000"
         },
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results"
         },
         "capture_class": "metadata",
-        "event_id": "captured-deepgram-id-0011",
+        "event_id": "captured-deepgram-event-6",
         "event_name": "earshot.turn.committed",
         "evidence": {
           "attributes": {},
           "availability": "available",
           "confidence": "estimated",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results.speech_final.receipt"
         },
         "instrumentation_scope_attributes": {},
-        "participant_id": "captured-deepgram-id-0004",
+        "participant_id": "captured-deepgram-participant-1",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "time": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "5779813707",
-          "source_time_unix_nano": "1784504856333581707",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "5432155207",
+          "source_time_unix_nano": "1784817810700834207",
           "uncertainty_nano": "1000000"
         },
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       }
     ],
     "manifest": {
@@ -215,30 +215,30 @@
         {
           "framework": "custom_pipeline",
           "name": "earshot.pipeline",
-          "version": "1.0.0"
+          "version": "0.3.0"
         }
       ],
       "attributes": {},
-      "bundle_id": "captured-deepgram-2026-07",
+      "bundle_id": "captured-deepgram-bundle-1",
       "completeness": "complete",
-      "created_at_unix_nano": "1784504850553768000",
+      "created_at_unix_nano": "1784817805268679000",
       "finality": "final",
       "producer": {
         "language": "python",
         "name": "earshot.pipeline",
-        "sdk_version": "1.0.0",
-        "version": "1.0.0"
+        "sdk_version": "0.3.0",
+        "version": "0.3.0"
       },
       "schema_version": "0.1.0",
       "semantic_profile_version": "0.1.0",
-      "session_id": "captured-deepgram-session"
+      "session_id": "captured-deepgram-session-1"
     },
     "media_refs": [],
     "operations": [
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
           "gen_ai.provider.name": "deepgram",
           "gen_ai.request.model": "nova-3"
@@ -249,32 +249,32 @@
           "availability": "available",
           "confidence": "inferred",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results"
         },
         "instrumentation_scope_attributes": {},
         "links": [],
-        "operation_id": "captured-deepgram-id-0012",
+        "operation_id": "captured-deepgram-operation-1",
         "operation_name": "stt",
         "parent_scope": "unknown",
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "started_at": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "2444108832",
-          "source_time_unix_nano": "1784504852997876832",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "2064638374",
+          "source_time_unix_nano": "1784817807333317374",
           "uncertainty_nano": "1000000"
         },
         "status": "ok",
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
           "gen_ai.provider.name": "deepgram",
           "gen_ai.request.model": "nova-3"
@@ -285,32 +285,32 @@
           "availability": "available",
           "confidence": "inferred",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results"
         },
         "instrumentation_scope_attributes": {},
         "links": [],
-        "operation_id": "captured-deepgram-id-0014",
+        "operation_id": "captured-deepgram-operation-2",
         "operation_name": "stt",
         "parent_scope": "unknown",
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "started_at": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "3555998916",
-          "source_time_unix_nano": "1784504854109766916",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "3173414957",
+          "source_time_unix_nano": "1784817808442093957",
           "uncertainty_nano": "1000000"
         },
         "status": "ok",
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
           "gen_ai.provider.name": "deepgram",
           "gen_ai.request.model": "nova-3"
@@ -321,32 +321,32 @@
           "availability": "available",
           "confidence": "inferred",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results"
         },
         "instrumentation_scope_attributes": {},
         "links": [],
-        "operation_id": "captured-deepgram-id-0015",
+        "operation_id": "captured-deepgram-operation-3",
         "operation_name": "stt",
         "parent_scope": "unknown",
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "started_at": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "4572891957",
-          "source_time_unix_nano": "1784504855126659957",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "4199186332",
+          "source_time_unix_nano": "1784817809467865332",
           "uncertainty_nano": "1000000"
         },
         "status": "ok",
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
           "gen_ai.provider.name": "deepgram",
           "gen_ai.request.model": "nova-3"
@@ -357,32 +357,32 @@
           "availability": "available",
           "confidence": "inferred",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results"
         },
         "instrumentation_scope_attributes": {},
         "links": [],
-        "operation_id": "captured-deepgram-id-0016",
+        "operation_id": "captured-deepgram-operation-4",
         "operation_name": "stt",
         "parent_scope": "unknown",
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "started_at": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "5579181791",
-          "source_time_unix_nano": "1784504856132949791",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "5234248708",
+          "source_time_unix_nano": "1784817810502927708",
           "uncertainty_nano": "1000000"
         },
         "status": "ok",
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       },
       {
         "attributes": {
-          "earshot.correlation": "provider_request",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
           "gen_ai.provider.name": "deepgram",
           "gen_ai.request.model": "nova-3"
@@ -393,27 +393,27 @@
           "availability": "available",
           "confidence": "inferred",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "app",
           "source_field": "deepgram.Results"
         },
         "instrumentation_scope_attributes": {},
         "links": [],
-        "operation_id": "captured-deepgram-id-0017",
+        "operation_id": "captured-deepgram-operation-5",
         "operation_name": "stt",
         "parent_scope": "unknown",
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "resource": {},
-        "session_id": "captured-deepgram-session",
+        "session_id": "captured-deepgram-session-1",
         "started_at": {
-          "clock_domain_id": "captured-deepgram-id-0001",
-          "monotonic_time_nano": "5779813707",
-          "source_time_unix_nano": "1784504856333581707",
+          "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+          "monotonic_time_nano": "5432155207",
+          "source_time_unix_nano": "1784817810700834207",
           "uncertainty_nano": "1000000"
         },
         "status": "ok",
-        "turn_id": "captured-deepgram-id-0005"
+        "turn_id": "captured-deepgram-turn-1"
       }
     ],
     "participants": [
@@ -421,17 +421,17 @@
         "attributes": {},
         "capture_class": "metadata",
         "endpoint_kind": "app",
-        "participant_id": "captured-deepgram-id-0004",
+        "participant_id": "captured-deepgram-participant-1",
         "role": "user",
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {},
         "capture_class": "metadata",
         "endpoint_kind": "app",
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "role": "agent",
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       }
     ],
     "privacy": {
@@ -500,7 +500,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0018",
+          "omission_id": "captured-deepgram-omission-1",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -510,7 +510,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0019",
+          "omission_id": "captured-deepgram-omission-2",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -520,7 +520,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0020",
+          "omission_id": "captured-deepgram-omission-3",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -530,7 +530,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0021",
+          "omission_id": "captured-deepgram-omission-4",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -540,7 +540,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0022",
+          "omission_id": "captured-deepgram-omission-5",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -550,7 +550,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0023",
+          "omission_id": "captured-deepgram-omission-6",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -560,7 +560,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0024",
+          "omission_id": "captured-deepgram-omission-7",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -570,7 +570,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0025",
+          "omission_id": "captured-deepgram-omission-8",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -580,7 +580,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0026",
+          "omission_id": "captured-deepgram-omission-9",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         },
@@ -590,7 +590,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-deepgram-id-0027",
+          "omission_id": "captured-deepgram-omission-10",
           "reason": "adapter_payload_omitted",
           "source_refs": []
         }
@@ -602,11 +602,11 @@
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.request.id": "captured-deepgram-id-0002",
+          "earshot.request.id": "captured-deepgram-correlation-2",
           "earshot.source.event.name": "SpeechStarted",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -614,7 +614,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "sha256:323748f86a762247e6631bc01c26fb22c63fd0176a2e1db7b0d5b78de228cd86"
@@ -629,35 +629,35 @@
             "value": 0.27
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0028",
+        "sample_id": "captured-deepgram-sample-1",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "1730359875",
-            "source_time_unix_nano": "1784504852284127875",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "1334447792",
+            "source_time_unix_nano": "1784817806603126792",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "1730359875",
-            "source_time_unix_nano": "1784504852284127875",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "1334447792",
+            "source_time_unix_nano": "1784817806603126792",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0012",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -665,7 +665,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "start"
@@ -680,35 +680,35 @@
             "value": 0.0
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0029",
+        "sample_id": "captured-deepgram-sample-2",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "2444108832",
-            "source_time_unix_nano": "1784504852997876832",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "2064638374",
+            "source_time_unix_nano": "1784817807333317374",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "2444108832",
-            "source_time_unix_nano": "1784504852997876832",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "2064638374",
+            "source_time_unix_nano": "1784817807333317374",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0012",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -716,7 +716,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "duration"
@@ -731,34 +731,34 @@
             "value": 1.0
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0030",
+        "sample_id": "captured-deepgram-sample-3",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "2444108832",
-            "source_time_unix_nano": "1784504852997876832",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "2064638374",
+            "source_time_unix_nano": "1784817807333317374",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "2444108832",
-            "source_time_unix_nano": "1784504852997876832",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "2064638374",
+            "source_time_unix_nano": "1784817807333317374",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
-          "earshot.operation.id": "captured-deepgram-id-0012",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-4",
+          "earshot.operation.id": "captured-deepgram-operation-1",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -766,7 +766,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "channel.alternatives.confidence"
@@ -778,38 +778,38 @@
             "attributes": {},
             "name": "deepgram.stt.transcript_confidence",
             "unit": "1",
-            "value": 0.9941406
+            "value": 0.9951172
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0031",
+        "sample_id": "captured-deepgram-sample-4",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "2444108832",
-            "source_time_unix_nano": "1784504852997876832",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "2064638374",
+            "source_time_unix_nano": "1784817807333317374",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "2444108832",
-            "source_time_unix_nano": "1784504852997876832",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "2064638374",
+            "source_time_unix_nano": "1784817807333317374",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0014",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-2",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -817,7 +817,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "start"
@@ -832,35 +832,35 @@
             "value": 0.0
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0032",
+        "sample_id": "captured-deepgram-sample-5",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3555998916",
-            "source_time_unix_nano": "1784504854109766916",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3173414957",
+            "source_time_unix_nano": "1784817808442093957",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3555998916",
-            "source_time_unix_nano": "1784504854109766916",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3173414957",
+            "source_time_unix_nano": "1784817808442093957",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0014",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-2",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -868,7 +868,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "duration"
@@ -883,34 +883,34 @@
             "value": 2.04
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0033",
+        "sample_id": "captured-deepgram-sample-6",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3555998916",
-            "source_time_unix_nano": "1784504854109766916",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3173414957",
+            "source_time_unix_nano": "1784817808442093957",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3555998916",
-            "source_time_unix_nano": "1784504854109766916",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3173414957",
+            "source_time_unix_nano": "1784817808442093957",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
-          "earshot.operation.id": "captured-deepgram-id-0014",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-4",
+          "earshot.operation.id": "captured-deepgram-operation-2",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -918,7 +918,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "channel.alternatives.confidence"
@@ -933,34 +933,34 @@
             "value": 0.9916992
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0034",
+        "sample_id": "captured-deepgram-sample-7",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3555998916",
-            "source_time_unix_nano": "1784504854109766916",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3173414957",
+            "source_time_unix_nano": "1784817808442093957",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3555998916",
-            "source_time_unix_nano": "1784504854109766916",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3173414957",
+            "source_time_unix_nano": "1784817808442093957",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.request.id": "captured-deepgram-id-0002",
+          "earshot.request.id": "captured-deepgram-correlation-2",
           "earshot.source.event.name": "SpeechStarted",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -968,7 +968,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "sha256:323748f86a762247e6631bc01c26fb22c63fd0176a2e1db7b0d5b78de228cd86"
@@ -983,35 +983,35 @@
             "value": 2.22
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0035",
+        "sample_id": "captured-deepgram-sample-8",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3747610667",
-            "source_time_unix_nano": "1784504854301378667",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3354820374",
+            "source_time_unix_nano": "1784817808623499374",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "3747610667",
-            "source_time_unix_nano": "1784504854301378667",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "3354820374",
+            "source_time_unix_nano": "1784817808623499374",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0015",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-3",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1019,7 +1019,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "start"
@@ -1034,35 +1034,35 @@
             "value": 2.04
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0036",
+        "sample_id": "captured-deepgram-sample-9",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "4572891957",
-            "source_time_unix_nano": "1784504855126659957",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "4199186332",
+            "source_time_unix_nano": "1784817809467865332",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "4572891957",
-            "source_time_unix_nano": "1784504855126659957",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "4199186332",
+            "source_time_unix_nano": "1784817809467865332",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0015",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-3",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1070,7 +1070,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "duration"
@@ -1085,34 +1085,34 @@
             "value": 1.06
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0037",
+        "sample_id": "captured-deepgram-sample-10",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "4572891957",
-            "source_time_unix_nano": "1784504855126659957",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "4199186332",
+            "source_time_unix_nano": "1784817809467865332",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "4572891957",
-            "source_time_unix_nano": "1784504855126659957",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "4199186332",
+            "source_time_unix_nano": "1784817809467865332",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
-          "earshot.operation.id": "captured-deepgram-id-0015",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-4",
+          "earshot.operation.id": "captured-deepgram-operation-3",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1120,7 +1120,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "channel.alternatives.confidence"
@@ -1135,35 +1135,35 @@
             "value": 0.99902344
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0038",
+        "sample_id": "captured-deepgram-sample-11",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "4572891957",
-            "source_time_unix_nano": "1784504855126659957",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "4199186332",
+            "source_time_unix_nano": "1784817809467865332",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "4572891957",
-            "source_time_unix_nano": "1784504855126659957",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "4199186332",
+            "source_time_unix_nano": "1784817809467865332",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0016",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-4",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1171,7 +1171,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "start"
@@ -1186,35 +1186,35 @@
             "value": 2.04
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0039",
+        "sample_id": "captured-deepgram-sample-12",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5579181791",
-            "source_time_unix_nano": "1784504856132949791",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5234248708",
+            "source_time_unix_nano": "1784817810502927708",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5579181791",
-            "source_time_unix_nano": "1784504856132949791",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5234248708",
+            "source_time_unix_nano": "1784817810502927708",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0016",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-4",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1222,7 +1222,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "duration"
@@ -1237,34 +1237,34 @@
             "value": 2.06
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0040",
+        "sample_id": "captured-deepgram-sample-13",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5579181791",
-            "source_time_unix_nano": "1784504856132949791",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5234248708",
+            "source_time_unix_nano": "1784817810502927708",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5579181791",
-            "source_time_unix_nano": "1784504856132949791",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5234248708",
+            "source_time_unix_nano": "1784817810502927708",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
-          "earshot.operation.id": "captured-deepgram-id-0016",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-4",
+          "earshot.operation.id": "captured-deepgram-operation-4",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1272,7 +1272,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "channel.alternatives.confidence"
@@ -1287,35 +1287,35 @@
             "value": 1.0
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0041",
+        "sample_id": "captured-deepgram-sample-14",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5579181791",
-            "source_time_unix_nano": "1784504856132949791",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5234248708",
+            "source_time_unix_nano": "1784817810502927708",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5579181791",
-            "source_time_unix_nano": "1784504856132949791",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5234248708",
+            "source_time_unix_nano": "1784817810502927708",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0017",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-5",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1323,7 +1323,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "start"
@@ -1338,35 +1338,35 @@
             "value": 2.04
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0042",
+        "sample_id": "captured-deepgram-sample-15",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5779813707",
-            "source_time_unix_nano": "1784504856333581707",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5432155207",
+            "source_time_unix_nano": "1784817810700834207",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5779813707",
-            "source_time_unix_nano": "1784504856333581707",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5432155207",
+            "source_time_unix_nano": "1784817810700834207",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
+          "earshot.correlation": "captured-deepgram-correlation-4",
           "earshot.metric.basis": "audio_stream_cursor",
-          "earshot.operation.id": "captured-deepgram-id-0017",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.operation.id": "captured-deepgram-operation-5",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1374,7 +1374,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "duration"
@@ -1389,34 +1389,34 @@
             "value": 2.0879998
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0043",
+        "sample_id": "captured-deepgram-sample-16",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5779813707",
-            "source_time_unix_nano": "1784504856333581707",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5432155207",
+            "source_time_unix_nano": "1784817810700834207",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5779813707",
-            "source_time_unix_nano": "1784504856333581707",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5432155207",
+            "source_time_unix_nano": "1784817810700834207",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       },
       {
         "attributes": {
           "earshot.chronology": "not_exposed",
-          "earshot.correlation": "provider_turn_scalar",
-          "earshot.operation.id": "captured-deepgram-id-0017",
-          "earshot.request.id": "captured-deepgram-id-0006",
+          "earshot.correlation": "captured-deepgram-correlation-4",
+          "earshot.operation.id": "captured-deepgram-operation-5",
+          "earshot.request.id": "captured-deepgram-correlation-3",
           "earshot.source.event.name": "Results",
-          "earshot.turn.id": "captured-deepgram-id-0005"
+          "earshot.turn.id": "captured-deepgram-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -1424,7 +1424,7 @@
           "availability": "available",
           "confidence": "measured",
           "method": "pipeline_capture",
-          "method_version": "1.0.0",
+          "method_version": "0.3.0",
           "observer": "server",
           "source": "provider",
           "source_field": "channel.alternatives.confidence"
@@ -1439,39 +1439,39 @@
             "value": 1.0
           }
         ],
-        "participant_id": "captured-deepgram-id-0013",
+        "participant_id": "captured-deepgram-participant-2",
         "quality_kind": "provider_metric",
         "resource": {},
-        "sample_id": "captured-deepgram-id-0044",
+        "sample_id": "captured-deepgram-sample-17",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5779813707",
-            "source_time_unix_nano": "1784504856333581707",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5432155207",
+            "source_time_unix_nano": "1784817810700834207",
             "uncertainty_nano": "1000000"
           },
           "start": {
-            "clock_domain_id": "captured-deepgram-id-0001",
-            "monotonic_time_nano": "5779813707",
-            "source_time_unix_nano": "1784504856333581707",
+            "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+            "monotonic_time_nano": "5432155207",
+            "source_time_unix_nano": "1784817810700834207",
             "uncertainty_nano": "1000000"
           }
         },
-        "session_id": "captured-deepgram-session"
+        "session_id": "captured-deepgram-session-1"
       }
     ],
     "session": {
       "attributes": {},
       "ended_at": {
-        "clock_domain_id": "captured-deepgram-id-0001",
-        "monotonic_time_nano": "6279813707",
-        "source_time_unix_nano": "1784504856833581707"
+        "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
+        "monotonic_time_nano": "13705625",
+        "source_time_unix_nano": "1784817805282384250"
       },
-      "session_id": "captured-deepgram-session",
+      "session_id": "captured-deepgram-session-1",
       "started_at": {
-        "clock_domain_id": "captured-deepgram-id-0001",
+        "clock_domain_id": "process-cc0dcd2f32d44a9f934511eb77c949ab",
         "monotonic_time_nano": "0",
-        "source_time_unix_nano": "1784504850553768000"
+        "source_time_unix_nano": "1784817805268679000"
       },
       "status": "completed"
     }
