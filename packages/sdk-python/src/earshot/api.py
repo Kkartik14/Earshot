@@ -346,6 +346,8 @@ def _response_media_type(request: Request) -> str:
     accept = request.headers.get("accept", JSON_MEDIA_TYPE).lower()
     if PROTOBUF_MEDIA_TYPE in accept or "application/x-protobuf" in accept:
         return PROTOBUF_MEDIA_TYPE
+    if JSON_MEDIA_TYPE not in accept and "application/json" in accept:
+        return "application/json"
     return JSON_MEDIA_TYPE
 
 
@@ -1289,14 +1291,15 @@ def create_app(
             "Vary": "Accept",
             "Cache-Control": "no-store",
         }
-        if _response_media_type(request) == PROTOBUF_MEDIA_TYPE:
+        response_media_type = _response_media_type(request)
+        if response_media_type == PROTOBUF_MEDIA_TYPE:
             headers = dict(common_headers)
             headers["ETag"] = f'"sha256:{hashlib.sha256(payload).hexdigest()}"'
             return Response(payload, media_type=PROTOBUF_MEDIA_TYPE, headers=headers)
         rendered = encode_incident_json(bundle, indent=2)
         headers = dict(common_headers)
         headers["ETag"] = f'"sha256:{hashlib.sha256(rendered).hexdigest()}"'
-        return Response(rendered, media_type=JSON_MEDIA_TYPE, headers=headers)
+        return Response(rendered, media_type=response_media_type, headers=headers)
 
     def resolve_analysis(
         bundle_id: str, *, project_id: str

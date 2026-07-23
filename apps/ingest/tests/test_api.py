@@ -357,6 +357,13 @@ def test_json_ingest_get_metadata_and_get_protobuf_roundtrip(tmp_path, valid_bun
     assert decode_incident_json(rendered.content).profile == valid_bundle.profile
     assert rendered.headers["etag"].startswith('"sha256:')
 
+    generic_json = client.get(
+        "/v1/incidents/bundle-1", headers={"Accept": "application/json"}
+    )
+    assert generic_json.status_code == 200
+    assert generic_json.headers["content-type"].startswith("application/json")
+    assert decode_incident_json(generic_json.content).profile == valid_bundle.profile
+
     binary = client.get("/v1/incidents/bundle-1", headers={"Accept": PROTOBUF_MEDIA_TYPE})
     assert binary.status_code == 200
     assert decode_incident_protobuf(binary.content).profile == valid_bundle.profile
