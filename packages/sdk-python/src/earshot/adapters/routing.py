@@ -20,9 +20,11 @@ with a counter), never broadcast.
 from __future__ import annotations
 
 import threading
+import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 from weakref import WeakKeyDictionary
 
@@ -45,6 +47,8 @@ _MAX_TRACE_MAP = 4096
 
 SpanPredicate = Callable[[Any], bool]
 SpanConsumer = Callable[[Any], None]
+LossConsumer = Callable[[str], None]
+SpanIdentity = tuple[int, int]
 
 
 def _span_ids(span: Any) -> tuple[int | None, int | None]:
@@ -68,19 +72,74 @@ def _span_ids(span: Any) -> tuple[int | None, int | None]:
     return trace_id, span_id
 
 
+@dataclass(frozen=True, slots=True)
+class RoutingStatus:
+    """Public, content-free health for one active routing registration."""
+
+    active: bool
+    quarantined_span_count: int
+
+
 class SpanSink:
     """One session's delivery target: the adapter's ``consume_span`` callback."""
 
-    __slots__ = ("_consume", "closed", "session_key")
+    __slots__ = (
+        "_closed",
+        "_consume",
+        "_lock",
+        "_on_loss",
+        "_quarantined_span_count",
+        "route_key",
+        "session_key",
+    )
 
-    def __init__(self, session_key: str, consume: SpanConsumer) -> None:
+    def __init__(
+        self,
+        route_key: str,
+        session_key: str,
+        consume: SpanConsumer,
+        on_loss: LossConsumer,
+    ) -> None:
+        self.route_key = route_key
         self.session_key = session_key
         self._consume = consume
-        self.closed = False
+        self._on_loss = on_loss
+        self._closed = False
+        self._quarantined_span_count = 0
+        self._lock = threading.RLock()
 
-    def consume(self, span: Any) -> None:
-        if not self.closed:
+    def consume(self, span: Any) -> bool:
+        """Deliver unless closed; close waits for an in-flight delivery."""
+
+        with self._lock:
+            if self._closed:
+                return False
             self._consume(span)
+            return True
+
+    def record_loss(self, reason: str) -> None:
+        """Count loss and publish only its stable reason, never span content."""
+
+        with self._lock:
+            self._quarantined_span_count += 1
+            if self._closed:
+                return
+            try:
+                self._on_loss(reason)
+            except Exception:  # pragma: no cover - adapter callbacks are also fail-open
+                return
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+
+    @property
+    def status(self) -> RoutingStatus:
+        with self._lock:
+            return RoutingStatus(
+                active=not self._closed,
+                quarantined_span_count=self._quarantined_span_count,
+            )
 
 
 class SpanRouter:
@@ -89,7 +148,7 @@ class SpanRouter:
     def __init__(self, predicate: SpanPredicate) -> None:
         self._predicate = predicate
         self._sinks: dict[str, SpanSink] = {}
-        self._span_to_session: OrderedDict[int, str] = OrderedDict()
+        self._span_to_session: OrderedDict[SpanIdentity, str] = OrderedDict()
         self._trace_to_session: OrderedDict[int, str] = OrderedDict()
         self._quarantined = 0
         self._stale = False
@@ -98,16 +157,22 @@ class SpanRouter:
     # -- registration -----------------------------------------------------
     def register(self, sink: SpanSink) -> None:
         with self._lock:
-            self._sinks[sink.session_key] = sink
+            self._sinks[sink.route_key] = sink
 
-    def deregister(self, session_key: str) -> None:
+    def deregister(self, sink: SpanSink) -> None:
         with self._lock:
-            self._sinks.pop(session_key, None)
+            if self._sinks.get(sink.route_key) is not sink:
+                return
+            self._sinks.pop(sink.route_key, None)
             self._trace_to_session = OrderedDict(
-                (trace, key) for trace, key in self._trace_to_session.items() if key != session_key
+                (trace, key)
+                for trace, key in self._trace_to_session.items()
+                if key != sink.route_key
             )
             self._span_to_session = OrderedDict(
-                (span, key) for span, key in self._span_to_session.items() if key != session_key
+                (span, key)
+                for span, key in self._span_to_session.items()
+                if key != sink.route_key
             )
 
     @property
@@ -129,20 +194,22 @@ class SpanRouter:
     def on_start(self, span: Any, parent_context: Any | None) -> None:
         if self._stale or not self._predicate(span):
             return
-        session_key = self._resolve_session(parent_context)
-        if session_key is None:
+        routing_hint = self._resolve_session(parent_context)
+        if routing_hint is None:
             return
         trace_id, span_id = _span_ids(span)
         with self._lock:
-            if session_key not in self._sinks:
+            route_key = self._route_key_for_hint_locked(routing_hint)
+            if route_key is None:
                 return
-            if span_id is not None:
-                self._span_to_session[span_id] = session_key
-                self._span_to_session.move_to_end(span_id)
+            if trace_id is not None and span_id is not None:
+                span_identity = (trace_id, span_id)
+                self._span_to_session[span_identity] = route_key
+                self._span_to_session.move_to_end(span_identity)
                 while len(self._span_to_session) > _MAX_SPAN_STASH:
                     self._span_to_session.popitem(last=False)
             if trace_id is not None and trace_id not in self._trace_to_session:
-                self._trace_to_session[trace_id] = session_key
+                self._trace_to_session[trace_id] = route_key
                 while len(self._trace_to_session) > _MAX_TRACE_MAP:
                     self._trace_to_session.popitem(last=False)
 
@@ -151,20 +218,29 @@ class SpanRouter:
             return
         trace_id, span_id = _span_ids(span)
         with self._lock:
-            session_key: str | None = None
-            if span_id is not None:
-                session_key = self._span_to_session.pop(span_id, None)
-            if session_key is None and trace_id is not None:
-                session_key = self._trace_to_session.get(trace_id)
-            if session_key is None and len(self._sinks) == 1:
+            route_key: str | None = None
+            if trace_id is not None and span_id is not None:
+                route_key = self._span_to_session.pop((trace_id, span_id), None)
+            if route_key is None and trace_id is not None:
+                route_key = self._trace_to_session.get(trace_id)
+            if route_key is None and len(self._sinks) == 1:
                 # Unambiguous single session: no attribution needed.
-                session_key = next(iter(self._sinks))
-            sink = self._sinks.get(session_key) if session_key is not None else None
-            if sink is None or sink.closed:
+                route_key = next(iter(self._sinks))
+            sink = self._sinks.get(route_key) if route_key is not None else None
+            if sink is None:
                 self._quarantined += 1
-                return
+                affected_sinks = tuple(self._sinks.values())
+            else:
+                affected_sinks = ()
+        if sink is None:
+            for affected_sink in affected_sinks:
+                affected_sink.record_loss("unattributed_span_quarantined")
+            return
         # Deliver outside the lock; the adapter guards its own recorder.
-        sink.consume(span)
+        if not sink.consume(span):
+            with self._lock:
+                self._quarantined += 1
+            sink.record_loss("routing_target_closed")
 
     # -- helpers ----------------------------------------------------------
     def _resolve_session(self, parent_context: Any | None) -> str | None:
@@ -181,6 +257,18 @@ class SpanRouter:
 
         conversation = current_conversation()
         return str(conversation) if conversation else None
+
+    def _route_key_for_hint_locked(self, routing_hint: str) -> str | None:
+        """Resolve an opaque scope key, or an unambiguous legacy session ID."""
+
+        if routing_hint in self._sinks:
+            return routing_hint
+        matches = [
+            route_key
+            for route_key, sink in self._sinks.items()
+            if sink.session_key == routing_hint
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _mark_stale(self) -> None:
         self._stale = True
@@ -268,8 +356,14 @@ class RoutingHandle:
     def close(self) -> None:
         """Remove this session's routing state from the shared provider."""
 
-        self._sink.closed = True
-        self._router.deregister(self._sink.session_key)
+        self._sink.close()
+        self._router.deregister(self._sink)
+
+    @property
+    def status(self) -> RoutingStatus:
+        """Return content-free loss and activation status for this session."""
+
+        return self._sink.status
 
     @contextmanager
     def session_scope(self):
@@ -282,7 +376,7 @@ class RoutingHandle:
         if not _OTEL:
             yield
             return
-        ctx = _otel_baggage.set_baggage(EARSHOT_SESSION_BAGGAGE, self._sink.session_key)
+        ctx = _otel_baggage.set_baggage(EARSHOT_SESSION_BAGGAGE, self._sink.route_key)
         token = _otel_context.attach(ctx)
         try:
             yield
@@ -304,6 +398,7 @@ def attach_adapter(
     predicate: SpanPredicate,
     session_key: str,
     consume: SpanConsumer,
+    on_loss: LossConsumer,
 ) -> RoutingHandle:
     """Register an adapter's recorder as a session sink on the shared router."""
 
@@ -312,6 +407,6 @@ def attach_adapter(
     if not callable(getattr(provider, "add_span_processor", None)):
         raise TypeError("tracer provider does not support span processors")
     router = get_router(provider, framework, predicate)
-    sink = SpanSink(session_key, consume)
+    sink = SpanSink(uuid.uuid4().hex, session_key, consume, on_loss)
     router.register(sink)
     return RoutingHandle(router, sink)

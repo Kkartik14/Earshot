@@ -1600,6 +1600,14 @@ class LiveKitAdapter:
         except Exception:
             self._record_coverage_safe("livekit.span", "unsupported_span_shape")
 
+    def _record_routing_loss(self, reason: str) -> None:
+        """Surface content-free router loss without escaping an OTel callback."""
+
+        try:
+            self.recorder.record_coverage("livekit.span.routing", "partial", reason)
+        except Exception:
+            return
+
     def attach_span_processor(self, tracer_provider: object) -> routing.RoutingHandle:
         """Route this session's spans through one shared, process-scoped processor.
 
@@ -1615,9 +1623,14 @@ class LiveKitAdapter:
             self._is_livekit_span,
             self.recorder.session_id,
             self._consume_routed_span,
+            self._record_routing_loss,
         )
-        self._native_spans_enabled = True
-        self._routing_handle = handle
+        with self._lock:
+            previous = self._routing_handle
+            self._native_spans_enabled = True
+            self._routing_handle = handle
+        if previous is not None:
+            previous.close()
         return handle
 
     def attach(self, tracer_provider: object) -> routing.RoutingHandle:
@@ -1628,10 +1641,11 @@ class LiveKitAdapter:
     def detach(self) -> None:
         """Release this session's routing state from the shared provider."""
 
-        handle = self._routing_handle
+        with self._lock:
+            handle = self._routing_handle
+            self._routing_handle = None
         if handle is not None:
             handle.close()
-            self._routing_handle = None
 
     def _record_native_interruption_events(
         self,
