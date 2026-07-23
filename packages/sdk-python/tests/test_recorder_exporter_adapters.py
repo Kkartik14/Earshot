@@ -2083,9 +2083,12 @@ def test_adapter_callbacks_remain_fail_open_after_recorder_close() -> None:
     provider = sdk_trace.TracerProvider()
     handle = pipecat.attach(provider)
     pipecat.recorder.close()
-    with handle.session_scope(), provider.get_tracer("pipecat").start_as_current_span(
-        "llm",
-        attributes={"conversation.id": "closed-recorder"},
+    with (
+        handle.session_scope(),
+        provider.get_tracer("pipecat").start_as_current_span(
+            "llm",
+            attributes={"conversation.id": "closed-recorder"},
+        ),
     ):
         pass
     pipecat.detach()

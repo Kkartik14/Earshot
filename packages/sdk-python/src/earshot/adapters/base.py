@@ -8,6 +8,7 @@ from typing import Any
 DEFAULT_ADAPTER_TRACKING_ENTRIES = 4_096
 MAX_ADAPTER_TRACKING_ENTRIES = 65_536
 
+
 @dataclass(frozen=True, slots=True)
 class AdapterTrackingStatus:
     """Content-free sizes for an adapter's bounded identity ledgers."""
@@ -24,8 +25,7 @@ def validate_tracking_limit(limit: int) -> int:
         or not 1 <= limit <= MAX_ADAPTER_TRACKING_ENTRIES
     ):
         raise ValueError(
-            "max_tracking_entries must be an integer between 1 and "
-            f"{MAX_ADAPTER_TRACKING_ENTRIES}"
+            f"max_tracking_entries must be an integer between 1 and {MAX_ADAPTER_TRACKING_ENTRIES}"
         )
     return limit
 

@@ -380,9 +380,7 @@ def test_livekit_span_identity_tracking_has_a_configured_bound() -> None:
         "livekit.tracking.spans",
         "partial",
         "max_tracking_entries",
-    ) in {
-        (item.signal, item.availability, item.reason) for item in bundle.profile.coverage
-    }
+    ) in {(item.signal, item.availability, item.reason) for item in bundle.profile.coverage}
     assert validate_incident(bundle).ok
 
 

@@ -187,9 +187,7 @@ class SpanRouter:
     def routing_state_size(self) -> int:
         with self._lock:
             return (
-                len(self._span_to_session)
-                + len(self._trace_to_session)
-                + len(self._retired_sinks)
+                len(self._span_to_session) + len(self._trace_to_session) + len(self._retired_sinks)
             )
 
     # -- processor callbacks ---------------------------------------------
@@ -231,15 +229,15 @@ class SpanRouter:
                 # Unambiguous single session: no attribution needed.
                 route_key = next(iter(self._sinks))
             sink = self._sinks.get(route_key) if route_key is not None else None
-            retired_sink = (
-                self._retired_sinks.get(route_key) if route_key is not None else None
-            )
+            retired_sink = self._retired_sinks.get(route_key) if route_key is not None else None
             if sink is None:
                 self._quarantined += 1
                 affected_sinks = (
                     (retired_sink,)
                     if retired_sink is not None
-                    else tuple(self._sinks.values()) if route_key is None else ()
+                    else tuple(self._sinks.values())
+                    if route_key is None
+                    else ()
                 )
             else:
                 affected_sinks = ()
@@ -282,9 +280,7 @@ class SpanRouter:
         if routing_hint in self._sinks:
             return routing_hint
         matches = [
-            route_key
-            for route_key, sink in self._sinks.items()
-            if sink.session_key == routing_hint
+            route_key for route_key, sink in self._sinks.items() if sink.session_key == routing_hint
         ]
         return matches[0] if len(matches) == 1 else None
 
@@ -298,9 +294,7 @@ class SpanRouter:
             return
         self._retired_sinks.pop(route_key, None)
         self._trace_to_session = OrderedDict(
-            (trace, key)
-            for trace, key in self._trace_to_session.items()
-            if key != route_key
+            (trace, key) for trace, key in self._trace_to_session.items() if key != route_key
         )
 
     def _mark_stale(self) -> None:
