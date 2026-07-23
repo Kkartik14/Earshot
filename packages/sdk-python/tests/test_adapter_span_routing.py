@@ -317,6 +317,88 @@ def test_conflicting_trace_ownership_remains_ambiguous() -> None:
         assert SECRET not in bundle.model_dump_json()
 
 
+def test_stale_explicit_scope_cannot_fall_back_to_shared_trace_owner() -> None:
+    """An unresolved explicit route stays unattributable for the span lifecycle."""
+
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    retired = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    retired_handle = retired.attach(provider)
+    root = provider.get_tracer("test-harness").start_span("shared-root")
+    tracer = provider.get_tracer("livekit-agents")
+
+    with use_span(root, end_on_exit=False):
+        with first_handle.session_scope():
+            tracer.start_span("llm_node", attributes={"lk.room": "first"}).end()
+
+        retired.detach()
+        with retired_handle.session_scope():
+            stale_span = tracer.start_span(
+                "llm_node",
+                attributes={"lk.response.text": SECRET, "lk.room": "retired"},
+            )
+        stale_span.end()
+    root.end()
+
+    assert first_handle.status.quarantined_span_count == 1
+    assert retired_handle.status.quarantined_span_count == 0
+    first_bundle = first.recorder.close()
+    retired_bundle = retired.recorder.close()
+    assert len(first_bundle.profile.operations) == 1
+    assert _span_ids(retired_bundle) == set()
+    assert SECRET not in first_bundle.model_dump_json()
+    assert [
+        (item.signal, item.availability, item.reason)
+        for item in first_bundle.profile.coverage
+        if item.signal == "livekit.span.routing"
+    ] == [
+        (
+            "livekit.span.routing",
+            "partial",
+            "unattributed_span_quarantined",
+        )
+    ]
+
+
+def test_evicted_unattributable_span_cannot_reenable_trace_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Capacity eviction fails closed after an unresolved explicit route."""
+
+    from earshot.adapters import routing
+
+    monkeypatch.setattr(routing, "_MAX_SPAN_STASH", 1)
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    retired = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    retired_handle = retired.attach(provider)
+    root = provider.get_tracer("test-harness").start_span("shared-root")
+    tracer = provider.get_tracer("livekit-agents")
+
+    with use_span(root, end_on_exit=False):
+        with first_handle.session_scope():
+            tracer.start_span("llm_node", attributes={"lk.room": "first"}).end()
+        retired.detach()
+        with retired_handle.session_scope():
+            stale_span = tracer.start_span(
+                "llm_node",
+                attributes={"lk.response.text": SECRET, "lk.room": "retired"},
+            )
+        with first_handle.session_scope():
+            current_span = tracer.start_span("llm_node", attributes={"lk.room": "current"})
+        stale_span.end()
+        current_span.end()
+    root.end()
+
+    assert first_handle.status.quarantined_span_count == 1
+    first_bundle = first.recorder.close()
+    assert len(first_bundle.profile.operations) == 2
+    assert SECRET not in first_bundle.model_dump_json()
+    assert _span_ids(retired.recorder.close()) == set()
+
+
 def test_on_end_waiting_behind_detach_cannot_deliver_after_close_returns() -> None:
     """A concurrent OTel end observed after close is quarantined, never delivered."""
 

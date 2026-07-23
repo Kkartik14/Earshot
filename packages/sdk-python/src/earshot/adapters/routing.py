@@ -50,6 +50,7 @@ SpanConsumer = Callable[[Any], None]
 LossConsumer = Callable[[str], None]
 SpanIdentity = tuple[int, int]
 _AMBIGUOUS_TRACE = object()
+_UNATTRIBUTABLE_SPAN = object()
 
 
 def _span_ids(span: Any) -> tuple[int | None, int | None]:
@@ -168,8 +169,9 @@ class SpanRouter:
         self._predicate = predicate
         self._sinks: dict[str, SpanSink] = {}
         self._retired_sinks: dict[str, SpanSink] = {}
-        self._span_to_session: OrderedDict[SpanIdentity, str] = OrderedDict()
+        self._span_to_session: OrderedDict[SpanIdentity, str | object] = OrderedDict()
         self._trace_to_session: OrderedDict[int, str | object] = OrderedDict()
+        self._allow_learned_end_fallback = True
         self._allow_unscoped_fallback = True
         self._quarantined = 0
         self._stale = False
@@ -221,21 +223,31 @@ class SpanRouter:
         trace_id, span_id = _span_ids(span)
         routing_hint = self._resolve_session(parent_context)
         with self._lock:
-            route_key = (
-                self._route_key_for_hint_locked(routing_hint)
-                if routing_hint is not None
-                else self._route_for_unscoped_start_locked(trace_id)
-            )
-            if route_key is None:
+            if routing_hint is not None:
+                route_key = self._route_key_for_hint_locked(routing_hint)
+                span_route: str | object = (
+                    route_key if route_key is not None else _UNATTRIBUTABLE_SPAN
+                )
+            else:
+                route_key = self._route_for_unscoped_start_locked(trace_id)
+                span_route = route_key if route_key is not None else _UNATTRIBUTABLE_SPAN
+            if route_key is None and routing_hint is None:
                 return
             if trace_id is not None and span_id is not None:
                 span_identity = (trace_id, span_id)
-                self._span_to_session[span_identity] = route_key
+                self._span_to_session[span_identity] = span_route
                 self._span_to_session.move_to_end(span_identity)
                 while len(self._span_to_session) > _MAX_SPAN_STASH:
                     _, evicted_route = self._span_to_session.popitem(last=False)
-                    if evicted_route not in self._sinks:
+                    if evicted_route is _UNATTRIBUTABLE_SPAN:
+                        # The exact negative decision can no longer be recalled.
+                        # Fail closed for future end-only attribution rather
+                        # than letting this span inherit a learned trace owner.
+                        self._allow_learned_end_fallback = False
+                    elif isinstance(evicted_route, str) and evicted_route not in self._sinks:
                         self._discard_retired_route_locked(evicted_route)
+            if route_key is None:
+                return
             if trace_id is not None:
                 if trace_id not in self._trace_to_session:
                     self._trace_to_session[trace_id] = route_key
@@ -254,9 +266,19 @@ class SpanRouter:
         trace_id, span_id = _span_ids(span)
         with self._lock:
             route_key: str | None = None
+            exact_unattributable = False
             if trace_id is not None and span_id is not None:
-                route_key = self._span_to_session.pop((trace_id, span_id), None)
-            if route_key is None and trace_id is not None:
+                span_route = self._span_to_session.pop((trace_id, span_id), None)
+                if span_route is _UNATTRIBUTABLE_SPAN:
+                    exact_unattributable = True
+                elif isinstance(span_route, str):
+                    route_key = span_route
+            if (
+                self._allow_learned_end_fallback
+                and not exact_unattributable
+                and route_key is None
+                and trace_id is not None
+            ):
                 learned_route = self._trace_to_session.get(trace_id)
                 route_key = learned_route if isinstance(learned_route, str) else None
             sink = self._sinks.get(route_key) if route_key is not None else None
@@ -308,7 +330,7 @@ class SpanRouter:
     def _route_key_for_hint_locked(self, routing_hint: str) -> str | None:
         """Resolve an opaque scope key, or an unambiguous legacy session ID."""
 
-        if routing_hint in self._sinks:
+        if routing_hint in self._sinks or routing_hint in self._retired_sinks:
             return routing_hint
         matches = [
             route_key for route_key, sink in self._sinks.items() if sink.session_key == routing_hint
