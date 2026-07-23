@@ -1054,9 +1054,9 @@ describe("remaining fault-family projections", () => {
         .filter((row) => row.availability === "not_observed")
         .map((row) => [row.signal, row.reason]),
     ).toEqual([
-      ["device.microphone", "permission_denied"],
       ["capture", "device_unavailable"],
       ["client.render", "app_backgrounded"],
+      ["device.microphone", "permission_denied"],
     ]);
   });
 
