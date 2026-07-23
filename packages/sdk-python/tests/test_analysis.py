@@ -105,7 +105,7 @@ def test_turns_use_evidence_time_before_lexical_identifier(valid_bundle) -> None
     assert [item.turn_id for item in result.projections.turns] == ["turn-2", "turn-10"]
 
 
-def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation(
+def test_incomparable_clock_groups_use_canonical_noncausal_order_in_analysis_and_explanation(
     valid_bundle,
 ) -> None:
     clocks = (
@@ -210,35 +210,35 @@ def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation
     )
     [projected_turn] = analysis.projections.turns
     assert projected_turn.operation_ids == (
-        "op-z-early",
         "op-a-early",
-        "op-observed-only",
-        "op-z-late",
         "op-a-late",
+        "op-z-early",
+        "op-z-late",
+        "op-observed-only",
     )
     assert projected_turn.event_ids == (
-        "evt-z-early",
         "evt-a-early",
-        "evt-observed-only",
-        "evt-z-late",
         "evt-a-late",
+        "evt-z-early",
+        "evt-z-late",
+        "evt-observed-only",
     )
 
     explanation = explain_incident(bundle, analysis)
     [explained_turn] = explanation.turns
     assert tuple(item.operation_id for item in explained_turn.operations) == (
-        "op-z-early",
         "op-a-early",
-        "op-observed-only",
-        "op-z-late",
         "op-a-late",
+        "op-z-early",
+        "op-z-late",
+        "op-observed-only",
     )
     assert tuple(item.event_id for item in explained_turn.events) == (
-        "evt-z-early",
         "evt-a-early",
-        "evt-observed-only",
-        "evt-z-late",
         "evt-a-late",
+        "evt-z-early",
+        "evt-z-late",
+        "evt-observed-only",
     )
 
     repeated_analysis = analyze_incident(
@@ -249,8 +249,21 @@ def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation
     assert repeated_analysis == analysis
     assert explain_incident(bundle, repeated_analysis) == explanation
 
+    permuted = replace_profile(
+        bundle,
+        operations=tuple(reversed(bundle.profile.operations)),
+        events=tuple(reversed(bundle.profile.events)),
+    )
+    permuted_analysis = analyze_incident(
+        permuted,
+        input_sha256=analysis.input_sha256,
+        generated_at_unix_nano=analysis.generated_at_unix_nano,
+    )
+    assert permuted_analysis == analysis
+    assert explain_incident(permuted, permuted_analysis) == explanation
 
-def test_incomparable_turn_clock_groups_keep_source_order(valid_bundle) -> None:
+
+def test_incomparable_turn_clock_groups_use_canonical_noncausal_order(valid_bundle) -> None:
     clocks = (
         ClockDomain(clock_domain_id="z-source-clock", kind="monotonic", observer="server"),
         ClockDomain(clock_domain_id="a-source-clock", kind="monotonic", observer="server"),
@@ -293,10 +306,12 @@ def test_incomparable_turn_clock_groups_keep_source_order(valid_bundle) -> None:
     result = analyze(bundle)
 
     assert [item.turn_id for item in result.projections.turns] == [
-        "turn-z-early",
         "turn-a-middle",
+        "turn-z-early",
         "turn-z-late",
     ]
+    permuted = replace_profile(bundle, operations=tuple(reversed(bundle.profile.operations)))
+    assert analyze(permuted) == result
 
 
 def test_high_fidelity_events_win_over_coarse_operation_starts(valid_bundle) -> None:

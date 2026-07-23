@@ -50,49 +50,35 @@ def _order_by_comparable_coordinate(
     items: Iterable[_T],
     *,
     coordinate: Callable[[_T], _Coordinate | None],
+    identity: Callable[[_T], str],
 ) -> tuple[_T, ...]:
-    """Order numerically within comparable groups without moving group slots.
+    """Return a permutation-invariant presentation order.
 
-    Clock-domain and timestamp-basis labels identify groups; their exact source
-    interleaving is retained. Equal coordinates and ungrouped items stay in source
-    order.
+    Clock-domain and timestamp-basis labels canonically group comparable points;
+    only the numeric order inside one group has temporal meaning. Group and identity
+    ordering is a deterministic serialization rule, not cross-clock causality.
     """
 
-    slots: list[tuple[tuple[str, str] | None, _T]] = []
-    grouped: dict[tuple[str, str], list[tuple[_T, int]]] = {}
-    for item in items:
+    def presentation_key(item: _T) -> tuple[int, str, str, int, str]:
         item_coordinate = coordinate(item)
         if item_coordinate is None:
-            slots.append((None, item))
-        else:
-            domain, basis, value = item_coordinate
-            group = (domain, basis)
-            slots.append((group, item))
-            grouped.setdefault(group, []).append((item, value))
+            return 1, "", "", 0, identity(item)
+        domain, basis, value = item_coordinate
+        return 0, domain, basis, value, identity(item)
 
-    sorted_groups = {
-        group: sorted(entries, key=lambda entry: entry[1]) for group, entries in grouped.items()
-    }
-    offsets = {group: 0 for group in sorted_groups}
-    ordered: list[_T] = []
-    for group, source_item in slots:
-        if group is None:
-            ordered.append(source_item)
-            continue
-        offset = offsets[group]
-        ordered.append(sorted_groups[group][offset][0])
-        offsets[group] = offset + 1
-    return tuple(ordered)
+    return tuple(sorted(items, key=presentation_key))
 
 
 def _order_by_comparable_time(
     items: Iterable[_T],
     *,
     point: Callable[[_T], TimePoint],
+    identity: Callable[[_T], str],
 ) -> tuple[_T, ...]:
     return _order_by_comparable_coordinate(
         items,
         coordinate=lambda item: _comparable_coordinate(point(item)),
+        identity=identity,
     )
 
 
@@ -738,11 +724,16 @@ def _turn_projection(
             for item in _order_by_comparable_time(
                 operations,
                 point=lambda operation: operation.started_at,
+                identity=lambda operation: operation.operation_id,
             )
         ],
         "event_ids": [
             item.event_id
-            for item in _order_by_comparable_time(events, point=lambda event: event.time)
+            for item in _order_by_comparable_time(
+                events,
+                point=lambda event: event.time,
+                identity=lambda event: event.event_id,
+            )
         ],
         "metrics": {
             "first_token_latency": first_token_latency,
@@ -860,6 +851,7 @@ def analyze_incident(
     ordered_turn_ids = _order_by_comparable_coordinate(
         turn_ids,
         coordinate=turn_coordinate,
+        identity=lambda turn_id: turn_id,
     )
     turns = [
         _turn_projection(

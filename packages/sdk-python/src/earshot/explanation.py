@@ -332,7 +332,7 @@ def _event(value) -> ExplainedEvent:
 
 
 def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> IncidentExplanation:
-    """Project UI-ready facts without inventing intervals or cross-clock ordering."""
+    """Project UI-ready facts without inventing intervals or cross-clock causality."""
 
     profile = bundle.profile
     operations = {item.operation_id: item for item in profile.operations}
@@ -353,6 +353,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                         if identity in operations
                     ),
                     point=lambda operation: operation.started_at,
+                    identity=lambda operation: operation.operation_id,
                 )
             ),
             events=tuple(
@@ -360,6 +361,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 for event in _order_by_comparable_time(
                     (events[identity] for identity in turn.event_ids if identity in events),
                     point=lambda event: event.time,
+                    identity=lambda event: event.event_id,
                 )
             ),
             metrics=turn.metrics,
@@ -380,6 +382,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
             if operation.operation_id not in assigned_operation_ids
         ),
         point=lambda operation: operation.started_at,
+        identity=lambda operation: operation.operation_id,
     )
     unassigned_operations = tuple(
         _operation(operation, samples) for operation in unassigned_source_operations
@@ -393,6 +396,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
         for event in _order_by_comparable_time(
             (event for event in profile.events if event.event_id not in assigned_event_ids),
             point=lambda event: event.time,
+            identity=lambda event: event.event_id,
         )
     )
 
