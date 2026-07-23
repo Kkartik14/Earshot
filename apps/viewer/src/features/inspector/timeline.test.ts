@@ -1,15 +1,25 @@
 import { describe, expect, it } from "vitest";
 import analysisFixture from "./__fixtures__/analysis.json";
 import incidentFixture from "./__fixtures__/incident.json";
+import toolTimeoutRetry from "./__fixtures__/faults/tool_timeout_retry.explanation.json";
+import telephonyHandoff from "./__fixtures__/faults/telephony_handoff.explanation.json";
+import websocketReconnect from "./__fixtures__/faults/websocket_reconnect.explanation.json";
+import webrtcDegradation from "./__fixtures__/faults/webrtc_degradation.explanation.json";
+import nativeInterruption from "./__fixtures__/faults/native_s2s_interruption.explanation.json";
 import {
+  buildDiagnoses,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
+  buildUnassigned,
   getCoverage,
   type AnalysisLike,
   type ExplanationLike,
   type IncidentLike,
 } from "./timeline";
+
+const asExplanation = (fixture: unknown): ExplanationLike =>
+  fixture as unknown as ExplanationLike;
 
 const incident = incidentFixture as unknown as IncidentLike;
 const analysis = analysisFixture as unknown as AnalysisLike;
@@ -502,5 +512,159 @@ describe("generic operation list", () => {
     const noCascade = buildTimeline(turnOf([{ operation_name: "agent" }])).turns[0]
       .hasCascade;
     expect(noCascade).toBe(false);
+  });
+});
+
+// -- real fault-family projections (WS-5) -----------------------------------
+// These are the actual backend explanation projections, decoded and dumped from
+// the fault fixtures, so the transform is exercised against real link/diagnosis/
+// error/unassigned shapes rather than hand-built stand-ins.
+
+describe("causal edges from links", () => {
+  it("resolves the retry and consume edges in tool_timeout_retry", () => {
+    const detail = buildTurnDetails(asExplanation(toolTimeoutRetry))[0];
+    expect(detail.edges).toEqual([
+      {
+        fromOperationId: "op-tool-attempt-2",
+        toOperationId: "op-tool-attempt-1",
+        relationship: "retries",
+      },
+      {
+        fromOperationId: "op-downstream-agent",
+        toOperationId: "op-tool-attempt-2",
+        relationship: "consumes",
+      },
+    ]);
+  });
+
+  it("resolves the handoff edge in telephony_handoff", () => {
+    const detail = buildTurnDetails(asExplanation(telephonyHandoff))[0];
+    const handoff = detail.edges.find((e) => e.relationship === "handoff");
+    expect(handoff).toEqual({
+      fromOperationId: "op-human-leg",
+      toOperationId: "op-bot-leg",
+      relationship: "handoff",
+    });
+  });
+
+  it("resolves the duplicates and supersedes edges in websocket_reconnect", () => {
+    const detail = buildTurnDetails(asExplanation(websocketReconnect))[0];
+    const rels = detail.edges.map((e) => e.relationship).sort();
+    expect(rels).toContain("duplicates");
+    expect(rels).toContain("supersedes");
+    const dup = detail.edges.find((e) => e.relationship === "duplicates");
+    expect(dup?.toOperationId).toBe("op-ws-message-original");
+  });
+
+  it("never invents an edge for an operation with no links", () => {
+    const detail = buildTurnDetails(asExplanation(nativeInterruption))[0];
+    expect(detail.edges).toEqual([]);
+  });
+});
+
+describe("per-operation error / status", () => {
+  it("flags the timed-out tool attempt as abnormal with a warn tone", () => {
+    const detail = buildTurnDetails(asExplanation(toolTimeoutRetry))[0];
+    const attempt1 = detail.stages.find((s) => s.operationId === "op-tool-attempt-1");
+    expect(attempt1?.status).toBe("timeout");
+    expect(attempt1?.statusView.abnormal).toBe(true);
+    expect(attempt1?.statusView.tone).toBe("warn");
+    expect(attempt1?.statusView.label).toBe("timeout");
+    // The succeeded retry is not badged.
+    const attempt2 = detail.stages.find((s) => s.operationId === "op-tool-attempt-2");
+    expect(attempt2?.statusView.abnormal).toBe(false);
+  });
+
+  it("surfaces an explicit error object as a crit badge with code and category", () => {
+    const withError = asExplanation({
+      bundle_id: "e",
+      session_id: "e",
+      session_status: "completed",
+      finality: "final",
+      completeness: "complete",
+      analyzer_version: "t",
+      limitations: [],
+      coverage: [],
+      omissions: [],
+      turns: [
+        {
+          turn_id: "turn-1",
+          metrics: {},
+          events: [],
+          operations: [
+            {
+              operation_id: "op-tool",
+              operation_name: "tool",
+              status: "failed",
+              shape: "point",
+              time_basis: "monotonic",
+              clock_domain_id: "c",
+              start_nano: "1000",
+              error: {
+                code: "tool_timeout",
+                category: "timeout",
+                capture_class: "metadata",
+              },
+              measurements: [],
+            },
+          ],
+        },
+      ],
+    });
+    const stage = buildTurnDetails(withError)[0].stages[0];
+    expect(stage.statusView.tone).toBe("crit");
+    expect(stage.statusView.label).toBe("tool_timeout · timeout");
+    expect(stage.statusView.error).toEqual({
+      code: "tool_timeout",
+      category: "timeout",
+      captureClass: "metadata",
+    });
+  });
+});
+
+describe("diagnoses", () => {
+  it("surfaces the operation.failed diagnosis with its evidence operation and turn", () => {
+    const diagnoses = buildDiagnoses(asExplanation(toolTimeoutRetry));
+    expect(diagnoses).toHaveLength(1);
+    const diag = diagnoses[0];
+    expect(diag.code).toBe("operation.failed");
+    expect(diag.confidence).toBe("measured");
+    expect(diag.evidence).toEqual([{ id: "op-tool-attempt-1", turnIndex: 0 }]);
+  });
+
+  it("returns no diagnoses when the explanation carries none", () => {
+    expect(buildDiagnoses(asExplanation(nativeInterruption))).toEqual([]);
+  });
+});
+
+describe("unassigned session-level facts", () => {
+  it("renders webrtc jitter/rtt/packet-loss as unassigned measurements with units", () => {
+    const explanation = asExplanation(webrtcDegradation);
+    // The incident has no turns; without the unassigned lane the inspector would
+    // be empty.
+    expect(buildTimeline(explanation).turns).toHaveLength(0);
+    const facts = buildUnassigned(explanation);
+    const byName = new Map(facts.measurements.map((m) => [m.name, m]));
+    expect(byName.get("jitter")?.unit).toBe("ms");
+    expect(byName.get("jitter")?.value).toBe(42);
+    expect(byName.get("round_trip_time")?.unit).toBe("ms");
+    expect(byName.get("packet_loss_ratio")?.unit).toBe("1");
+    expect(byName.get("packet_loss_ratio")?.value).toBe(0.18);
+  });
+
+  it("has no unassigned facts for a fully turn-scoped incident", () => {
+    const facts = buildUnassigned(asExplanation(toolTimeoutRetry));
+    expect(facts.operations).toEqual([]);
+    expect(facts.measurements).toEqual([]);
+  });
+});
+
+describe("interruption attachment", () => {
+  it("keeps a stream-less interruption event turn-level, attached to no operation", () => {
+    const detail = buildTurnDetails(asExplanation(nativeInterruption))[0];
+    const interruption = detail.events.find((e) => e.name.includes("interruption"));
+    expect(interruption).toBeDefined();
+    expect(interruption?.attachedOperationId).toBeNull();
+    expect(detail.stages.every((s) => s.interruptedByEvent == null)).toBe(true);
   });
 });

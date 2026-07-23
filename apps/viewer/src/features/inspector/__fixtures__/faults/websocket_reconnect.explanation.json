@@ -1,0 +1,266 @@
+{
+  "bundle_id": "fault-websocket-reconnect",
+  "session_id": "fixture-session",
+  "session_status": "completed",
+  "finality": "final",
+  "completeness": "complete",
+  "analyzer_name": "earshot.deterministic",
+  "analyzer_version": "0.1.0",
+  "input_sha256": "c75a28452c9a6f7011aefb4427a7c55e30a299ad78bd5f12ddd3d338d6b467be",
+  "turns": [
+    {
+      "turn_id": "turn-1",
+      "operations": [
+        {
+          "operation_id": "op-ws-message-original",
+          "operation_name": "transport_receive",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "900000000",
+          "end_nano": "1000000000",
+          "duration_nano": "100000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-agent",
+          "stream_id": "stream-output",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "1111111111111111",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": ["op-ws-message-original"]
+        },
+        {
+          "operation_id": "op-ws-message-duplicate",
+          "operation_name": "transport_receive",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "1050000000",
+          "end_nano": "1100000000",
+          "duration_nano": "50000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-agent",
+          "stream_id": "stream-output",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "2222222222222222",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [
+            {
+              "relationship": "duplicates",
+              "target_scope": "internal",
+              "target_operation_id": "op-ws-message-original",
+              "trace_id": null,
+              "span_id": null
+            }
+          ],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": ["op-ws-message-duplicate"]
+        },
+        {
+          "operation_id": "op-ws-message-out-of-order",
+          "operation_name": "transport_receive",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "1100000000",
+          "end_nano": "1150000000",
+          "duration_nano": "50000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-agent",
+          "stream_id": "stream-output",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "3333333333333333",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [
+            {
+              "relationship": "supersedes",
+              "target_scope": "internal",
+              "target_operation_id": "op-ws-message-original",
+              "trace_id": null,
+              "span_id": null
+            }
+          ],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": ["op-ws-message-out-of-order"]
+        }
+      ],
+      "events": [
+        {
+          "event_id": "event-transport-reconnecting",
+          "event_name": "earshot.transport.reconnecting",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "1200000000",
+          "participant_id": null,
+          "stream_id": null,
+          "evidence": {
+            "source": "websocket",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": ["event-transport-reconnecting"]
+        },
+        {
+          "event_id": "event-message-duplicate",
+          "event_name": "earshot.transport.message.duplicate",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "1250000000",
+          "participant_id": null,
+          "stream_id": null,
+          "evidence": {
+            "source": "websocket",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": ["event-message-duplicate"]
+        },
+        {
+          "event_id": "event-message-out-of-order",
+          "event_name": "earshot.transport.message.out_of_order",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "1300000000",
+          "participant_id": null,
+          "stream_id": null,
+          "evidence": {
+            "source": "websocket",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": ["event-message-out-of-order"]
+        }
+      ],
+      "metrics": {
+        "first_token_latency": {
+          "availability": "not_observed",
+          "basis": "first_token",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "generated_response_latency": {
+          "availability": "not_observed",
+          "basis": "generated",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "sent_response_latency": {
+          "availability": "not_observed",
+          "basis": "sent",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "received_response_latency": {
+          "availability": "not_observed",
+          "basis": "received",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "render_start_response_latency": {
+          "availability": "not_observed",
+          "basis": "render",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "response_latency": {
+          "availability": "not_observed",
+          "basis": "receive_estimate",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "tools": {
+          "operation_count": 0,
+          "total_work_ms": 0.0,
+          "elapsed_ms_by_clock_domain": {},
+          "evidence_ids": []
+        },
+        "provider_measurements": {}
+      }
+    }
+  ],
+  "coverage": [],
+  "omissions": [],
+  "limitations": ["render_evidence_not_observed"],
+  "diagnoses": [],
+  "unassigned_operations": [],
+  "unassigned_measurements": []
+}

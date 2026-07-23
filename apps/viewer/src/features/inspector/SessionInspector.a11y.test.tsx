@@ -22,6 +22,28 @@ const explanation = {
   limitations: [],
   coverage: incident.profile.coverage ?? [],
   omissions: [],
+  diagnoses: [
+    {
+      diagnosis_id: "operation_failed.1",
+      code: "operation.failed",
+      summary: "the llm operation failed",
+      confidence: "measured",
+      evidence_ids: ["operation-llm-0-5"],
+      limitations: [],
+    },
+  ],
+  unassigned_operations: [],
+  unassigned_measurements: [
+    {
+      name: "round_trip_time",
+      value: 180,
+      unit: "ms",
+      aggregation: "instant",
+      basis: "provider_measurement",
+      confidence: "measured",
+      evidence_ids: ["quality-webrtc"],
+    },
+  ],
   turns: analysis.projections.turns.map((turn) => ({
     turn_id: turn.turn_id,
     metrics: turn.metrics,
@@ -31,6 +53,7 @@ const explanation = {
         const start = operation.started_at.monotonic_time_nano ?? "0";
         const end = operation.ended_at?.monotonic_time_nano;
         return {
+          operation_id: operation.operation_id ?? undefined,
           operation_name: operation.operation_name,
           status: operation.status ?? "unknown",
           shape: end == null ? "point" : "interval",
@@ -118,6 +141,26 @@ describe("SessionInspector focus management", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(turn).toHaveFocus();
+  });
+
+  it("surfaces backend diagnoses and selects the evidence operation on click", () => {
+    renderInspector();
+    // The session-level Diagnoses panel renders the analyzer's diagnosis.
+    expect(screen.getByRole("heading", { name: /diagnoses/i })).toBeInTheDocument();
+    expect(screen.getByText("operation.failed")).toBeInTheDocument();
+
+    // Clicking the evidence chip opens the detail for that exact operation.
+    fireEvent.click(screen.getByRole("button", { name: "operation-llm-0-5" }));
+    expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
+  });
+
+  it("renders unassigned session-level measurements with their units", () => {
+    renderInspector();
+    expect(
+      screen.getByRole("region", { name: /session-level facts/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("round_trip_time")).toBeInTheDocument();
+    expect(screen.getByText("180ms")).toBeInTheDocument();
   });
 
   it("preserves the open dialog and restore target across a data refresh", () => {
