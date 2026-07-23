@@ -745,6 +745,41 @@ describe("interruption attachment", () => {
     ).toBeUndefined();
   });
 
+  it("keeps a stream-only event turn-level instead of inferring causality", () => {
+    const source = turnOf([
+      {
+        operation_id: "op-agent",
+        operation_name: "agent",
+        stream_id: "stream-output",
+      },
+    ]);
+    const [turn] = source.turns;
+    const explanation = asExplanation({
+      ...source,
+      turns: [
+        {
+          ...turn,
+          events: [
+            {
+              event_id: "evt-interruption",
+              event_name: "earshot.interruption.accepted",
+              stream_id: "stream-output",
+              time_basis: "monotonic",
+              clock_domain_id: "generic-clock",
+              at_nano: "1500",
+              evidence_ids: ["evt-interruption"],
+            },
+          ],
+        },
+      ],
+    });
+
+    const [detail] = buildTurnDetails(explanation);
+
+    expect(detail.events[0].attachedOperationId).toBeNull();
+    expect(detail.stages[0].interruptedByEvent).toBeUndefined();
+  });
+
   it("keeps a stream-less interruption event turn-level, attached to no operation", () => {
     const detail = buildTurnDetails(asExplanation(nativeInterruption))[0];
     const interruption = detail.events.find((e) => e.name.includes("interruption"));

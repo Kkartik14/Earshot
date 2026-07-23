@@ -608,9 +608,8 @@ export interface StageDetail {
    * as edges by the call graph; unresolved (external/unknown) ones surface as a
    * relationship tag on the node. */
   links: LinkView[];
-  /** An interruption event that references this operation (via a matching
-   * `stream_id`). When set, the interruption attaches here rather than to a
-   * fixed row. */
+  /** An interruption event that explicitly references this operation. When set,
+   * the interruption attaches here rather than remaining at turn level. */
   interruptedByEvent?: string;
   evidence?: EvidenceView;
   measurements: MeasurementView[];
@@ -620,8 +619,8 @@ export interface EventView {
   atMs: number | null;
   participant: string;
   confidence: string;
-  /** The operation this event attaches to, when its `stream_id` resolves to
-   * exactly one operation in the turn; otherwise null (a turn-level event). */
+  /** The operation this event explicitly identifies; otherwise null (a
+   * turn-level event). */
   attachedOperationId: string | null;
 }
 export interface MetricRow {
@@ -734,27 +733,14 @@ function resolveLinks(windows: OperationWindow[]): {
   return { linksByOp, edges };
 }
 
-/** Attach an event to an operation when its `stream_id` resolves to EXACTLY one
- * operation in the turn. This is how an interruption lands on the operation it
- * references instead of a hardcoded row; an ambiguous or absent stream_id leaves
- * the event at the turn level. */
+/** Attach events only through their source-authored operation identity. Stream
+ * correlation is not causal evidence, so stream-only events remain turn-level. */
 function attachEventsToOps(windows: OperationWindow[], events: ExplainedEvent[]) {
   const operationIds = new Set(windows.map((window) => window.operationId));
-  const opsByStream = new Map<string, string[]>();
-  for (const w of windows) {
-    const stream = w.op.stream_id;
-    if (stream == null) continue;
-    const list = opsByStream.get(stream) ?? [];
-    list.push(w.operationId);
-    opsByStream.set(stream, list);
-  }
   const eventTarget = (event: ExplainedEvent): string | null => {
-    if (event.operation_id != null) {
-      return operationIds.has(event.operation_id) ? event.operation_id : null;
-    }
-    if (event.stream_id == null) return null;
-    const ops = opsByStream.get(event.stream_id);
-    return ops != null && ops.length === 1 ? ops[0] : null;
+    return event.operation_id != null && operationIds.has(event.operation_id)
+      ? event.operation_id
+      : null;
   };
   // For each operation, the interruption event (if any) that attaches to it.
   const interruptByOp = new Map<string, string>();
