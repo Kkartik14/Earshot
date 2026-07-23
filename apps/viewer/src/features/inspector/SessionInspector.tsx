@@ -15,7 +15,6 @@ import {
   buildTurnDetails,
   buildUnassigned,
   getCoverage,
-  type ExplanationLike,
   type IncidentLike,
 } from "./timeline";
 
@@ -46,8 +45,7 @@ export function SessionInspector() {
       return;
     }
     initializedExplanationFor.current = bundleId;
-    const turns =
-      (explanation.data as unknown as ExplanationLike | undefined)?.turns ?? [];
+    const turns = explanation.data?.turns ?? [];
     const slow = turns.findIndex(
       (t) => (t.metrics?.first_token_latency?.value ?? 0) > 500,
     );
@@ -79,10 +77,10 @@ export function SessionInspector() {
     );
   }
 
-  // The API responses are the source of truth; the transform reads only the
-  // fields it needs, so we narrow to the local shapes at this boundary.
+  // The explanation response flows directly from the generated API contract.
+  // The incident transform still consumes a deliberately small canonical subset.
   const inc = incident.data as unknown as IncidentLike;
-  const explained = explanation.data as unknown as ExplanationLike;
+  const explained = explanation.data;
   const timeline = buildTimeline(explained);
   const summary = buildSummary(inc, explained, timeline);
   const details = buildTurnDetails(explained);

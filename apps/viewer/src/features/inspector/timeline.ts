@@ -1,6 +1,7 @@
 // Visualizes the backend-authored explanation projection. The browser positions
 // exact coordinates; it never decides whether an operation is a point or interval.
 
+import type { components } from "../../api/schema";
 import { statusTone, type Tone } from "../../lib/status";
 
 // The cascade stages remain a named subset, but they no longer gate what the
@@ -99,14 +100,14 @@ const LEAD_METRIC: Record<StageName, string> = {
   llm: "earshot.llm.ttft",
   tts: "earshot.tts.ttfb",
 };
-const METRIC_KEYS: { key: string; label: string }[] = [
+const METRIC_KEYS = [
   { key: "first_token_latency", label: "first_token" },
   { key: "generated_response_latency", label: "generated_response" },
   { key: "sent_response_latency", label: "sent_response" },
   { key: "received_response_latency", label: "received_response" },
   { key: "render_start_response_latency", label: "render_start" },
   { key: "response_latency", label: "response" },
-];
+] as const;
 
 interface Evidence {
   source?: string | null;
@@ -171,109 +172,12 @@ export interface AnalysisLike {
   projections: { turns: { turn_id: string; metrics: Record<string, MetricLike> }[] };
 }
 
-// A faithful local subset of the backend explanation model (see schema.d.ts).
-// These mirror the wire shape; the viewer never invents fields not present here.
-interface ExplainedMeasurement {
-  name: string;
-  value: boolean | number;
-  unit: string;
-  basis?: string | null;
-  confidence?: string | null;
-  limitation?: string | null;
-  evidence?: Evidence | null;
-}
-/** A backend-authored causal link between operations. Edges come ONLY from
- * these; the viewer never manufactures a relationship the analyzer did not
- * record. `target_operation_id` resolves within the same turn when the target
- * is `internal` and present. */
-interface ExplainedLink {
-  relationship: string;
-  target_scope?: string | null;
-  target_operation_id?: string | null;
-  trace_id?: string | null;
-  span_id?: string | null;
-}
-/** A backend-classified operation error. The message is never carried; only the
- * governed code/category/capture_class metadata is available to render. */
-interface ExplainedError {
-  code: string;
-  category: string;
-  capture_class: string;
-}
-interface ExplainedOperation {
-  operation_id?: string;
-  operation_name: string;
-  status: string;
-  shape: "point" | "interval";
-  time_basis: "monotonic" | "source_wall" | "observed_wall";
-  clock_domain_id?: string | null;
-  start_nano: string;
-  duration_nano?: string | null;
-  start_uncertainty_nano?: string | null;
-  end_uncertainty_nano?: string | null;
-  provider?: string | null;
-  model?: string | null;
-  stream_id?: string | null;
-  trace_id?: string | null;
-  span_id?: string | null;
-  parent_span_id?: string | null;
-  parent_scope?: string | null;
-  links?: ExplainedLink[] | null;
-  error?: ExplainedError | null;
-  evidence?: Evidence | null;
-  measurements: ExplainedMeasurement[];
-}
-interface ExplainedEvent {
-  event_name: string;
-  event_id?: string | null;
-  operation_id?: string | null;
-  time_basis: "monotonic" | "source_wall" | "observed_wall";
-  clock_domain_id?: string | null;
-  at_nano: string;
-  participant_id?: string | null;
-  stream_id?: string | null;
-  evidence?: Evidence | null;
-}
-interface ExplainedTurn {
-  turn_id: string;
-  operations: ExplainedOperation[];
-  events: ExplainedEvent[];
-  metrics: Record<string, MetricLike>;
-}
-/** A backend-authored diagnosis. Diagnoses come ONLY from this list; the viewer
- * never derives one. `evidence_ids` reference operations (and other facts) by id. */
-interface ExplainedDiagnosis {
-  diagnosis_id: string;
-  code: string;
-  summary: string;
-  confidence: string;
-  evidence_ids: string[];
-  limitations?: string[] | null;
-}
-export interface ExplanationLike {
-  bundle_id: string;
-  session_id: string;
-  session_status: string;
-  finality: string;
-  completeness: string;
-  analyzer_version: string;
-  turns: ExplainedTurn[];
-  diagnoses?: ExplainedDiagnosis[] | null;
-  unassigned_operations?: ExplainedOperation[] | null;
-  unassigned_measurements?: ExplainedMeasurement[] | null;
-  coverage: {
-    signal: string;
-    availability: string;
-    reason?: string | null;
-  }[];
-  omissions: {
-    omission_id: string;
-    capture_class: string;
-    reason: string;
-    count?: number | null;
-  }[];
-  limitations: string[];
-}
+type ExplainedMeasurement = components["schemas"]["ExplainedMeasurement"];
+type ExplainedError = components["schemas"]["ExplainedError"];
+type ExplainedOperation = components["schemas"]["ExplainedOperation"];
+type ExplainedEvent = components["schemas"]["ExplainedEvent"];
+type ExplainedTurn = components["schemas"]["ExplainedTurn"];
+export type ExplanationLike = components["schemas"]["IncidentExplanation"];
 
 export interface MetricView {
   value: number | null;
@@ -471,9 +375,7 @@ function computeOperations(turn: ExplainedTurn): OperationWindow[] {
         if (leftStart == null || rightStart == null) return 0;
         if (leftStart < rightStart) return -1;
         if (leftStart > rightStart) return 1;
-        return (left.operation_id ?? left.operation_name).localeCompare(
-          right.operation_id ?? right.operation_name,
-        );
+        return left.operation_id.localeCompare(right.operation_id);
       })
     : candidates;
   // A single origin would falsely place independent clocks on one axis. If any
@@ -481,9 +383,9 @@ function computeOperations(turn: ExplainedTurn): OperationWindow[] {
   // whichever operation happened to arrive first look like +0 ms.
   const origin = comparable ? (ops[0] ?? null) : null;
 
-  return ops.map((op, index) => {
+  return ops.map((op) => {
     const role = classifyRole(op.operation_name);
-    const operationId = op.operation_id ?? `${op.operation_name}-${index}`;
+    const operationId = op.operation_id;
     const startMs = coordinateDeltaMs(
       op.start_nano,
       op.time_basis,
@@ -682,11 +584,7 @@ function resolveLinks(windows: OperationWindow[]): {
   linksByOp: Map<string, LinkView[]>;
   edges: EdgeView[];
 } {
-  const presentIds = new Set(
-    windows
-      .map((w) => w.op.operation_id)
-      .filter((id): id is string => typeof id === "string"),
-  );
+  const presentIds = new Set(windows.map((window) => window.op.operation_id));
   const operationBySpan = new Map<string, OperationWindow>();
   const spanKey = (
     traceId: string | null | undefined,

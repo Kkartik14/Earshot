@@ -23,7 +23,7 @@ const asExplanation = (fixture: unknown): ExplanationLike =>
 
 const incident = incidentFixture as unknown as IncidentLike;
 const analysis = analysisFixture as unknown as AnalysisLike;
-const explanation = {
+const explanation = asExplanation({
   bundle_id: "fixture-bundle",
   session_id: "fixture-session",
   session_status: incident.profile.session?.status ?? "unknown",
@@ -38,11 +38,11 @@ const explanation = {
     metrics: turn.metrics,
     operations: incident.profile.operations
       .filter((operation) => operation.turn_id === turn.turn_id)
-      .map((operation) => {
+      .map((operation, operationIndex) => {
         const start = operation.started_at.monotonic_time_nano ?? "0";
         const end = operation.ended_at?.monotonic_time_nano;
         return {
-          operation_id: operation.operation_id ?? undefined,
+          operation_id: operation.operation_id ?? `fixture-operation-${operationIndex}`,
           operation_name: operation.operation_name,
           status: operation.status ?? "unknown",
           shape: end == null ? ("point" as const) : ("interval" as const),
@@ -84,7 +84,7 @@ const explanation = {
         evidence: event.evidence,
       })),
   })),
-} satisfies ExplanationLike;
+});
 
 describe("buildTimeline", () => {
   const timeline = buildTimeline(explanation);
@@ -111,7 +111,7 @@ describe("buildTimeline", () => {
   });
 
   it("subtracts decimal nanoseconds before converting to Number", () => {
-    const preciseExplanation = {
+    const preciseExplanation = asExplanation({
       bundle_id: "precise",
       session_id: "precise",
       session_status: "completed",
@@ -150,7 +150,7 @@ describe("buildTimeline", () => {
           ],
         },
       ],
-    } as ExplanationLike;
+    });
 
     const stages = buildTimeline(preciseExplanation).turns[0].stages;
     expect(stages.map((stage) => stage.name)).toEqual(["stt", "llm"]);
@@ -159,13 +159,13 @@ describe("buildTimeline", () => {
 
   it("preserves the analyzer's temporal turn order instead of sorting identifiers", () => {
     const source = explanation.turns[0];
-    const ordered = {
+    const ordered = asExplanation({
       ...explanation,
       turns: [
         { ...source, turn_id: "turn-2" },
         { ...source, turn_id: "turn-10" },
       ],
-    } satisfies ExplanationLike;
+    });
 
     expect(buildTimeline(ordered).turns.map((turn) => turn.turnId)).toEqual([
       "turn-2",
@@ -174,7 +174,7 @@ describe("buildTimeline", () => {
   });
 
   it("marks cross-clock stage placement unavailable", () => {
-    const crossClockExplanation = {
+    const crossClockExplanation = asExplanation({
       bundle_id: "cross-clock",
       session_id: "cross-clock",
       session_status: "completed",
@@ -211,7 +211,7 @@ describe("buildTimeline", () => {
           ],
         },
       ],
-    } as ExplanationLike;
+    });
 
     const [, llm] = buildTimeline(crossClockExplanation).turns[0].stages;
     const [stt] = buildTimeline(crossClockExplanation).turns[0].stages;
@@ -323,7 +323,7 @@ describe("buildTurnDetails", () => {
   });
 
   it("keeps an unaligned event offset unavailable instead of coercing it to zero", () => {
-    const crossClock = {
+    const crossClock = asExplanation({
       ...explanation,
       turns: [
         {
@@ -339,7 +339,7 @@ describe("buildTurnDetails", () => {
           ],
         },
       ],
-    } satisfies ExplanationLike;
+    });
 
     expect(buildTurnDetails(crossClock)[0].events[0].atMs).toBeNull();
   });
@@ -374,7 +374,7 @@ interface RawOp {
 
 /** A single-turn explanation over an arbitrary operation set, one clock. */
 function turnOf(operations: RawOp[]): ExplanationLike {
-  return {
+  return asExplanation({
     bundle_id: "generic",
     session_id: "generic",
     session_status: "completed",
@@ -390,7 +390,7 @@ function turnOf(operations: RawOp[]): ExplanationLike {
         metrics: {},
         events: [],
         operations: operations.map((raw, i) => ({
-          operation_id: raw.operation_id,
+          operation_id: raw.operation_id ?? `op-${i}`,
           operation_name: raw.operation_name,
           stream_id: raw.stream_id,
           status: raw.status ?? "ok",
@@ -408,7 +408,7 @@ function turnOf(operations: RawOp[]): ExplanationLike {
         })),
       },
     ],
-  } satisfies ExplanationLike;
+  });
 }
 
 describe("generic operation list", () => {
@@ -740,8 +740,7 @@ describe("interruption attachment", () => {
         ?.interruptedByEvent,
     ).toBe("earshot.interruption.accepted");
     expect(
-      detail.stages.find((stage) => stage.operationId === "op-other")
-        ?.interruptedByEvent,
+      detail.stages.find((stage) => stage.operationId === "op-other")?.interruptedByEvent,
     ).toBeUndefined();
   });
 

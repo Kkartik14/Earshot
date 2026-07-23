@@ -235,9 +235,8 @@ describe("Interruption attachment", () => {
     expect(turnEvent?.attachedOperationId).toBeNull();
   });
 
-  it("attaches an interruption to the operation its stream_id references", () => {
-    // A stream-correlated interruption resolves to exactly one operation.
-    const explanation: ExplanationLike = {
+  it("attaches an interruption to the operation it explicitly references", () => {
+    const explanation = {
       bundle_id: "b",
       session_id: "s",
       session_status: "completed",
@@ -267,16 +266,19 @@ describe("Interruption attachment", () => {
           ],
           events: [
             {
+              event_id: "evt-interruption",
               event_name: "earshot.interruption.accepted",
+              operation_id: "op-tts",
               time_basis: "monotonic",
               clock_domain_id: "c",
               at_nano: "1200",
               stream_id: "stream-output",
+              evidence_ids: ["evt-interruption"],
             },
           ],
         },
       ],
-    };
+    } as unknown as ExplanationLike;
     const detail = buildTurnDetails(explanation)[0];
     expect(detail.stages[0].interruptedByEvent).toBe("earshot.interruption.accepted");
     expect(detail.events[0].attachedOperationId).toBe("op-tts");
