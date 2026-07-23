@@ -693,6 +693,75 @@ def test_validate_explanation_rejects_duplicate_event(valid_bundle) -> None:
     }
 
 
+def test_validate_explanation_rejects_moved_dropped_or_invented_events(
+    valid_bundle,
+) -> None:
+    operation_template = next(
+        operation
+        for operation in valid_bundle.profile.operations
+        if operation.operation_id == "op-llm"
+    )
+    second_operation = operation_template.model_copy(
+        update={
+            "operation_id": "op-turn-two",
+            "turn_id": "turn-two",
+            "span_id": "a" * 16,
+            "parent_span_id": None,
+            "parent_scope": "external",
+            "started_at": point(2_000_000_000),
+            "ended_at": point(2_100_000_000),
+        }
+    )
+    event_template = next(
+        event for event in valid_bundle.profile.events if event.event_id == "evt-token"
+    )
+    second_event = event_template.model_copy(
+        update={
+            "event_id": "evt-turn-two",
+            "turn_id": "turn-two",
+            "operation_id": second_operation.operation_id,
+            "time": point(2_050_000_000),
+            "trace_id": TRACE_ID,
+            "span_id": second_operation.span_id,
+        }
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(*valid_bundle.profile.operations, second_operation),
+        events=(*valid_bundle.profile.events, second_event),
+    )
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    first, second = explanation.turns
+    moved = first.events[0]
+    moved_between_turns = explanation.model_copy(
+        update={
+            "turns": (
+                first.model_copy(update={"events": first.events[1:]}),
+                second.model_copy(update={"events": (*second.events, moved)}),
+            )
+        }
+    )
+    dropped = explanation.model_copy(
+        update={"turns": (first.model_copy(update={"events": first.events[1:]}), second)}
+    )
+    invented_event = moved.model_copy(update={"event_id": "invented-event"})
+    invented = explanation.model_copy(
+        update={
+            "turns": (
+                first.model_copy(update={"events": (*first.events, invented_event)}),
+                second,
+            )
+        }
+    )
+
+    for tampered in (moved_between_turns, dropped, invented):
+        report = validate_explanation(bundle, analysis, tampered)
+        assert "EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH" in {
+            issue.code for issue in report.errors
+        }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)

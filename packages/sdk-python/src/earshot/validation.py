@@ -2498,6 +2498,23 @@ def validate_explanation(
             )
         )
 
+    expected_turn_event_layout = tuple(
+        (turn.turn_id, tuple(event.event_id for event in turn.events))
+        for turn in expected_explanation.turns
+    )
+    explained_turn_event_layout = tuple(
+        (turn.turn_id, tuple(event.event_id for event in turn.events))
+        for turn in explanation.turns
+    )
+    if explained_turn_event_layout != expected_turn_event_layout:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH",
+                path=("explanation", "events"),
+                message="explained events differ from exact source turn placement",
+            )
+        )
+
     seen_event_ids: set[str] = set()
     for event_index, event_id in enumerate(projected_event_ids):
         if event_id in seen_event_ids:
