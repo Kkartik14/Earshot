@@ -2481,7 +2481,7 @@ def validate_explanation(
             item.capture_class,
             item.reason,
             item.count,
-            tuple(item.source_refs),
+            tuple(sorted(item.source_refs)),
         )
         for item in sorted(
             bundle.profile.privacy.omissions,

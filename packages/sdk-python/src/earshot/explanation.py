@@ -473,7 +473,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 capture_class=item.capture_class,
                 reason=item.reason,
                 count=item.count,
-                source_refs=item.source_refs,
+                source_refs=tuple(sorted(item.source_refs)),
             )
             for item in sorted(
                 profile.privacy.omissions,

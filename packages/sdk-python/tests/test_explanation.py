@@ -116,6 +116,7 @@ def test_explanation_metadata_arrays_are_permutation_invariant(valid_bundle) -> 
             omission_id="omission-z",
             capture_class="transcript",
             reason="capture_class_disabled",
+            source_refs=("evt-token", "op-llm"),
         ),
         Omission(
             omission_id="omission-a",
@@ -129,7 +130,11 @@ def test_explanation_metadata_arrays_are_permutation_invariant(valid_bundle) -> 
 
     analysis = _analyze(bundle)
     explanation = explain_incident(bundle, analysis)
-    permuted_privacy = privacy.model_copy(update={"omissions": tuple(reversed(omissions))})
+    permuted_omissions = tuple(
+        item.model_copy(update={"source_refs": tuple(reversed(item.source_refs))})
+        for item in reversed(omissions)
+    )
+    permuted_privacy = privacy.model_copy(update={"omissions": permuted_omissions})
     permuted = replace_profile(
         bundle,
         coverage=tuple(reversed(coverage)),
