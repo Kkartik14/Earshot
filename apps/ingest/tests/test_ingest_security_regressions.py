@@ -10,9 +10,14 @@ from fastapi.testclient import TestClient
 
 from earshot.analysis import ANALYZER_VERSION, analyze_incident
 from earshot.api import ApiConfig, create_app
-from earshot.codec import JSON_MEDIA_TYPE, PROTOBUF_MEDIA_TYPE, encode_incident_json
+from earshot.codec import (
+    JSON_MEDIA_TYPE,
+    PROTOBUF_MEDIA_TYPE,
+    decode_incident_protobuf,
+    encode_incident_json,
+)
 from earshot.codec import encode_incident_protobuf as encode_protobuf
-from earshot.contract import AnalysisProjections, DerivedAnalysis, ExportPolicy
+from earshot.contract import ExportPolicy
 from earshot.storage import IncidentStore
 from incident_factory import SECRET_SENTINEL, make_valid_bundle
 
@@ -20,12 +25,21 @@ pytestmark = pytest.mark.integration
 
 
 def _analysis(store: IncidentStore, bundle_id: str, version: str, marker: str):
-    return DerivedAnalysis(
-        analyzer_name="security.test",
-        analyzer_version=version,
-        input_sha256=store.get_record(bundle_id).digest,
+    record, payload = store.get_artifact(bundle_id)
+    analysis = analyze_incident(
+        decode_incident_protobuf(payload),
+        input_sha256=record.digest,
         generated_at_unix_nano="1800000000000000000",
-        projections=AnalysisProjections(limitations=(marker,)),
+    )
+    projections = analysis.projections.model_copy(
+        update={"limitations": (*analysis.projections.limitations, marker)}
+    )
+    return analysis.model_copy(
+        update={
+            "analyzer_name": "security.test",
+            "analyzer_version": version,
+            "projections": projections,
+        }
     )
 
 
