@@ -8,7 +8,7 @@ from earshot.codec import analysis_input_sha256, decode_incident_json
 from earshot.contract import ErrorRecord, QualityMeasurement, QualitySample, TimeRange
 from earshot.explanation import ExplainedDiagnosis, explain_incident
 from earshot.validation import validate_explanation
-from incident_factory import ROOT_SPAN_ID, point
+from incident_factory import LLM_SPAN_ID, ROOT_SPAN_ID, TRACE_ID, point
 from test_contract_validation import replace_profile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -75,6 +75,24 @@ def test_explanation_keeps_exact_nanos_and_provenance(valid_bundle) -> None:
     assert explanation.session_status == "completed"
     assert explanation.coverage[0].signal == "client.render"
     assert explanation.coverage[0].availability == "available"
+
+
+def test_explanation_preserves_event_operation_and_otel_identity(valid_bundle) -> None:
+    events = tuple(
+        event.model_copy(update={"trace_id": TRACE_ID, "span_id": LLM_SPAN_ID})
+        if event.event_id == "evt-token"
+        else event
+        for event in valid_bundle.profile.events
+    )
+    bundle = replace_profile(valid_bundle, events=events)
+
+    explanation = explain_incident(bundle, _analyze(bundle))
+
+    [turn] = explanation.turns
+    token = next(event for event in turn.events if event.event_id == "evt-token")
+    assert token.operation_id == "op-llm"
+    assert token.trace_id == TRACE_ID
+    assert token.span_id == LLM_SPAN_ID
 
 
 def test_explanation_authors_stage_measurement_associations() -> None:

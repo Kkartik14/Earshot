@@ -109,8 +109,11 @@ class ExplainedEvent(ExplanationModel):
     time_basis: Literal["monotonic", "source_wall", "observed_wall"]
     clock_domain_id: str | None = None
     at_nano: str
+    operation_id: str | None = None
     participant_id: str | None = None
     stream_id: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
     evidence: ExplainedEvidence | None = None
     evidence_ids: tuple[str, ...]
 
@@ -316,8 +319,11 @@ def _event(value) -> ExplainedEvent:
         time_basis=basis,
         clock_domain_id=domain,
         at_nano=at,
+        operation_id=value.operation_id,
         participant_id=value.participant_id,
         stream_id=value.stream_id,
+        trace_id=value.trace_id,
+        span_id=value.span_id,
         evidence=_evidence(value.evidence),
         evidence_ids=(value.event_id,),
     )
