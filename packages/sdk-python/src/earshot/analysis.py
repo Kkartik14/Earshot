@@ -562,8 +562,8 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
     # Calculate union wall time only within comparable clock domains. Intervals in
     # different domains remain separate rather than inventing a global critical path.
     by_basis: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
-    for operation, _duration in durations:
-        if operation.ended_at is None or not operation.started_at.clock_domain_id:
+    for operation, duration in durations:
+        if duration is None or operation.ended_at is None:
             continue
         start: str | None
         end: str | None
@@ -586,10 +586,7 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
             continue
         by_basis[(operation.started_at.clock_domain_id, basis)].append((int(start), int(end)))
 
-    elapsed_by_domain: dict[str, float] = {}
-    basis_count: dict[str, int] = defaultdict(int)
-    for domain, _basis in by_basis:
-        basis_count[domain] += 1
+    elapsed_by_domain: dict[str, dict[str, float]] = {}
     for (domain, basis), intervals in sorted(by_basis.items()):
         merged: list[list[int]] = []
         for start, end in sorted(intervals):
@@ -597,8 +594,9 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
                 merged.append([start, end])
             else:
                 merged[-1][1] = max(merged[-1][1], end)
-        key = domain if basis_count[domain] == 1 else f"{domain}:{basis}"
-        elapsed_by_domain[key] = sum(end - start for start, end in merged) / 1_000_000
+        elapsed_by_domain.setdefault(domain, {})[basis] = (
+            sum(end - start for start, end in merged) / 1_000_000
+        )
 
     output: dict[str, object] = {
         "operation_count": len(tools),

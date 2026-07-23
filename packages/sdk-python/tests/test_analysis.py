@@ -16,6 +16,7 @@ from earshot.contract import (
     QualitySample,
     TimePoint,
     TimeRange,
+    ToolAnalysis,
 )
 from earshot.explanation import explain_incident
 from earshot.validation import validate_derived_analysis, validate_incident
@@ -1006,7 +1007,57 @@ def test_parallel_tool_work_and_elapsed_wall_time_are_separate(valid_bundle) -> 
     assert tool_metrics["total_work_completeness"] == "complete"
     assert "limitation" not in tool_metrics
     assert tool_metrics["total_work_ms"] == 400.0
-    assert tool_metrics["elapsed_ms_by_clock_domain"] == {"server-clock": 300.0}
+    assert tool_metrics["elapsed_ms_by_clock_domain"] == {"server-clock": {"monotonic": 300.0}}
+
+    result = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    [projected_turn] = result.projections.turns
+    for forged_elapsed in ({"server-clock": {"monotonic": 1.0}}, {}):
+        forged_tools = projected_turn.metrics.tools.model_copy(
+            update={"elapsed_ms_by_clock_domain": forged_elapsed}
+        )
+        forged_metrics = projected_turn.metrics.model_copy(update={"tools": forged_tools})
+        forged_turn = projected_turn.model_copy(update={"metrics": forged_metrics})
+        forged_projections = result.projections.model_copy(update={"turns": (forged_turn,)})
+        report = validate_derived_analysis(
+            bundle,
+            result.model_copy(update={"projections": forged_projections}),
+        )
+        assert "EARSHOT_ANALYSIS_TOOL_MISMATCH" in {issue.code for issue in report.errors}
+
+
+@pytest.mark.parametrize("elapsed_ms", [-1.0, float("inf"), float("nan")])
+def test_tool_elapsed_values_must_be_finite_and_nonnegative(elapsed_ms: float) -> None:
+    with pytest.raises(ValueError):
+        ToolAnalysis.model_validate(
+            {
+                "operation_count": 1,
+                "timed_operation_count": 1,
+                "untimed_operation_count": 0,
+                "total_work_ms": 1.0,
+                "elapsed_ms_by_clock_domain": {
+                    "clock": {"monotonic": elapsed_ms},
+                },
+                "evidence_ids": ["tool"],
+            }
+        )
+
+
+def test_tool_elapsed_basis_map_cannot_be_empty() -> None:
+    with pytest.raises(ValueError):
+        ToolAnalysis.model_validate(
+            {
+                "operation_count": 1,
+                "timed_operation_count": 1,
+                "untimed_operation_count": 0,
+                "total_work_ms": 1.0,
+                "elapsed_ms_by_clock_domain": {"clock": {}},
+                "evidence_ids": ["tool"],
+            }
+        )
 
 
 def test_open_tool_duration_is_unavailable_not_observed_zero(valid_bundle) -> None:
@@ -1160,8 +1211,134 @@ def test_tool_elapsed_clock_key_preserves_a_clock_domain_containing_colons(
         input_sha256=analysis_input_sha256(bundle),
         generated_at_unix_nano="1800000005000000000",
     )
-    assert metric(result, "tools")["elapsed_ms_by_clock_domain"] == {clock_domain_id: 100.0}
+    assert metric(result, "tools")["elapsed_ms_by_clock_domain"] == {
+        clock_domain_id: {"monotonic": 100.0}
+    }
     assert validate_derived_analysis(bundle, result).ok
+
+
+def test_tool_elapsed_groups_keep_domain_and_basis_structural(valid_bundle) -> None:
+    wall_clock = ClockDomain(
+        clock_domain_id="runtime:worker:clock",
+        kind="wall",
+        observer="server",
+    )
+    colliding_clock = ClockDomain(
+        clock_domain_id="runtime:worker:clock:monotonic",
+        kind="monotonic",
+        observer="server",
+    )
+    wall_start = TimePoint(
+        source_time_unix_nano="1800000000100000000",
+        clock_domain_id=wall_clock.clock_domain_id,
+    )
+    wall_end = TimePoint(
+        source_time_unix_nano="1800000000200000000",
+        clock_domain_id=wall_clock.clock_domain_id,
+    )
+    tools = (
+        Operation(
+            operation_id="tool-monotonic",
+            session_id="session-1",
+            operation_name="tool",
+            status="ok",
+            started_at=point(400_000_000, domain=wall_clock.clock_domain_id),
+            ended_at=point(425_000_000, domain=wall_clock.clock_domain_id),
+            turn_id="turn-1",
+        ),
+        Operation(
+            operation_id="tool-wall",
+            session_id="session-1",
+            operation_name="tool",
+            status="ok",
+            started_at=wall_start,
+            ended_at=wall_end,
+            turn_id="turn-1",
+        ),
+        Operation(
+            operation_id="tool-colon-domain",
+            session_id="session-1",
+            operation_name="tool",
+            status="ok",
+            started_at=point(300_000_000, domain=colliding_clock.clock_domain_id),
+            ended_at=point(350_000_000, domain=colliding_clock.clock_domain_id),
+            turn_id="turn-1",
+        ),
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        clock_domains=(*valid_bundle.profile.clock_domains, wall_clock, colliding_clock),
+        operations=(*valid_bundle.profile.operations, *tools),
+    )
+
+    result = analyze(bundle)
+
+    assert metric(result, "tools")["elapsed_ms_by_clock_domain"] == {
+        "runtime:worker:clock": {"monotonic": 25.0, "source_wall": 100.0},
+        "runtime:worker:clock:monotonic": {"monotonic": 50.0},
+    }
+
+
+def test_cross_clock_tool_interval_does_not_author_elapsed_time(valid_bundle) -> None:
+    other_clock = ClockDomain(
+        clock_domain_id="other-clock",
+        kind="monotonic",
+        observer="server",
+    )
+    tool = Operation(
+        operation_id="tool-cross-clock",
+        session_id="session-1",
+        operation_name="tool",
+        status="ok",
+        started_at=point(100_000_000),
+        ended_at=point(200_000_000, domain=other_clock.clock_domain_id),
+        turn_id="turn-1",
+    )
+    cross_basis_tool = Operation(
+        operation_id="tool-cross-basis",
+        session_id="session-1",
+        operation_name="tool",
+        status="ok",
+        started_at=TimePoint(monotonic_time_nano="300000000", clock_domain_id="server-clock"),
+        ended_at=TimePoint(
+            source_time_unix_nano="1800000000400000000",
+            clock_domain_id="server-clock",
+        ),
+        turn_id="turn-1",
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        clock_domains=(*valid_bundle.profile.clock_domains, other_clock),
+        operations=(*valid_bundle.profile.operations, tool, cross_basis_tool),
+    )
+
+    assert validate_incident(bundle).ok
+    tools = metric(analyze(bundle), "tools")
+    assert tools["timed_operation_count"] == 0
+    assert tools["elapsed_ms_by_clock_domain"] == {}
+
+
+def test_reversed_tool_interval_does_not_author_elapsed_time(valid_bundle) -> None:
+    tool = Operation(
+        operation_id="tool-reversed",
+        session_id="session-1",
+        operation_name="tool",
+        status="ok",
+        started_at=point(200_000_000),
+        ended_at=point(100_000_000),
+        turn_id="turn-1",
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(*valid_bundle.profile.operations, tool),
+    )
+
+    assert "EARSHOT_TIME_RANGE_REVERSED" in {
+        issue.code for issue in validate_incident(bundle).errors
+    }
+    tools = metric(analyze(bundle), "tools")
+    assert tools["timed_operation_count"] == 0
+    assert tools["elapsed_ms_by_clock_domain"] == {}
 
 
 def test_native_speech_to_speech_without_serial_stages_still_projects(bundle_factory) -> None:

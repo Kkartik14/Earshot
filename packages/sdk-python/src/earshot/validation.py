@@ -2153,6 +2153,36 @@ def validate_derived_analysis(
         expected_total_work_ms = (
             sum(value for value in source_tool_durations if value is not None) / 1_000_000
         )
+        intervals_by_basis: dict[tuple[str, str], list[tuple[int, int]]] = {}
+        for operation, duration in zip(source_tools, source_tool_durations, strict=True):
+            if duration is None or operation.ended_at is None:
+                continue
+            domain = operation.started_at.clock_domain_id
+            if domain is None:  # pragma: no cover - excluded by source_interval_nanos
+                continue
+            if (
+                operation.started_at.monotonic_time_nano is not None
+                and operation.ended_at.monotonic_time_nano is not None
+            ):
+                start = int(operation.started_at.monotonic_time_nano)
+                end = int(operation.ended_at.monotonic_time_nano)
+                basis = "monotonic"
+            else:
+                start = int(operation.started_at.source_time_unix_nano or "0")
+                end = int(operation.ended_at.source_time_unix_nano or "0")
+                basis = "source_wall"
+            intervals_by_basis.setdefault((domain, basis), []).append((start, end))
+        expected_elapsed_ms: dict[str, dict[str, float]] = {}
+        for (domain, basis), intervals in sorted(intervals_by_basis.items()):
+            merged: list[list[int]] = []
+            for start, end in sorted(intervals):
+                if not merged or start > merged[-1][1]:
+                    merged.append([start, end])
+                else:
+                    merged[-1][1] = max(merged[-1][1], end)
+            expected_elapsed_ms.setdefault(domain, {})[basis] = (
+                sum(end - start for start, end in merged) / 1_000_000
+            )
         if (
             tuple(tool_analysis.evidence_ids) != expected_tool_ids
             or tool_analysis.operation_count != len(source_tools)
@@ -2161,6 +2191,7 @@ def validate_derived_analysis(
             or tool_analysis.total_work_ms != expected_total_work_ms
             or tool_analysis.total_work_completeness != expected_completeness
             or tool_analysis.limitation != expected_limitation
+            or tool_analysis.elapsed_ms_by_clock_domain != expected_elapsed_ms
         ):
             issues.append(
                 ValidationIssue(
@@ -2207,17 +2238,18 @@ def validate_derived_analysis(
                 turn_path + ("metrics", "provider_measurements", metric_name, "evidence_ids"),
             )
         clock_domain_ids = {domain.clock_domain_id for domain in bundle.profile.clock_domains}
-        for clock_key in turn.metrics.tools.elapsed_ms_by_clock_domain:
-            matches_source = clock_key in clock_domain_ids or any(
-                clock_key.endswith(suffix) and clock_key[: -len(suffix)] in clock_domain_ids
-                for suffix in (":monotonic", ":source_wall")
-            )
-            if not matches_source:
+        for clock_domain_id in turn.metrics.tools.elapsed_ms_by_clock_domain:
+            if clock_domain_id not in clock_domain_ids:
                 issues.append(
                     ValidationIssue(
                         code="EARSHOT_DANGLING_REF",
                         path=turn_path
-                        + ("metrics", "tools", "elapsed_ms_by_clock_domain", clock_key),
+                        + (
+                            "metrics",
+                            "tools",
+                            "elapsed_ms_by_clock_domain",
+                            clock_domain_id,
+                        ),
                         message="tool elapsed-time key is not an input clock domain",
                     )
                 )

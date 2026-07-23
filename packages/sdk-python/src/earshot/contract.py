@@ -71,6 +71,10 @@ SemanticCode = Annotated[
     str,
     StringConstraints(pattern=r"^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$"),
 ]
+NonNegativeFiniteFloat = Annotated[
+    StrictFloat,
+    Field(ge=0, allow_inf_nan=False),
+]
 VersionLabel = Annotated[
     str,
     StringConstraints(
@@ -515,10 +519,13 @@ class ToolAnalysis(AnalysisContractModel):
     operation_count: StrictInt = Field(ge=0)
     timed_operation_count: StrictInt = Field(default=0, ge=0)
     untimed_operation_count: StrictInt = Field(default=0, ge=0)
-    total_work_ms: StrictFloat = Field(ge=0)
+    total_work_ms: NonNegativeFiniteFloat
     total_work_completeness: Literal["complete", "partial", "unavailable"] = "complete"
     limitation: SemanticCode | None = None
-    elapsed_ms_by_clock_domain: dict[str, StrictFloat] = Field(default_factory=dict)
+    elapsed_ms_by_clock_domain: dict[
+        OpaqueId,
+        dict[Literal["monotonic", "source_wall"], NonNegativeFiniteFloat],
+    ] = Field(default_factory=dict)
     evidence_ids: tuple[OpaqueId, ...] = ()
 
     @model_validator(mode="after")
@@ -537,6 +544,10 @@ class ToolAnalysis(AnalysisContractModel):
             or self.untimed_operation_count != 0
         ):
             raise ValueError("empty tool analysis cannot assert elapsed work")
+        if any(
+            not elapsed_by_basis for elapsed_by_basis in self.elapsed_ms_by_clock_domain.values()
+        ):
+            raise ValueError("tool elapsed-time basis maps cannot be empty")
         if self.total_work_completeness == "complete":
             if self.untimed_operation_count or self.limitation is not None:
                 raise ValueError("complete tool work cannot carry missing intervals")
