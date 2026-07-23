@@ -797,6 +797,33 @@ describe("interruption attachment", () => {
 });
 
 describe("remaining fault-family projections", () => {
+  it("uses backend-authored operation identity for telephony, retry, and reconnect events", () => {
+    const telephony = buildTurnDetails(asExplanation(telephonyHandoff))[0];
+    expect(
+      telephony.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.telephony.dtmf.received", "op-inbound-leg"],
+      ["earshot.telephony.voicemail.detected", "op-bot-leg"],
+    ]);
+
+    const retry = buildTurnDetails(asExplanation(toolTimeoutRetry))[0];
+    expect(retry.events).toContainEqual(
+      expect.objectContaining({
+        name: "earshot.tool.retry.downstream_resumed",
+        attachedOperationId: "op-downstream-agent",
+      }),
+    );
+
+    const reconnect = buildTurnDetails(asExplanation(websocketReconnect))[0];
+    expect(
+      reconnect.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.transport.reconnecting", null],
+      ["earshot.transport.message.duplicate", "op-ws-message-duplicate"],
+      ["earshot.transport.message.out_of_order", "op-ws-message-out-of-order"],
+    ]);
+  });
+
   it("renders the observed barge-in cancellations and their explicit event owners", () => {
     const [detail] = buildTurnDetails(asExplanation(bargeIn));
 
@@ -805,15 +832,15 @@ describe("remaining fault-family projections", () => {
       ["op-tts", "cancelled"],
       ["op-render", "cancelled"],
     ]);
-    expect(
-      detail.events.map((event) => [event.name, event.attachedOperationId]),
-    ).toEqual([
-      ["earshot.interruption.detected", null],
-      ["earshot.interruption.accepted", null],
-      ["earshot.model.cancelled", "op-agent"],
-      ["earshot.audio.queued.discarded", "op-tts"],
-      ["earshot.audio.render.stopped", "op-render"],
-    ]);
+    expect(detail.events.map((event) => [event.name, event.attachedOperationId])).toEqual(
+      [
+        ["earshot.interruption.detected", null],
+        ["earshot.interruption.accepted", null],
+        ["earshot.model.cancelled", "op-agent"],
+        ["earshot.audio.queued.discarded", "op-tts"],
+        ["earshot.audio.render.stopped", "op-render"],
+      ],
+    );
     expect(detail.edges).toEqual([]);
   });
 
@@ -841,21 +868,17 @@ describe("remaining fault-family projections", () => {
     const [detail] = buildTurnDetails(asExplanation(fastEndpointing));
 
     expect(
-      detail.stages.map((stage) => [
-        stage.operationId,
-        stage.startMs,
-        stage.endMs,
-      ]),
+      detail.stages.map((stage) => [stage.operationId, stage.startMs, stage.endMs]),
     ).toEqual([
       ["op-vad", 0, 200],
       ["op-turn", 200, 280],
     ]);
-    expect(
-      detail.events.map((event) => [event.name, event.attachedOperationId]),
-    ).toEqual([
-      ["earshot.speech.ended", "op-vad"],
-      ["earshot.turn.committed", "op-turn"],
-    ]);
+    expect(detail.events.map((event) => [event.name, event.attachedOperationId])).toEqual(
+      [
+        ["earshot.speech.ended", "op-vad"],
+        ["earshot.turn.committed", "op-turn"],
+      ],
+    );
     expect(detail.edges).toEqual([]);
   });
 
@@ -863,21 +886,17 @@ describe("remaining fault-family projections", () => {
     const [detail] = buildTurnDetails(asExplanation(slowEndpointing));
 
     expect(
-      detail.stages.map((stage) => [
-        stage.operationId,
-        stage.startMs,
-        stage.endMs,
-      ]),
+      detail.stages.map((stage) => [stage.operationId, stage.startMs, stage.endMs]),
     ).toEqual([
       ["op-vad", 0, 200],
       ["op-turn", 200, 1500],
     ]);
-    expect(
-      detail.events.map((event) => [event.name, event.attachedOperationId]),
-    ).toEqual([
-      ["earshot.speech.ended", "op-vad"],
-      ["earshot.turn.committed", "op-turn"],
-    ]);
+    expect(detail.events.map((event) => [event.name, event.attachedOperationId])).toEqual(
+      [
+        ["earshot.speech.ended", "op-vad"],
+        ["earshot.turn.committed", "op-turn"],
+      ],
+    );
     expect(detail.edges).toEqual([]);
   });
 
@@ -892,18 +911,20 @@ describe("remaining fault-family projections", () => {
       "op-receive",
       "op-render",
     ]);
-    expect(
-      detail.stages.find((stage) => stage.operationId === "op-llm"),
-    ).toMatchObject({ startMs: 300, endMs: 2500, timing: "interval" });
-    expect(
-      detail.events.map((event) => [event.name, event.attachedOperationId]),
-    ).toEqual([
-      ["earshot.response.first_token", "op-llm"],
-      ["earshot.response.first_audio_generated", "op-tts"],
-      ["earshot.audio.first_byte_sent", "op-send"],
-      ["earshot.audio.first_packet_received", "op-receive"],
-      ["earshot.audio.render.started", "op-render"],
-    ]);
+    expect(detail.stages.find((stage) => stage.operationId === "op-llm")).toMatchObject({
+      startMs: 300,
+      endMs: 2500,
+      timing: "interval",
+    });
+    expect(detail.events.map((event) => [event.name, event.attachedOperationId])).toEqual(
+      [
+        ["earshot.response.first_token", "op-llm"],
+        ["earshot.response.first_audio_generated", "op-tts"],
+        ["earshot.audio.first_byte_sent", "op-send"],
+        ["earshot.audio.first_packet_received", "op-receive"],
+        ["earshot.audio.render.started", "op-render"],
+      ],
+    );
     expect(detail.edges).toEqual([]);
   });
 
@@ -918,18 +939,20 @@ describe("remaining fault-family projections", () => {
       "op-receive",
       "op-render",
     ]);
-    expect(
-      detail.stages.find((stage) => stage.operationId === "op-stt"),
-    ).toMatchObject({ startMs: 0, endMs: 2100, timing: "interval" });
-    expect(
-      detail.events.map((event) => [event.name, event.attachedOperationId]),
-    ).toEqual([
-      ["earshot.response.first_token", "op-llm"],
-      ["earshot.response.first_audio_generated", "op-tts"],
-      ["earshot.audio.first_byte_sent", "op-send"],
-      ["earshot.audio.first_packet_received", "op-receive"],
-      ["earshot.audio.render.started", "op-render"],
-    ]);
+    expect(detail.stages.find((stage) => stage.operationId === "op-stt")).toMatchObject({
+      startMs: 0,
+      endMs: 2100,
+      timing: "interval",
+    });
+    expect(detail.events.map((event) => [event.name, event.attachedOperationId])).toEqual(
+      [
+        ["earshot.response.first_token", "op-llm"],
+        ["earshot.response.first_audio_generated", "op-tts"],
+        ["earshot.audio.first_byte_sent", "op-send"],
+        ["earshot.audio.first_packet_received", "op-receive"],
+        ["earshot.audio.render.started", "op-render"],
+      ],
+    );
     expect(detail.edges).toEqual([]);
   });
 
@@ -944,18 +967,20 @@ describe("remaining fault-family projections", () => {
       "op-receive",
       "op-render",
     ]);
-    expect(
-      detail.stages.find((stage) => stage.operationId === "op-tts"),
-    ).toMatchObject({ startMs: 600, endMs: 3100, timing: "interval" });
-    expect(
-      detail.events.map((event) => [event.name, event.attachedOperationId]),
-    ).toEqual([
-      ["earshot.response.first_token", "op-llm"],
-      ["earshot.response.first_audio_generated", "op-tts"],
-      ["earshot.audio.first_byte_sent", "op-send"],
-      ["earshot.audio.first_packet_received", "op-receive"],
-      ["earshot.audio.render.started", "op-render"],
-    ]);
+    expect(detail.stages.find((stage) => stage.operationId === "op-tts")).toMatchObject({
+      startMs: 600,
+      endMs: 3100,
+      timing: "interval",
+    });
+    expect(detail.events.map((event) => [event.name, event.attachedOperationId])).toEqual(
+      [
+        ["earshot.response.first_token", "op-llm"],
+        ["earshot.response.first_audio_generated", "op-tts"],
+        ["earshot.audio.first_byte_sent", "op-send"],
+        ["earshot.audio.first_packet_received", "op-receive"],
+        ["earshot.audio.render.started", "op-render"],
+      ],
+    );
     expect(detail.edges).toEqual([]);
   });
 
@@ -963,9 +988,7 @@ describe("remaining fault-family projections", () => {
     const explanation = asExplanation(privacyOptOut);
     const [detail] = buildTurnDetails(explanation);
 
-    expect(detail.stages.map((stage) => stage.operationId)).toEqual([
-      "op-metadata-only",
-    ]);
+    expect(detail.stages.map((stage) => stage.operationId)).toEqual(["op-metadata-only"]);
     expect(detail.events).toEqual([]);
     expect(detail.edges).toEqual([]);
     expect(getCoverage(explanation)).toContainEqual({

@@ -6,7 +6,7 @@
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
   "analyzer_version": "0.1.0",
-  "input_sha256": "c75a28452c9a6f7011aefb4427a7c55e30a299ad78bd5f12ddd3d338d6b467be",
+  "input_sha256": "fb2d2eedf7e6c38de8c1679da7418d6d35ff495ad9e4f254a745ac2696aecf86",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -140,8 +140,11 @@
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
           "at_nano": "1200000000",
+          "operation_id": null,
           "participant_id": null,
           "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
           "evidence": {
             "source": "websocket",
             "observer": "test_harness",
@@ -159,8 +162,11 @@
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
           "at_nano": "1250000000",
+          "operation_id": "op-ws-message-duplicate",
           "participant_id": null,
           "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
           "evidence": {
             "source": "websocket",
             "observer": "test_harness",
@@ -178,8 +184,11 @@
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
           "at_nano": "1300000000",
+          "operation_id": "op-ws-message-out-of-order",
           "participant_id": null,
           "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
           "evidence": {
             "source": "websocket",
             "observer": "test_harness",

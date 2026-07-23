@@ -6,7 +6,7 @@
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
   "analyzer_version": "0.1.0",
-  "input_sha256": "b562e3a6b1db383e1779cb207e63f91ec8aa3d7d8aec55ac37feb659d1d6261a",
+  "input_sha256": "44c2c9794510becdceeed5af30cd1c05e13a9e5ccd5297f325c7ed68a88b835f",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -132,8 +132,11 @@
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
           "at_nano": "500000000",
+          "operation_id": "op-inbound-leg",
           "participant_id": null,
           "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
           "evidence": {
             "source": "carrier_gateway",
             "observer": "test_harness",
@@ -151,8 +154,11 @@
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
           "at_nano": "700000000",
+          "operation_id": "op-bot-leg",
           "participant_id": null,
           "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
           "evidence": {
             "source": "carrier_gateway",
             "observer": "test_harness",
