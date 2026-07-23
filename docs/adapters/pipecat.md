@@ -1,6 +1,7 @@
 # Pipecat adapter
 
-Status: M1 normalization adapter.
+Status: implemented pre-v1 normalization adapter with a
+[privacy-scrubbed retained real capture](../captured-fixtures.md).
 
 Verified against `pipecat-ai==1.5.0`, tag commit
 `f97595f9ccdec52ece7561ecf642c0eec63fdefe` on 2026-07-11. The supported package

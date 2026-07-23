@@ -1,6 +1,8 @@
 # LiveKit adapter
 
-Status: M1 normalization adapter; client render is M1.5.
+Status: implemented pre-v1 normalization adapter with a
+[privacy-scrubbed retained real capture](../captured-fixtures.md); browser/mobile client
+render collection is planned and not shipped.
 
 Verified against `livekit-agents==1.6.5`, tag commit
 `dbc38dfbc113a2e06d36feb1278e543af3585ea9` on 2026-07-11. The supported package
