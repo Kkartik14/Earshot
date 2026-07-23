@@ -15,7 +15,6 @@ import {
   buildTurnDetails,
   buildUnassigned,
   getCoverage,
-  type IncidentLike,
 } from "./timeline";
 
 export function SessionInspector() {
@@ -77,9 +76,8 @@ export function SessionInspector() {
     );
   }
 
-  // The explanation response flows directly from the generated API contract.
-  // The incident transform still consumes a deliberately small canonical subset.
-  const inc = incident.data as unknown as IncidentLike;
+  // Both responses flow directly from the generated API contract.
+  const inc = incident.data;
   const explained = explanation.data;
   const timeline = buildTimeline(explained);
   const summary = buildSummary(inc, explained, timeline);

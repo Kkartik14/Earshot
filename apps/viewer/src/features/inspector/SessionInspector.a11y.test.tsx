@@ -44,7 +44,7 @@ const explanation = {
       evidence_ids: ["quality-webrtc"],
     },
   ],
-  turns: analysis.projections.turns.map((turn) => ({
+  turns: analysis.projections!.turns.map((turn) => ({
     turn_id: turn.turn_id,
     metrics: turn.metrics,
     operations: incident.profile.operations

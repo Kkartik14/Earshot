@@ -109,58 +109,10 @@ const METRIC_KEYS = [
   { key: "response_latency", label: "response" },
 ] as const;
 
-interface Evidence {
-  source?: string | null;
-  observer?: string | null;
-  method?: string | null;
-  confidence?: string | null;
-  source_field?: string | null;
-}
-interface Operation {
-  operation_id?: string | null;
-  operation_name: string;
-  turn_id?: string | null;
-  started_at: Timestamp;
-  ended_at?: Timestamp | null;
-  attributes?: Record<string, unknown> | null;
-  evidence?: Evidence | null;
-  status?: string | null;
-}
-interface Timestamp {
-  monotonic_time_nano?: string | null;
-  clock_domain_id?: string | null;
-}
-interface QualitySample {
-  measurements: { name: string; value: number; unit: string }[];
-  attributes?: Record<string, unknown> | null;
-  evidence?: { confidence?: string | null } | null;
-}
-interface EventRecord {
-  event_name: string;
-  turn_id?: string | null;
-  time?: Timestamp | null;
-  participant_id?: string | null;
-  evidence?: { confidence?: string | null } | null;
-}
-interface CoverageRecord {
-  signal: string;
-  availability: string;
-  reason?: string | null;
-}
-export interface IncidentLike {
-  profile: {
-    manifest?: { session_id?: string } | null;
-    session?: {
-      status?: string;
-      started_at?: Timestamp;
-      ended_at?: Timestamp | null;
-    } | null;
-    operations: Operation[];
-    events: EventRecord[];
-    quality_samples: QualitySample[];
-    coverage?: CoverageRecord[];
-  };
-}
+type Evidence =
+  components["schemas"]["Evidence"] | components["schemas"]["ExplainedEvidence"];
+type Timestamp = components["schemas"]["TimePoint"];
+export type IncidentLike = components["schemas"]["IncidentBundleJson"];
 
 interface MetricLike {
   value?: number | null;
@@ -168,9 +120,7 @@ interface MetricLike {
   basis: string;
   confidence: string;
 }
-export interface AnalysisLike {
-  projections: { turns: { turn_id: string; metrics: Record<string, MetricLike> }[] };
-}
+export type AnalysisLike = components["schemas"]["DerivedAnalysis"];
 
 type ExplainedMeasurement = components["schemas"]["ExplainedMeasurement"];
 type ExplainedError = components["schemas"]["ExplainedError"];

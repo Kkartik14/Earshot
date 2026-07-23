@@ -41,7 +41,7 @@ const explanation = asExplanation({
   limitations: [],
   coverage: incident.profile.coverage ?? [],
   omissions: [],
-  turns: analysis.projections.turns.map((turn) => ({
+  turns: analysis.projections!.turns.map((turn) => ({
     turn_id: turn.turn_id,
     metrics: turn.metrics,
     operations: incident.profile.operations
@@ -276,10 +276,16 @@ describe("buildSummary", () => {
           started_at: {
             monotonic_time_nano: "100",
             clock_domain_id: "server",
+            observed_time_unix_nano: null,
+            source_time_unix_nano: null,
+            uncertainty_nano: null,
           },
           ended_at: {
             monotonic_time_nano: "200",
             clock_domain_id: "browser",
+            observed_time_unix_nano: null,
+            source_time_unix_nano: null,
+            uncertainty_nano: null,
           },
         },
       },
