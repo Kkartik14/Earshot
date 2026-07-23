@@ -18,6 +18,23 @@
     ]
   },
   {
+    "id": "full_barge_in_chain",
+    "required_signals": [
+      "interruption.detected",
+      "interruption.accepted",
+      "model.cancelled",
+      "response.cancelled",
+      "audio.queued.discarded",
+      "transport.stopped",
+      "audio.buffer.purged",
+      "audio.render.stopped",
+      "interruption.resumed",
+      "interruption.intent",
+      "earshot.metric.interruption.probability",
+      "tool"
+    ]
+  },
+  {
     "id": "stt_delay",
     "required_signals": [
       "stt",

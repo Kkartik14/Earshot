@@ -488,6 +488,92 @@ def scenarios() -> dict[str, IncidentBundle]:
                 ),
             ),
         ),
+        "full_barge_in_chain": profile(
+            "full-barge-in-chain",
+            operations=(
+                operation("op-agent", "agent", 400, 1_000, status="cancelled", span_digit="1"),
+                operation(
+                    "op-tts",
+                    "tts",
+                    500,
+                    980,
+                    status="cancelled",
+                    stream_id="stream-output",
+                    span_digit="2",
+                ),
+                operation(
+                    "op-render",
+                    "render",
+                    600,
+                    1_000,
+                    status="cancelled",
+                    stream_id="stream-output",
+                    span_digit="3",
+                ),
+                # A tool still running when the barge-in lands is cancelled with it.
+                operation("op-tool", "tool", 700, 1_000, status="cancelled", span_digit="4"),
+            ),
+            events=(
+                event("event-overlap", "earshot.interruption.detected", 900),
+                event("event-accepted", "earshot.interruption.accepted", 940),
+                event(
+                    "event-model-cancelled",
+                    "earshot.model.cancelled",
+                    950,
+                    operation_id="op-agent",
+                ),
+                event(
+                    "event-response-cancelled",
+                    "earshot.response.cancelled",
+                    955,
+                    operation_id="op-agent",
+                ),
+                event(
+                    "event-audio-discarded",
+                    "earshot.audio.queued.discarded",
+                    960,
+                    operation_id="op-tts",
+                ),
+                event(
+                    "event-transport-stopped",
+                    "earshot.transport.stopped",
+                    965,
+                    operation_id="op-tts",
+                ),
+                event(
+                    "event-buffers-purged",
+                    "earshot.audio.buffer.purged",
+                    970,
+                    operation_id="op-render",
+                ),
+                event(
+                    "event-render-stopped",
+                    "earshot.audio.render.stopped",
+                    1_000,
+                    operation_id="op-render",
+                ),
+                # A resumed signal is emitted purely to exercise the recovery stage
+                # of the vocabulary; a real accepted barge-in would not also resume.
+                event("event-resumed", "earshot.interruption.resumed", 1_010),
+            ),
+            quality_samples=(
+                QualitySample(
+                    sample_id="quality-interruption-intent",
+                    session_id="fixture-session",
+                    quality_kind="interruption.intent",
+                    sample_window=TimeRange(start=point(880), end=point(900)),
+                    measurements=(
+                        QualityMeasurement(
+                            name="earshot.metric.interruption.probability",
+                            value=0.92,
+                            unit="1",
+                        ),
+                    ),
+                    evidence=evidence("livekit_metrics", "adaptive_interruption"),
+                    attributes={"earshot.turn.id": "turn-1"},
+                ),
+            ),
+        ),
         "stt_delay": cascaded_delay_profile(
             "stt-delay",
             stt=(300, 2_400),

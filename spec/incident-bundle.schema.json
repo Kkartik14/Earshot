@@ -1519,6 +1519,47 @@
       "title": "IncidentProfile",
       "type": "object"
     },
+    "InterruptionChainProjection": {
+      "additionalProperties": false,
+      "description": "The ordered causal chain a single turn's interruption produced.\n\nEvery stage in the canonical vocabulary is present exactly once, marked\nobserved or not. ``effectiveness`` is the barge-in latency from the observed\noverlap to the observed render stop, computed only when both endpoints are\ncomparable (same clock, or a declared calibration aligns them); otherwise it\nhonestly asserts no value.",
+      "properties": {
+        "classification": {
+          "enum": [
+            "accepted",
+            "ignored",
+            "false",
+            "unknown"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "effectiveness": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/InterruptionStage"
+          },
+          "minItems": 1,
+          "title": "Stages",
+          "type": "array"
+        },
+        "turn_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "classification",
+        "stages",
+        "effectiveness"
+      ],
+      "title": "InterruptionChainProjection",
+      "type": "object"
+    },
     "InterruptionProjection": {
       "additionalProperties": false,
       "properties": {
@@ -1543,6 +1584,108 @@
         "evidence_ids"
       ],
       "title": "InterruptionProjection",
+      "type": "object"
+    },
+    "InterruptionStage": {
+      "additionalProperties": false,
+      "description": "One canonical stage of a barge-in teardown, observed or not.\n\nAn observed stage cites a real event/operation/sample and carries the exact\ncoordinate that evidence recorded (never a synthesized timestamp). A stage the\nartifact does not contain is reported as ``observed=False`` with a\n``coverage_reason`` and no coordinate, so absence is coverage, not fabrication.\n``outcome`` carries the disposition of the ``tool_outcome`` stage (the tool's\nok/error/timeout/cancelled status) and stays ``None`` for every other stage.",
+      "properties": {
+        "at_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At Nano"
+        },
+        "clock_domain_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clock Domain Id"
+        },
+        "coverage_reason": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coverage Reason"
+        },
+        "evidence_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Id"
+        },
+        "observed": {
+          "title": "Observed",
+          "type": "boolean"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "stage": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Stage",
+          "type": "string"
+        },
+        "time_basis": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Basis"
+        }
+      },
+      "required": [
+        "stage",
+        "observed"
+      ],
+      "title": "InterruptionStage",
       "type": "object"
     },
     "JsonRawOtlpChunk": {
@@ -2861,6 +3004,17 @@
           },
           "title": "Event Ids",
           "type": "array"
+        },
+        "interruption_chain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/InterruptionChainProjection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "interruptions": {
           "default": [],
