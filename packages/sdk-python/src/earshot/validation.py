@@ -2346,6 +2346,34 @@ def validate_explanation(
                     message="explained operation error differs from governed source evidence",
                 )
             )
+        source_links = tuple(
+            (
+                link.relationship,
+                link.target_scope,
+                link.target_operation_id,
+                link.trace_id,
+                link.span_id,
+            )
+            for link in source.links
+        )
+        explained_links = tuple(
+            (
+                link.relationship,
+                link.target_scope,
+                link.target_operation_id,
+                link.trace_id,
+                link.span_id,
+            )
+            for link in operation.links
+        )
+        if explained_links != source_links:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_OPERATION_MISMATCH",
+                    path=path + ("links",),
+                    message="explained causal links differ from source evidence",
+                )
+            )
         # Never manufacture an interval: an end coordinate is only honest when the
         # source recorded one in the same clock representation and it is not before
         # the start. Recompute from the immutable source rather than trusting the
