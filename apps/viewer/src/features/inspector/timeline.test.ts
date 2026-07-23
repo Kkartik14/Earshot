@@ -9,6 +9,9 @@ import nativeInterruption from "./__fixtures__/faults/native_s2s_interruption.ex
 import bargeIn from "./__fixtures__/faults/barge_in.explanation.json";
 import deviceUnavailable from "./__fixtures__/faults/device_unavailable.explanation.json";
 import fastEndpointing from "./__fixtures__/faults/fast_endpointing.explanation.json";
+import llmDelay from "./__fixtures__/faults/llm_delay.explanation.json";
+import slowEndpointing from "./__fixtures__/faults/slow_endpointing.explanation.json";
+import sttDelay from "./__fixtures__/faults/stt_delay.explanation.json";
 import {
   buildDiagnoses,
   buildSummary,
@@ -850,6 +853,80 @@ describe("remaining fault-family projections", () => {
     ).toEqual([
       ["earshot.speech.ended", "op-vad"],
       ["earshot.turn.committed", "op-turn"],
+    ]);
+    expect(detail.edges).toEqual([]);
+  });
+
+  it("renders slow endpointing without relabeling its long observed interval", () => {
+    const [detail] = buildTurnDetails(asExplanation(slowEndpointing));
+
+    expect(
+      detail.stages.map((stage) => [
+        stage.operationId,
+        stage.startMs,
+        stage.endMs,
+      ]),
+    ).toEqual([
+      ["op-vad", 0, 200],
+      ["op-turn", 200, 1500],
+    ]);
+    expect(
+      detail.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.speech.ended", "op-vad"],
+      ["earshot.turn.committed", "op-turn"],
+    ]);
+    expect(detail.edges).toEqual([]);
+  });
+
+  it("keeps the observed LLM delay and all downstream response boundaries visible", () => {
+    const [detail] = buildTurnDetails(asExplanation(llmDelay));
+
+    expect(detail.stages.map((stage) => stage.operationId)).toEqual([
+      "op-stt",
+      "op-llm",
+      "op-tts",
+      "op-send",
+      "op-receive",
+      "op-render",
+    ]);
+    expect(
+      detail.stages.find((stage) => stage.operationId === "op-llm"),
+    ).toMatchObject({ startMs: 300, endMs: 2500, timing: "interval" });
+    expect(
+      detail.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.response.first_token", "op-llm"],
+      ["earshot.response.first_audio_generated", "op-tts"],
+      ["earshot.audio.first_byte_sent", "op-send"],
+      ["earshot.audio.first_packet_received", "op-receive"],
+      ["earshot.audio.render.started", "op-render"],
+    ]);
+    expect(detail.edges).toEqual([]);
+  });
+
+  it("keeps the observed STT delay and all downstream response boundaries visible", () => {
+    const [detail] = buildTurnDetails(asExplanation(sttDelay));
+
+    expect(detail.stages.map((stage) => stage.operationId)).toEqual([
+      "op-stt",
+      "op-llm",
+      "op-tts",
+      "op-send",
+      "op-receive",
+      "op-render",
+    ]);
+    expect(
+      detail.stages.find((stage) => stage.operationId === "op-stt"),
+    ).toMatchObject({ startMs: 0, endMs: 2100, timing: "interval" });
+    expect(
+      detail.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.response.first_token", "op-llm"],
+      ["earshot.response.first_audio_generated", "op-tts"],
+      ["earshot.audio.first_byte_sent", "op-send"],
+      ["earshot.audio.first_packet_received", "op-receive"],
+      ["earshot.audio.render.started", "op-render"],
     ]);
     expect(detail.edges).toEqual([]);
   });
