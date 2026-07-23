@@ -588,6 +588,102 @@ def test_explanation_surfaces_unassigned_measurements_without_turns() -> None:
     assert all(item.evidence_ids == ("quality-webrtc",) for item in unassigned.values())
 
 
+def test_quality_only_turn_cannot_be_dropped_and_relocated(valid_bundle) -> None:
+    sample = QualitySample(
+        sample_id="quality-only-turn",
+        session_id=valid_bundle.profile.session.session_id,
+        quality_kind="provider.metric",
+        sample_window=TimeRange(start=point(10), end=point(10)),
+        measurements=(
+            QualityMeasurement(
+                name="provider.queue_depth",
+                value=3,
+                unit="count",
+                aggregation="instant",
+            ),
+        ),
+        evidence=Evidence(
+            source="provider",
+            observer="server",
+            method="native_metric",
+            confidence="measured",
+            availability="available",
+        ),
+        attributes={"earshot.turn.id": "turn-quality-only"},
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(),
+        events=(),
+        quality_samples=(sample,),
+    )
+    assert validate_incident(bundle).ok
+    analysis = _analyze(bundle)
+    assert tuple(turn.turn_id for turn in analysis.projections.turns) == ("turn-quality-only",)
+    assert analysis.projections.summary is not None
+    tampered_summary = analysis.projections.summary.model_copy(update={"turn_count": 0})
+    tampered_projections = analysis.projections.model_copy(
+        update={"turns": (), "summary": tampered_summary}
+    )
+    tampered_analysis = analysis.model_copy(update={"projections": tampered_projections})
+
+    analysis_report = validate_derived_analysis(bundle, tampered_analysis)
+
+    assert "EARSHOT_ANALYSIS_TURN_DROPPED" in {issue.code for issue in analysis_report.errors}
+
+    relocated = explain_incident(bundle, tampered_analysis)
+    assert relocated.turns == ()
+    assert relocated.unassigned_measurements
+    explanation_report = validate_explanation(bundle, tampered_analysis, relocated)
+    assert {
+        "EARSHOT_EXPLANATION_MEASUREMENT_DROPPED",
+        "EARSHOT_EXPLANATION_MEASUREMENT_INVENTED",
+    }.issubset({issue.code for issue in explanation_report.errors})
+
+
+def test_analysis_cannot_drop_ownerless_quality_sample(valid_bundle) -> None:
+    sample = QualitySample(
+        sample_id="quality-ownerless",
+        session_id=valid_bundle.profile.session.session_id,
+        quality_kind="provider.metric",
+        sample_window=TimeRange(start=point(10), end=point(10)),
+        measurements=(
+            QualityMeasurement(
+                name="provider.queue_depth",
+                value=3,
+                unit="count",
+                aggregation="instant",
+            ),
+        ),
+        evidence=Evidence(
+            source="provider",
+            observer="server",
+            method="native_metric",
+            confidence="measured",
+            availability="available",
+        ),
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(),
+        events=(),
+        quality_samples=(sample,),
+    )
+    assert validate_incident(bundle).ok
+    analysis = _analyze(bundle)
+    assert set(analysis.projections.unassigned_provider_measurements) == {"quality-ownerless"}
+    tampered_projections = analysis.projections.model_copy(
+        update={"unassigned_provider_measurements": {}}
+    )
+
+    report = validate_derived_analysis(
+        bundle,
+        analysis.model_copy(update={"projections": tampered_projections}),
+    )
+
+    assert "EARSHOT_ANALYSIS_QUALITY_DROPPED" in {issue.code for issue in report.errors}
+
+
 def test_explanation_projects_error_record_without_message(valid_bundle) -> None:
     target = next(
         operation

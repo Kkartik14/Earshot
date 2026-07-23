@@ -2185,6 +2185,15 @@ def validate_derived_analysis(
                         )
                     )
 
+    for _missing_turn_id in sorted(source_turn_ids - projected_turns):
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_ANALYSIS_TURN_DROPPED",
+                path=("analysis", "projections", "turns"),
+                message="source-owned turn is absent from the analysis projection",
+            )
+        )
+
     for operation_id, owner in operation_turns.items():
         if owner is not None and operation_id not in projected_operations:
             issues.append(
@@ -2203,6 +2212,21 @@ def validate_derived_analysis(
                     message="turn-owned source event is absent from the analysis",
                 )
             )
+
+    expected_unassigned_quality_ids = {
+        sample_id for sample_id, owner in quality_turns.items() if owner is None
+    }
+    projected_unassigned_quality_ids = set(analysis.projections.unassigned_provider_measurements)
+    for _missing_sample_id in sorted(
+        expected_unassigned_quality_ids - projected_unassigned_quality_ids
+    ):
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_ANALYSIS_QUALITY_DROPPED",
+                path=("analysis", "projections", "unassigned_provider_measurements"),
+                message="ownerless source quality sample is absent from the analysis",
+            )
+        )
 
     for sample_id, measurements in analysis.projections.unassigned_provider_measurements.items():
         sample_path = (
@@ -3052,8 +3076,6 @@ def validate_explanation(
             evidence_fact(evidence),
         )
 
-    analysis_turn_ids = {turn.turn_id for turn in analysis.projections.turns}
-
     def source_measurement_placement(sample: Any) -> tuple[str, str]:
         operation_owner = sample.attributes.get("earshot.operation.id")
         if isinstance(operation_owner, str) and operation_owner in operations:
@@ -3061,8 +3083,7 @@ def validate_explanation(
         turn_owner = sample.attributes.get("earshot.turn.id")
         if isinstance(turn_owner, (str, int)) and not isinstance(turn_owner, bool):
             turn_id = str(turn_owner)
-            if turn_id in analysis_turn_ids:
-                return "turn", turn_id
+            return "turn", turn_id
         return "unassigned", ""
 
     source_measurement_entries = tuple(
