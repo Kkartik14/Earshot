@@ -101,13 +101,37 @@ callback as idempotent.
 
 ```python
 adapter = LiveKitAdapter(recorder, framework_version="1.6.5")
-adapter.attach_span_processor(existing_tracer_provider)
+handle = adapter.attach_span_processor(existing_tracer_provider)
 adapter.attach_session_listeners(agent_session)
+
+try:
+    # Keep this scope active while starting the session and spawning its tasks.
+    with handle.session_scope():
+        await agent_session.start(...)
+        await run_voice_session(agent_session)
+finally:
+    existing_tracer_provider.force_flush()
+    handle.close()
 ```
 
-The processor filters for LiveKit scope/`lk.*` spans, authors no new trace root, and
-does not replace existing processors or exporters. Native interruption span events
-and adaptive-interruption callbacks become correlated Earshot point events.
+The shared processor filters for LiveKit scope/`lk.*` spans, authors no new trace
+root, and does not replace existing processors or exporters. `session_scope()` uses
+an opaque registration key, not the caller's `session_id`, so two active incidents
+may safely have the same external room/session name. Always use the scope: a lone
+session can be routed unambiguously without it, but an unscoped span is quarantined
+as soon as another session shares the provider. Close the handle only after the
+framework has ended its spans and the provider has flushed.
+
+Quarantined spans are never copied into another incident. Each active handle exposes
+content-free health through `handle.status.quarantined_span_count`, and each affected
+incident records `livekit.span.routing=partial` with reason
+`unattributed_span_quarantined`. Span attributes are not included in that diagnostic.
+Native interruption span events and adaptive-interruption callbacks become correlated
+Earshot point events.
+
+`create_span_processor()` is retained only as an explicit migration error because a
+recorder-bound processor installed per session bypasses isolation. Use
+`attach_span_processor(existing_tracer_provider)` instead.
 
 When both documented surfaces are attached, ownership is type-selective. Native spans
 own LLM, TTS, and realtime operations plus their embedded metric samples. EOU/EOT

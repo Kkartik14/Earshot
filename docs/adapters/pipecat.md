@@ -29,16 +29,38 @@ force the contract to remain framework-neutral.
   an unambiguous interruption source before authoring `earshot.interruption.accepted`.
 
 `PipecatAdapter.consume_span()` accepts a span-shaped mapping/object, which keeps the
-normalizer testable without importing Pipecat. `create_span_processor()` and
-`attach(existing_tracer_provider)` consume ended native spans without replacing the
-provider or creating a second root. `create_observer()` supplies a Pipecat 1.5 frame
-observer. It authors an accepted interruption only when a native `InterruptionFrame`
-is observed while native `BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame` state
-says bot playout is active. Pipecat also broadcasts `InterruptionFrame` at the start
-of an ordinary first user turn, so the interruption frame alone is not barge-in
-evidence. The accepted classification is therefore explicitly `inferred` from both
-native facts, cites the composite frame source, and is attached to the interrupted
-native turn number tracked from Pipecat's lifecycle frames.
+normalizer testable without importing Pipecat. Use the process-scoped router around
+the work that starts the Pipecat pipeline, then flush before closing the handle:
+
+```python
+adapter = PipecatAdapter(recorder, framework_version="1.5.0")
+handle = adapter.attach(existing_tracer_provider)
+
+try:
+    with handle.session_scope():
+        await run_pipecat_pipeline()
+finally:
+    existing_tracer_provider.force_flush()
+    handle.close()
+```
+
+The scope uses an opaque registration key, so duplicate caller-supplied session IDs
+remain independent. When an unscoped span cannot be assigned while sessions share a
+provider, Earshot quarantines it rather than broadcasting it. Content-free health is
+available as `handle.status.quarantined_span_count`; affected incidents record
+`pipecat.span.routing=partial` with reason `unattributed_span_quarantined` and never
+retain the dropped span's attributes. `create_span_processor()` now raises an
+explicit migration error because a recorder-bound processor bypasses session
+isolation; use `attach(existing_tracer_provider)`.
+
+`create_observer()` supplies a Pipecat 1.5 frame observer. It authors an accepted
+interruption only when a native `InterruptionFrame` is observed while native
+`BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame` state says bot playout is active.
+Pipecat also broadcasts `InterruptionFrame` at the start of an ordinary first user
+turn, so the interruption frame alone is not barge-in evidence. The accepted
+classification is therefore explicitly `inferred` from both native facts, cites the
+composite frame source, and is attached to the interrupted native turn number tracked
+from Pipecat's lifecycle frames.
 The observer deduplicates the same broadcast frame as it crosses processors and its
 upstream/downstream sibling pair. Observer-authored events use Earshot's recorder
 receipt time; Pipecat frame timestamps have a separate monotonic origin and are never

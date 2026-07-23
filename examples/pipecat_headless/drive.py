@@ -293,6 +293,8 @@ class PipecatRuntime:
 
     def __init__(self, api_key: str, recorder: StageTrackingRecorder) -> None:
         self._provider = TracerProvider()
+        self._adapter: PipecatAdapter | None = None
+        self._routing_handle = None
         self._runner_task: asyncio.Task[None] | None = None
         self._pipeline_started = asyncio.Event()
         self._pipeline_failed = False
@@ -301,11 +303,11 @@ class PipecatRuntime:
             otel_trace.set_tracer_provider(self._provider)
             if otel_trace.get_tracer_provider() is not self._provider:
                 raise RuntimeError("the headless Pipecat driver requires a fresh one-shot process")
-            adapter = PipecatAdapter(
+            self._adapter = PipecatAdapter(
                 recorder,
                 framework_version=version("pipecat-ai"),
             )
-            adapter.attach(self._provider)
+            self._routing_handle = self._adapter.attach(self._provider)
 
             stt = GroqSTTService(
                 api_key=api_key,
@@ -335,7 +337,7 @@ class PipecatRuntime:
                 enable_rtvi=False,
                 cancel_on_idle_timeout=False,
                 conversation_id="earshot-pipecat",
-                observers=[adapter.create_observer()],
+                observers=[self._adapter.create_observer()],
             )
             self._runner = WorkerRunner(handle_sigint=False)
 
@@ -355,8 +357,12 @@ class PipecatRuntime:
                 if isinstance(frame, EndFrame):
                     self._pipeline_finished_normally = True
         except BaseException:
-            with contextlib.suppress(Exception):
-                self._provider.shutdown()
+            try:
+                with contextlib.suppress(Exception):
+                    self._provider.shutdown()
+            finally:
+                if self._adapter is not None:
+                    self._adapter.detach()
             raise
 
     @property
@@ -393,6 +399,12 @@ class PipecatRuntime:
                 await completion_task
 
     async def run(self) -> None:
+        if self._routing_handle is None:
+            raise RuntimeError("Pipecat span routing was not initialized")
+        with self._routing_handle.session_scope():
+            await self._run_scoped()
+
+    async def _run_scoped(self) -> None:
         pcm = await synth_user_pcm()
         audio_frames = [
             InputAudioRawFrame(
@@ -461,7 +473,11 @@ class PipecatRuntime:
         return await asyncio.to_thread(self._provider.force_flush, timeout_millis=5_000)
 
     async def shutdown(self) -> None:
-        await asyncio.to_thread(self._provider.shutdown)
+        try:
+            await asyncio.to_thread(self._provider.shutdown)
+        finally:
+            if self._adapter is not None:
+                self._adapter.detach()
 
 
 def create_pipecat_runtime(
