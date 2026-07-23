@@ -715,14 +715,20 @@ export interface UnassignedOperationView {
   durationMs: number | null;
   measurements: MeasurementView[];
 }
+export interface UnassignedEventView {
+  eventId: string;
+  name: string;
+  coordinate: string;
+  confidence: string;
+}
 export interface UnassignedFacts {
   operations: UnassignedOperationView[];
+  events: UnassignedEventView[];
   measurements: MeasurementView[];
 }
 
-/** Surface operations and measurements the analyzer could not scope to a turn
- * (e.g. webrtc jitter/rtt/packet-loss, a device-unavailable operation) so an
- * incident with no turn-scoped evidence is still visible. */
+/** Surface operations, events, and measurements that could not be scoped to a
+ * turn so an incident with only session-level evidence is still visible. */
 export function buildUnassigned(explanation: ExplanationLike): UnassignedFacts {
   const operations = (explanation.unassigned_operations ?? []).map((op, index) => {
     const duration = nano(op.duration_nano);
@@ -741,6 +747,12 @@ export function buildUnassigned(explanation: ExplanationLike): UnassignedFacts {
   });
   return {
     operations,
+    events: (explanation.unassigned_events ?? []).map((event) => ({
+      eventId: event.event_id,
+      name: event.event_name,
+      coordinate: `${event.clock_domain_id ?? "unknown clock"} · ${event.time_basis} · ${event.at_nano}ns`,
+      confidence: event.evidence?.confidence ?? "unknown",
+    })),
     measurements: measurementViews(explanation.unassigned_measurements ?? []),
   };
 }

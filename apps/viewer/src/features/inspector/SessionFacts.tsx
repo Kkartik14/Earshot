@@ -57,11 +57,15 @@ export function DiagnosesPanel({
   );
 }
 
-/** Operations and measurements the analyzer could not scope to a turn. Rendering
- * them keeps an incident whose evidence is session-level (webrtc jitter/rtt,
- * a device-unavailable operation) visible instead of an empty inspector. */
+/** Operations, events, and measurements the analyzer could not scope to a turn.
+ * Rendering them keeps session-level evidence visible instead of an empty inspector. */
 export function UnassignedPanel({ facts }: { facts: UnassignedFacts }) {
-  if (facts.operations.length === 0 && facts.measurements.length === 0) return null;
+  if (
+    facts.operations.length === 0 &&
+    facts.events.length === 0 &&
+    facts.measurements.length === 0
+  )
+    return null;
   return (
     <section className={styles.panel} aria-label="Session-level facts">
       <div className={styles.panelHead}>
@@ -103,6 +107,20 @@ export function UnassignedPanel({ facts }: { facts: UnassignedFacts }) {
                   <span className={styles.measConf}>{m.confidence}</span>
                 </div>
               ))}
+            </article>
+          ))}
+        </div>
+      ) : null}
+
+      {facts.events.length > 0 ? (
+        <div className={styles.list}>
+          {facts.events.map((event) => (
+            <article key={event.eventId} className={styles.unop}>
+              <div className={styles.unopHead}>
+                <span className={styles.unName}>{event.name}</span>
+                <span className={styles.measConf}>{event.confidence}</span>
+                <span className={styles.unDur}>{event.coordinate}</span>
+              </div>
             </article>
           ))}
         </div>

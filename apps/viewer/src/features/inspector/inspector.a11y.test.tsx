@@ -398,6 +398,43 @@ describe("Session-level facts", () => {
     expect(region.getByText("packet_loss_ratio")).toBeInTheDocument();
     expect(region.getByText("0.18")).toBeInTheDocument();
   });
+
+  it("renders source-authored events that are not scoped to a turn", () => {
+    const explanation = {
+      ...webrtcDegradation,
+      unassigned_events: [
+        {
+          event_id: "evt-session-reconnecting",
+          event_name: "earshot.transport.reconnecting",
+          time_basis: "monotonic",
+          clock_domain_id: "server-clock",
+          at_nano: "800000000",
+          evidence: { confidence: "measured" },
+          evidence_ids: ["evt-session-reconnecting"],
+        },
+      ],
+    } as unknown as ExplanationLike;
+
+    const facts = buildUnassigned(explanation);
+    expect(facts.events).toEqual([
+      {
+        eventId: "evt-session-reconnecting",
+        name: "earshot.transport.reconnecting",
+        coordinate: "server-clock · monotonic · 800000000ns",
+        confidence: "measured",
+      },
+    ]);
+
+    render(<UnassignedPanel facts={facts} />);
+    const eventName = screen.getByText("earshot.transport.reconnecting");
+    const eventFact = eventName.closest("article");
+    expect(eventFact).not.toBeNull();
+    const eventRegion = within(eventFact as HTMLElement);
+    expect(
+      eventRegion.getByText("server-clock · monotonic · 800000000ns"),
+    ).toBeInTheDocument();
+    expect(eventRegion.getByText("measured")).toBeInTheDocument();
+  });
 });
 
 describe("Detail drawers", () => {
