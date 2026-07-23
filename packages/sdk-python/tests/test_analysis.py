@@ -913,6 +913,82 @@ def test_preemptive_livekit_first_token_uses_direct_stage_metric_when_delta_reve
     assert validate_derived_analysis(bundle, result).ok
 
 
+def test_provider_stage_fallback_uses_the_bounded_attribute_that_authored_target(
+    valid_bundle,
+) -> None:
+    events = tuple(
+        event.model_copy(update={"time": point(1_200_000_000)})
+        if event.event_name == "earshot.turn.committed"
+        else event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.response.first_token"
+    )
+    operations = tuple(
+        operation.model_copy(
+            update={
+                "attributes": {
+                    **operation.attributes,
+                    "lk.response.ttft": 1.0,
+                    "metrics.ttfb": 0.1,
+                }
+            }
+        )
+        if operation.operation_name == "llm"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+
+    first_token = metric(analyze(bundle), "first_token_latency")
+
+    assert first_token["basis"] == "provider_stage_direct"
+    assert first_token["value"] == 100.0
+    assert first_token["evidence_ids"] == ["op-llm"]
+
+
+def test_provider_stage_fallback_downgrades_unavailable_source_evidence(valid_bundle) -> None:
+    events = tuple(
+        event.model_copy(update={"time": point(1_200_000_000)})
+        if event.event_name == "earshot.turn.committed"
+        else event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.response.first_token"
+    )
+    operations = tuple(
+        operation.model_copy(
+            update={
+                "attributes": {**operation.attributes, "metrics.ttfb": 0.1},
+                "evidence": operation.evidence.model_copy(
+                    update={"availability": "unavailable", "confidence": "measured"}
+                )
+                if operation.evidence is not None
+                else None,
+            }
+        )
+        if operation.operation_name == "llm"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+
+    first_token = metric(analyze(bundle), "first_token_latency")
+
+    assert first_token["availability"] == "available"
+    assert first_token["confidence"] == "unavailable"
+
+
 @pytest.mark.parametrize(
     ("llm_name", "tts_name"),
     [
@@ -1471,6 +1547,39 @@ def test_conflicting_snapshots_in_one_sample_are_order_invariant(valid_bundle) -
         "evidence_ids": ["provider-snapshot"],
     }
     assert explain_incident(permuted, permuted_result) == explain_incident(bundle, result)
+
+
+def test_provider_measurement_confidence_requires_available_evidence(valid_bundle) -> None:
+    sample = QualitySample(
+        sample_id="provider-unavailable-evidence",
+        session_id="session-1",
+        quality_kind="provider.metric",
+        sample_window=TimeRange(start=point(10), end=point(10)),
+        measurements=(
+            QualityMeasurement(
+                name="provider.queue_depth",
+                value=10,
+                unit="{item}",
+                aggregation="instant",
+            ),
+        ),
+        evidence=Evidence(
+            source="provider",
+            observer="server",
+            method="native_metric",
+            confidence="measured",
+            availability="unavailable",
+        ),
+        attributes={"earshot.turn.id": "turn-1"},
+    )
+
+    projected = metric(
+        analyze(replace_profile(valid_bundle, quality_samples=(sample,))),
+        "provider_measurements",
+    )["provider.queue_depth"]
+
+    assert projected["availability"] == "available"
+    assert projected["confidence"] == "unavailable"
 
 
 def test_turn_delta_quality_windows_are_summed_with_all_evidence(valid_bundle) -> None:

@@ -30,6 +30,7 @@ from .versions import ANALYZER_VERSION
 ANALYZER_NAME = "earshot.deterministic"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
 _SUCCESS_BOUNDARY_STATUSES = frozenset({"completed", "ok", "unset"})
+_PROVIDER_DURATION_ATTRIBUTE = "earshot.analysis.provider_duration_attribute"
 _CONFIDENCE_RANK = {
     "measured": 0,
     "estimated": 1,
@@ -273,7 +274,15 @@ def _provider_latency_event(
             end_delta = comparable_delta(point, operation.ended_at)
             if end_delta.availability == "inconsistent":
                 continue
-        return _operation_point_event(operation, event_name, point)
+        projected = _operation_point_event(operation, event_name, point)
+        return projected.model_copy(
+            update={
+                "attributes": {
+                    **projected.attributes,
+                    _PROVIDER_DURATION_ATTRIBUTE: attribute_name,
+                }
+            }
+        )
     return None
 
 
@@ -329,7 +338,12 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
                     value,
                     unit,
                     measurement.aggregation,
-                    (sample.evidence.confidence if sample.evidence is not None else "unavailable"),
+                    (
+                        sample.evidence.confidence
+                        if sample.evidence is not None
+                        and sample.evidence.availability == "available"
+                        else "unavailable"
+                    ),
                 )
             )
 
@@ -653,20 +667,33 @@ def _provider_stage_latency_fallback(
     )
     if operation is None:
         return current
-    for attribute_name in attribute_names:
-        raw = operation.attributes.get(attribute_name)
-        if _shift_time_point(operation.started_at, raw) is None:
-            continue
-        return {
-            "availability": "available",
-            "basis": "provider_stage_direct",
-            "confidence": operation.evidence.confidence if operation.evidence else "estimated",
-            "value": float(raw) * 1_000,
-            "unit": "ms",
-            "limitation": "stage_local_excludes_turn_scheduling",
-            "evidence_ids": [operation.operation_id],
-        }
-    return current
+    attribute_name = target.attributes.get(_PROVIDER_DURATION_ATTRIBUTE)
+    if not isinstance(attribute_name, str) or attribute_name not in attribute_names:
+        return current
+    raw = operation.attributes.get(attribute_name)
+    point = _shift_time_point(operation.started_at, raw)
+    if point is None or point != target.time:
+        return current
+    if operation.ended_at is not None:
+        end_delta = comparable_delta(point, operation.ended_at)
+        if end_delta.availability == "inconsistent":
+            return current
+    confidence = "estimated"
+    if operation.evidence is not None:
+        confidence = (
+            operation.evidence.confidence
+            if operation.evidence.availability == "available"
+            else "unavailable"
+        )
+    return {
+        "availability": "available",
+        "basis": "provider_stage_direct",
+        "confidence": confidence,
+        "value": float(raw) * 1_000,
+        "unit": "ms",
+        "limitation": "stage_local_excludes_turn_scheduling",
+        "evidence_ids": [operation.operation_id],
+    }
 
 
 def _turn_projection(
