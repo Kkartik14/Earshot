@@ -7,6 +7,7 @@ import { CallGraph } from "./CallGraph";
 import { DiagnosesPanel, UnassignedPanel } from "./SessionFacts";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
+import { TurnTimeline } from "./TurnTimeline";
 import {
   buildDiagnoses,
   buildTurnDetails,
@@ -17,6 +18,7 @@ import {
   type OperationRole,
   type StageDetail,
   type StageName,
+  type Timeline,
   type TurnDetail,
 } from "./timeline";
 
@@ -106,6 +108,16 @@ const turnDetail: TurnDetail = {
 };
 
 describe("CallGraph accessibility", () => {
+  it("does not attribute a turn-level first-token value to the LLM node", () => {
+    render(<CallGraph detail={{ ...turnDetail, firstTokenMs: 720 }} onPick={() => {}} />);
+
+    const llmNode = screen.getByRole("button", { name: /llm operation/i });
+    const visualClasses = [llmNode, ...llmNode.querySelectorAll("[class]")]
+      .map((element) => element.getAttribute("class") ?? "")
+      .join(" ");
+    expect(visualClasses).not.toMatch(/slow/i);
+  });
+
   it("activates an operation node with click, Enter, and Space", () => {
     const onPick = vi.fn();
     render(<CallGraph detail={turnDetail} onPick={onPick} />);
@@ -225,6 +237,55 @@ describe("CallGraph accessibility", () => {
   });
 });
 
+describe("Turn timeline truthfulness", () => {
+  it("renders measured high latency without an invented slow verdict or LLM glow", () => {
+    const metric = {
+      value: 720,
+      availability: "available",
+      basis: "provider_stage_direct",
+      confidence: "measured",
+    };
+    const timeline: Timeline = {
+      scaleMs: 1_000,
+      turns: [
+        {
+          turnId: "turn-high-latency",
+          index: 0,
+          stages: [
+            stage("llm", {
+              startMs: 0,
+              endMs: 900,
+              leadMs: 720,
+              timing: "interval",
+            }),
+          ],
+          firstToken: metric,
+          generated: { ...metric, value: null, availability: "not_observed" },
+          response: { ...metric, value: null, availability: "not_observed" },
+          interrupted: false,
+          hasCascade: false,
+          totalMs: 900,
+        },
+      ],
+    };
+
+    render(
+      <TurnTimeline
+        timeline={timeline}
+        openTurns={new Set()}
+        selection={null}
+        onToggleTurn={() => {}}
+        onSelectOperation={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText("slow")).not.toBeInTheDocument();
+    expect(
+      screen.getByTitle("llm observed interval · groq").getAttribute("class"),
+    ).not.toMatch(/glow/i);
+  });
+});
+
 describe("Interruption attachment", () => {
   it("keeps an interruption turn-level when it references no operation (no false row)", () => {
     // The native s2s projection carries an interruption event with no stream/op
@@ -322,6 +383,22 @@ describe("Session-level facts", () => {
 });
 
 describe("Detail drawers", () => {
+  it("shows high first-token latency without inventing a budget verdict", () => {
+    render(
+      <TurnDrawer
+        detail={{ ...turnDetail, firstTokenMs: 720 }}
+        coverage={[]}
+        onClose={() => {}}
+        onPickStage={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("720")).toBeInTheDocument();
+    expect(screen.getByText("first token")).toBeInTheDocument();
+    expect(screen.queryByText("slow")).not.toBeInTheDocument();
+    expect(screen.queryByText(/budget/i)).not.toBeInTheDocument();
+  });
+
   it("TurnDrawer is a labelled dialog, focuses close on open, and has headings", () => {
     const onClose = vi.fn();
     render(

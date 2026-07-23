@@ -36,7 +36,7 @@ function stageReadout(stage: StageBar): string {
   return "not observed";
 }
 
-function Bar({ stage, scale, glow }: { stage: StageBar; scale: number; glow?: boolean }) {
+function Bar({ stage, scale }: { stage: StageBar; scale: number }) {
   const color = { "--c": roleColorVar(stage.role) } as CSSProperties;
   if (stage.startMs == null) {
     return <div className={styles.unplaced} title={`${stage.name} timing unavailable`} />;
@@ -55,7 +55,7 @@ function Bar({ stage, scale, glow }: { stage: StageBar; scale: number; glow?: bo
     width > 0 && stage.leadMs != null ? Math.min(100, (stage.leadMs / width) * 100) : 0;
   return (
     <div
-      className={`${styles.bar} ${glow ? styles.glow : ""}`}
+      className={styles.bar}
       style={{
         ...color,
         left: `${(stage.startMs / scale) * 100}%`,
@@ -100,7 +100,6 @@ function TurnRow({
   onToggle: (index: number) => void;
   onOperation: (index: number, operationId: string) => void;
 }) {
-  const slow = (turn.firstToken.value ?? 0) > 500;
   const llm = turn.stages.find((s) => s.role === "llm");
   const firstTokenAt =
     llm?.startMs != null && llm.leadMs != null ? llm.startMs + llm.leadMs : null;
@@ -112,9 +111,7 @@ function TurnRow({
         type="button"
         onClick={() => onToggle(turn.index)}
         aria-expanded={open}
-        className={`${styles.node} ${styles.turn} ${slow ? styles.slow : ""} ${
-          turnSelected ? styles.sel : ""
-        }`}
+        className={`${styles.node} ${styles.turn} ${turnSelected ? styles.sel : ""}`}
       >
         <div className={styles.lab}>
           <Caret open={open} />
@@ -122,18 +119,10 @@ function TurnRow({
           {turn.interrupted ? (
             <span className={`${styles.chip} ${styles.barge}`}>barge-in</span>
           ) : null}
-          {slow ? (
-            <span className={`${styles.chip} ${styles.slowChip}`}>slow</span>
-          ) : null}
         </div>
         <div className={styles.gantt}>
           {turn.stages.map((stage) => (
-            <Bar
-              key={stage.operationId}
-              stage={stage}
-              scale={scale}
-              glow={slow && stage.role === "llm"}
-            />
+            <Bar key={stage.operationId} stage={stage} scale={scale} />
           ))}
           {firstTokenAt != null ? (
             <div
@@ -143,9 +132,7 @@ function TurnRow({
             />
           ) : null}
         </div>
-        <div className={`${styles.dur} ${slow ? styles.durSlow : ""}`}>
-          +{formatMs(turn.totalMs)}
-        </div>
+        <div className={styles.dur}>+{formatMs(turn.totalMs)}</div>
       </button>
 
       {open ? (

@@ -25,9 +25,6 @@ export function TurnDrawer({
   onPickStage: (operationId: string) => void;
 }) {
   const ft = detail.firstTokenMs;
-  const slow = (ft ?? 0) > 500;
-  const budget =
-    ft == null ? "not observed" : slow ? "well over budget" : "within budget";
 
   // Move focus to the close control when the panel opens or its turn changes,
   // so keyboard and screen-reader users land inside the labelled dialog on a
@@ -58,14 +55,13 @@ export function TurnDrawer({
           {detail.interrupted ? (
             <span className={`${styles.chip} ${styles.barge}`}>barge-in</span>
           ) : null}
-          {slow ? <span className={`${styles.chip} ${styles.slow}`}>slow</span> : null}
         </div>
         <div className={styles.hero}>
-          <span className={`${styles.big} ${slow ? styles.critical : ""}`}>
+          <span className={styles.big}>
             {ft == null ? "—" : ft}
             {ft == null ? null : <small> ms</small>}
           </span>
-          <span className={styles.heroLbl}>first token · {budget}</span>
+          <span className={styles.heroLbl}>first token</span>
         </div>
       </div>
 

@@ -77,7 +77,6 @@ export function CallGraph({
 }) {
   const descriptionId = useId();
   const arrowId = useId().replace(/:/g, "");
-  const slowTurn = (detail.firstTokenMs ?? 0) > 500;
   const ops = detail.stages;
   const indexById = new Map(ops.map((op, i) => [op.operationId, i]));
 
@@ -162,7 +161,6 @@ export function CallGraph({
         {ops.map((op, i) => {
           const y = nodeY(i);
           const color = roleColorVar(op.role);
-          const slow = op.role === "llm" && slowTurn;
           const sub = subtitle(op);
           const lat = readout(op);
           const badge = op.statusView.abnormal ? op.statusView.label : null;
@@ -177,7 +175,7 @@ export function CallGraph({
           return (
             <g
               key={op.operationId}
-              className={`${styles.gn} ${slow ? styles.slow : ""}`}
+              className={styles.gn}
               style={{ "--nc": color } as CSSProperties}
               onClick={activate}
               onKeyDown={(event) => {
@@ -202,12 +200,7 @@ export function CallGraph({
               <text className={styles.nm} x={X + 16} y={y + 19}>
                 {op.name}
               </text>
-              <text
-                className={`${styles.lat} ${slow ? styles.slowLat : ""}`}
-                x={X + NW - 13}
-                y={y + 19}
-                textAnchor="end"
-              >
+              <text className={styles.lat} x={X + NW - 13} y={y + 19} textAnchor="end">
                 {lat}
               </text>
               <text className={styles.sub} x={X + 16} y={y + 35}>
