@@ -95,7 +95,12 @@ export function TurnDrawer({
           {detail.events.map((e, i) => (
             <div key={`${e.name}-${i}`} className={styles.evrow}>
               <span className={styles.glyph} style={{ background: glyphColor(e.name) }} />
-              <span className={styles.en}>{short(e.name)}</span>
+              <span className={styles.en}>
+                {short(e.name)}
+                {e.attachedOperationId != null ? (
+                  <span className={styles.evAttach}> → {e.attachedOperationId}</span>
+                ) : null}
+              </span>
               <span className={styles.et}>
                 {e.atMs == null ? "offset unavailable" : `+${Math.round(e.atMs)}ms`} ·{" "}
                 {e.confidence}

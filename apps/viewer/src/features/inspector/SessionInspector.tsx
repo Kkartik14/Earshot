@@ -3,14 +3,17 @@ import { useParams } from "react-router-dom";
 import { useExplanation, useIncident } from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
 import { SessionHeader } from "./SessionHeader";
+import { DiagnosesPanel, UnassignedPanel } from "./SessionFacts";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
 import { TurnTimeline, type Selection } from "./TurnTimeline";
 import styles from "./SessionInspector.module.css";
 import {
+  buildDiagnoses,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
+  buildUnassigned,
   getCoverage,
   type ExplanationLike,
   type IncidentLike,
@@ -84,6 +87,8 @@ export function SessionInspector() {
   const summary = buildSummary(inc, explained, timeline);
   const details = buildTurnDetails(explained);
   const coverage = getCoverage(explained);
+  const diagnoses = buildDiagnoses(explained);
+  const unassigned = buildUnassigned(explained);
 
   const openTurn = (i: number) =>
     setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
@@ -121,6 +126,8 @@ export function SessionInspector() {
           onToggleTurn={toggleTurn}
           onSelectOperation={selectOperation}
         />
+        <DiagnosesPanel diagnoses={diagnoses} onSelectEvidence={selectOperation} />
+        <UnassignedPanel facts={unassigned} />
       </div>
       {sel ? (
         <div className={styles.drawerCol}>

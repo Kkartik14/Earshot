@@ -1,5 +1,6 @@
 import { type CSSProperties } from "react";
 import { formatMs } from "../../lib/format";
+import { toneColorVar } from "../../lib/status";
 import styles from "./TurnTimeline.module.css";
 import {
   roleColorVar,
@@ -170,6 +171,17 @@ function TurnRow({
                     {stage.name}
                   </span>
                   <span className={styles.prov}>{operationSubtitle(stage)}</span>
+                  {stage.statusView.abnormal ? (
+                    <span
+                      className={styles.statusChip}
+                      style={{
+                        color: toneColorVar(stage.statusView.tone),
+                        borderColor: toneColorVar(stage.statusView.tone),
+                      }}
+                    >
+                      {stage.statusView.label}
+                    </span>
+                  ) : null}
                 </div>
                 <div className={styles.gantt}>
                   <Bar stage={stage} scale={scale} />

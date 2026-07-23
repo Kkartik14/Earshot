@@ -166,6 +166,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.statusChip {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex: none;
+}
 
 .gantt {
   position: relative;

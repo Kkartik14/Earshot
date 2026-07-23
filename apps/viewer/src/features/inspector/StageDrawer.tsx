@@ -1,4 +1,5 @@
 import { formatMeasurement } from "../../lib/format";
+import { toneColorVar } from "../../lib/status";
 import styles from "./drawer.module.css";
 import {
   roleColorVar,
@@ -20,6 +21,9 @@ function confClass(confidence: string): string {
   return styles[confidence] ?? styles.unavailable;
 }
 
+const relationshipLabel = (relationship: string): string =>
+  relationship.replace(/_/g, " ");
+
 export function StageDrawer({
   index,
   stage,
@@ -31,6 +35,8 @@ export function StageDrawer({
 }) {
   const color = roleColorVar(stage.role);
   const ev = stage.evidence;
+  const status = stage.statusView;
+  const badgeColor = toneColorVar(status.tone);
 
   const leadLabel = LEAD_LABEL[stage.role];
   const observedDuration =
@@ -71,6 +77,14 @@ export function StageDrawer({
             {stage.name}
           </span>
           <span className={styles.kindTag}>{roleLabel(stage.role)}</span>
+          {status.abnormal ? (
+            <span
+              className={styles.statusBadge}
+              style={{ color: badgeColor, borderColor: badgeColor }}
+            >
+              {status.label}
+            </span>
+          ) : null}
         </div>
         <div className={styles.hero}>
           <span className={styles.big}>
@@ -93,8 +107,21 @@ export function StageDrawer({
           </div>
           <div className={styles.kv}>
             <span className={styles.kk}>status</span>
-            <span className={styles.vv}>{stage.status}</span>
+            <span
+              className={styles.vv}
+              style={status.abnormal ? { color: badgeColor } : undefined}
+            >
+              {stage.status}
+            </span>
           </div>
+          {status.error ? (
+            <div className={styles.kv}>
+              <span className={styles.kk}>error</span>
+              <span className={styles.vv} style={{ color: badgeColor }}>
+                {status.error.code} · {status.error.category}
+              </span>
+            </div>
+          ) : null}
           <div className={styles.kv}>
             <span className={styles.kk}>timing</span>
             <span className={styles.vv}>
@@ -103,9 +130,34 @@ export function StageDrawer({
                 : stage.timing === "point" && stage.startMs != null
                   ? `observed point +${Math.round(stage.startMs)} ms; interval not observed`
                   : "operation timing unavailable"}
+              {stage.startUncertaintyMs != null
+                ? ` (±${Math.round(stage.startUncertaintyMs)} ms)`
+                : ""}
             </span>
           </div>
+          {stage.interruptedByEvent ? (
+            <div className={styles.kv}>
+              <span className={styles.kk}>interrupted by</span>
+              <span className={styles.vv}>{stage.interruptedByEvent}</span>
+            </div>
+          ) : null}
         </section>
+
+        {stage.links.length > 0 ? (
+          <section className={styles.sec}>
+            <h2 className={styles.secLabel}>Causal links</h2>
+            {stage.links.map((link, i) => (
+              <div key={`${link.relationship}-${i}`} className={styles.kv}>
+                <span className={styles.kk}>{relationshipLabel(link.relationship)}</span>
+                <span className={styles.vv}>
+                  {link.resolved && link.targetOperationId != null
+                    ? link.targetOperationId
+                    : `${link.targetScope} target`}
+                </span>
+              </div>
+            ))}
+          </section>
+        ) : null}
 
         <section className={styles.sec}>
           <h2 className={styles.secLabel}>Provider measurement</h2>
