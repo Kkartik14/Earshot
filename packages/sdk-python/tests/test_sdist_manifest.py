@@ -10,14 +10,26 @@ import pytest
 
 pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[3]
+PACKAGE_NAMES = (ROOT / "scripts" / "sdist_package_manifest.txt").read_text().splitlines()
 REQUIRED_NAMES = [
     "pyproject.toml",
-    "packages/sdk-python/src/earshot/__init__.py",
-    "packages/sdk-python/src/earshot/cli.py",
-    "packages/sdk-python/src/earshot/generated/earshot/v1alpha1/incident_pb2.py",
+    *PACKAGE_NAMES,
     "packages/sdk-python/src/earshot/web/index.html",
     "packages/sdk-python/src/earshot/web/assets/index.js",
 ]
+
+
+def test_sdist_package_manifest_matches_runtime_tree() -> None:
+    package_root = ROOT / "packages" / "sdk-python" / "src" / "earshot"
+    runtime_names = sorted(
+        path.relative_to(ROOT).as_posix()
+        for path in package_root.rglob("*")
+        if path.is_file()
+        and "web" not in path.relative_to(package_root).parts
+        and (path.suffix in {".py", ".pyi"} or path.name == "py.typed")
+    )
+
+    assert runtime_names == PACKAGE_NAMES
 
 
 def _write_archive(
@@ -58,7 +70,6 @@ def test_sdist_checker_accepts_minimal_release_layout(tmp_path: Path) -> None:
         [
             *(f"{root}/{name}" for name in REQUIRED_NAMES),
             f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
-            f"{root}/packages/sdk-python/src/earshot/py.typed",
         ],
     )
 
@@ -255,6 +266,28 @@ def test_sdist_checker_rejects_non_runtime_package_debris(
     assert "unexpected archive path" in result.stderr
 
 
+def test_sdist_checker_rejects_unlisted_python_module(tmp_path: Path) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/scratch/credentials.py",
+        ],
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "unexpected archive path" in result.stderr
+
+
 def test_sdist_checker_rejects_multiple_archive_roots(tmp_path: Path) -> None:
     root = "earshot_observability-0.1.0"
     archive = tmp_path / f"{root}.tar.gz"
@@ -331,7 +364,10 @@ def test_sdist_checker_rejects_excessive_file_count(tmp_path: Path) -> None:
         archive,
         [
             *(f"{root}/{name}" for name in REQUIRED_NAMES),
-            *(f"{root}/packages/sdk-python/src/earshot/extra-{index}.py" for index in range(513)),
+            *(
+                f"{root}/packages/sdk-python/src/earshot/web/assets/extra-{index}.js"
+                for index in range(513)
+            ),
         ],
     )
 

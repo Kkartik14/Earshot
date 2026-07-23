@@ -33,8 +33,16 @@ FORBIDDEN_DIRECTORY_SEGMENTS = frozenset(
 )
 ALLOWED_ROOT_FILES = {".gitignore", "LICENSE", "PKG-INFO", "README.md", "pyproject.toml"}
 ALLOWED_PACKAGE_PREFIX = "packages/sdk-python/src/earshot/"
-ALLOWED_PACKAGE_SUFFIXES = frozenset({".py", ".pyi"})
-PACKAGE_TYPE_MARKER = f"{ALLOWED_PACKAGE_PREFIX}py.typed"
+PACKAGE_MANIFEST_PATH = pathlib.Path(__file__).with_name("sdist_package_manifest.txt")
+_package_manifest_lines = PACKAGE_MANIFEST_PATH.read_text(encoding="utf-8").splitlines()
+if _package_manifest_lines != sorted(set(_package_manifest_lines)) or any(
+    not name.startswith(ALLOWED_PACKAGE_PREFIX)
+    or name.startswith(f"{ALLOWED_PACKAGE_PREFIX}web/")
+    or not (name.endswith((".py", ".pyi")) or name == f"{ALLOWED_PACKAGE_PREFIX}py.typed")
+    for name in _package_manifest_lines
+):
+    raise RuntimeError(f"invalid source package manifest: {PACKAGE_MANIFEST_PATH}")
+ALLOWED_PACKAGE_FILES = frozenset(_package_manifest_lines)
 VIEWER_DIRECTORY = "packages/sdk-python/src/earshot/web"
 VIEWER_ASSETS_DIRECTORY = f"{VIEWER_DIRECTORY}/assets"
 VIEWER_ASSET_SUFFIXES = frozenset({".css", ".js"})
@@ -83,11 +91,9 @@ def _path_is_allowed(relative_path: str, *, directory: bool) -> bool:
             or relative_path in ALLOWED_PACKAGE_ANCESTORS
             or relative_path.startswith(ALLOWED_PACKAGE_PREFIX)
         )
-    if relative_path in ALLOWED_ROOT_FILES or relative_path == PACKAGE_TYPE_MARKER:
+    if relative_path in ALLOWED_ROOT_FILES:
         return True
-    if not relative_path.startswith(ALLOWED_PACKAGE_PREFIX):
-        return False
-    return pathlib.PurePosixPath(relative_path).suffix in ALLOWED_PACKAGE_SUFFIXES
+    return relative_path in ALLOWED_PACKAGE_FILES
 
 
 def _path_is_forbidden(name: str) -> bool:
@@ -161,11 +167,8 @@ def check_sdist(path: pathlib.Path) -> None:
                 raise SystemExit(f"{path}: unexpected archive path: {relative_path!r}")
             if member.isfile():
                 relative_files.add(relative_path)
-    required_files = {
+    required_files = ALLOWED_PACKAGE_FILES | {
         "pyproject.toml",
-        "packages/sdk-python/src/earshot/__init__.py",
-        "packages/sdk-python/src/earshot/cli.py",
-        "packages/sdk-python/src/earshot/generated/earshot/v1alpha1/incident_pb2.py",
         "packages/sdk-python/src/earshot/web/index.html",
     }
     missing = required_files - relative_files
