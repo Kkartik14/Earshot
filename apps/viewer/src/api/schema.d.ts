@@ -815,8 +815,12 @@ export interface components {
             evidence?: components["schemas"]["ExplainedEvidence"] | null;
             /** Evidence Ids */
             evidence_ids: string[];
+            /** Operation Id */
+            operation_id?: string | null;
             /** Participant Id */
             participant_id?: string | null;
+            /** Span Id */
+            span_id?: string | null;
             /** Stream Id */
             stream_id?: string | null;
             /**
@@ -824,6 +828,8 @@ export interface components {
              * @enum {string}
              */
             time_basis: "monotonic" | "source_wall" | "observed_wall";
+            /** Trace Id */
+            trace_id?: string | null;
         };
         /** ExplainedEvidence */
         ExplainedEvidence: {
