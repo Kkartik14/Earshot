@@ -50,6 +50,20 @@ DecimalNano = Annotated[
 ]
 
 
+def _int64_signed(value: str) -> str:
+    v = int(value)
+    if v > (1 << 63) - 1 or v < -(1 << 63):
+        raise ValueError("signed nanosecond value exceeds int64")
+    return value
+
+
+SignedDecimalNano = Annotated[
+    str,
+    StringConstraints(pattern=r"^-?(0|[1-9][0-9]*)$", max_length=21),
+    AfterValidator(_int64_signed),
+]
+
+
 def _nonzero_otel_id(value: str) -> str:
     if not any(character != "0" for character in value):
         raise ValueError("OTLP identifiers must not be all zero")
@@ -273,6 +287,46 @@ class Evidence(ContractModel):
     source_field: NonEmptyStr | None = None
     sample_window: TimeRange | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class ClockRelation(ContractModel):
+    """A declared calibration mapping between two clock domains.
+
+    ``offset_nano`` converts a ``from``-domain wall timestamp into the ``to``
+    domain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``
+    is an optional linear parts-per-million rate anchored at ``reference_unix_nano``,
+    so the total correction at wall time ``t`` is
+    ``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds.
+    ``uncertainty_nano`` is the calibration's own error bound and is propagated into
+    any cross-domain latency derived through this relation. ``valid_from_unix_nano``
+    and ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)
+    where the calibration is trustworthy; timestamps outside it are not aligned.
+    """
+
+    relation_id: OpaqueId
+    from_clock_domain_id: OpaqueId
+    to_clock_domain_id: OpaqueId
+    offset_nano: SignedDecimalNano
+    drift_ppm: StrictFloat | None = None
+    uncertainty_nano: DecimalNano | None = None
+    method: SemanticCode
+    reference_unix_nano: DecimalNano | None = None
+    valid_from_unix_nano: DecimalNano | None = None
+    valid_to_unix_nano: DecimalNano | None = None
+    evidence: Evidence | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def keeps_calibration_coherent(self) -> ClockRelation:
+        if self.from_clock_domain_id == self.to_clock_domain_id:
+            raise ValueError("a clock relation must map between two different domains")
+        if (
+            self.valid_from_unix_nano is not None
+            and self.valid_to_unix_nano is not None
+            and int(self.valid_to_unix_nano) < int(self.valid_from_unix_nano)
+        ):
+            raise ValueError("clock relation validity window ends before it begins")
+        return self
 
 
 class Coverage(ContractModel):
@@ -629,6 +683,7 @@ class IncidentProfile(ContractModel):
     participants: tuple[Participant, ...] = ()
     audio_streams: tuple[AudioStream, ...] = ()
     clock_domains: tuple[ClockDomain, ...] = ()
+    clock_relations: tuple[ClockRelation, ...] = ()
     coverage: tuple[Coverage, ...] = ()
     operations: tuple[Operation, ...] = ()
     events: tuple[Event, ...] = ()

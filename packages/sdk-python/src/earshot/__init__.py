@@ -38,6 +38,7 @@ from .contract import (  # noqa: F401 - legacy direct attributes; import from ea
     CaptureClassPolicy,
     CausalLink,
     ClockDomain,
+    ClockRelation,
     ConsentRecord,
     Coverage,
     DerivedAnalysis,
