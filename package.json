@@ -7,6 +7,11 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "pnpm": {
+    "overrides": {
+      "js-yaml": "4.3.0"
+    }
+  },
   "type": "module",
   "scripts": {
     "build": "turbo run build",
