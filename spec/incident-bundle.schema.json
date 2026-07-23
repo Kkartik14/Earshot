@@ -694,6 +694,134 @@
       "title": "ClockDomain",
       "type": "object"
     },
+    "ClockRelation": {
+      "additionalProperties": true,
+      "description": "A declared calibration mapping between two clock domains.\n\n``offset_nano`` converts a ``from``-domain wall timestamp into the ``to``\ndomain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``\nis an optional linear parts-per-million rate anchored at ``reference_unix_nano``,\nso the total correction at wall time ``t`` is\n``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds.\n``uncertainty_nano`` is the calibration's own error bound and is propagated into\nany cross-domain latency derived through this relation. ``valid_from_unix_nano``\nand ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)\nwhere the calibration is trustworthy; timestamps outside it are not aligned.",
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "drift_ppm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Drift Ppm"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "from_clock_domain_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "From Clock Domain Id",
+          "type": "string"
+        },
+        "method": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Method",
+          "type": "string"
+        },
+        "offset_nano": {
+          "maxLength": 21,
+          "pattern": "^-?(0|[1-9][0-9]*)$",
+          "title": "Offset Nano",
+          "type": "string"
+        },
+        "reference_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Unix Nano"
+        },
+        "relation_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Relation Id",
+          "type": "string"
+        },
+        "to_clock_domain_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "To Clock Domain Id",
+          "type": "string"
+        },
+        "uncertainty_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uncertainty Nano"
+        },
+        "valid_from_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid From Unix Nano"
+        },
+        "valid_to_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid To Unix Nano"
+        }
+      },
+      "required": [
+        "relation_id",
+        "from_clock_domain_id",
+        "to_clock_domain_id",
+        "offset_nano",
+        "method"
+      ],
+      "title": "ClockRelation",
+      "type": "object"
+    },
     "ConsentRecord": {
       "additionalProperties": true,
       "properties": {
@@ -1315,6 +1443,14 @@
             "$ref": "#/$defs/ClockDomain"
           },
           "title": "Clock Domains",
+          "type": "array"
+        },
+        "clock_relations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ClockRelation"
+          },
+          "title": "Clock Relations",
           "type": "array"
         },
         "coverage": {
