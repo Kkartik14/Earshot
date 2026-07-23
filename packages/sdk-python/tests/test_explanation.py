@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import earshot
@@ -32,6 +33,19 @@ def _analyze(bundle):
 def _fault(name: str):
     path = ROOT / "fixtures" / "faults" / f"{name}.incident.json"
     return decode_incident_json(path.read_bytes())
+
+
+def test_viewer_fault_explanations_match_current_backend_projection() -> None:
+    viewer_fixtures = (
+        ROOT / "apps" / "viewer" / "src" / "features" / "inspector" / "__fixtures__" / "faults"
+    )
+    for path in sorted((ROOT / "fixtures" / "faults").glob("*.incident.json")):
+        name = path.name.removesuffix(".incident.json")
+        bundle = decode_incident_json(path.read_bytes())
+        analysis = _analyze(bundle)
+        explanation = explain_incident(bundle, analysis)
+        expected = json.loads((viewer_fixtures / f"{name}.explanation.json").read_text())
+        assert expected == explanation.model_dump(mode="json"), name
 
 
 def test_explanation_publishes_only_observed_operation_intervals(valid_bundle) -> None:
