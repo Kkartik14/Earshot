@@ -5,7 +5,7 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.1.0",
+  "analyzer_version": "0.2.0",
   "input_sha256": "ff29b0ba0452dfd770744539ca613bbcdd331a323b96969c7e6f27fdbe5950b3",
   "turns": [
     {
@@ -198,5 +198,6 @@
   "limitations": ["render_evidence_not_observed"],
   "diagnoses": [],
   "unassigned_operations": [],
+  "unassigned_events": [],
   "unassigned_measurements": []
 }
