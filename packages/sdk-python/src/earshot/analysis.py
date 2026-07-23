@@ -914,6 +914,280 @@ def _provider_stage_latency_fallback(
     }
 
 
+# --- Interruption causal chain -----------------------------------------------
+# The canonical, ordered stages of a barge-in teardown. Each maps to one or more
+# open Earshot event names (or, for ``intent``/``resumed``, a provider
+# measurement, and for ``tool_outcome``, a tool operation's status). A stage is
+# *observed* only when the artifact actually contains its signal; a missing stage
+# is reported as coverage with a reason, never as a fabricated coordinate.
+_STAGE_OVERLAP = "overlap_observed"
+_STAGE_INTENT = "intent"
+_STAGE_CLASSIFIED = "classified"
+_STAGE_CANCELLATION_REQUESTED = "cancellation_requested"
+_STAGE_GENERATION_STOPPED = "generation_stopped"
+_STAGE_QUEUED_AUDIO_DISCARDED = "queued_audio_discarded"
+_STAGE_TRANSPORT_STOPPED = "transport_stopped"
+_STAGE_BUFFERS_PURGED = "buffers_purged"
+_STAGE_RENDER_STOPPED = "render_stopped"
+_STAGE_RESUMED = "resumed"
+_STAGE_TOOL_OUTCOME = "tool_outcome"
+
+_OVERLAP_EVENT_NAMES = {
+    "earshot.interruption.detected",
+    "earshot.interruption.overlapping_speech",
+}
+_ACCEPTED_EVENT_NAME = "earshot.interruption.accepted"
+_IGNORED_EVENT_NAME = "earshot.interruption.ignored"
+_CLASSIFIED_EVENT_NAMES = {_ACCEPTED_EVENT_NAME, _IGNORED_EVENT_NAME}
+_MODEL_CANCELLED_EVENT_NAME = "earshot.model.cancelled"
+_CANCELLATION_REQUESTED_EVENT_NAMES = {
+    _MODEL_CANCELLED_EVENT_NAME,
+    "earshot.interruption.cancellation_requested",
+}
+_GENERATION_STOPPED_EVENT_NAMES = {"earshot.response.cancelled"}
+_QUEUED_AUDIO_DISCARDED_EVENT_NAMES = {"earshot.audio.queued.discarded"}
+_TRANSPORT_STOPPED_EVENT_NAMES = {
+    "earshot.transport.stopped",
+    "earshot.audio.send.stopped",
+}
+_BUFFERS_PURGED_EVENT_NAMES = {"earshot.audio.buffer.purged"}
+_RENDER_STOPPED_EVENT_NAMES = {"earshot.audio.render.stopped"}
+_RESUMED_EVENT_NAMES = {"earshot.interruption.resumed"}
+_INTERRUPTION_PROBABILITY_MEASUREMENT = "earshot.metric.interruption.probability"
+_INTERRUPTION_RESUMED_MEASUREMENT = "earshot.metric.interruption.resumed"
+
+
+def _first_named_event(events: Sequence[Event], names: set[str]) -> Event | None:
+    """Return the earliest event whose name is in ``names`` (deterministic).
+
+    Ordering uses the coordinate-group key, which never subtracts across clock
+    domains, so the choice is stable and source-order-invariant.
+    """
+
+    candidates = [event for event in events if event.event_name in names]
+    if not candidates:
+        return None
+    return min(candidates, key=_event_sort_key)
+
+
+def _first_measurement_sample(
+    samples: Sequence[QualitySample],
+    measurement_name: str,
+    *,
+    require_true: bool = False,
+) -> QualitySample | None:
+    for sample in sorted(samples, key=lambda item: item.sample_id):
+        for measurement in sample.measurements:
+            if measurement.name != measurement_name:
+                continue
+            if require_true and measurement.value is not True:
+                continue
+            return sample
+    return None
+
+
+def _stage_coordinate(point: TimePoint) -> tuple[str | None, str | None, str | None]:
+    """Return ``(at_nano, clock_domain_id, time_basis)`` copied from real evidence.
+
+    Prefer the monotonic reading, then source wall, then observed wall. The value
+    is taken verbatim from the evidence; analysis never synthesizes a timestamp.
+    """
+
+    domain = point.clock_domain_id
+    if point.monotonic_time_nano is not None:
+        return (point.monotonic_time_nano, domain, "monotonic")
+    if point.source_time_unix_nano is not None:
+        return (point.source_time_unix_nano, domain, "source_wall")
+    if point.observed_time_unix_nano is not None:
+        return (point.observed_time_unix_nano, domain, "observed_wall")
+    return (None, domain, None)
+
+
+def _observed_stage(
+    stage: str,
+    point: TimePoint,
+    evidence_id: str,
+    *,
+    outcome: str | None = None,
+) -> dict:
+    at_nano, clock_domain_id, time_basis = _stage_coordinate(point)
+    projected: dict[str, object] = {
+        "stage": stage,
+        "observed": True,
+        "at_nano": at_nano,
+        "clock_domain_id": clock_domain_id,
+        "time_basis": time_basis,
+        "evidence_id": evidence_id,
+    }
+    if outcome is not None:
+        projected["outcome"] = outcome
+    return projected
+
+
+def _unobserved_stage(stage: str, reason: str = "stage_not_observed") -> dict:
+    return {"stage": stage, "observed": False, "coverage_reason": reason}
+
+
+def _event_stage(stage: str, event: Event | None) -> dict:
+    if event is None:
+        return _unobserved_stage(stage)
+    return _observed_stage(stage, event.time, event.event_id)
+
+
+def _point_at_or_after(candidate: TimePoint, reference: TimePoint) -> bool | None:
+    """Return whether ``candidate >= reference`` within one comparable domain.
+
+    ``None`` means the two coordinates are not comparable (different clock domains
+    or incompatible representations), so the caller must not exclude on time.
+    """
+
+    if candidate.clock_domain_id is None or candidate.clock_domain_id != reference.clock_domain_id:
+        return None
+    if candidate.monotonic_time_nano is not None and reference.monotonic_time_nano is not None:
+        return int(candidate.monotonic_time_nano) >= int(reference.monotonic_time_nano)
+    if candidate.source_time_unix_nano is not None and reference.source_time_unix_nano is not None:
+        return int(candidate.source_time_unix_nano) >= int(reference.source_time_unix_nano)
+    return None
+
+
+def _tool_outcome_stage(
+    operations: Sequence[Operation],
+    overlap_event: Event | None,
+) -> dict:
+    """Attribute the disposition of a tool the interruption reached, if any.
+
+    A tool is eligible when it is still active at or after the overlap: its end
+    coordinate is not strictly before the overlap. When the overlap and the tool
+    are not comparable, the tool is not excluded on time. Among eligible tools the
+    earliest by coordinate is chosen deterministically, and its status is recorded
+    as the outcome (ok/error/timeout/cancelled/...).
+    """
+
+    tools = sorted(
+        (operation for operation in operations if operation.operation_name == "tool"),
+        key=_operation_sort_key,
+    )
+    if not tools:
+        return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_in_turn")
+    if overlap_event is not None:
+        eligible = [
+            operation
+            for operation in tools
+            if _point_at_or_after(operation.ended_at or operation.started_at, overlap_event.time)
+            is not False
+        ]
+    else:
+        eligible = tools
+    if not eligible:
+        return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_after_interruption")
+    chosen = eligible[0]
+    return _observed_stage(
+        _STAGE_TOOL_OUTCOME,
+        chosen.started_at,
+        chosen.operation_id,
+        outcome=chosen.status,
+    )
+
+
+def _interruption_chain(
+    turn_id: str,
+    operations: Sequence[Operation],
+    events: Sequence[Event],
+    quality_samples: Sequence[QualitySample],
+    aligner: _ClockAligner | None,
+) -> dict | None:
+    """Build the ordered causal chain a turn's interruption produced, or ``None``.
+
+    A chain exists only for a turn that actually observed an interruption -- an
+    overlap detection or a recorded accept/ignore decision. Downstream teardown
+    signals alone (a model cancel, a render stop) never conjure one.
+    """
+
+    overlap_event = _first_named_event(events, _OVERLAP_EVENT_NAMES)
+    classified_event = _first_named_event(events, _CLASSIFIED_EVENT_NAMES)
+    if overlap_event is None and classified_event is None:
+        return None
+
+    accepted_event = _first_named_event(events, {_ACCEPTED_EVENT_NAME})
+    ignored_event = _first_named_event(events, {_IGNORED_EVENT_NAME})
+    if accepted_event is not None:
+        classification = "accepted"
+    elif overlap_event is not None:
+        # Detected without an accept is a false interruption (T2-consistent).
+        classification = "false"
+    elif ignored_event is not None:
+        classification = "ignored"
+    else:
+        classification = "unknown"
+
+    cancellation_event = _first_named_event(events, _CANCELLATION_REQUESTED_EVENT_NAMES)
+    generation_event = _first_named_event(events, _GENERATION_STOPPED_EVENT_NAMES)
+    if generation_event is None:
+        # Ambiguity: with only earshot.model.cancelled present we cannot separate
+        # the request to cancel from generation actually stopping, so we read the
+        # model-cancel as the effective stop too, citing that same real event. A
+        # distinct earshot.response.cancelled, when present, is preferred above.
+        generation_event = _first_named_event(events, {_MODEL_CANCELLED_EVENT_NAME})
+    queued_event = _first_named_event(events, _QUEUED_AUDIO_DISCARDED_EVENT_NAMES)
+    transport_event = _first_named_event(events, _TRANSPORT_STOPPED_EVENT_NAMES)
+    purged_event = _first_named_event(events, _BUFFERS_PURGED_EVENT_NAMES)
+    render_stopped_event = _first_named_event(events, _RENDER_STOPPED_EVENT_NAMES)
+    resumed_event = _first_named_event(events, _RESUMED_EVENT_NAMES)
+
+    intent_sample = _first_measurement_sample(
+        quality_samples, _INTERRUPTION_PROBABILITY_MEASUREMENT
+    )
+    resumed_sample = (
+        _first_measurement_sample(
+            quality_samples, _INTERRUPTION_RESUMED_MEASUREMENT, require_true=True
+        )
+        if resumed_event is None
+        else None
+    )
+
+    stages: list[dict] = [_event_stage(_STAGE_OVERLAP, overlap_event)]
+    if intent_sample is not None:
+        stages.append(
+            _observed_stage(
+                _STAGE_INTENT, intent_sample.sample_window.start, intent_sample.sample_id
+            )
+        )
+    else:
+        stages.append(_unobserved_stage(_STAGE_INTENT))
+    stages.append(_event_stage(_STAGE_CLASSIFIED, classified_event))
+    stages.append(_event_stage(_STAGE_CANCELLATION_REQUESTED, cancellation_event))
+    stages.append(_event_stage(_STAGE_GENERATION_STOPPED, generation_event))
+    stages.append(_event_stage(_STAGE_QUEUED_AUDIO_DISCARDED, queued_event))
+    stages.append(_event_stage(_STAGE_TRANSPORT_STOPPED, transport_event))
+    stages.append(_event_stage(_STAGE_BUFFERS_PURGED, purged_event))
+    stages.append(_event_stage(_STAGE_RENDER_STOPPED, render_stopped_event))
+    if resumed_event is not None:
+        stages.append(_observed_stage(_STAGE_RESUMED, resumed_event.time, resumed_event.event_id))
+    elif resumed_sample is not None:
+        stages.append(
+            _observed_stage(
+                _STAGE_RESUMED, resumed_sample.sample_window.start, resumed_sample.sample_id
+            )
+        )
+    else:
+        stages.append(_unobserved_stage(_STAGE_RESUMED))
+    stages.append(_tool_outcome_stage(operations, overlap_event))
+
+    # Barge-in effectiveness is the overlap -> render-stop latency, computed only
+    # when both endpoints are observed and comparable (same clock, or a declared
+    # calibration aligns them); otherwise it honestly asserts no value.
+    effectiveness = _latency_metric(
+        overlap_event, render_stopped_event, "interruption_barge_in", aligner
+    )
+
+    return {
+        "turn_id": turn_id,
+        "classification": classification,
+        "stages": stages,
+        "effectiveness": effectiveness,
+    }
+
+
 def _turn_projection(
     turn_id: str,
     operations: Sequence[Operation],
@@ -1116,6 +1390,9 @@ def _turn_projection(
             {"event_name": event.event_name, "evidence_ids": [event.event_id]}
             for event in interruption_events
         ],
+        "interruption_chain": _interruption_chain(
+            turn_id, operations, events, quality_samples, aligner
+        ),
     }
 
 
