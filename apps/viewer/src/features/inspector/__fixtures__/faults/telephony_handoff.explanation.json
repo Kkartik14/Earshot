@@ -230,7 +230,7 @@
         },
         "response_latency": {
           "availability": "not_observed",
-          "basis": "receive_estimate",
+          "basis": "transport_estimate",
           "confidence": "unavailable",
           "value": null,
           "unit": null,
@@ -239,7 +239,11 @@
         },
         "tools": {
           "operation_count": 0,
+          "timed_operation_count": 0,
+          "untimed_operation_count": 0,
           "total_work_ms": 0.0,
+          "total_work_completeness": "complete",
+          "limitation": null,
           "elapsed_ms_by_clock_domain": {},
           "evidence_ids": []
         },

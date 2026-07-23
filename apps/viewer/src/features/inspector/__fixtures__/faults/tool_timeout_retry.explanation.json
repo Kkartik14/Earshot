@@ -223,7 +223,11 @@
         },
         "tools": {
           "operation_count": 2,
+          "timed_operation_count": 2,
+          "untimed_operation_count": 0,
           "total_work_ms": 1300.0,
+          "total_work_completeness": "complete",
+          "limitation": null,
           "elapsed_ms_by_clock_domain": {
             "fault-fixture-clock": 1300.0
           },
