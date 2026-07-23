@@ -148,6 +148,40 @@ def _matches_stream_direction(
         return directions == {expected_direction}
     return not require_explicit
 
+# --- Boundary-attribution SLO recipe -----------------------------------------
+# Deterministic thresholds that turn a governed measurement into a boundary
+# hypothesis. Every default is a conservative, real-time-voice-oriented value; a
+# caller may override any subset through ``SloRecipe`` without touching the rules.
+DEFAULT_PACKET_LOSS_RATIO_SLO = 0.05  # fraction 0..1; >5% loss is audibly degraded
+DEFAULT_JITTER_MS_SLO = 30.0  # ms of inter-arrival jitter a jitter buffer must absorb
+DEFAULT_ROUND_TRIP_TIME_MS_SLO = 150.0  # ms RTT; conversation feels laggy beyond this
+DEFAULT_RENDER_START_LATENCY_MS_SLO = 1500.0  # ms turn-commit -> audio actually rendering
+DEFAULT_STAGE_LATENCY_MS_SLO = 1500.0  # ms a single stt/llm/tts stage may occupy
+DEFAULT_ENDPOINTING_LATENCY_MS_SLO = 1000.0  # ms a turn_detection (EOU) decision may take
+
+
+@dataclass(frozen=True)
+class SloRecipe:
+    """Configurable thresholds for the boundary-attribution engine.
+
+    A metric is only diagnosed as an SLO breach when it was actually measured;
+    an ``unavailable``/``not_observed`` metric yields no diagnosis (the analyzer
+    says *unknown* rather than inventing slowness it did not observe). Latency
+    fields are milliseconds; ``packet_loss_ratio`` is a unit-interval fraction.
+    """
+
+    packet_loss_ratio: float = DEFAULT_PACKET_LOSS_RATIO_SLO
+    jitter_ms: float = DEFAULT_JITTER_MS_SLO
+    round_trip_time_ms: float = DEFAULT_ROUND_TRIP_TIME_MS_SLO
+    render_start_latency_ms: float = DEFAULT_RENDER_START_LATENCY_MS_SLO
+    stt_latency_ms: float = DEFAULT_STAGE_LATENCY_MS_SLO
+    llm_latency_ms: float = DEFAULT_STAGE_LATENCY_MS_SLO
+    tts_latency_ms: float = DEFAULT_STAGE_LATENCY_MS_SLO
+    endpointing_latency_ms: float = DEFAULT_ENDPOINTING_LATENCY_MS_SLO
+
+
+DEFAULT_SLO_RECIPE = SloRecipe()
+
 
 @dataclass(frozen=True)
 class Delta:
@@ -1120,11 +1154,320 @@ def _operation_turn_ids(operations: Sequence[Operation]) -> dict[str, str | None
     return resolved
 
 
+# --- Boundary-attribution engine ---------------------------------------------
+# Each rule turns governed evidence into an evidence-linked ``Diagnosis`` that
+# names the boundary at fault. Rules are deterministic and source-order-invariant
+# (inputs are sorted), they cite only real operation/event/sample ids, and they
+# emit nothing when the deciding signal is absent or unmeasured. Confidence is
+# ``measured`` when the deciding signal is a direct governed fact (a QoS reading,
+# a governed event, an operation status, a causal link) and ``inferred`` when the
+# analyzer had to derive it (an SLO breach on a computed latency, or an absence).
+_DEVICE_EVENT_PREFIX = "earshot.device."
+_TRANSPORT_EVENT_PREFIX = "earshot.transport."
+_RENDER_EVENT_PREFIX = "earshot.audio.render."
+_STALE_EVENT_NAME = "earshot.audio.render.stale"
+_INTERRUPTION_DETECTED = "earshot.interruption.detected"
+_INTERRUPTION_ACCEPTED = "earshot.interruption.accepted"
+_INTERRUPTION_IGNORED = "earshot.interruption.ignored"
+_FALSE_INTERRUPTION_SOURCE = "agent_false_interruption"
+_FAILED_STATUSES = {"error", "timeout", "failed"}
+_STAGE_LATENCY_FIELDS = {
+    "stt": "stt_latency_ms",
+    "llm": "llm_latency_ms",
+    "tts": "tts_latency_ms",
+}
+
+
+def _boundary_diagnosis_id(code: str, key: str) -> str:
+    """Derive a bounded, deterministic diagnosis id from its code and evidence."""
+
+    slug = code.replace(".", "_").replace("-", "_")
+    return f"{slug}." + hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _network_degraded_diagnoses(
+    quality_samples: Sequence[QualitySample],
+    slo: SloRecipe,
+) -> list[Diagnosis]:
+    """Attribute packet loss, jitter growth, and RTT to the transport boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for sample in sorted(quality_samples, key=lambda item: item.sample_id):
+        # An unavailable QoS sample cannot support a diagnosis: say unknown.
+        if sample.evidence is None or sample.evidence.availability.lower() != "available":
+            continue
+        breaches: set[str] = set()
+        for measurement in sample.measurements:
+            if (
+                measurement_value_limitation(measurement.name, measurement.value, measurement.unit)
+                is not None
+            ):
+                continue
+            value = measurement.value
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            name = measurement.name.lower()
+            in_ms = value * 1_000 if measurement.unit == "s" else value
+            is_packet_loss = name == "packet_loss_ratio" or name.endswith(
+                (".packet_loss_ratio", "_packet_loss_ratio")
+            )
+            is_rtt = "round_trip" in name or "roundtrip" in name or name.endswith((".rtt", "_rtt"))
+            if is_packet_loss and value > slo.packet_loss_ratio:
+                breaches.add("packet_loss_ratio_exceeds_slo")
+            elif "jitter" in name and in_ms > slo.jitter_ms:
+                breaches.add("jitter_exceeds_slo")
+            elif is_rtt and in_ms > slo.round_trip_time_ms:
+                breaches.add("round_trip_time_exceeds_slo")
+        if breaches:
+            diagnoses.append(
+                Diagnosis(
+                    diagnosis_id=_boundary_diagnosis_id("network.degraded", sample.sample_id),
+                    code="network.degraded",
+                    summary="network_degraded",
+                    confidence="measured",
+                    evidence_refs=(sample.sample_id,),
+                    limitations=tuple(sorted(breaches)),
+                )
+            )
+    return diagnoses
+
+
+def _tool_retry_diagnoses(operations: Sequence[Operation]) -> list[Diagnosis]:
+    """Attribute a failure-then-retry pattern to the tool boundary."""
+
+    by_id = {operation.operation_id: operation for operation in operations}
+    diagnoses: list[Diagnosis] = []
+    for operation in sorted(operations, key=lambda item: item.operation_id):
+        if operation.operation_name != "tool":
+            continue
+        for link in operation.links:
+            if link.relationship != "retries" or link.target_operation_id is None:
+                continue
+            target = by_id.get(link.target_operation_id)
+            if (
+                target is None
+                or target.operation_name != "tool"
+                or target.status not in _FAILED_STATUSES
+            ):
+                continue
+            evidence_refs = tuple(sorted({target.operation_id, operation.operation_id}))
+            diagnoses.append(
+                Diagnosis(
+                    diagnosis_id=_boundary_diagnosis_id(
+                        "tool.retry", f"{target.operation_id}->{operation.operation_id}"
+                    ),
+                    code="tool.retry",
+                    summary="tool_retry",
+                    confidence="measured",
+                    evidence_refs=evidence_refs,
+                )
+            )
+    return diagnoses
+
+
+def _event_prefix_diagnoses(
+    events: Sequence[Event],
+    *,
+    code: str,
+    summary: str,
+    match: object,
+) -> list[Diagnosis]:
+    """Emit one measured diagnosis citing every event that matches ``match``."""
+
+    matched = sorted(
+        (event for event in events if match(event.event_name)),
+        key=lambda event: event.event_id,
+    )
+    if not matched:
+        return []
+    evidence_refs = tuple(event.event_id for event in matched)
+    return [
+        Diagnosis(
+            diagnosis_id=_boundary_diagnosis_id(code, "|".join(evidence_refs)),
+            code=code,
+            summary=summary,
+            confidence="measured",
+            evidence_refs=evidence_refs,
+        )
+    ]
+
+
+def _device_unavailable_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute permission/context loss to the capture boundary."""
+
+    return _event_prefix_diagnoses(
+        events,
+        code="device.unavailable",
+        summary="device_unavailable",
+        match=lambda name: name.startswith(_DEVICE_EVENT_PREFIX),
+    )
+
+
+def _transport_reconnect_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute reconnect/duplicate/out-of-order signals to the transport boundary."""
+
+    if not any(event.event_name == "earshot.transport.reconnecting" for event in events):
+        return []
+    return _event_prefix_diagnoses(
+        events,
+        code="transport.reconnect",
+        summary="transport_reconnect",
+        match=lambda name: name.startswith(_TRANSPORT_EVENT_PREFIX),
+    )
+
+
+def _stale_playback_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute stale-buffer playback to the decode/render boundary."""
+
+    return _event_prefix_diagnoses(
+        events,
+        code="audio.stale_playback",
+        summary="audio_stale_playback",
+        match=lambda name: name == _STALE_EVENT_NAME,
+    )
+
+
+def _interruption_false_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute a detected-but-never-accepted interruption to the interruption boundary.
+
+    A cleanly handled barge-in (detected *then* accepted) and a well-handled
+    native accept (accepted with no detection) both produce nothing.
+    """
+
+    buckets: dict[str | None, list[Event]] = defaultdict(list)
+    for event in events:
+        if event.event_name in {
+            _INTERRUPTION_DETECTED,
+            _INTERRUPTION_ACCEPTED,
+            _INTERRUPTION_IGNORED,
+        }:
+            buckets[event.turn_id].append(event)
+    diagnoses: list[Diagnosis] = []
+    for turn_id in sorted(buckets, key=lambda value: (value is None, value or "")):
+        bucket = buckets[turn_id]
+        names = {event.event_name for event in bucket}
+        if _INTERRUPTION_DETECTED not in names or _INTERRUPTION_ACCEPTED in names:
+            continue
+        cited = sorted(
+            (
+                event
+                for event in bucket
+                if event.event_name in {_INTERRUPTION_DETECTED, _INTERRUPTION_IGNORED}
+            ),
+            key=lambda event: event.event_id,
+        )
+        evidence_refs = tuple(event.event_id for event in cited)
+        explicit_false = _INTERRUPTION_IGNORED in names or any(
+            event.evidence is not None and event.evidence.source == _FALSE_INTERRUPTION_SOURCE
+            for event in bucket
+        )
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("interruption.false", "|".join(evidence_refs)),
+                code="interruption.false",
+                summary="interruption_false",
+                confidence="measured" if explicit_false else "inferred",
+                evidence_refs=evidence_refs,
+            )
+        )
+    return diagnoses
+
+
+def _render_delayed_diagnoses(turns: Sequence[dict], slo: SloRecipe) -> list[Diagnosis]:
+    """Attribute an excessive turn-commit -> render latency to the render boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for turn in turns:
+        metric = turn["metrics"]["render_start_response_latency"]
+        # not_observed / unavailable render latency is unknown, never a fault.
+        if metric.get("availability") != "available":
+            continue
+        value = metric.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        if value <= slo.render_start_latency_ms:
+            continue
+        evidence_refs = tuple(metric.get("evidence_ids", ()))
+        if not evidence_refs:
+            continue
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("render.delayed", str(turn["turn_id"])),
+                code="render.delayed",
+                summary="render_delayed",
+                confidence="inferred",
+                evidence_refs=evidence_refs,
+                limitations=("render_start_latency_exceeds_slo",),
+            )
+        )
+    return diagnoses
+
+
+def _stage_slow_diagnoses(
+    operations: Sequence[Operation],
+    slo: SloRecipe,
+    aligner: _ClockAligner | None,
+) -> list[Diagnosis]:
+    """Attribute an over-SLO stt/llm/tts duration to that stage boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for operation in sorted(operations, key=lambda item: item.operation_id):
+        field = _STAGE_LATENCY_FIELDS.get(operation.operation_name)
+        if field is None:
+            continue
+        nanos = _interval_nanos(operation, aligner)
+        if nanos is None:
+            continue
+        if nanos / 1_000_000 <= getattr(slo, field):
+            continue
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("stage.slow", operation.operation_id),
+                code="stage.slow",
+                summary=f"{operation.operation_name}_stage_slow",
+                confidence="inferred",
+                evidence_refs=(operation.operation_id,),
+                limitations=(f"{operation.operation_name}_latency_exceeds_slo",),
+            )
+        )
+    return diagnoses
+
+
+def _endpointing_slow_diagnoses(
+    operations: Sequence[Operation],
+    slo: SloRecipe,
+    aligner: _ClockAligner | None,
+) -> list[Diagnosis]:
+    """Attribute an over-SLO end-of-utterance decision to the turn-detection boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for operation in sorted(operations, key=lambda item: item.operation_id):
+        if operation.operation_name != "turn_detection":
+            continue
+        nanos = _interval_nanos(operation, aligner)
+        if nanos is None:
+            continue
+        if nanos / 1_000_000 <= slo.endpointing_latency_ms:
+            continue
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("endpointing.slow", operation.operation_id),
+                code="endpointing.slow",
+                summary="endpointing_slow",
+                confidence="inferred",
+                evidence_refs=(operation.operation_id,),
+                limitations=("endpointing_latency_exceeds_slo",),
+            )
+        )
+    return diagnoses
+
+
 def analyze_incident(
     bundle: IncidentBundle,
     *,
     input_sha256: str,
     generated_at_unix_nano: int | str,
+    slo: SloRecipe | None = None,
 ) -> DerivedAnalysis:
     """Return a stable projection for an exact immutable input digest."""
 
@@ -1211,9 +1554,10 @@ def analyze_incident(
         for turn_id in ordered_turn_ids
     ]
 
+    recipe = slo if slo is not None else DEFAULT_SLO_RECIPE
     diagnoses: list[Diagnosis] = []
     for operation in sorted(profile.operations, key=lambda item: item.operation_id):
-        if operation.status in {"error", "timeout", "failed"}:
+        if operation.status in _FAILED_STATUSES:
             diagnoses.append(
                 Diagnosis(
                     diagnosis_id=(
@@ -1226,6 +1570,21 @@ def analyze_incident(
                     evidence_refs=(operation.operation_id,),
                 )
             )
+
+    # Boundary attribution layers evidence-linked hypotheses on top of the raw
+    # operation.failed facts: the failure and its retry pattern can co-exist,
+    # each citing its own evidence. The combined list is sorted for a stable,
+    # source-order-invariant projection.
+    diagnoses.extend(_network_degraded_diagnoses(profile.quality_samples, recipe))
+    diagnoses.extend(_tool_retry_diagnoses(profile.operations))
+    diagnoses.extend(_device_unavailable_diagnoses(profile.events))
+    diagnoses.extend(_transport_reconnect_diagnoses(profile.events))
+    diagnoses.extend(_stale_playback_diagnoses(profile.events))
+    diagnoses.extend(_interruption_false_diagnoses(profile.events))
+    diagnoses.extend(_render_delayed_diagnoses(turns, recipe))
+    diagnoses.extend(_stage_slow_diagnoses(profile.operations, recipe, aligner))
+    diagnoses.extend(_endpointing_slow_diagnoses(profile.operations, recipe, aligner))
+    diagnoses.sort(key=lambda item: item.diagnosis_id)
 
     render_availabilities = {
         entry.availability
