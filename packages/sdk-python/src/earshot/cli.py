@@ -18,6 +18,8 @@ from .codec import (
     encode_incident_json,
     encode_incident_protobuf,
 )
+from .exporters import span_count, to_openinference, to_otlp
+from .exporters.push import OtlpHttpExporter
 from .privacy import ExportPolicyError, assert_export_allowed
 from .query import EvidenceQuery, compare_incidents
 from .storage import DEFAULT_PROJECT_ID, IncidentStore, StorageError
@@ -207,6 +209,53 @@ def _diff_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_headers(pairs: Sequence[str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for pair in pairs:
+        key, separator, value = pair.partition("=")
+        if not separator or not key:
+            raise ValueError("headers must be supplied as KEY=VALUE")
+        headers[key.strip()] = value
+    return headers
+
+
+def _export_command(arguments: argparse.Namespace) -> int:
+    bundle = _decode_file(Path(arguments.path))
+    # Respect any declared export restriction, exactly like ``show`` does.
+    assert_export_allowed(bundle, "otlp")
+    document = to_openinference(bundle) if arguments.format == "openinference" else to_otlp(bundle)
+
+    if arguments.out is not None:
+        Path(arguments.out).write_text(
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if arguments.push_otlp is not None:
+        exporter = OtlpHttpExporter(arguments.push_otlp, headers=_parse_headers(arguments.header))
+        result = exporter.export(document)
+        _print_json(
+            {
+                "endpoint": exporter.endpoint,
+                "error": result.error,
+                "ok": result.ok,
+                "retryable": result.retryable,
+                "spans": result.spans,
+                "status": result.status,
+            }
+        )
+        return 0 if result.ok else 1
+
+    if arguments.out is not None:
+        _print_json(
+            {"format": arguments.format, "out": str(arguments.out), "spans": span_count(document)}
+        )
+        return 0
+
+    _print_json(document)
+    return 0
+
+
 def _serve_command(arguments: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -351,6 +400,27 @@ def _build_parser() -> argparse.ArgumentParser:
     diff.add_argument("incident")
     diff.add_argument("known_good")
     diff.set_defaults(handler=_diff_command)
+
+    export = commands.add_parser(
+        "export",
+        help="project an incident into OTLP or OpenInference and optionally push it",
+    )
+    export.add_argument("path")
+    export.add_argument("--format", choices=("otlp", "openinference"), required=True)
+    export.add_argument("--out", help="write the projected OTLP/JSON document to this file")
+    export.add_argument(
+        "--push-otlp",
+        metavar="ENDPOINT",
+        help="POST the projected document to an OTLP traces endpoint (e.g. Phoenix/Langfuse)",
+    )
+    export.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="header to send with --push-otlp (repeatable), e.g. authentication",
+    )
+    export.set_defaults(handler=_export_command)
 
     serve = commands.add_parser("serve", help="run the local ingest API")
     serve.add_argument("--data-dir")
