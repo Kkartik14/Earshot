@@ -255,6 +255,19 @@ def _explained_measurement(
     )
 
 
+def _measurement_sort_key(
+    value: ExplainedMeasurement,
+) -> tuple[tuple[str, ...], str, str, str, str, str]:
+    return (
+        value.evidence_ids,
+        value.name,
+        value.unit,
+        value.aggregation,
+        type(value.value).__name__,
+        repr(value.value),
+    )
+
+
 def _operation(
     value: Operation,
     samples: tuple[QualitySample, ...],
@@ -277,10 +290,15 @@ def _operation(
     provider = attributes.get("gen_ai.provider.name")
     model = attributes.get("gen_ai.request.model")
     measurements = tuple(
-        _explained_measurement(sample, measurement)
-        for sample in samples
-        if _sample_belongs_to_operation(sample, value)
-        for measurement in sample.measurements
+        sorted(
+            (
+                _explained_measurement(sample, measurement)
+                for sample in samples
+                if _sample_belongs_to_operation(sample, value)
+                for measurement in sample.measurements
+            ),
+            key=_measurement_sort_key,
+        )
     )
     return ExplainedOperation(
         operation_id=value.operation_id,
@@ -400,25 +418,24 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
         )
     )
 
-    # Provider scalars the analyzer could not bind to a turn. The analyzer is the
-    # authority on which samples are unassigned; we project their measurements
-    # faithfully and sort so the output is invariant to source ordering.
-    sample_by_id = {sample.sample_id: sample for sample in samples}
+    # Every provider scalar without an explicit operation owner remains available
+    # as an exact fact. Turn metrics may select or aggregate these samples for a
+    # derived scalar, but that lossy read model cannot replace the source facts.
+    operation_owned_sample_ids = {
+        sample.sample_id
+        for sample in samples
+        if isinstance(sample.attributes.get("earshot.operation.id"), str)
+        and sample.attributes["earshot.operation.id"] in operations
+    }
     unassigned_measurements = tuple(
         sorted(
             (
-                _explained_measurement(sample_by_id[sample_id], measurement)
-                for sample_id in analysis.projections.unassigned_provider_measurements
-                if sample_id in sample_by_id
-                for measurement in sample_by_id[sample_id].measurements
+                _explained_measurement(sample, measurement)
+                for sample in samples
+                if sample.sample_id not in operation_owned_sample_ids
+                for measurement in sample.measurements
             ),
-            key=lambda item: (
-                item.evidence_ids[0],
-                item.name,
-                item.unit,
-                item.aggregation,
-                str(item.value),
-            ),
+            key=_measurement_sort_key,
         )
     )
 

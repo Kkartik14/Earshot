@@ -377,7 +377,9 @@ def test_explanation_retains_non_prefixed_owned_measurement() -> None:
     assert retained["livekit.llm_node_ttft"].confidence == "unavailable"
 
 
-def test_explanation_keeps_turn_only_measurement_off_unrelated_operations() -> None:
+def test_explanation_keeps_every_turn_only_measurement_as_an_exact_unassigned_fact(
+    monkeypatch,
+) -> None:
     session = earshot.pipeline(
         session_id="turn-only-measurement-session",
         started_at_unix_nano=1_752_800_000_000_000_000,
@@ -387,39 +389,99 @@ def test_explanation_keeps_turn_only_measurement_off_unrelated_operations() -> N
         turn.llm("openai", ttft_ms=180)
         turn.tts("cartesia", ttfb_ms=70)
     bundle = session.close()
-    turn_only_sample = QualitySample(
-        sample_id="quality-turn-only",
-        session_id=bundle.profile.session.session_id,
-        quality_kind="provider.metric",
-        sample_window=TimeRange(
-            start=bundle.profile.operations[0].started_at,
-            end=bundle.profile.operations[-1].ended_at or bundle.profile.operations[-1].started_at,
-        ),
-        measurements=(
-            QualityMeasurement(
-                name="provider.turn_latency",
-                value=340.0,
-                unit="ms",
-                aggregation="instant",
+    sample_window = TimeRange(
+        start=bundle.profile.operations[0].started_at,
+        end=bundle.profile.operations[-1].ended_at or bundle.profile.operations[-1].started_at,
+    )
+    turn_only_samples = tuple(
+        QualitySample(
+            sample_id=sample_id,
+            session_id=bundle.profile.session.session_id,
+            quality_kind="provider.metric",
+            sample_window=sample_window,
+            measurements=(
+                QualityMeasurement(
+                    name="provider.queue_depth",
+                    value=value,
+                    unit="{item}",
+                    aggregation="instant",
+                ),
             ),
-        ),
-        attributes={"earshot.turn.id": "turn-only"},
+            evidence=Evidence(
+                source="provider",
+                observer="server",
+                method="provider_reported",
+                confidence="measured",
+                availability="available",
+                source_field=source_field,
+            ),
+            attributes={"earshot.turn.id": "turn-only"},
+        )
+        for sample_id, value, source_field in (
+            ("quality-turn-only-1", 10, "queue.depth.first"),
+            ("quality-turn-only-2", 20, "queue.depth.second"),
+        )
     )
     bundle = replace_profile(
         bundle,
-        quality_samples=(*bundle.profile.quality_samples, turn_only_sample),
+        quality_samples=(*bundle.profile.quality_samples, *turn_only_samples),
     )
 
-    explanation = explain_incident(bundle, _analyze(bundle))
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
 
     [explained_turn] = explanation.turns
-    assert explained_turn.metrics.provider_measurements["provider.turn_latency"].evidence_ids == (
-        "quality-turn-only",
+    assert explained_turn.metrics.provider_measurements["provider.queue_depth"].evidence_ids == (
+        "quality-turn-only-1",
     )
     assert all(
-        "provider.turn_latency" not in {item.name for item in operation.measurements}
+        "provider.queue_depth" not in {item.name for item in operation.measurements}
         for operation in explained_turn.operations
     )
+    exact_facts = [
+        measurement
+        for measurement in explanation.unassigned_measurements
+        if measurement.name == "provider.queue_depth"
+    ]
+    assert [(item.evidence_ids, item.value) for item in exact_facts] == [
+        (("quality-turn-only-1",), 10),
+        (("quality-turn-only-2",), 20),
+    ]
+    assert [item.evidence.source_field for item in exact_facts if item.evidence is not None] == [
+        "queue.depth.first",
+        "queue.depth.second",
+    ]
+    assert validate_explanation(bundle, analysis, explanation).ok
+
+    permuted = replace_profile(
+        bundle,
+        quality_samples=tuple(reversed(bundle.profile.quality_samples)),
+    )
+    permuted_analysis = analyze_incident(
+        permuted,
+        input_sha256=analysis.input_sha256,
+        generated_at_unix_nano=analysis.generated_at_unix_nano,
+    )
+    assert permuted_analysis == analysis
+    assert explain_incident(permuted, permuted_analysis) == explanation
+
+    dropped = explanation.model_copy(
+        update={
+            "unassigned_measurements": tuple(
+                item
+                for item in explanation.unassigned_measurements
+                if item.evidence_ids != ("quality-turn-only-2",)
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "earshot.explanation.explain_incident",
+        lambda _bundle, _analysis: dropped,
+    )
+
+    report = validate_explanation(bundle, analysis, dropped)
+
+    assert "EARSHOT_EXPLANATION_MEASUREMENT_DROPPED" in {issue.code for issue in report.errors}
 
 
 def test_explanation_surfaces_unassigned_measurements_without_turns() -> None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -2607,6 +2608,72 @@ def validate_explanation(
                 code="EARSHOT_EXPLANATION_UNASSIGNED_MEASUREMENT_MISMATCH",
                 path=("explanation", "unassigned_measurements"),
                 message=("unassigned measurements differ from the exact source projection"),
+            )
+        )
+
+    # Check source-measurement completeness independently of the projection helper.
+    # This prevents a lossy derivation bug from validating itself by recomputing the
+    # same incomplete read model. Derived turn metrics are intentionally excluded;
+    # exact facts live on their owned operation or in unassigned_measurements.
+    def measurement_fact(
+        evidence_id: str,
+        name: str,
+        value: bool | int | float,
+        unit: str,
+        aggregation: str,
+    ) -> tuple[str, str, str, str, str, str]:
+        return evidence_id, name, type(value).__name__, repr(value), unit, aggregation
+
+    source_measurement_facts = Counter(
+        measurement_fact(
+            sample.sample_id,
+            measurement.name,
+            measurement.value,
+            measurement.unit,
+            measurement.aggregation,
+        )
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    )
+    explained_exact_measurements = (
+        measurement
+        for operation in (operation for turn in explanation.turns for operation in turn.operations)
+        for measurement in operation.measurements
+    )
+    explained_exact_measurements = (
+        *explained_exact_measurements,
+        *(
+            measurement
+            for operation in explanation.unassigned_operations
+            for measurement in operation.measurements
+        ),
+        *explanation.unassigned_measurements,
+    )
+    explained_measurement_facts = Counter(
+        measurement_fact(
+            evidence_id,
+            measurement.name,
+            measurement.value,
+            measurement.unit,
+            measurement.aggregation,
+        )
+        for measurement in explained_exact_measurements
+        for evidence_id in measurement.evidence_ids
+    )
+    if source_measurement_facts - explained_measurement_facts:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_MEASUREMENT_DROPPED",
+                path=("explanation", "measurements"),
+                message="source quality measurement is absent from the explanation",
+            )
+        )
+    if explained_measurement_facts - source_measurement_facts:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_MEASUREMENT_INVENTED",
+                path=("explanation", "measurements"),
+                message="explanation measurement is absent from source quality evidence",
             )
         )
 
