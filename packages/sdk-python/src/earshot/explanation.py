@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -217,15 +216,9 @@ def _coordinate(
 def _sample_belongs_to_operation(
     sample: QualitySample,
     operation: Operation,
-    *,
-    matching_stage_count: int,
 ) -> bool:
     explicit_owner = sample.attributes.get("earshot.operation.id")
-    if explicit_owner is not None:
-        return isinstance(explicit_owner, str) and explicit_owner == operation.operation_id
-    return (
-        matching_stage_count == 1 and sample.attributes.get("earshot.turn.id") == operation.turn_id
-    )
+    return isinstance(explicit_owner, str) and explicit_owner == operation.operation_id
 
 
 def _explained_measurement(
@@ -260,8 +253,6 @@ def _explained_measurement(
 def _operation(
     value: Operation,
     samples: tuple[QualitySample, ...],
-    *,
-    matching_stage_count: int,
 ) -> ExplainedOperation:
     basis, domain, start = _coordinate(value.started_at)
     end: str | None = None
@@ -283,11 +274,7 @@ def _operation(
     measurements = tuple(
         _explained_measurement(sample, measurement)
         for sample in samples
-        if _sample_belongs_to_operation(
-            sample,
-            value,
-            matching_stage_count=matching_stage_count,
-        )
+        if _sample_belongs_to_operation(sample, value)
         for measurement in sample.measurements
     )
     return ExplainedOperation(
@@ -360,11 +347,6 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 _operation(
                     operation,
                     samples,
-                    matching_stage_count=sum(
-                        candidate.operation_name == operation.operation_name
-                        for identity in turn.operation_ids
-                        if (candidate := operations.get(identity)) is not None
-                    ),
                 )
                 for operation in sorted(
                     (
@@ -401,17 +383,8 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
         ),
         key=_operation_order,
     )
-    unassigned_stage_counts = Counter(
-        (operation.turn_id, operation.operation_name) for operation in unassigned_source_operations
-    )
     unassigned_operations = tuple(
-        _operation(
-            operation,
-            samples,
-            matching_stage_count=unassigned_stage_counts[
-                (operation.turn_id, operation.operation_name)
-            ],
-        )
+        _operation(operation, samples)
         for operation in unassigned_source_operations
     )
 

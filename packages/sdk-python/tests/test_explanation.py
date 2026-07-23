@@ -303,6 +303,52 @@ def test_explanation_retains_non_prefixed_owned_measurement() -> None:
     assert retained["livekit.llm_node_ttft"].confidence == "unavailable"
 
 
+def test_explanation_keeps_turn_only_measurement_off_unrelated_operations() -> None:
+    session = earshot.pipeline(
+        session_id="turn-only-measurement-session",
+        started_at_unix_nano=1_752_800_000_000_000_000,
+    )
+    with session.turn(turn_id="turn-only") as turn:
+        turn.stt("deepgram", ttfb_ms=90)
+        turn.llm("openai", ttft_ms=180)
+        turn.tts("cartesia", ttfb_ms=70)
+    bundle = session.close()
+    turn_only_sample = QualitySample(
+        sample_id="quality-turn-only",
+        session_id=bundle.profile.session.session_id,
+        quality_kind="provider.metric",
+        sample_window=TimeRange(
+            start=bundle.profile.operations[0].started_at,
+            end=bundle.profile.operations[-1].ended_at
+            or bundle.profile.operations[-1].started_at,
+        ),
+        measurements=(
+            QualityMeasurement(
+                name="provider.turn_latency",
+                value=340.0,
+                unit="ms",
+                aggregation="instant",
+            ),
+        ),
+        attributes={"earshot.turn.id": "turn-only"},
+    )
+    bundle = replace_profile(
+        bundle,
+        quality_samples=(*bundle.profile.quality_samples, turn_only_sample),
+    )
+
+    explanation = explain_incident(bundle, _analyze(bundle))
+
+    [explained_turn] = explanation.turns
+    assert explained_turn.metrics.provider_measurements[
+        "provider.turn_latency"
+    ].evidence_ids == ("quality-turn-only",)
+    assert all(
+        "provider.turn_latency" not in {item.name for item in operation.measurements}
+        for operation in explained_turn.operations
+    )
+
+
 def test_explanation_surfaces_unassigned_measurements_without_turns() -> None:
     bundle = _fault("webrtc_degradation")
 
