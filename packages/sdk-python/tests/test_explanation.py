@@ -1292,7 +1292,7 @@ def test_validate_explanation_independently_rejects_duplicate_diagnosis(monkeypa
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
     explanation = explain_incident(bundle, analysis)
-    [diagnosis] = explanation.diagnoses
+    diagnosis = explanation.diagnoses[0]
     duplicated = explanation.model_copy(update={"diagnoses": (*explanation.diagnoses, diagnosis)})
     monkeypatch.setattr(
         explanation_module,

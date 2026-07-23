@@ -841,11 +841,12 @@ describe("per-operation error / status", () => {
 describe("diagnoses", () => {
   it("surfaces the operation.failed diagnosis with its evidence operation and turn", () => {
     const diagnoses = buildDiagnoses(asExplanation(toolTimeoutRetry));
-    expect(diagnoses).toHaveLength(1);
-    const diag = diagnoses[0];
-    expect(diag.code).toBe("operation.failed");
-    expect(diag.confidence).toBe("measured");
-    expect(diag.evidence).toEqual([{ id: "op-tool-attempt-1", turnIndex: 0 }]);
+    // The analyzer now also attributes the retry pattern (tool.retry) alongside
+    // the raw operation.failed fact; both cite the timed-out tool operation.
+    const diag = diagnoses.find((d) => d.code === "operation.failed");
+    expect(diag).toBeDefined();
+    expect(diag!.confidence).toBe("measured");
+    expect(diag!.evidence).toEqual([{ id: "op-tool-attempt-1", turnIndex: 0 }]);
   });
 
   it("returns no diagnoses when the explanation carries none", () => {

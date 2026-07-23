@@ -15,6 +15,7 @@ import earshot
 from adapter_conformance import assert_capture_conforms
 from earshot.adapters.providers import GeminiLiveAdapter, OpenAIRealtimeAdapter
 from earshot.analysis import analyze_incident
+from earshot.clock import ManualClock
 from earshot.codec import analysis_input_sha256, encode_incident_json, encode_incident_protobuf
 from earshot.recorder import RecorderConfig
 from earshot.validation import validate_incident
@@ -255,7 +256,7 @@ def _capture_gemini(status: str = "completed") -> earshot.IncidentBundle:
     session = earshot.pipeline(
         session_id="gemini-conformance",
         bundle_id="gemini-conformance-bundle",
-        started_at_unix_nano=START,
+        clock=ManualClock(wall=START, monotonic=0),
         config=RecorderConfig(clock_domain_id="conformance-clock"),
     )
     with session.turn(turn_id="turn-0") as turn:

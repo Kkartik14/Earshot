@@ -434,7 +434,9 @@ describe("Diagnoses panel", () => {
     expect(screen.getByRole("heading", { name: /diagnoses/i })).toBeInTheDocument();
     expect(screen.getByText("operation.failed")).toBeInTheDocument();
     // The evidence operation is a selectable chip that reports its turn + op id.
-    const chip = screen.getByRole("button", { name: "op-tool-attempt-1" });
+    // Both operation.failed and tool.retry cite this op, so it appears more than
+    // once; clicking any chip reports the same turn + op id.
+    const chip = screen.getAllByRole("button", { name: "op-tool-attempt-1" })[0];
     fireEvent.click(chip);
     expect(onSelect).toHaveBeenCalledWith(0, "op-tool-attempt-1");
   });
