@@ -2396,7 +2396,7 @@ def validate_explanation(
         )
     source_coverage = tuple(
         (item.signal, item.availability, item.reason, evidence_fact(item.evidence))
-        for item in bundle.profile.coverage
+        for item in sorted(bundle.profile.coverage, key=lambda item: item.signal)
     )
     explained_coverage = tuple(
         (item.signal, item.availability, item.reason, evidence_fact(item.evidence))
@@ -2418,7 +2418,10 @@ def validate_explanation(
             item.count,
             tuple(item.source_refs),
         )
-        for item in bundle.profile.privacy.omissions
+        for item in sorted(
+            bundle.profile.privacy.omissions,
+            key=lambda item: item.omission_id,
+        )
     )
     explained_omissions = tuple(
         (

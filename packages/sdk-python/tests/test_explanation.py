@@ -10,9 +10,11 @@ import earshot.explanation as explanation_module
 from earshot.analysis import ANALYZER_VERSION, analyze_incident
 from earshot.codec import analysis_input_sha256, decode_incident_json
 from earshot.contract import (
+    Coverage,
     ErrorRecord,
     Event,
     Evidence,
+    Omission,
     Operation,
     QualityMeasurement,
     QualitySample,
@@ -101,6 +103,47 @@ def test_explanation_keeps_exact_nanos_and_provenance(valid_bundle) -> None:
     assert explanation.session_status == "completed"
     assert explanation.coverage[0].signal == "client.render"
     assert explanation.coverage[0].availability == "available"
+
+
+def test_explanation_metadata_arrays_are_permutation_invariant(valid_bundle) -> None:
+    coverage = (
+        *valid_bundle.profile.coverage,
+        Coverage(signal="transport.health", availability="available"),
+        Coverage(signal="provider.metrics", availability="available"),
+    )
+    omissions = (
+        Omission(
+            omission_id="omission-z",
+            capture_class="transcript",
+            reason="capture_class_disabled",
+        ),
+        Omission(
+            omission_id="omission-a",
+            capture_class="audio",
+            reason="capture_class_disabled",
+        ),
+    )
+    privacy = valid_bundle.profile.privacy.model_copy(update={"omissions": omissions})
+    bundle = replace_profile(valid_bundle, coverage=coverage, privacy=privacy)
+    assert validate_incident(bundle).ok
+
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    permuted_privacy = privacy.model_copy(update={"omissions": tuple(reversed(omissions))})
+    permuted = replace_profile(
+        bundle,
+        coverage=tuple(reversed(coverage)),
+        privacy=permuted_privacy,
+    )
+    assert validate_incident(permuted).ok
+    permuted_analysis = analyze_incident(
+        permuted,
+        input_sha256=analysis.input_sha256,
+        generated_at_unix_nano=analysis.generated_at_unix_nano,
+    )
+
+    assert permuted_analysis == analysis
+    assert explain_incident(permuted, permuted_analysis) == explanation
 
 
 def test_explanation_preserves_event_operation_and_otel_identity(valid_bundle) -> None:

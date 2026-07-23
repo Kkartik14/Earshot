@@ -465,7 +465,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 reason=item.reason,
                 evidence=_evidence(item.evidence),
             )
-            for item in profile.coverage
+            for item in sorted(profile.coverage, key=lambda item: item.signal)
         ),
         omissions=tuple(
             ExplainedOmission(
@@ -475,7 +475,10 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 count=item.count,
                 source_refs=item.source_refs,
             )
-            for item in profile.privacy.omissions
+            for item in sorted(
+                profile.privacy.omissions,
+                key=lambda item: item.omission_id,
+            )
         ),
         limitations=analysis.projections.limitations,
         diagnoses=tuple(_diagnosis(item) for item in analysis.diagnoses),
