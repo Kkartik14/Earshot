@@ -18,7 +18,7 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
-The current deterministic analyzer identity is `earshot.deterministic@0.3.2`.
+The current deterministic analyzer identity is `earshot.deterministic@0.4.0`.
 Analyzer version is part of the storage cache key; behavior changes such as delta-window
 aggregation therefore cannot reuse a projection produced by an older analyzer.
 
@@ -97,9 +97,13 @@ observed send, receive, or render evidence. Their projection carries
 `server_output_excludes_delivery_and_render` so server playout cannot be mistaken for
 client render or human perception.
 
-Cross-clock subtraction requires the same explicit clock domain. Reversed comparable
-time is `inconsistent`; missing/incomparable time is unavailable, never clamped to
-zero. Parallel tool output reports total work plus union elapsed time separately for
+Within one clock domain, subtraction is an exact difference across every shared basis;
+a reversed comparable time is `inconsistent`. Cross-clock latency between two clock
+domains is _unavailable_ unless a declared, in-window `ClockRelation` calibration aligns
+the endpoints' wall timestamps, in which case it is reported as an _estimated_ latency
+carrying the relation's propagated uncertainty — it is never _measured_. A reversed
+calibrated difference is `inconsistent`; missing or incomparable time stays unavailable,
+never clamped to zero. Parallel tool output reports total work plus union elapsed time separately for
 each source clock/basis. `elapsed_ms_by_clock_domain` is a nested map whose outer keys
 are exact clock-domain IDs and whose inner keys are `monotonic` or `source_wall`; IDs
 are never parsed or suffixed. Values are finite and nonnegative, and independent

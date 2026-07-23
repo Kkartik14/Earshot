@@ -233,9 +233,14 @@ acknowledgement at the close boundary matters more than callback latency.
 
 `delivery_mode="durable"` requires an explicit `spool_dir`. It persists the already
 privacy-filtered whole incident before delivery and replays retained incidents after a
-restart. The spool is plaintext operational evidence: put it on a private, encrypted
-volume and treat directory access as sensitive. The explicit directory is the plaintext
-storage opt-in, must be owner-private, and contains atomic, fsynced `0600` records.
+restart. The spool is plaintext operational evidence by default: put it on a private,
+encrypted volume and treat directory access as sensitive. Optionally, each record's
+payload can be envelope-encrypted at rest with AES-256-GCM by configuring a 32-byte
+spool key (`spool_key`, `EARSHOT_SPOOL_KEY`, or `EARSHOT_SPOOL_KEY_FILE`) with the
+optional `earshot-observability[spool-encryption]` extra (the `cryptography` dependency)
+installed; with no key configured the spool stays plaintext and behavior is unchanged.
+The explicit directory is the plaintext storage opt-in, must be owner-private, and
+contains atomic, fsynced `0600` records.
 Corrupt or crash-interrupted records are quarantined and surfaced as abandoned. Item
 and byte limits are mandatory; retryable failures remain replayable, while permanent
 rejections are retained by default or deleted only with an explicit `delete` policy.
