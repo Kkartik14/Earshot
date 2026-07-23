@@ -3,15 +3,6 @@ import { toneColorVar } from "../../lib/status";
 import styles from "./CallGraph.module.css";
 import { roleColorVar, roleLabel, type StageDetail, type TurnDetail } from "./timeline";
 
-const shortModel = (m?: string) =>
-  m == null
-    ? "?"
-    : m.includes("whisper")
-      ? "whisper"
-      : m.includes("llama")
-        ? "llama-3.1"
-        : m;
-
 const X = 12;
 const NW = 214;
 const NH = 46;
@@ -45,7 +36,7 @@ function relationshipVerb(relationship: string): string {
 
 function subtitle(op: StageDetail): string {
   if (op.provider != null || op.model != null) {
-    return `${op.provider ?? "?"} · ${shortModel(op.model)}`;
+    return `${op.provider ?? "?"} · ${op.model ?? "?"}`;
   }
   return roleLabel(op.role);
 }

@@ -12,7 +12,7 @@ import { useInitialFocus } from "./useInitialFocus";
 // Cascade stages get a friendlier hero label; other roles fall back to a
 // generic observed-duration readout.
 const LEAD_LABEL: Partial<Record<OperationRole, string>> = {
-  stt: "finalization",
+  stt: "time to first response",
   llm: "time to first token",
   tts: "time to first byte",
 };

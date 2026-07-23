@@ -108,6 +108,24 @@ const turnDetail: TurnDetail = {
 };
 
 describe("CallGraph accessibility", () => {
+  it("preserves the exact source-authored model identity", () => {
+    const exactModel = "llama-4-maverick-17b-128e-instruct";
+    render(
+      <CallGraph
+        detail={{
+          ...turnDetail,
+          stages: [stage("llm", { model: exactModel })],
+        }}
+        onPick={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: new RegExp(exactModel) }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("llama-3.1")).not.toBeInTheDocument();
+  });
+
   it("does not attribute a turn-level first-token value to the LLM node", () => {
     render(<CallGraph detail={{ ...turnDetail, firstTokenMs: 720 }} onPick={() => {}} />);
 
@@ -430,6 +448,13 @@ describe("Detail drawers", () => {
     expect(
       screen.getByRole("heading", { name: /provider measurement/i }),
     ).toBeInTheDocument();
+  });
+
+  it("labels STT TTFB as time to first response, not finalization", () => {
+    render(<StageDrawer index={0} stage={stage("stt")} onClose={() => {}} />);
+
+    expect(screen.getByText("time to first response")).toBeInTheDocument();
+    expect(screen.queryByText("finalization")).not.toBeInTheDocument();
   });
 
   it("StageDrawer badges an errored operation with its code and category", () => {
