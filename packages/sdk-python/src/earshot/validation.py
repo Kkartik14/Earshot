@@ -2882,15 +2882,35 @@ def validate_explanation(
         )
 
     expected_turn_operation_layout = tuple(
-        (turn.turn_id, tuple(operation.operation_id for operation in turn.operations))
-        for turn in expected_explanation.turns
+        (turn.turn_id, tuple(turn.operation_ids)) for turn in analysis.projections.turns
     )
     explained_turn_operation_layout = tuple(
         (turn.turn_id, tuple(operation.operation_id for operation in turn.operations))
         for turn in explanation.turns
     )
+    assigned_analysis_operation_ids = {
+        operation_id for turn in analysis.projections.turns for operation_id in turn.operation_ids
+    }
+
+    def canonical_source_key(value: TimePoint, identity: str) -> tuple[Any, ...]:
+        basis, domain, coordinate = source_coordinate(value)
+        if domain is None:
+            return 1, "", "", 0, identity
+        return 0, domain, basis, int(coordinate), identity
+
     expected_unassigned_operation_ids = tuple(
-        operation.operation_id for operation in expected_explanation.unassigned_operations
+        operation.operation_id
+        for operation in sorted(
+            (
+                operation
+                for operation in operations.values()
+                if operation.operation_id not in assigned_analysis_operation_ids
+            ),
+            key=lambda operation: canonical_source_key(
+                operation.started_at,
+                operation.operation_id,
+            ),
+        )
     )
     explained_unassigned_operation_ids = tuple(
         operation.operation_id for operation in explanation.unassigned_operations
@@ -2908,13 +2928,32 @@ def validate_explanation(
         )
 
     expected_turn_event_layout = tuple(
-        (turn.turn_id, tuple(event.event_id for event in turn.events))
-        for turn in expected_explanation.turns
+        (turn.turn_id, tuple(turn.event_ids)) for turn in analysis.projections.turns
     )
     explained_turn_event_layout = tuple(
         (turn.turn_id, tuple(event.event_id for event in turn.events)) for turn in explanation.turns
     )
-    if explained_turn_event_layout != expected_turn_event_layout:
+    assigned_analysis_event_ids = {
+        event_id for turn in analysis.projections.turns for event_id in turn.event_ids
+    }
+    expected_unassigned_event_ids = tuple(
+        event.event_id
+        for event in sorted(
+            (
+                event
+                for event in events.values()
+                if event.event_id not in assigned_analysis_event_ids
+            ),
+            key=lambda event: canonical_source_key(event.time, event.event_id),
+        )
+    )
+    explained_unassigned_event_ids = tuple(
+        event.event_id for event in explanation.unassigned_events
+    )
+    if (
+        explained_turn_event_layout != expected_turn_event_layout
+        or explained_unassigned_event_ids != expected_unassigned_event_ids
+    ):
         issues.append(
             ValidationIssue(
                 code="EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH",
@@ -3025,7 +3064,7 @@ def validate_explanation(
                 return "turn", turn_id
         return "unassigned", ""
 
-    source_measurement_facts = Counter(
+    source_measurement_entries = tuple(
         measurement_fact(
             source_measurement_placement(sample),
             (sample.sample_id,),
@@ -3045,6 +3084,7 @@ def validate_explanation(
         for sample in bundle.profile.quality_samples
         for measurement in sample.measurements
     )
+    source_measurement_facts = Counter(source_measurement_entries)
     explained_exact_measurements = (
         (("operation", operation.operation_id), measurement)
         for operation in (operation for turn in explanation.turns for operation in turn.operations)
@@ -3064,7 +3104,7 @@ def validate_explanation(
         ),
         *((("unassigned", ""), measurement) for measurement in explanation.unassigned_measurements),
     )
-    explained_measurement_facts = Counter(
+    explained_measurement_entries = tuple(
         measurement_fact(
             placement,
             measurement.evidence_ids,
@@ -3079,6 +3119,7 @@ def validate_explanation(
         )
         for placement, measurement in explained_exact_measurements
     )
+    explained_measurement_facts = Counter(explained_measurement_entries)
     if source_measurement_facts - explained_measurement_facts:
         issues.append(
             ValidationIssue(
@@ -3096,6 +3137,31 @@ def validate_explanation(
             )
         )
 
+    def measurement_order_key(fact: tuple[Any, ...]) -> tuple[Any, ...]:
+        return fact[1], fact[2], fact[5], fact[6], fact[3], fact[4]
+
+    measurement_placements = {
+        fact[0] for fact in (*source_measurement_entries, *explained_measurement_entries)
+    }
+    for placement in sorted(measurement_placements):
+        expected_measurement_order = tuple(
+            sorted(
+                (fact for fact in source_measurement_entries if fact[0] == placement),
+                key=measurement_order_key,
+            )
+        )
+        explained_measurement_order = tuple(
+            fact for fact in explained_measurement_entries if fact[0] == placement
+        )
+        if explained_measurement_order != expected_measurement_order:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_MEASUREMENT_ORDER_MISMATCH",
+                    path=("explanation", "measurements", *placement),
+                    message="exact measurements are not in canonical source order",
+                )
+            )
+
     # Diagnoses must mirror the analysis exactly: same identities and fields, with
     # no invented and no dropped findings.
     def diagnosis_shape(
@@ -3108,8 +3174,8 @@ def validate_explanation(
     ) -> tuple[str, str, str, str, tuple[str, ...], tuple[str, ...]]:
         return (diagnosis_id, code, summary, confidence, evidence, limitations)
 
-    analysis_diagnoses = {
-        diagnosis.diagnosis_id: diagnosis_shape(
+    analysis_diagnoses = tuple(
+        diagnosis_shape(
             diagnosis.diagnosis_id,
             diagnosis.code,
             diagnosis.summary,
@@ -3118,8 +3184,8 @@ def validate_explanation(
             tuple(diagnosis.limitations),
         )
         for diagnosis in analysis.diagnoses
-    }
-    explained_diagnoses: dict[str, tuple] = {}
+    )
+    explained_diagnoses: list[tuple[str, str, str, str, tuple[str, ...], tuple[str, ...]]] = []
     for diagnosis_index, diagnosis in enumerate(explanation.diagnoses):
         path = ("explanation", "diagnoses", diagnosis_index)
         check_refs(diagnosis.evidence_ids, evidence_ids, path + ("evidence_ids",))
@@ -3131,23 +3197,17 @@ def validate_explanation(
             tuple(diagnosis.evidence_ids),
             tuple(diagnosis.limitations),
         )
-        explained_diagnoses[diagnosis.diagnosis_id] = shape
-        if analysis_diagnoses.get(diagnosis.diagnosis_id) != shape:
-            issues.append(
-                ValidationIssue(
-                    code="EARSHOT_EXPLANATION_DIAGNOSIS_MISMATCH",
-                    path=path,
-                    message="explanation diagnosis does not mirror the analysis diagnosis",
-                )
+        explained_diagnoses.append(shape)
+    if tuple(explained_diagnoses) != analysis_diagnoses:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_DIAGNOSIS_MISMATCH",
+                path=("explanation", "diagnoses"),
+                message=(
+                    "explanation diagnoses do not exactly mirror analysis order, fields, "
+                    "and multiplicity"
+                ),
             )
-    for diagnosis_id in analysis_diagnoses:
-        if diagnosis_id not in explained_diagnoses:
-            issues.append(
-                ValidationIssue(
-                    code="EARSHOT_EXPLANATION_DIAGNOSIS_MISMATCH",
-                    path=("explanation", "diagnoses"),
-                    message="analysis diagnosis is missing from the explanation",
-                )
-            )
+        )
 
     return ValidationReport(issues=tuple(issues))

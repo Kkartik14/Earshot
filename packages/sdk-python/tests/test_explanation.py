@@ -458,6 +458,26 @@ def test_explanation_keeps_every_turn_only_measurement_as_an_exact_turn_fact(
     )
     assert validate_explanation(bundle, analysis, explanation).ok
 
+    reordered = explanation.model_copy(
+        update={
+            "turns": (
+                explained_turn.model_copy(
+                    update={"measurements": tuple(reversed(explained_turn.measurements))}
+                ),
+            )
+        }
+    )
+    monkeypatch.setattr(
+        explanation_module,
+        "explain_incident",
+        lambda _bundle, _analysis: reordered,
+    )
+    reordered_report = validate_explanation(bundle, analysis, reordered)
+    assert "EARSHOT_EXPLANATION_MEASUREMENT_ORDER_MISMATCH" in {
+        issue.code for issue in reordered_report.errors
+    }
+    monkeypatch.setattr(explanation_module, "explain_incident", explain_incident)
+
     permuted = replace_profile(
         bundle,
         quality_samples=tuple(reversed(bundle.profile.quality_samples)),
@@ -815,6 +835,41 @@ def test_validate_explanation_independently_rejects_operation_and_event_provenan
     assert "EARSHOT_EXPLANATION_EVENT_MISMATCH" in {issue.code for issue in event_report.errors}
 
 
+def test_validate_explanation_independently_rejects_reordered_turn_facts(
+    valid_bundle,
+    monkeypatch,
+) -> None:
+    analysis = _analyze(valid_bundle)
+    explanation = explain_incident(valid_bundle, analysis)
+    [turn] = explanation.turns
+    assert len(turn.operations) > 1
+    assert len(turn.events) > 1
+    reordered = explanation.model_copy(
+        update={
+            "turns": (
+                turn.model_copy(
+                    update={
+                        "operations": tuple(reversed(turn.operations)),
+                        "events": tuple(reversed(turn.events)),
+                    }
+                ),
+            )
+        }
+    )
+    monkeypatch.setattr(
+        explanation_module,
+        "explain_incident",
+        lambda _bundle, _analysis: reordered,
+    )
+
+    report = validate_explanation(valid_bundle, analysis, reordered)
+
+    assert {
+        "EARSHOT_EXPLANATION_OPERATION_PLACEMENT_MISMATCH",
+        "EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH",
+    }.issubset({issue.code for issue in report.errors})
+
+
 def test_validate_explanation_rejects_duplicate_operation() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
@@ -1081,6 +1136,23 @@ def test_validate_explanation_flags_invented_diagnosis() -> None:
 
     report = validate_explanation(bundle, analysis, tampered)
     assert not report.ok
+    assert "EARSHOT_EXPLANATION_DIAGNOSIS_MISMATCH" in {issue.code for issue in report.errors}
+
+
+def test_validate_explanation_independently_rejects_duplicate_diagnosis(monkeypatch) -> None:
+    bundle = _fault("tool_timeout_retry")
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    [diagnosis] = explanation.diagnoses
+    duplicated = explanation.model_copy(update={"diagnoses": (*explanation.diagnoses, diagnosis)})
+    monkeypatch.setattr(
+        explanation_module,
+        "explain_incident",
+        lambda _bundle, _analysis: duplicated,
+    )
+
+    report = validate_explanation(bundle, analysis, duplicated)
+
     assert "EARSHOT_EXPLANATION_DIAGNOSIS_MISMATCH" in {issue.code for issue in report.errors}
 
 
