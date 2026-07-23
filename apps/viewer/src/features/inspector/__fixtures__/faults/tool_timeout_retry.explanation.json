@@ -5,7 +5,7 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.2.1",
+  "analyzer_version": "0.3.0",
   "input_sha256": "c3726fa46e61457ee94a7664cfe652053ed25815b26e0f932a0bdcfaa5879098",
   "turns": [
     {
@@ -229,7 +229,9 @@
           "total_work_completeness": "complete",
           "limitation": null,
           "elapsed_ms_by_clock_domain": {
-            "fault-fixture-clock": 1300.0
+            "fault-fixture-clock": {
+              "monotonic": 1300.0
+            }
           },
           "evidence_ids": [
             "op-tool-attempt-1",
