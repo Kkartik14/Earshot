@@ -7,3 +7,4 @@ spec/*.json
 fixtures/conformance/canonical-vector.*.json
 fixtures/valid/complete.json
 apps/viewer/src/api/schema.d.ts
+apps/viewer/src/features/inspector/__fixtures__/faults/*.explanation.json
