@@ -20,6 +20,70 @@ REQUIRED_NAMES = [
     "packages/sdk-python/src/earshot/web/index.html",
     "packages/sdk-python/src/earshot/web/assets/index.js",
 ]
+HATCH_BUILD_MTIME = 1_580_601_600
+
+
+def _write_canonical_gzip(
+    path: Path,
+    payload: bytes,
+    *,
+    compresslevel: int = 9,
+) -> None:
+    with (
+        path.open("wb") as raw_stream,
+        gzip.GzipFile(
+            filename="",
+            mode="wb",
+            fileobj=raw_stream,
+            compresslevel=compresslevel,
+            mtime=HATCH_BUILD_MTIME,
+        ) as stream,
+    ):
+        stream.write(payload)
+
+
+def _replace_first_tar_header_field(
+    path: Path,
+    field: slice,
+    replacement: bytes,
+) -> None:
+    with gzip.open(path, mode="rb") as stream:
+        tar_payload = bytearray(stream.read())
+    assert field.start is not None
+    assert field.stop is not None
+    assert len(replacement) == field.stop - field.start
+    header = bytearray(tar_payload[:512])
+    header[field] = replacement
+    header[148:156] = b"        "
+    header[148:156] = f"{sum(header):06o}\0 ".encode("ascii")
+    tar_payload[:512] = header
+    _write_canonical_gzip(path, bytes(tar_payload))
+
+
+def _use_noncanonical_first_tar_checksum(path: Path) -> None:
+    with gzip.open(path, mode="rb") as stream:
+        tar_payload = bytearray(stream.read())
+    header = bytearray(tar_payload[:512])
+    header[148:156] = b"        "
+    header[148:156] = f"{sum(header):07o}\0".encode("ascii")
+    tar_payload[:512] = header
+    _write_canonical_gzip(path, bytes(tar_payload))
+
+
+def _replace_gzip_header_field(path: Path, field: slice, replacement: bytes) -> None:
+    payload = bytearray(path.read_bytes())
+    assert field.start is not None
+    assert field.stop is not None
+    assert len(replacement) == field.stop - field.start
+    payload[field] = replacement
+    path.write_bytes(payload)
+
+
+def _inject_gzip_optional_header(path: Path, flag: int, payload: bytes) -> None:
+    compressed = bytearray(path.read_bytes())
+    compressed[3] = flag
+    compressed[10:10] = payload
+    path.write_bytes(compressed)
 
 
 def _hostile_pythonpath(tmp_path: Path) -> dict[str, str]:
@@ -104,31 +168,36 @@ def _write_archive(
     pax_headers: dict[str, str] | None = None,
     local_pax_headers: dict[str, dict[str, str]] | None = None,
 ) -> None:
+    tar_payload = io.BytesIO()
     with tarfile.open(
-        path,
-        mode="w:gz",
-        compresslevel=compresslevel,
+        fileobj=tar_payload,
+        mode="w",
         format=tarfile.PAX_FORMAT,
         pax_headers=pax_headers,
     ) as archive:
         for name in names:
             member = tarfile.TarInfo(name)
             member.size = payload_size
+            member.mtime = HATCH_BUILD_MTIME
             member.pax_headers = (local_pax_headers or {}).get(name, {})
             archive.addfile(member, io.BytesIO(b"x" * payload_size))
         for name, payload in (payloads or {}).items():
             member = tarfile.TarInfo(name)
             member.size = len(payload)
+            member.mtime = HATCH_BUILD_MTIME
             archive.addfile(member, io.BytesIO(payload))
         for name in directories or []:
             member = tarfile.TarInfo(name)
             member.type = tarfile.DIRTYPE
+            member.mtime = HATCH_BUILD_MTIME
             archive.addfile(member)
         for name, target in links or []:
             member = tarfile.TarInfo(name)
             member.type = tarfile.SYMTYPE
             member.linkname = target
+            member.mtime = HATCH_BUILD_MTIME
             archive.addfile(member)
+    _write_canonical_gzip(path, tar_payload.getvalue(), compresslevel=compresslevel)
 
 
 def test_sdist_checker_accepts_minimal_release_layout(tmp_path: Path) -> None:
@@ -426,6 +495,32 @@ def test_sdist_checker_rejects_duplicate_archive_paths(tmp_path: Path) -> None:
     assert "duplicate archive path" in result.stderr
 
 
+def test_sdist_checker_rejects_nonzero_member_padding(tmp_path: Path) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    with gzip.open(archive, mode="rb") as stream:
+        tar_payload = bytearray(stream.read())
+    tar_payload[512 + 13] = 1
+    _write_canonical_gzip(archive, bytes(tar_payload))
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "non-zero source archive padding" in result.stderr
+
+
 def test_sdist_checker_rejects_nonzero_payload_after_end_marker(tmp_path: Path) -> None:
     root = "earshot_observability-0.1.0"
     archive = tmp_path / f"{root}.tar.gz"
@@ -443,9 +538,7 @@ def test_sdist_checker_rejects_nonzero_payload_after_end_marker(tmp_path: Path) 
         member = tarfile.TarInfo(f"{root}/hidden/secret.txt")
         member.size = 6
         trailing_archive.addfile(member, io.BytesIO(b"secret"))
-    with gzip.open(archive, mode="wb") as stream:
-        stream.write(release_tar)
-        stream.write(hidden_tar.getvalue())
+    _write_canonical_gzip(archive, release_tar + hidden_tar.getvalue())
 
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
@@ -470,9 +563,7 @@ def test_sdist_checker_rejects_non_block_aligned_end_padding(tmp_path: Path) -> 
     )
     with gzip.open(archive, mode="rb") as stream:
         release_tar = stream.read()
-    with gzip.open(archive, mode="wb") as stream:
-        stream.write(release_tar)
-        stream.write(b"\0")
+    _write_canonical_gzip(archive, release_tar + b"\0")
 
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
@@ -538,13 +629,15 @@ def test_sdist_checker_rejects_excessive_header_metadata(tmp_path: Path) -> None
     archive = tmp_path / f"{root}.tar.gz"
     _write_archive(
         archive,
-        [f"{root}/{name}" for name in REQUIRED_NAMES],
-        directories=[
-            (
-                f"{root}/packages/sdk-python/src/earshot/generated/"
-                f"{'long-directory-name-' * 100}{index}"
-            )
-            for index in range(400)
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            *(
+                (
+                    f"{root}/packages/sdk-python/src/earshot/web/assets/"
+                    f"{'long-asset-name-' * 100}{index}.js"
+                )
+                for index in range(400)
+            ),
         ],
     )
 
@@ -601,6 +694,207 @@ def test_sdist_checker_rejects_unknown_local_pax_metadata(tmp_path: Path) -> Non
 
     assert result.returncode != 0
     assert "unsupported local archive metadata key" in result.stderr
+
+
+def test_sdist_checker_rejects_raw_path_hidden_by_local_pax_path(tmp_path: Path) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    hidden_path = f"{root}/local/PRIVATE_RELEASE_PATH.txt"
+    allowed_path = f"{root}/packages/sdk-python/src/earshot/web/assets/index.css"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            hidden_path,
+        ],
+        local_pax_headers={hidden_path: {"path": allowed_path}},
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "raw archive path conflicts with local path metadata" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "label"),
+    [
+        (slice(100, 108), b"0000755\0", "mode"),
+        (slice(108, 116), b"0000001\0", "uid"),
+        (slice(116, 124), b"0000001\0", "gid"),
+        (slice(124, 136), b"         15\0", "size"),
+        (slice(136, 148), b"00000000000\0", "mtime"),
+        (slice(156, 157), b"\0", "type"),
+        (slice(157, 257), b"private-target" + b"\0" * 86, "linkname"),
+        (slice(257, 263), b"ustar ", "magic"),
+        (slice(263, 265), b"01", "version"),
+        (slice(265, 297), b"private-user" + b"\0" * 20, "uname"),
+        (slice(297, 329), b"private-group" + b"\0" * 19, "gname"),
+        (slice(329, 337), b"0000001\0", "device major"),
+        (slice(337, 345), b"0000001\0", "device minor"),
+        (slice(345, 500), b"hidden-prefix" + b"\0" * 142, "path prefix"),
+        (slice(500, 512), b"hidden-bytes", "reserved"),
+    ],
+)
+def test_sdist_checker_rejects_noncanonical_standard_header_metadata(
+    tmp_path: Path,
+    field: slice,
+    replacement: bytes,
+    label: str,
+) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    _replace_first_tar_header_field(archive, field, replacement)
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert f"non-canonical {label} archive metadata" in result.stderr
+
+
+def test_sdist_checker_rejects_noncanonical_checksum_encoding(tmp_path: Path) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    _use_noncanonical_first_tar_checksum(archive)
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "non-canonical checksum archive metadata" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("flag", "metadata"),
+    [
+        (0x01, b""),
+        (0x02, b"\0\0"),
+        (0x04, b"\x04\0leak"),
+        (0x08, b"private-source.tar\0"),
+        (0x10, b"private build comment\0"),
+        (0x20, b""),
+    ],
+    ids=("text", "header-crc", "extra", "filename", "comment", "reserved"),
+)
+def test_sdist_checker_rejects_optional_or_reserved_gzip_header_flags(
+    tmp_path: Path,
+    flag: int,
+    metadata: bytes,
+) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    _inject_gzip_optional_header(archive, flag, metadata)
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "unsupported gzip header flags" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    [
+        (slice(0, 2), b"\x1f\x9d", "invalid gzip signature"),
+        (slice(2, 3), b"\0", "unsupported gzip compression method"),
+        (slice(4, 8), b"\0\0\0\0", "non-canonical gzip mtime metadata"),
+        (slice(8, 9), b"\0", "non-canonical gzip compression metadata"),
+        (slice(9, 10), b"\x03", "non-canonical gzip platform metadata"),
+    ],
+)
+def test_sdist_checker_rejects_noncanonical_fixed_gzip_header_metadata(
+    tmp_path: Path,
+    field: slice,
+    replacement: bytes,
+    message: str,
+) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    _replace_gzip_header_field(archive, field, replacement)
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+
+
+def test_sdist_checker_rejects_concatenated_gzip_member_with_hidden_metadata(
+    tmp_path: Path,
+) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [
+            *(f"{root}/{name}" for name in REQUIRED_NAMES),
+            f"{root}/packages/sdk-python/src/earshot/web/assets/index.css",
+        ],
+    )
+    trailing_member = tmp_path / "trailing.gz"
+    _write_canonical_gzip(trailing_member, b"\0" * 512)
+    _inject_gzip_optional_header(trailing_member, 0x08, b"private-source.tar\0")
+    archive.write_bytes(archive.read_bytes() + trailing_member.read_bytes())
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "multiple gzip members or trailing compressed data" in result.stderr
 
 
 def test_sdist_checker_rejects_excessive_compressed_size_before_parsing(
