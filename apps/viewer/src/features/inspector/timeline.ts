@@ -1,6 +1,8 @@
 // Visualizes the backend-authored explanation projection. The browser positions
 // exact coordinates; it never decides whether an operation is a point or interval.
 
+import { statusTone, type Tone } from "../../lib/status";
+
 // The cascade stages remain a named subset, but they no longer gate what the
 // viewer renders: every turn operation is shown. `StageName` stays for the
 // cascade-only lead-metric lookup and the optional STT->LLM->TTS projection.
@@ -169,11 +171,34 @@ export interface AnalysisLike {
   projections: { turns: { turn_id: string; metrics: Record<string, MetricLike> }[] };
 }
 
+// A faithful local subset of the backend explanation model (see schema.d.ts).
+// These mirror the wire shape; the viewer never invents fields not present here.
 interface ExplainedMeasurement {
   name: string;
   value: boolean | number;
   unit: string;
+  basis?: string | null;
+  confidence?: string | null;
+  limitation?: string | null;
   evidence?: Evidence | null;
+}
+/** A backend-authored causal link between operations. Edges come ONLY from
+ * these; the viewer never manufactures a relationship the analyzer did not
+ * record. `target_operation_id` resolves within the same turn when the target
+ * is `internal` and present. */
+interface ExplainedLink {
+  relationship: string;
+  target_scope?: string | null;
+  target_operation_id?: string | null;
+  trace_id?: string | null;
+  span_id?: string | null;
+}
+/** A backend-classified operation error. The message is never carried; only the
+ * governed code/category/capture_class metadata is available to render. */
+interface ExplainedError {
+  code: string;
+  category: string;
+  capture_class: string;
 }
 interface ExplainedOperation {
   operation_id?: string;
@@ -184,17 +209,28 @@ interface ExplainedOperation {
   clock_domain_id?: string | null;
   start_nano: string;
   duration_nano?: string | null;
+  start_uncertainty_nano?: string | null;
+  end_uncertainty_nano?: string | null;
   provider?: string | null;
   model?: string | null;
+  stream_id?: string | null;
+  trace_id?: string | null;
+  span_id?: string | null;
+  parent_span_id?: string | null;
+  parent_scope?: string | null;
+  links?: ExplainedLink[] | null;
+  error?: ExplainedError | null;
   evidence?: Evidence | null;
   measurements: ExplainedMeasurement[];
 }
 interface ExplainedEvent {
   event_name: string;
+  event_id?: string | null;
   time_basis: "monotonic" | "source_wall" | "observed_wall";
   clock_domain_id?: string | null;
   at_nano: string;
   participant_id?: string | null;
+  stream_id?: string | null;
   evidence?: Evidence | null;
 }
 interface ExplainedTurn {
@@ -202,6 +238,16 @@ interface ExplainedTurn {
   operations: ExplainedOperation[];
   events: ExplainedEvent[];
   metrics: Record<string, MetricLike>;
+}
+/** A backend-authored diagnosis. Diagnoses come ONLY from this list; the viewer
+ * never derives one. `evidence_ids` reference operations (and other facts) by id. */
+interface ExplainedDiagnosis {
+  diagnosis_id: string;
+  code: string;
+  summary: string;
+  confidence: string;
+  evidence_ids: string[];
+  limitations?: string[] | null;
 }
 export interface ExplanationLike {
   bundle_id: string;
@@ -211,6 +257,9 @@ export interface ExplanationLike {
   completeness: string;
   analyzer_version: string;
   turns: ExplainedTurn[];
+  diagnoses?: ExplainedDiagnosis[] | null;
+  unassigned_operations?: ExplainedOperation[] | null;
+  unassigned_measurements?: ExplainedMeasurement[] | null;
   coverage: {
     signal: string;
     availability: string;
@@ -231,6 +280,74 @@ export interface MetricView {
   basis: string;
   confidence: string;
 }
+
+/** A rendered operation error (code + category, coloured by tone). */
+export interface ErrorView {
+  code: string;
+  category: string;
+  captureClass: string;
+}
+/** The status/error badge for an operation: shown only when the operation is not
+ * in a healthy state, or carries an explicit error. */
+export interface StatusView {
+  abnormal: boolean;
+  tone: Tone;
+  label: string;
+  error?: ErrorView;
+}
+/** A resolved causal edge between two operations in the same turn. Edges are
+ * derived ONLY from `links`; an operation with no links draws none. */
+export interface EdgeView {
+  fromOperationId: string;
+  toOperationId: string;
+  relationship: string;
+}
+/** A single link as carried on an operation; `resolved` is true when the target
+ * is another operation within this turn (so it can be drawn as an edge). */
+export interface LinkView {
+  relationship: string;
+  targetOperationId: string | null;
+  targetScope: string;
+  resolved: boolean;
+}
+
+const HEALTHY_STATUS = new Set([
+  "ok",
+  "completed",
+  "complete",
+  "success",
+  "succeeded",
+  "done",
+]);
+
+const errorView = (e: ExplainedError | null | undefined): ErrorView | undefined =>
+  e == null
+    ? undefined
+    : { code: e.code, category: e.category, captureClass: e.capture_class };
+
+/** Whether an operation is abnormal, and how to badge it. An explicit error is a
+ * failure (crit); otherwise the tone follows the status word via status.ts. */
+export function operationStatus(op: {
+  status: string;
+  error?: ExplainedError | null;
+}): StatusView {
+  const error = errorView(op.error);
+  const abnormal = error != null || !HEALTHY_STATUS.has(op.status);
+  const tone: Tone = error != null ? "crit" : statusTone(op.status);
+  const label = error != null ? `${error.code} · ${error.category}` : op.status;
+  return { abnormal, tone, label, error };
+}
+
+/** A ± uncertainty in milliseconds from a nanosecond magnitude. BigInt-exact
+ * parse; a negative or unparseable value is treated as absent. */
+const uncertaintyMs = (value: string | null | undefined): number | null => {
+  const n = nano(value);
+  if (n == null || n < 0n) return null;
+  return Number(n) / 1_000_000;
+};
+
+const INTERRUPTION_EVENT = (name: string): boolean => name.includes("interruption");
+
 export interface StageBar {
   operationId: string;
   name: string;
@@ -242,6 +359,9 @@ export interface StageBar {
   leadMs: number | null;
   timing: "interval" | "point" | "unavailable";
   confidence?: string;
+  status: string;
+  statusView: StatusView;
+  startUncertaintyMs: number | null;
 }
 export interface TurnView {
   turnId: string;
@@ -435,6 +555,9 @@ export function buildTimeline(explanation: ExplanationLike): Timeline {
       leadMs: w.leadMs,
       timing: w.timing,
       confidence: w.confidence,
+      status: typeof w.op.status === "string" ? w.op.status : "unknown",
+      statusView: operationStatus(w.op),
+      startUncertaintyMs: uncertaintyMs(w.op.start_uncertainty_nano),
     }));
     return {
       turnId: t.turn_id,
@@ -473,10 +596,21 @@ export interface StageDetail {
   provider?: string;
   model?: string;
   status: string;
+  statusView: StatusView;
   startMs: number | null;
   endMs: number | null;
   leadMs: number | null;
   timing: "interval" | "point" | "unavailable";
+  startUncertaintyMs: number | null;
+  endUncertaintyMs: number | null;
+  /** All links this operation carries, resolved or not. Resolved ones are drawn
+   * as edges by the call graph; unresolved (external/unknown) ones surface as a
+   * relationship tag on the node. */
+  links: LinkView[];
+  /** An interruption event that references this operation (via a matching
+   * `stream_id`). When set, the interruption attaches here rather than to a
+   * fixed row. */
+  interruptedByEvent?: string;
   evidence?: EvidenceView;
   measurements: MeasurementView[];
 }
@@ -485,6 +619,9 @@ export interface EventView {
   atMs: number | null;
   participant: string;
   confidence: string;
+  /** The operation this event attaches to, when its `stream_id` resolves to
+   * exactly one operation in the turn; otherwise null (a turn-level event). */
+  attachedOperationId: string | null;
 }
 export interface MetricRow {
   key: string;
@@ -505,6 +642,8 @@ export interface TurnDetail {
   hasCascade: boolean;
   firstTokenMs: number | null;
   stages: StageDetail[];
+  /** Resolved causal edges between operations in this turn (from `links`). */
+  edges: EdgeView[];
   metrics: MetricRow[];
   events: EventView[];
 }
@@ -520,16 +659,103 @@ const evidenceView = (e: Evidence | null | undefined): EvidenceView | undefined 
         sourceField: e.source_field ?? undefined,
       };
 
+const measurementViews = (measurements: ExplainedMeasurement[]): MeasurementView[] =>
+  // Every measurement is carried with its real unit; booleans and other
+  // non-duration domains are formatted by their unit at the view layer.
+  measurements
+    .filter(
+      (measurement): measurement is ExplainedMeasurement =>
+        typeof measurement.value === "number" || typeof measurement.value === "boolean",
+    )
+    .map((measurement) => ({
+      name: measurement.name,
+      value: measurement.value,
+      unit: measurement.unit,
+      confidence:
+        measurement.confidence ?? measurement.evidence?.confidence ?? "unavailable",
+    }));
+
+/** Resolve each operation's links against the operations actually present in the
+ * turn, and collect the resolved op->op edges. A link resolves to an edge only
+ * when its target is another operation in this turn; external/unknown targets
+ * stay as node-level tags. No edge is ever invented. */
+function resolveLinks(windows: OperationWindow[]): {
+  linksByOp: Map<string, LinkView[]>;
+  edges: EdgeView[];
+} {
+  const presentIds = new Set(
+    windows
+      .map((w) => w.op.operation_id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const linksByOp = new Map<string, LinkView[]>();
+  const edges: EdgeView[] = [];
+  for (const w of windows) {
+    const views: LinkView[] = [];
+    for (const link of w.op.links ?? []) {
+      const target = link.target_operation_id ?? null;
+      const resolved = target != null && presentIds.has(target);
+      views.push({
+        relationship: link.relationship,
+        targetOperationId: target,
+        targetScope: link.target_scope ?? "unknown",
+        resolved,
+      });
+      if (resolved && target != null) {
+        edges.push({
+          fromOperationId: w.operationId,
+          toOperationId: target,
+          relationship: link.relationship,
+        });
+      }
+    }
+    linksByOp.set(w.operationId, views);
+  }
+  return { linksByOp, edges };
+}
+
+/** Attach an event to an operation when its `stream_id` resolves to EXACTLY one
+ * operation in the turn. This is how an interruption lands on the operation it
+ * references instead of a hardcoded row; an ambiguous or absent stream_id leaves
+ * the event at the turn level. */
+function attachEventsToOps(windows: OperationWindow[], events: ExplainedEvent[]) {
+  const opsByStream = new Map<string, string[]>();
+  for (const w of windows) {
+    const stream = w.op.stream_id;
+    if (stream == null) continue;
+    const list = opsByStream.get(stream) ?? [];
+    list.push(w.operationId);
+    opsByStream.set(stream, list);
+  }
+  const eventTarget = (event: ExplainedEvent): string | null => {
+    if (event.stream_id == null) return null;
+    const ops = opsByStream.get(event.stream_id);
+    return ops != null && ops.length === 1 ? ops[0] : null;
+  };
+  // For each operation, the interruption event (if any) that attaches to it.
+  const interruptByOp = new Map<string, string>();
+  for (const event of events) {
+    const target = eventTarget(event);
+    if (target != null && INTERRUPTION_EVENT(event.event_name)) {
+      interruptByOp.set(target, event.event_name);
+    }
+  }
+  return { eventTarget, interruptByOp };
+}
+
 export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
   return explanation.turns.map((t, index) => {
     const windows = computeOperations(t);
     const origin = windows[0]?.origin ?? null;
+    const { linksByOp, edges } = resolveLinks(windows);
+    const { eventTarget, interruptByOp } = attachEventsToOps(windows, t.events);
     return {
       turnId: t.turn_id,
       index,
       interrupted: isInterrupted(t),
       hasCascade: hasCascadeChain(windows),
       firstTokenMs: t.metrics.first_token_latency?.value ?? null,
+      edges,
       stages: windows.map((w) => ({
         operationId: w.operationId,
         name: w.name,
@@ -537,25 +763,17 @@ export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
         provider: w.provider,
         model: w.model,
         status: typeof w.op.status === "string" ? w.op.status : "unknown",
+        statusView: operationStatus(w.op),
         startMs: w.startMs,
         endMs: w.endMs,
         leadMs: w.leadMs,
         timing: w.timing,
+        startUncertaintyMs: uncertaintyMs(w.op.start_uncertainty_nano),
+        endUncertaintyMs: uncertaintyMs(w.op.end_uncertainty_nano),
+        links: linksByOp.get(w.operationId) ?? [],
+        interruptedByEvent: interruptByOp.get(w.operationId),
         evidence: evidenceView(w.op.evidence),
-        // Every measurement is carried with its real unit; booleans and other
-        // non-duration domains are formatted by their unit at the view layer.
-        measurements: w.op.measurements
-          .filter(
-            (measurement): measurement is ExplainedMeasurement =>
-              typeof measurement.value === "number" ||
-              typeof measurement.value === "boolean",
-          )
-          .map((measurement) => ({
-            name: measurement.name,
-            value: measurement.value,
-            unit: measurement.unit,
-            confidence: measurement.evidence?.confidence ?? "unavailable",
-          })),
+        measurements: measurementViews(w.op.measurements),
       })),
       metrics: METRIC_KEYS.map(({ key, label }) => {
         const m = t.metrics[key];
@@ -577,9 +795,88 @@ export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
         ),
         participant: (event.participant_id ?? "").split("-").pop() ?? "",
         confidence: event.evidence?.confidence ?? "",
+        attachedOperationId: eventTarget(event),
       })),
     };
   });
+}
+
+// -- session-level facts ----------------------------------------------------
+
+/** A backend-authored diagnosis, with each evidence id resolved to the turn that
+ * contains the referenced operation (when it is an operation). */
+export interface DiagnosisView {
+  id: string;
+  code: string;
+  summary: string;
+  confidence: string;
+  limitations: string[];
+  evidence: { id: string; turnIndex: number | null }[];
+}
+
+/** Surface the analyzer's diagnoses. Diagnoses come only from the explanation;
+ * the viewer never derives one. Evidence ids that name an operation are linked
+ * to their turn so the UI can select it. */
+export function buildDiagnoses(explanation: ExplanationLike): DiagnosisView[] {
+  const turnOfOp = new Map<string, number>();
+  explanation.turns.forEach((turn, index) => {
+    for (const op of turn.operations) {
+      if (op.operation_id != null) turnOfOp.set(op.operation_id, index);
+    }
+  });
+  return (explanation.diagnoses ?? []).map((d) => ({
+    id: d.diagnosis_id,
+    code: d.code,
+    summary: d.summary,
+    confidence: d.confidence,
+    limitations: d.limitations ?? [],
+    evidence: d.evidence_ids.map((id) => ({
+      id,
+      turnIndex: turnOfOp.has(id) ? (turnOfOp.get(id) as number) : null,
+    })),
+  }));
+}
+
+/** A session-level operation whose evidence is not turn-scoped (e.g. a
+ * `device_unavailable` op). It has no shared turn axis, so only a self-contained
+ * observed duration (from `duration_nano`) is shown — never a cross-op offset. */
+export interface UnassignedOperationView {
+  operationId: string;
+  name: string;
+  role: OperationRole;
+  status: string;
+  statusView: StatusView;
+  durationMs: number | null;
+  measurements: MeasurementView[];
+}
+export interface UnassignedFacts {
+  operations: UnassignedOperationView[];
+  measurements: MeasurementView[];
+}
+
+/** Surface operations and measurements the analyzer could not scope to a turn
+ * (e.g. webrtc jitter/rtt/packet-loss, a device-unavailable operation) so an
+ * incident with no turn-scoped evidence is still visible. */
+export function buildUnassigned(explanation: ExplanationLike): UnassignedFacts {
+  const operations = (explanation.unassigned_operations ?? []).map((op, index) => {
+    const duration = nano(op.duration_nano);
+    return {
+      operationId: op.operation_id ?? `${op.operation_name}-${index}`,
+      name: op.operation_name,
+      role: classifyRole(op.operation_name),
+      status: typeof op.status === "string" ? op.status : "unknown",
+      statusView: operationStatus(op),
+      durationMs:
+        op.shape === "interval" && duration != null && duration >= 0n
+          ? Number(duration) / 1_000_000
+          : null,
+      measurements: measurementViews(op.measurements),
+    };
+  });
+  return {
+    operations,
+    measurements: measurementViews(explanation.unassigned_measurements ?? []),
+  };
 }
 
 export function getCoverage(explanation: ExplanationLike): CoverageRow[] {

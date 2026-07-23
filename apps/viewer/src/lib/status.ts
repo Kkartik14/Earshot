@@ -9,10 +9,27 @@ export function statusTone(status: string): Tone {
     case "error":
       return "crit";
     case "timed_out":
+    case "timeout":
     case "processing":
     case "in_progress":
+    case "cancelled":
+    case "canceled":
       return "warn";
     default:
       return "muted";
+  }
+}
+
+/** The themed CSS custom property that paints a given tone. */
+export function toneColorVar(tone: Tone): string {
+  switch (tone) {
+    case "good":
+      return "var(--good)";
+    case "crit":
+      return "var(--crit)";
+    case "warn":
+      return "var(--est)";
+    default:
+      return "var(--tx-low)";
   }
 }
