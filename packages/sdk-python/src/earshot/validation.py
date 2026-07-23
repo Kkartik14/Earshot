@@ -2290,6 +2290,9 @@ def validate_explanation(
             for operation in expected_explanation.unassigned_operations
         }
     )
+    expected_events = {
+        event.event_id: event for turn in expected_explanation.turns for event in turn.events
+    }
 
     def check_refs(
         references: tuple[str, ...],
@@ -2449,6 +2452,17 @@ def validate_explanation(
                 operation,
                 ("explanation", "turns", turn_index, "operations", operation_index),
             )
+        for event_index, event in enumerate(turn.events):
+            path = ("explanation", "turns", turn_index, "events", event_index)
+            check_refs(event.evidence_ids, evidence_ids, path + ("evidence_ids",))
+            if expected_events.get(event.event_id) != event:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_EXPLANATION_EVENT_MISMATCH",
+                        path=path,
+                        message="explained event differs from its exact source projection",
+                    )
+                )
     for operation_index, operation in enumerate(explanation.unassigned_operations):
         projected_operation_ids.append(operation.operation_id)
         check_operation(

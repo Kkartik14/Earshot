@@ -650,6 +650,35 @@ def test_validate_explanation_rejects_operation_moved_between_turns() -> None:
     }
 
 
+def test_validate_explanation_rejects_changed_event_source_fields(valid_bundle) -> None:
+    analysis = _analyze(valid_bundle)
+    explanation = explain_incident(valid_bundle, analysis)
+    [turn] = explanation.turns
+    source = next(event for event in turn.events if event.event_id == "evt-token")
+    changed = source.model_copy(
+        update={
+            "event_name": "invented.event",
+            "at_nano": str(int(source.at_nano) + 1),
+            "operation_id": "op-tts",
+            "trace_id": "f" * 32,
+            "span_id": "f" * 16,
+            "evidence": None,
+        }
+    )
+    tampered_turn = turn.model_copy(
+        update={
+            "events": tuple(
+                changed if event.event_id == changed.event_id else event for event in turn.events
+            )
+        }
+    )
+    tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_explanation(valid_bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_EVENT_MISMATCH" in {issue.code for issue in report.errors}
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
