@@ -96,10 +96,9 @@
         "event_name": "earshot.response.first_token",
         "instrumentation_scope_attributes": {},
         "operation_id": "op-llm",
-        "participant_id": "participant-user",
+        "participant_id": "participant-agent",
         "resource": {},
         "session_id": "session-1",
-        "stream_id": "stream-input",
         "time": {
           "clock_domain_id": "server-clock",
           "monotonic_time_nano": "1150000000",
