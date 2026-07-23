@@ -1,0 +1,845 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "captured-pipecat-id-0001",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "473864685655875",
+        "observer": "earshot.sdk",
+        "synchronization_method": "same_process_sample",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1784305296598261000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "server_cannot_observe_client_render",
+        "signal": "client.render"
+      }
+    ],
+    "events": [],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "pipecat",
+          "framework_version": "1.5.0",
+          "name": "earshot.pipecat",
+          "version": "0.1.0"
+        }
+      ],
+      "attributes": {},
+      "bundle_id": "captured-pipecat-2026-07",
+      "completeness": "complete",
+      "created_at_unix_nano": "1784305296598261000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot",
+        "sdk_version": "0.1.0",
+        "version": "0.1.0"
+      },
+      "schema_version": "0.1.0",
+      "semantic_profile_version": "0.1.0",
+      "session_id": "captured-pipecat-session"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "stt",
+          "gen_ai.operation.name": "stt",
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305301839632000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "stt"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "links": [],
+        "operation_id": "captured-pipecat-id-0002",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "parent_span_id": "0000000000000001",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-pipecat-session",
+        "span_id": "0000000000000002",
+        "started_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305297774991872"
+        },
+        "status": "unset",
+        "trace_id": "00000000000000000000000000000001"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "llm",
+          "gen_ai.operation.name": "chat",
+          "gen_ai.output.type": "text",
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "llama-3.1-8b-instant",
+          "gen_ai.usage.input_tokens": 53,
+          "gen_ai.usage.output_tokens": 3,
+          "metrics.ttfb": 0.23218107223510742
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305307079081000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "llm"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "links": [],
+        "operation_id": "captured-pipecat-id-0003",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "parent_span_id": "0000000000000001",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-pipecat-session",
+        "span_id": "0000000000000003",
+        "started_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305306843643000"
+        },
+        "status": "unset",
+        "trace_id": "00000000000000000000000000000001"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "tts",
+          "gen_ai.operation.name": "tts",
+          "gen_ai.output.type": "speech",
+          "gen_ai.provider.name": "groq",
+          "gen_ai.request.model": "canopylabs/orpheus-v1-english",
+          "metrics.character_count": 6,
+          "metrics.ttfb": 0.561892032623291
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305307644404000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "tts"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "links": [],
+        "operation_id": "captured-pipecat-id-0004",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "parent_span_id": "0000000000000001",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-pipecat-session",
+        "span_id": "0000000000000004",
+        "started_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305307081911000"
+        },
+        "status": "unset",
+        "trace_id": "00000000000000000000000000000001"
+      },
+      {
+        "attributes": {
+          "conversation.id": "captured-pipecat-id-0005",
+          "earshot.framework.operation.name": "turn",
+          "turn.duration_seconds": 9.891923625,
+          "turn.number": 1,
+          "turn.type": "conversation",
+          "turn.user_bot_latency_seconds": 6.307773113250732,
+          "turn.was_interrupted": true
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305307665363000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "turn"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat.turn",
+        "links": [],
+        "operation_id": "captured-pipecat-id-0006",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "0000000000000005",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-pipecat-session",
+        "span_id": "0000000000000001",
+        "started_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305297773732000"
+        },
+        "status": "unset",
+        "trace_id": "00000000000000000000000000000001",
+        "turn_id": "captured-pipecat-id-0007"
+      },
+      {
+        "attributes": {
+          "conversation.id": "captured-pipecat-id-0005",
+          "conversation.type": "voice",
+          "earshot.framework.operation.name": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305307668069000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat.turn",
+        "links": [],
+        "operation_id": "captured-pipecat-id-0008",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-pipecat-session",
+        "span_id": "0000000000000005",
+        "started_at": {
+          "clock_domain_id": "captured-pipecat-id-0001",
+          "source_time_unix_nano": "1784305297773496000"
+        },
+        "status": "unset",
+        "trace_id": "00000000000000000000000000000001"
+      }
+    ],
+    "participants": [],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [
+        {
+          "attributes": {
+            "field_key_sha256": "768fce5300f7f1a1feede0d1a25a68c9cd24e86fb70343b5e84268dcef6d72fb"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0009",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "1268cff5b1fa704c444b8a958ec120637c5917d9cb237681e6bc0894c5a0ac95"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0010",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "3a57e08a7a2fbcb59b76c860037359210cb8de059ecdd3476aa0a712cfbe146e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0011",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "54e6289e14c7b0e7ad9acc2dfc4c1e3d027d0eef7f5c4c3fe7c292761d0e06a6"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0012",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "0245c0b3309ad53cd222d2368ad8d79473f481a2cb4528f3070f945d56adb7aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0013",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "dca83e717b1f64eb141057a7415a330ad1361f51703efa2e4776f40047898a04"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0014",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "6e8889b1f6ec18b1ef120c308de1bb6b76cd712147a8de0380d8dc81219ad719"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0015",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "522fe1b21719f007ce45dd022c1c1aeaaf91c9522adb5ab61926d39337479f17"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0016",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "3d2adee21a7ef9392e80ff4edd4f7a5ecef3659417f484f80d123d2afaa9ec2e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0017",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "8650c4e923f3d9c4e258f5aaf026048096a8306344c53770c5f063d85b574dfe"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0018",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "5bfe0ea15b6b0867f5c0a2c1e0b3f4f2ea44d7bc36be1c6f74a27f09d302c172"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0019",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "7aee1875b5b52bddb04b19d87f5b32abbf5228c898bb8a77ae8ab67c509007c8"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0020",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "c40b8f0dc30bbb0c4673d2b054f8743e16f70f87828a2db247067cf735d71211"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0021",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "8bf3f7fe637ada78e9f57e5f33262f066d56b2c16014378f18090aa620080a26"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0022",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "1268cff5b1fa704c444b8a958ec120637c5917d9cb237681e6bc0894c5a0ac95"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0023",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "505767ca5c48202bd04ae1656b07a0e58ef1579835e97af6393d30d28807c85d"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0024",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "3a57e08a7a2fbcb59b76c860037359210cb8de059ecdd3476aa0a712cfbe146e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0025",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "afd9dc18cca938275942d5a6c1ca3452babe767df57756994c027d38168f1f20"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0026",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ec3a1da19c9e1c15dfd6adf52f665c8af45ee4efccc59642d654e4c2f177906e"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-pipecat-id-0027",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        }
+      ],
+      "policy_id": "earshot.metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [
+      {
+        "attributes": {
+          "earshot.operation.id": "captured-pipecat-id-0003"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {
+            "earshot.framework.metric.name": "gen_ai.usage.input_tokens"
+          },
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "gen_ai.usage.input_tokens"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "gen_ai.usage.input_tokens",
+            "unit": "count",
+            "value": 53
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-pipecat-id-0028",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307079081000"
+          },
+          "start": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305306843643000"
+          }
+        },
+        "session_id": "captured-pipecat-session"
+      },
+      {
+        "attributes": {
+          "earshot.operation.id": "captured-pipecat-id-0003"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {
+            "earshot.framework.metric.name": "gen_ai.usage.output_tokens"
+          },
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "gen_ai.usage.output_tokens"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "gen_ai.usage.output_tokens",
+            "unit": "count",
+            "value": 3
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-pipecat-id-0029",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307079081000"
+          },
+          "start": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305306843643000"
+          }
+        },
+        "session_id": "captured-pipecat-session"
+      },
+      {
+        "attributes": {
+          "earshot.operation.id": "captured-pipecat-id-0003"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {
+            "earshot.framework.metric.name": "metrics.ttfb"
+          },
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "metrics.ttfb"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "pipecat.llm.ttfb",
+            "unit": "s",
+            "value": 0.23218107223510742
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-pipecat-id-0030",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307079081000"
+          },
+          "start": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305306843643000"
+          }
+        },
+        "session_id": "captured-pipecat-session"
+      },
+      {
+        "attributes": {
+          "earshot.operation.id": "captured-pipecat-id-0004"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {
+            "earshot.framework.metric.name": "metrics.character_count"
+          },
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "metrics.character_count"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "pipecat.tts.character_count",
+            "unit": "count",
+            "value": 6
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-pipecat-id-0031",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307644404000"
+          },
+          "start": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307081911000"
+          }
+        },
+        "session_id": "captured-pipecat-session"
+      },
+      {
+        "attributes": {
+          "earshot.operation.id": "captured-pipecat-id-0004"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {
+            "earshot.framework.metric.name": "metrics.ttfb"
+          },
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "metrics.ttfb"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat",
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "pipecat.tts.ttfb",
+            "unit": "s",
+            "value": 0.561892032623291
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-pipecat-id-0032",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307644404000"
+          },
+          "start": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307081911000"
+          }
+        },
+        "session_id": "captured-pipecat-session"
+      },
+      {
+        "attributes": {
+          "earshot.operation.id": "captured-pipecat-id-0006",
+          "earshot.turn.id": "captured-pipecat-id-0007"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {
+            "earshot.framework.metric.name": "turn.user_bot_latency_seconds"
+          },
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.5.0",
+          "observer": "server",
+          "source": "pipecat",
+          "source_field": "turn.user_bot_latency_seconds"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "pipecat.turn",
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "pipecat.turn.user_bot_latency",
+            "unit": "s",
+            "value": 6.307773113250732
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-voice-app",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-pipecat-id-0033",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305307665363000"
+          },
+          "start": {
+            "clock_domain_id": "captured-pipecat-id-0001",
+            "source_time_unix_nano": "1784305297773732000"
+          }
+        },
+        "session_id": "captured-pipecat-session"
+      }
+    ],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "captured-pipecat-id-0001",
+        "monotonic_time_nano": "11071829041",
+        "source_time_unix_nano": "1784305307670139000"
+      },
+      "session_id": "captured-pipecat-session",
+      "started_at": {
+        "clock_domain_id": "captured-pipecat-id-0001",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1784305296598261000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}
