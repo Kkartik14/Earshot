@@ -151,10 +151,11 @@ framework versions; one version number must not be used as a proxy for another.
 - Browser/mobile collectors, generic live OTLP receiving, media upload/replay, and other
   planned surfaces are outside the current compatibility contract.
 
-The retained real-capture fixtures predate correction of an erroneous `1.0.0` label.
-They were structurally validated under the current model and migrated to `0.1.0` only in
-their privacy-scrubbed fixture copies; stored user evidence must not be rewritten this
-way. Future format support requires an explicit versioned decoder or normalizer.
+The retained real-capture fixtures were regenerated on the current contract, semantic
+profile, and adapter versions; they are not relabelled historical artifacts. Their
+manifest pins the ignored source, checked-in driver, redactor, and public-artifact
+digests. Stored user evidence must never be rewritten to simulate compatibility. Future
+format support requires an explicit versioned decoder or normalizer.
 
 ## Supported versions and deprecation policy
 
