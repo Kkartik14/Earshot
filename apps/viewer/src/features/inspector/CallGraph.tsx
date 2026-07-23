@@ -36,6 +36,8 @@ function relationshipVerb(relationship: string): string {
       return "duplicates";
     case "interrupts":
       return "interrupts";
+    case "parent":
+      return "parents";
     default:
       return relationship.replace(/_/g, " ");
   }
@@ -63,10 +65,9 @@ function readout(op: StageDetail): string {
     : base;
 }
 
-/** Renders the operations present as a vertical flow, overlaid with the REAL
- * causal edges the analyzer recorded (`detail.edges`, sourced from each
- * operation's `links`). There is no invented cascade and no arrival-order
- * connector: an operation with no links simply has no drawn edge. */
+/** Renders the operations present as a vertical flow, overlaid with source-authored
+ * parent/link edges. There is no invented cascade or arrival-order connector: an
+ * operation with no observed graph relationship simply has no drawn edge. */
 export function CallGraph({
   detail,
   onPick,
@@ -98,11 +99,14 @@ export function CallGraph({
     const to = ops[indexById.get(e.toOperationId) as number];
     return `${from.name} ${relationshipVerb(e.relationship)} ${to.name}`;
   });
+  const edgeLabel = edges.some((edge) => edge.relationship === "parent")
+    ? "Graph relationships"
+    : "Causal links";
   const description =
     ops.length === 0
       ? "No operations were observed for this turn."
       : (hasEdges
-          ? `Causal links: ${edgeSentences.join("; ")}.`
+          ? `${edgeLabel}: ${edgeSentences.join("; ")}.`
           : "No causal links were recorded between these operations.") +
         (detail.interrupted ? " An interruption was accepted during this turn." : "");
 

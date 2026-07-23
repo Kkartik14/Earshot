@@ -295,8 +295,8 @@ export interface StatusView {
   label: string;
   error?: ErrorView;
 }
-/** A resolved causal edge between two operations in the same turn. Edges are
- * derived ONLY from `links`; an operation with no links draws none. */
+/** A resolved graph edge between two operations in the same turn. Edges come
+ * only from explicit links or same-trace parent span identity. */
 export interface EdgeView {
   fromOperationId: string;
   toOperationId: string;
@@ -642,7 +642,7 @@ export interface TurnDetail {
   hasCascade: boolean;
   firstTokenMs: number | null;
   stages: StageDetail[];
-  /** Resolved causal edges between operations in this turn (from `links`). */
+  /** Resolved parent/link edges between operations in this turn. */
   edges: EdgeView[];
   metrics: MetricRow[];
   events: EventView[];
@@ -675,10 +675,9 @@ const measurementViews = (measurements: ExplainedMeasurement[]): MeasurementView
         measurement.confidence ?? measurement.evidence?.confidence ?? "unavailable",
     }));
 
-/** Resolve each operation's links against the operations actually present in the
- * turn, and collect the resolved op->op edges. A link resolves to an edge only
- * when its target is another operation in this turn; external/unknown targets
- * stay as node-level tags. No edge is ever invented. */
+/** Resolve source-authored links and same-trace parent span identities against
+ * operations actually present in this turn. External/unknown targets stay as
+ * node-level tags. No arrival-order or stage-order edge is ever invented. */
 function resolveLinks(windows: OperationWindow[]): {
   linksByOp: Map<string, LinkView[]>;
   edges: EdgeView[];
@@ -688,6 +687,15 @@ function resolveLinks(windows: OperationWindow[]): {
       .map((w) => w.op.operation_id)
       .filter((id): id is string => typeof id === "string"),
   );
+  const operationBySpan = new Map<string, OperationWindow>();
+  const spanKey = (
+    traceId: string | null | undefined,
+    spanId: string | null | undefined,
+  ) => (traceId != null && spanId != null ? `${traceId}:${spanId}` : null);
+  for (const window of windows) {
+    const key = spanKey(window.op.trace_id, window.op.span_id);
+    if (key != null) operationBySpan.set(key, window);
+  }
   const linksByOp = new Map<string, LinkView[]>();
   const edges: EdgeView[] = [];
   for (const w of windows) {
@@ -706,6 +714,17 @@ function resolveLinks(windows: OperationWindow[]): {
           fromOperationId: w.operationId,
           toOperationId: target,
           relationship: link.relationship,
+        });
+      }
+    }
+    if (w.op.parent_scope !== "external") {
+      const parentKey = spanKey(w.op.trace_id, w.op.parent_span_id);
+      const parent = parentKey == null ? undefined : operationBySpan.get(parentKey);
+      if (parent != null) {
+        edges.push({
+          fromOperationId: parent.operationId,
+          toOperationId: w.operationId,
+          relationship: "parent",
         });
       }
     }

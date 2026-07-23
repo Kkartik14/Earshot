@@ -184,6 +184,26 @@ describe("CallGraph accessibility", () => {
     expect(screen.getByText("consumes")).toBeInTheDocument();
   });
 
+  it("describes an observed parent edge without calling it a causal link", () => {
+    const parented: TurnDetail = {
+      ...turnDetail,
+      hasCascade: false,
+      stages: [op("op-parent", "agent", "agent"), op("op-child", "tool", "tool")],
+      edges: [
+        {
+          fromOperationId: "op-parent",
+          toOperationId: "op-child",
+          relationship: "parent",
+        },
+      ],
+    };
+
+    const { container } = render(<CallGraph detail={parented} onPick={() => {}} />);
+    const svg = container.querySelector("svg");
+    expect(svg).toHaveAccessibleDescription(/agent parents tool/i);
+    expect(svg).not.toHaveAccessibleDescription(/^causal links/i);
+  });
+
   it("badges the timed-out tool attempt on its node", () => {
     const detail = buildTurnDetails(toolTimeoutRetry as unknown as ExplanationLike)[0];
     render(<CallGraph detail={detail} onPick={() => {}} />);

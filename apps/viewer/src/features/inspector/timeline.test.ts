@@ -364,6 +364,10 @@ interface RawOp {
   start_nano?: string;
   duration_nano?: string | null;
   clock?: string;
+  trace_id?: string;
+  span_id?: string;
+  parent_span_id?: string;
+  parent_scope?: string;
   measurements?: { name: string; value: boolean | number; unit: string }[];
 }
 
@@ -391,6 +395,10 @@ function turnOf(operations: RawOp[]): ExplanationLike {
           shape: raw.shape ?? "interval",
           time_basis: "monotonic" as const,
           clock_domain_id: raw.clock ?? "generic-clock",
+          trace_id: raw.trace_id,
+          span_id: raw.span_id,
+          parent_span_id: raw.parent_span_id,
+          parent_scope: raw.parent_scope,
           start_nano: raw.start_nano ?? String(1000 + i * 1000),
           duration_nano:
             raw.duration_nano === undefined ? "500000000" : raw.duration_nano,
@@ -521,6 +529,33 @@ describe("generic operation list", () => {
 // error/unassigned shapes rather than hand-built stand-ins.
 
 describe("causal edges from links", () => {
+  it("renders an observed in-trace parent edge", () => {
+    const [detail] = buildTurnDetails(
+      turnOf([
+        {
+          operation_id: "op-parent",
+          operation_name: "agent",
+          trace_id: "a".repeat(32),
+          span_id: "1".repeat(16),
+        },
+        {
+          operation_id: "op-child",
+          operation_name: "tool",
+          trace_id: "a".repeat(32),
+          span_id: "2".repeat(16),
+          parent_span_id: "1".repeat(16),
+          parent_scope: "internal",
+        },
+      ]),
+    );
+
+    expect(detail.edges).toContainEqual({
+      fromOperationId: "op-parent",
+      toOperationId: "op-child",
+      relationship: "parent",
+    });
+  });
+
   it("resolves the retry and consume edges in tool_timeout_retry", () => {
     const detail = buildTurnDetails(asExplanation(toolTimeoutRetry))[0];
     expect(detail.edges).toEqual([
