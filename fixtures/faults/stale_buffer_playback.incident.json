@@ -38,106 +38,8 @@
       {
         "attributes": {},
         "capture_class": "metadata",
-        "event_id": "event-interruption-detected",
-        "event_name": "earshot.interruption.detected",
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "deterministic_fault_injection",
-          "method_version": "1",
-          "observer": "test_harness",
-          "source": "fixture_runtime"
-        },
-        "instrumentation_scope_attributes": {},
-        "resource": {},
-        "session_id": "fixture-session",
-        "time": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "900000000",
-          "source_time_unix_nano": "1800000000900000000"
-        },
-        "turn_id": "turn-1"
-      },
-      {
-        "attributes": {},
-        "capture_class": "metadata",
-        "event_id": "event-interruption-accepted",
-        "event_name": "earshot.interruption.accepted",
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "deterministic_fault_injection",
-          "method_version": "1",
-          "observer": "test_harness",
-          "source": "fixture_runtime"
-        },
-        "instrumentation_scope_attributes": {},
-        "resource": {},
-        "session_id": "fixture-session",
-        "time": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "940000000",
-          "source_time_unix_nano": "1800000000940000000"
-        },
-        "turn_id": "turn-1"
-      },
-      {
-        "attributes": {},
-        "capture_class": "metadata",
-        "event_id": "event-model-cancelled",
-        "event_name": "earshot.model.cancelled",
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "deterministic_fault_injection",
-          "method_version": "1",
-          "observer": "test_harness",
-          "source": "fixture_runtime"
-        },
-        "instrumentation_scope_attributes": {},
-        "operation_id": "op-agent",
-        "resource": {},
-        "session_id": "fixture-session",
-        "time": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "960000000",
-          "source_time_unix_nano": "1800000000960000000"
-        },
-        "turn_id": "turn-1"
-      },
-      {
-        "attributes": {},
-        "capture_class": "metadata",
-        "event_id": "event-audio-discarded",
-        "event_name": "earshot.audio.queued.discarded",
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "deterministic_fault_injection",
-          "method_version": "1",
-          "observer": "test_harness",
-          "source": "fixture_runtime"
-        },
-        "instrumentation_scope_attributes": {},
-        "operation_id": "op-tts",
-        "resource": {},
-        "session_id": "fixture-session",
-        "time": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "980000000",
-          "source_time_unix_nano": "1800000000980000000"
-        },
-        "turn_id": "turn-1"
-      },
-      {
-        "attributes": {},
-        "capture_class": "metadata",
-        "event_id": "event-render-stopped",
-        "event_name": "earshot.audio.render.stopped",
+        "event_id": "event-render-stale",
+        "event_name": "earshot.audio.render.stale",
         "evidence": {
           "attributes": {},
           "availability": "available",
@@ -153,8 +55,8 @@
         "session_id": "fixture-session",
         "time": {
           "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "1000000000",
-          "source_time_unix_nano": "1800000001000000000"
+          "monotonic_time_nano": "800000000",
+          "source_time_unix_nano": "1800000000800000000"
         },
         "turn_id": "turn-1"
       }
@@ -170,7 +72,7 @@
       "attributes": {
         "earshot.framework.name": "deterministic_harness"
       },
-      "bundle_id": "fault-barge-in",
+      "bundle_id": "fault-stale-buffer-playback",
       "completeness": "complete",
       "created_at_unix_nano": "1800000000000000000",
       "finality": "final",
@@ -185,76 +87,6 @@
     },
     "media_refs": [],
     "operations": [
-      {
-        "attributes": {},
-        "capture_class": "metadata",
-        "ended_at": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "960000000",
-          "source_time_unix_nano": "1800000000960000000"
-        },
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "deterministic_fault_injection",
-          "method_version": "1",
-          "observer": "test_harness",
-          "source": "fixture_runtime"
-        },
-        "instrumentation_scope_attributes": {},
-        "links": [],
-        "operation_id": "op-agent",
-        "operation_name": "agent",
-        "parent_scope": "external",
-        "resource": {},
-        "session_id": "fixture-session",
-        "span_id": "1111111111111111",
-        "started_at": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "400000000",
-          "source_time_unix_nano": "1800000000400000000"
-        },
-        "status": "cancelled",
-        "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "turn_id": "turn-1"
-      },
-      {
-        "attributes": {},
-        "capture_class": "metadata",
-        "ended_at": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "980000000",
-          "source_time_unix_nano": "1800000000980000000"
-        },
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "deterministic_fault_injection",
-          "method_version": "1",
-          "observer": "test_harness",
-          "source": "fixture_runtime"
-        },
-        "instrumentation_scope_attributes": {},
-        "links": [],
-        "operation_id": "op-tts",
-        "operation_name": "tts",
-        "parent_scope": "external",
-        "participant_id": "participant-agent",
-        "resource": {},
-        "session_id": "fixture-session",
-        "span_id": "2222222222222222",
-        "started_at": {
-          "clock_domain_id": "fault-fixture-clock",
-          "monotonic_time_nano": "500000000",
-          "source_time_unix_nano": "1800000000500000000"
-        },
-        "status": "cancelled",
-        "stream_id": "stream-output",
-        "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "turn_id": "turn-1"
-      },
       {
         "attributes": {},
         "capture_class": "metadata",
@@ -280,13 +112,13 @@
         "participant_id": "participant-agent",
         "resource": {},
         "session_id": "fixture-session",
-        "span_id": "3333333333333333",
+        "span_id": "1111111111111111",
         "started_at": {
           "clock_domain_id": "fault-fixture-clock",
           "monotonic_time_nano": "600000000",
           "source_time_unix_nano": "1800000000600000000"
         },
-        "status": "cancelled",
+        "status": "ok",
         "stream_id": "stream-output",
         "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "turn_id": "turn-1"

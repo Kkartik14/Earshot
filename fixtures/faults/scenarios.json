@@ -80,6 +80,18 @@
     "id": "native_s2s_interruption",
     "required_signals": ["interruption.accepted", "render"]
   },
+  {
+    "id": "render_delay",
+    "required_signals": ["render", "turn_detection", "audio.render.started"]
+  },
+  {
+    "id": "false_interruption",
+    "required_signals": ["agent", "interruption.detected", "interruption.ignored"]
+  },
+  {
+    "id": "stale_buffer_playback",
+    "required_signals": ["render", "audio.render.stale"]
+  },
   { "id": "privacy_opt_out", "required_signals": ["omission", "metadata"] },
   {
     "id": "telephony_handoff",

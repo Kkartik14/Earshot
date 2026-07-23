@@ -644,6 +644,118 @@ def scenarios() -> dict[str, IncidentBundle]:
                 ),
             ),
         ),
+        "render_delay": profile(
+            "render-delay",
+            operations=(
+                operation("op-vad", "vad", 100, 300, stream_id="stream-input", span_digit="1"),
+                operation(
+                    "op-turn",
+                    "turn_detection",
+                    300,
+                    380,
+                    stream_id="stream-input",
+                    span_digit="2",
+                ),
+                operation("op-llm", "llm", 380, 520, span_digit="3"),
+                operation("op-tts", "tts", 520, 680, stream_id="stream-output", span_digit="4"),
+                operation(
+                    "op-send",
+                    "transport_send",
+                    680,
+                    720,
+                    stream_id="stream-output",
+                    span_digit="5",
+                ),
+                operation(
+                    "op-receive",
+                    "transport_receive",
+                    720,
+                    760,
+                    stream_id="stream-output",
+                    span_digit="6",
+                ),
+                # Upstream stages finish quickly; audio is not rendered until
+                # much later, isolating the delay to the render boundary.
+                operation(
+                    "op-render",
+                    "render",
+                    2_400,
+                    2_600,
+                    stream_id="stream-output",
+                    span_digit="7",
+                ),
+            ),
+            events=(
+                event("event-speech-ended", "earshot.speech.ended", 300, operation_id="op-vad"),
+                event(
+                    "event-turn-committed",
+                    "earshot.turn.committed",
+                    380,
+                    operation_id="op-turn",
+                ),
+                event(
+                    "event-first-token",
+                    "earshot.response.first_token",
+                    500,
+                    operation_id="op-llm",
+                ),
+                event(
+                    "event-first-audio",
+                    "earshot.response.first_audio_generated",
+                    660,
+                    operation_id="op-tts",
+                ),
+                event(
+                    "event-first-byte",
+                    "earshot.audio.first_byte_sent",
+                    700,
+                    operation_id="op-send",
+                ),
+                event(
+                    "event-first-packet",
+                    "earshot.audio.first_packet_received",
+                    740,
+                    operation_id="op-receive",
+                ),
+                event(
+                    "event-render-started",
+                    "earshot.audio.render.started",
+                    2_450,
+                    operation_id="op-render",
+                ),
+            ),
+        ),
+        "false_interruption": profile(
+            "false-interruption",
+            operations=(operation("op-agent", "agent", 400, 2_000, span_digit="1"),),
+            events=(
+                # Detected but never accepted: the agent kept speaking because
+                # the detector self-classified the interruption as false.
+                event("event-interruption-detected", "earshot.interruption.detected", 900),
+                event("event-interruption-ignored", "earshot.interruption.ignored", 940),
+            ),
+        ),
+        "stale_buffer_playback": profile(
+            "stale-buffer-playback",
+            operations=(
+                operation(
+                    "op-render",
+                    "render",
+                    600,
+                    1_000,
+                    stream_id="stream-output",
+                    span_digit="1",
+                ),
+            ),
+            events=(
+                event(
+                    "event-render-stale",
+                    "earshot.audio.render.stale",
+                    800,
+                    operation_id="op-render",
+                ),
+            ),
+        ),
         "privacy_opt_out": profile(
             "privacy-opt-out",
             operations=(operation("op-metadata-only", "agent", 500, 900),),
