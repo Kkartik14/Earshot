@@ -97,6 +97,7 @@ class TurnRecorder:
         self._cursor_ms = 0.0
         self._max_ms = 0.0
         self._sequence = 0
+        self._speech_end_ms: float | None = None
 
     @property
     def turn_id(self) -> str:
@@ -130,11 +131,23 @@ class TurnRecorder:
             self._measurement(
                 "earshot.stt.ttfb", ttfb_ms, operation_id, confidence, "pipeline.stt.ttfb"
             )
-        # ``final_ms`` is audio-stop -> final transcript. Positioned against the
-        # turn cursor, which is the observed speech-end when ``vad`` supplied it;
-        # stages no longer advance the cursor, so this is not a fabricated sum.
-        if final_ms is not None and transcript_final:
-            self._event("earshot.transcript.final", self._cursor_ms + final_ms, _USER, confidence)
+        if final_ms is not None:
+            self._measurement(
+                "earshot.stt.finalization_latency",
+                final_ms,
+                operation_id,
+                confidence,
+                "pipeline.stt.finalization_latency",
+            )
+        # ``final_ms`` is a scalar from audio-stop to final transcript. It proves
+        # the final event coordinate only when this turn observed speech end.
+        if final_ms is not None and transcript_final and self._speech_end_ms is not None:
+            self._event(
+                "earshot.transcript.final",
+                self._speech_end_ms + final_ms,
+                _USER,
+                confidence,
+            )
         return self
 
     def llm(
@@ -208,12 +221,10 @@ class TurnRecorder:
             self._measurement(
                 "earshot.tts.ttfb", ttfb_ms, operation_id, confidence, "pipeline.tts.ttfb"
             )
-        # ``first_audio_ms`` is a turn-relative offset from the cursor (the
-        # observed speech-end). When a provider TTFB is present the analyzer uses
-        # that measurement for generated-response latency, so the positioned
-        # event is emitted only for the first-audio-only case to avoid a second,
-        # conflicting boundary signal.
-        if first_audio_ms is not None and ttfb_ms is None:
+        # ``first_audio_ms`` is a turn-relative observed boundary, while TTFB is a
+        # provider scalar. They are distinct evidence and neither suppresses the
+        # other.
+        if first_audio_ms is not None:
             self._event(
                 "earshot.response.first_audio_generated",
                 self._cursor_ms + first_audio_ms,
@@ -238,6 +249,7 @@ class TurnRecorder:
             self._event("earshot.speech.started", speech_start_ms, _USER, confidence)
         if speech_end_ms is not None:
             self._event("earshot.speech.ended", speech_end_ms, _USER, confidence)
+            self._speech_end_ms = speech_end_ms
             self._cursor_ms = max(self._cursor_ms, speech_end_ms)
         return self
 

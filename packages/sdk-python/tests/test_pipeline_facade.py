@@ -46,15 +46,15 @@ def test_custom_pipeline_incident_is_contract_valid() -> None:
 def test_provider_reported_latencies_populate_turn_facts(tmp_path) -> None:
     bundle = _two_turn_session().close()
 
-    # Derived first-token/generated latency come straight from the facade's
-    # earshot.llm.ttft / earshot.tts.ttfb measurements.
+    # First-token comes from the provider TTFT scalar. The explicit first-audio
+    # boundary outranks the TTS TTFB scalar for generated-response latency.
     analysis = analyze_incident(
         bundle, input_sha256=analysis_input_sha256(bundle), generated_at_unix_nano=1
     )
     first_turn = analysis.projections.turns[0].metrics
     assert first_turn.first_token_latency.value == pytest.approx(350)
     assert first_turn.first_token_latency.confidence == "measured"
-    assert first_turn.generated_response_latency.value == pytest.approx(90)
+    assert first_turn.generated_response_latency.value == pytest.approx(140)
 
     store = IncidentStore(tmp_path)
     store.create_project("pipe", display_name="Pipe")
@@ -67,7 +67,7 @@ def test_provider_reported_latencies_populate_turn_facts(tmp_path) -> None:
     assert facts[0].model == "gpt-4o"
     assert facts[0].first_token_ms == pytest.approx(350)
     assert facts[0].first_token_confidence == "measured"
-    assert facts[0].generated_response_ms == pytest.approx(90)
+    assert facts[0].generated_response_ms == pytest.approx(140)
 
 
 def test_barge_in_authors_an_accepted_interruption(tmp_path) -> None:
@@ -174,15 +174,69 @@ def test_first_audio_boundary_is_preserved_without_provider_ttfb() -> None:
     assert analysis.projections.turns[0].metrics.generated_response_latency.value == 140
 
 
+def test_first_audio_boundary_is_preserved_alongside_provider_ttfb() -> None:
+    sess = earshot.pipeline(session_id="first-audio-and-ttfb", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.vad(speech_end_ms=0)
+        turn.tts("cartesia", ttfb_ms=90, first_audio_ms=140, confidence="measured")
+    bundle = sess.close()
+
+    assert any(
+        event.event_name == "earshot.response.first_audio_generated"
+        and int(event.time.monotonic_time_nano) == 140_000_000
+        for event in bundle.profile.events
+    )
+    assert any(
+        measurement.name == "earshot.tts.ttfb" and measurement.value == 90
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    )
+
+
 def test_final_transcript_is_attributed_to_the_user() -> None:
     sess = earshot.pipeline(session_id="speaker", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.vad(speech_end_ms=100)
+        turn.stt("deepgram", final_ms=420)
+    bundle = sess.close()
+
+    event = next(
+        event for event in bundle.profile.events if event.event_name == "earshot.transcript.final"
+    )
+    assert event.event_name == "earshot.transcript.final"
+    assert event.participant_id == "participant-user"
+
+
+def test_finalization_scalar_without_speech_end_does_not_invent_an_event() -> None:
+    sess = earshot.pipeline(session_id="finalization-scalar", started_at_unix_nano=START)
     with sess.turn() as turn:
         turn.stt("deepgram", final_ms=420)
     bundle = sess.close()
 
-    [event] = bundle.profile.events
-    assert event.event_name == "earshot.transcript.final"
-    assert event.participant_id == "participant-user"
+    assert not any(
+        event.event_name == "earshot.transcript.final" for event in bundle.profile.events
+    )
+    assert [
+        (measurement.name, measurement.value, measurement.unit)
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    ] == [("earshot.stt.finalization_latency", 420.0, "ms")]
+
+
+def test_finalization_scalar_populates_turn_fact_without_invented_boundaries(tmp_path) -> None:
+    sess = earshot.pipeline(session_id="finalization-fact", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.stt("deepgram", final_ms=420)
+    bundle = sess.close()
+
+    store = IncidentStore(tmp_path)
+    store.create_project("pipe", display_name="Pipe")
+    store.ingest(bundle, project_id="pipe")
+    [fact] = store.list_turn_facts(project_id="pipe")
+
+    assert fact.stt_finalization_ms == 420
+    assert fact.stt_finalization_basis == "provider_finalization_latency"
+    assert fact.stt_finalization_confidence == "measured"
 
 
 def test_failed_turn_does_not_reuse_its_clock_origin() -> None:
