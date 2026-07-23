@@ -1847,6 +1847,58 @@ def assert_valid_incident(bundle: IncidentBundle) -> None:
         raise IncidentValidationError(report)
 
 
+_BOUNDARY_FAILED_STATUSES = {"error", "timeout", "failed"}
+
+
+def _boundary_diagnosis_evidence_ok(
+    code: str,
+    evidence_refs: tuple[str, ...],
+    operations: Mapping[str, Any],
+    events: Mapping[str, Any],
+    quality_samples: Mapping[str, Any],
+) -> bool:
+    """Return whether a governed boundary diagnosis cites its attributed evidence kind.
+
+    Evidence resolution is enforced elsewhere. This adds the ``no invented
+    diagnosis`` guarantee for the deterministic boundary-attribution codes: each
+    must cite at least one record of the kind it blames, so a hypothesis cannot
+    be attached to an unrelated operation, event, or sample. Unknown codes are
+    accepted once their evidence resolves, preserving analyzer extensibility.
+    """
+
+    cited_operations = [operations[ref] for ref in evidence_refs if ref in operations]
+    cited_events = [events[ref] for ref in evidence_refs if ref in events]
+    if code == "network.degraded":
+        return bool(evidence_refs) and all(ref in quality_samples for ref in evidence_refs)
+    if code == "tool.retry":
+        return (
+            bool(cited_operations)
+            and all(operation.operation_name == "tool" for operation in cited_operations)
+            and any(operation.status in _BOUNDARY_FAILED_STATUSES for operation in cited_operations)
+        )
+    if code == "device.unavailable":
+        return any(event.event_name.startswith("earshot.device.") for event in cited_events)
+    if code == "transport.reconnect":
+        return any(event.event_name.startswith("earshot.transport.") for event in cited_events)
+    if code == "interruption.false":
+        return any(
+            event.event_name == "earshot.interruption.detected" for event in cited_events
+        ) and not any(event.event_name == "earshot.interruption.accepted" for event in cited_events)
+    if code == "audio.stale_playback":
+        return any(event.event_name.startswith("earshot.audio.render.") for event in cited_events)
+    if code == "render.delayed":
+        return any(
+            event.event_name.startswith("earshot.audio.render.") for event in cited_events
+        ) or any(operation.operation_name == "render" for operation in cited_operations)
+    if code == "stage.slow":
+        return any(
+            operation.operation_name in {"stt", "llm", "tts"} for operation in cited_operations
+        )
+    if code == "endpointing.slow":
+        return any(operation.operation_name == "turn_detection" for operation in cited_operations)
+    return True
+
+
 def validate_derived_analysis(
     bundle: IncidentBundle,
     analysis: DerivedAnalysis,
@@ -2518,6 +2570,20 @@ def validate_derived_analysis(
                         ),
                     )
                 )
+        elif not _boundary_diagnosis_evidence_ok(
+            diagnosis.code,
+            diagnosis.evidence_refs,
+            operations,
+            events,
+            quality_samples,
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_ANALYSIS_DIAGNOSIS_EVIDENCE_INVALID",
+                    path=("analysis", "diagnoses", diagnosis_index, "evidence_refs"),
+                    message="boundary diagnosis does not cite evidence of its attributed kind",
+                )
+            )
     return ValidationReport(issues=tuple(issues))
 
 
