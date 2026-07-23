@@ -306,6 +306,110 @@ def test_detect_contradictions_honors_uncertainty_within_bounds() -> None:
     assert contradictions == []
 
 
+def _scalar_sample(
+    sample_id: str,
+    observer: str,
+    name: str,
+    value: float,
+    unit: str,
+    *,
+    uncertainty: float | None = None,
+):
+    measurements = [QualityMeasurement(name=name, value=value, unit=unit)]
+    if uncertainty is not None:
+        measurements.append(
+            QualityMeasurement(name=f"{name}.uncertainty", value=uncertainty, unit=unit)
+        )
+    return QualitySample(
+        sample_id=sample_id,
+        session_id="session-1",
+        quality_kind="transport.quality",
+        sample_window=TimeRange(start=point(1), end=point(2)),
+        measurements=tuple(measurements),
+        evidence=Evidence(
+            source="webrtc_stats",
+            observer=observer,
+            method="getStats",
+            confidence="measured",
+            availability="available",
+        ),
+        participant_id="participant-user",
+        stream_id="stream-input",
+        attributes={"earshot.turn.id": "turn-1"},
+    )
+
+
+# F6(c): absent uncertainty is UNKNOWN, never an exact 0 that fakes precision.
+def test_missing_uncertainty_is_unknown_not_a_fabricated_zero() -> None:
+    # 100ms vs 180ms, but NEITHER sample states an uncertainty. The old code read
+    # the missing bound as 0 and reported a disagreement "beyond uncertainty"; an
+    # unknown bound cannot prove a disagreement, so nothing is asserted.
+    bundle = _bundle_with_samples(
+        (
+            _scalar_sample("q-server", "server", "earshot.metric.round_trip_time", 100.0, "ms"),
+            _scalar_sample("q-client", "browser", "earshot.metric.round_trip_time", 180.0, "ms"),
+        )
+    )
+    contradictions = [
+        c for c in detect_contradictions(bundle) if c.kind == "provider_client_disagreement"
+    ]
+    assert contradictions == []
+
+
+# F6(d): measurements whose bases differ are incomparable, never compared.
+def test_incompatible_measurement_bases_are_not_compared() -> None:
+    # Same metric name, two observers, but one is in ms and the other a raw count.
+    # Both carry a known uncertainty (so F6(c) does not short-circuit); the old
+    # code dropped the unit and compared 100 against 5000 into a fake disagreement.
+    bundle = _bundle_with_samples(
+        (
+            _scalar_sample(
+                "q-server", "server", "earshot.metric.round_trip_time", 100.0, "ms", uncertainty=1.0
+            ),
+            _scalar_sample(
+                "q-client",
+                "browser",
+                "earshot.metric.round_trip_time",
+                5000.0,
+                "count",
+                uncertainty=1.0,
+            ),
+        )
+    )
+    contradictions = [
+        c for c in detect_contradictions(bundle) if c.kind == "provider_client_disagreement"
+    ]
+    assert contradictions == []
+
+
+# F6(e): a derived analysis from another incident must not be trusted.
+def test_evidence_query_rejects_stale_analysis_from_another_incident() -> None:
+    from earshot.analysis import analyze_incident
+    from earshot.codec import analysis_input_sha256
+
+    incident = _fault("render_delay")
+    other = _fault("barge_in")
+    foreign = analyze_incident(
+        other, input_sha256=analysis_input_sha256(other), generated_at_unix_nano="0"
+    )
+    with pytest.raises(ValueError):
+        EvidenceQuery(incident, foreign)
+    with pytest.raises(ValueError):
+        detect_contradictions(incident, foreign)
+
+
+def test_evidence_query_accepts_matching_analysis() -> None:
+    from earshot.analysis import analyze_incident
+    from earshot.codec import analysis_input_sha256
+
+    incident = _fault("render_delay")
+    matching = analyze_incident(
+        incident, input_sha256=analysis_input_sha256(incident), generated_at_unix_nano="0"
+    )
+    query = EvidenceQuery(incident, matching)
+    assert query.summary().counts["turn_count"] >= 1
+
+
 def test_detect_contradictions_ignores_same_observer_disagreement() -> None:
     bundle = _bundle_with_samples(
         (

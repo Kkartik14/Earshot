@@ -136,7 +136,7 @@ class TurnKnowledge:
     metrics: tuple[dict[str, object], ...] = ()
     provider_measurements: tuple[dict[str, object], ...] = ()
     diagnoses: tuple[dict[str, object], ...] = ()
-    interruption_chain: dict[str, object] | None = None
+    interruption_chains: tuple[dict[str, object], ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -145,7 +145,7 @@ class TurnKnowledge:
             "metrics": list(self.metrics),
             "provider_measurements": list(self.provider_measurements),
             "diagnoses": list(self.diagnoses),
-            "interruption_chain": self.interruption_chain,
+            "interruption_chains": list(self.interruption_chains),
         }
 
 
@@ -311,6 +311,23 @@ def _derive_analysis(bundle: IncidentBundle) -> DerivedAnalysis:
     )
 
 
+def _require_matching_analysis(bundle: IncidentBundle, analysis: DerivedAnalysis) -> None:
+    """Reject a derived analysis whose input identity is not this incident's.
+
+    ``DerivedAnalysis`` carries the ``input_sha256`` of the exact evidence artifact
+    it was computed from. Answering questions about one incident from an analysis
+    derived from another would silently attribute a foreign incident's conclusions;
+    the identities must match before the analysis is trusted.
+    """
+
+    expected = analysis_input_sha256(bundle)
+    if analysis.input_sha256 != expected:
+        raise ValueError(
+            "derived analysis input_sha256 does not match the incident under analysis; "
+            "refusing to answer from a stale or foreign analysis"
+        )
+
+
 def _operation_and_event_turns(
     analysis: DerivedAnalysis,
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -421,7 +438,11 @@ class EvidenceQuery:
         analysis: DerivedAnalysis | None = None,
     ) -> None:
         self.bundle = bundle
-        self.analysis = analysis if analysis is not None else _derive_analysis(bundle)
+        if analysis is not None:
+            _require_matching_analysis(bundle, analysis)
+            self.analysis = analysis
+        else:
+            self.analysis = _derive_analysis(bundle)
         self._index = _EvidenceIndex(bundle, self.analysis)
         self._turns_by_id = {turn.turn_id: turn for turn in self.analysis.projections.turns}
 
@@ -444,10 +465,8 @@ class EvidenceQuery:
             for diagnosis in self.analysis.diagnoses
             if turn_id in self._index.diagnosis_turn_ids(diagnosis)
         )
-        chain = (
-            turn.interruption_chain.model_dump(mode="json", exclude_none=True)
-            if turn.interruption_chain is not None
-            else None
+        chains = tuple(
+            chain.model_dump(mode="json", exclude_none=True) for chain in turn.interruption_chains
         )
         return TurnKnowledge(
             turn_id=turn_id,
@@ -455,7 +474,7 @@ class EvidenceQuery:
             metrics=metrics,
             provider_measurements=provider,
             diagnoses=diagnoses,
-            interruption_chain=chain,
+            interruption_chains=chains,
         )
 
     # -- first_abnormal_boundary -------------------------------------------- #
@@ -719,17 +738,20 @@ class EvidenceQuery:
 def _measurements_by_turn(
     bundle: IncidentBundle,
     index: _EvidenceIndex,
-) -> dict[str, dict[str, list[tuple[str, str, float, float]]]]:
+) -> dict[str, dict[str, list[tuple[str, str, float, str, float | None]]]]:
     """Group each turn's provider/client scalars by measurement name.
 
-    Returns ``turn -> name -> [(sample_id, observer, value_ms, uncertainty_ms)]``.
-    Values in seconds are normalized to milliseconds. A same-sample companion
-    measurement named ``"<name>.uncertainty"`` (same unit) supplies the scalar's
-    uncertainty; absent that, uncertainty is zero. Companion measurements are not
-    themselves treated as comparable quantities.
+    Returns ``turn -> name -> [(sample_id, observer, value, unit, uncertainty)]``.
+    Values in seconds are normalized to milliseconds and carry their (normalized)
+    ``unit`` as the comparison basis. A same-sample companion measurement named
+    ``"<name>.uncertainty"`` in the *same* unit supplies the scalar's uncertainty;
+    when it is absent -- or stated in a different basis that cannot bound the value
+    -- the uncertainty is ``None`` (UNKNOWN), never an exact 0 that would fake a
+    precision the evidence never claimed. Companion measurements are not themselves
+    treated as comparable quantities.
     """
 
-    grouped: dict[str, dict[str, list[tuple[str, str, float, float]]]] = {}
+    grouped: dict[str, dict[str, list[tuple[str, str, float, str, float | None]]]] = {}
     for sample in sorted(bundle.profile.quality_samples, key=lambda item: item.sample_id):
         turn = index.sample_turns.get(sample.sample_id)
         if turn is None or sample.evidence is None:
@@ -753,11 +775,15 @@ def _measurements_by_turn(
             else:
                 values[measurement.name] = (magnitude, unit)
         for name, (magnitude, unit) in values.items():
-            uncertainty, uncertainty_unit = uncertainties.get(name, (0.0, unit))
-            if uncertainty_unit != unit:
-                uncertainty = 0.0
+            companion = uncertainties.get(name)
+            if companion is None or companion[1] != unit:
+                # Absent, or stated in an incompatible basis: the error bound is
+                # UNKNOWN. Propagating 0 here would manufacture false precision.
+                uncertainty: float | None = None
+            else:
+                uncertainty = companion[0]
             grouped.setdefault(turn, {}).setdefault(name, []).append(
-                (sample.sample_id, observer, magnitude, uncertainty)
+                (sample.sample_id, observer, magnitude, unit, uncertainty)
             )
     return grouped
 
@@ -854,12 +880,31 @@ def _provider_client_contradictions(
     grouped = _measurements_by_turn(bundle, index)
     for turn in sorted(grouped):
         for name in sorted(grouped[turn]):
-            entries = sorted(grouped[turn][name])
+            entries = sorted(
+                grouped[turn][name],
+                key=lambda entry: (
+                    entry[0],
+                    entry[1],
+                    entry[2],
+                    entry[3],
+                    entry[4] is None,
+                    entry[4] or 0.0,
+                ),
+            )
             for i in range(len(entries)):
                 for j in range(i + 1, len(entries)):
-                    sample_a, observer_a, value_a, uncertainty_a = entries[i]
-                    sample_b, observer_b, value_b, uncertainty_b = entries[j]
+                    sample_a, observer_a, value_a, unit_a, uncertainty_a = entries[i]
+                    sample_b, observer_b, value_b, unit_b, uncertainty_b = entries[j]
                     if observer_a == observer_b:
+                        continue
+                    if unit_a != unit_b:
+                        # Different measurement bases are not the same quantity;
+                        # comparing unlike bases would invent a disagreement, so the
+                        # pair is incomparable and no contradiction is asserted.
+                        continue
+                    if uncertainty_a is None or uncertainty_b is None:
+                        # An unknown error bound cannot prove a disagreement "beyond
+                        # uncertainty". Missing uncertainty is unknown, not zero.
                         continue
                     if abs(value_a - value_b) > (uncertainty_a + uncertainty_b):
                         contradictions.append(
@@ -893,6 +938,8 @@ def detect_contradictions(
 
     if analysis is None:
         analysis = _derive_analysis(bundle)
+    else:
+        _require_matching_analysis(bundle, analysis)
     index = _EvidenceIndex(bundle, analysis)
     aligner = _ClockAligner(bundle.profile.clock_relations)
 
@@ -980,8 +1027,12 @@ def compare_incidents(
 
     if incident_analysis is None:
         incident_analysis = _derive_analysis(incident)
+    else:
+        _require_matching_analysis(incident, incident_analysis)
     if known_good_analysis is None:
         known_good_analysis = _derive_analysis(known_good)
+    else:
+        _require_matching_analysis(known_good, known_good_analysis)
     incident_index = _EvidenceIndex(incident, incident_analysis)
     known_index = _EvidenceIndex(known_good, known_good_analysis)
 
