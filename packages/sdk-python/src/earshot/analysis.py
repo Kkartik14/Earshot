@@ -10,8 +10,9 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from typing import TypeVar
 
 from .contract import (
     UINT64_MAX,
@@ -28,6 +29,70 @@ from .versions import ANALYZER_VERSION
 
 ANALYZER_NAME = "earshot.deterministic"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
+_T = TypeVar("_T")
+_Coordinate = tuple[str, str, int]
+
+
+def _comparable_coordinate(point: TimePoint) -> _Coordinate | None:
+    domain = point.clock_domain_id
+    if domain is None:
+        return None
+    if point.monotonic_time_nano is not None:
+        return domain, "monotonic", int(point.monotonic_time_nano)
+    if point.source_time_unix_nano is not None:
+        return domain, "source_wall", int(point.source_time_unix_nano)
+    if point.observed_time_unix_nano is not None:
+        return domain, "observed_wall", int(point.observed_time_unix_nano)
+    return None
+
+
+def _order_by_comparable_coordinate(
+    items: Iterable[_T],
+    *,
+    coordinate: Callable[[_T], _Coordinate | None],
+) -> tuple[_T, ...]:
+    """Order numerically within comparable groups and retain group source order.
+
+    Clock-domain and timestamp-basis labels identify groups; they never rank one
+    incomparable group ahead of another. Equal coordinates retain source order.
+    """
+
+    group_order: list[tuple[str, str, str]] = []
+    grouped: dict[tuple[str, str, str], list[tuple[_T, int | None]]] = {}
+    for source_index, item in enumerate(items):
+        item_coordinate = coordinate(item)
+        if item_coordinate is None:
+            group = ("source", str(source_index), "")
+            value = None
+        else:
+            domain, basis, value = item_coordinate
+            group = ("coordinate", domain, basis)
+        if group not in grouped:
+            group_order.append(group)
+            grouped[group] = []
+        grouped[group].append((item, value))
+
+    ordered: list[_T] = []
+    for group in group_order:
+        entries = grouped[group]
+        if group[0] == "coordinate":
+            entries = sorted(
+                entries,
+                key=lambda entry: entry[1] if entry[1] is not None else 0,
+            )
+        ordered.extend(item for item, _value in entries)
+    return tuple(ordered)
+
+
+def _order_by_comparable_time(
+    items: Iterable[_T],
+    *,
+    point: Callable[[_T], TimePoint],
+) -> tuple[_T, ...]:
+    return _order_by_comparable_coordinate(
+        items,
+        coordinate=lambda item: _comparable_coordinate(point(item)),
+    )
 
 
 @dataclass(frozen=True)
@@ -96,32 +161,6 @@ def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
     uncertainty = int(start.uncertainty_nano or "0") + int(end.uncertainty_nano or "0")
     confidence = "estimated" if uncertainty else "measured"
     return Delta("available", value, basis, confidence)
-
-
-def _coordinate_sort_key(point: TimePoint) -> tuple[int, str, int, int]:
-    """Return a canonical coordinate-group key without cross-clock subtraction.
-
-    Clock domain and representation group incomparable evidence. Numeric ordering
-    therefore happens only after those fields match. The leading unavailable flag
-    keeps records without an orderable coordinate deterministic but last.
-    """
-
-    domain = point.clock_domain_id
-    if domain is not None and point.monotonic_time_nano is not None:
-        return (0, domain, 0, int(point.monotonic_time_nano))
-    if domain is not None and point.source_time_unix_nano is not None:
-        return (0, domain, 1, int(point.source_time_unix_nano))
-    if domain is not None and point.observed_time_unix_nano is not None:
-        return (0, domain, 2, int(point.observed_time_unix_nano))
-    return (1, domain or "", 3, 0)
-
-
-def _operation_sort_key(operation: Operation) -> tuple[int, str, int, int, str]:
-    return (*_coordinate_sort_key(operation.started_at), operation.operation_id)
-
-
-def _event_sort_key(event: Event) -> tuple[int, str, int, int, str]:
-    return (*_coordinate_sort_key(event.time), event.event_id)
 
 
 def _earliest_event(events: Iterable[Event], names: set[str]) -> Event | None:
@@ -694,9 +733,16 @@ def _turn_projection(
     return {
         "turn_id": turn_id,
         "operation_ids": [
-            item.operation_id for item in sorted(operations, key=_operation_sort_key)
+            item.operation_id
+            for item in _order_by_comparable_time(
+                operations,
+                point=lambda operation: operation.started_at,
+            )
         ],
-        "event_ids": [item.event_id for item in sorted(events, key=_event_sort_key)],
+        "event_ids": [
+            item.event_id
+            for item in _order_by_comparable_time(events, point=lambda event: event.time)
+        ],
         "metrics": {
             "first_token_latency": first_token_latency,
             "generated_response_latency": generated_response_latency,
@@ -792,20 +838,28 @@ def analyze_incident(
         else:
             unassigned_quality.append(sample)
 
-    turn_ids = set(turn_operations) | set(turn_events) | set(turn_quality)
+    turn_ids = tuple(dict.fromkeys((*turn_operations, *turn_events, *turn_quality)))
 
-    def turn_sort_key(turn_id: str) -> tuple[int, str, int, int, str]:
+    def turn_coordinate(turn_id: str) -> tuple[str, str, int] | None:
         coordinates = [
-            _coordinate_sort_key(operation.started_at) for operation in turn_operations[turn_id]
+            _comparable_coordinate(operation.started_at) for operation in turn_operations[turn_id]
         ]
-        coordinates.extend(_coordinate_sort_key(event.time) for event in turn_events[turn_id])
+        coordinates.extend(_comparable_coordinate(event.time) for event in turn_events[turn_id])
         coordinates.extend(
-            _coordinate_sort_key(sample.sample_window.start) for sample in turn_quality[turn_id]
+            _comparable_coordinate(sample.sample_window.start) for sample in turn_quality[turn_id]
         )
-        coordinate = min(coordinates) if coordinates else (1, "", 3, 0)
-        return (*coordinate, turn_id)
+        if not coordinates or any(coordinate is None for coordinate in coordinates):
+            return None
+        comparable = [coordinate for coordinate in coordinates if coordinate is not None]
+        groups = {(domain, basis) for domain, basis, _value in comparable}
+        if len(groups) != 1:
+            return None
+        return min(comparable, key=lambda coordinate: coordinate[2])
 
-    ordered_turn_ids = sorted(turn_ids, key=turn_sort_key)
+    ordered_turn_ids = _order_by_comparable_coordinate(
+        turn_ids,
+        coordinate=turn_coordinate,
+    )
     turns = [
         _turn_projection(
             turn_id,

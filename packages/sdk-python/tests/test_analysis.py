@@ -15,6 +15,7 @@ from earshot.contract import (
     QualitySample,
     TimeRange,
 )
+from earshot.explanation import explain_incident
 from earshot.validation import validate_derived_analysis
 from incident_factory import point
 from test_contract_validation import replace_profile
@@ -101,6 +102,171 @@ def test_turns_use_evidence_time_before_lexical_identifier(valid_bundle) -> None
     result = analyze(bundle)
 
     assert [item.turn_id for item in result.projections.turns] == ["turn-2", "turn-10"]
+
+
+def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation(
+    valid_bundle,
+) -> None:
+    clocks = (
+        ClockDomain(clock_domain_id="z-source-clock", kind="monotonic", observer="server"),
+        ClockDomain(clock_domain_id="a-source-clock", kind="monotonic", observer="server"),
+    )
+    operations = (
+        Operation(
+            operation_id="op-z-late",
+            session_id="session-1",
+            operation_name="agent",
+            status="ok",
+            started_at=point(300, domain="z-source-clock"),
+            ended_at=point(350, domain="z-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Operation(
+            operation_id="op-z-early",
+            session_id="session-1",
+            operation_name="agent",
+            status="ok",
+            started_at=point(100, domain="z-source-clock"),
+            ended_at=point(150, domain="z-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Operation(
+            operation_id="op-a-late",
+            session_id="session-1",
+            operation_name="agent",
+            status="ok",
+            started_at=point(400, domain="a-source-clock"),
+            ended_at=point(450, domain="a-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Operation(
+            operation_id="op-a-early",
+            session_id="session-1",
+            operation_name="agent",
+            status="ok",
+            started_at=point(200, domain="a-source-clock"),
+            ended_at=point(250, domain="a-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+    )
+    events = (
+        Event(
+            event_id="evt-z-late",
+            session_id="session-1",
+            event_name="earshot.test.marker",
+            time=point(310, domain="z-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Event(
+            event_id="evt-z-early",
+            session_id="session-1",
+            event_name="earshot.test.marker",
+            time=point(110, domain="z-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Event(
+            event_id="evt-a-late",
+            session_id="session-1",
+            event_name="earshot.test.marker",
+            time=point(410, domain="a-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Event(
+            event_id="evt-a-early",
+            session_id="session-1",
+            event_name="earshot.test.marker",
+            time=point(210, domain="a-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        clock_domains=(*valid_bundle.profile.clock_domains, *clocks),
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+
+    analysis = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    [projected_turn] = analysis.projections.turns
+    assert projected_turn.operation_ids == (
+        "op-z-early",
+        "op-z-late",
+        "op-a-early",
+        "op-a-late",
+    )
+    assert projected_turn.event_ids == (
+        "evt-z-early",
+        "evt-z-late",
+        "evt-a-early",
+        "evt-a-late",
+    )
+
+    explanation = explain_incident(bundle, analysis)
+    [explained_turn] = explanation.turns
+    assert tuple(item.operation_id for item in explained_turn.operations) == (
+        "op-z-early",
+        "op-z-late",
+        "op-a-early",
+        "op-a-late",
+    )
+    assert tuple(item.event_id for item in explained_turn.events) == (
+        "evt-z-early",
+        "evt-z-late",
+        "evt-a-early",
+        "evt-a-late",
+    )
+
+    repeated_analysis = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    assert repeated_analysis == analysis
+    assert explain_incident(bundle, repeated_analysis) == explanation
+
+
+def test_incomparable_turn_clock_groups_keep_source_order(valid_bundle) -> None:
+    clocks = (
+        ClockDomain(clock_domain_id="z-source-clock", kind="monotonic", observer="server"),
+        ClockDomain(clock_domain_id="a-source-clock", kind="monotonic", observer="server"),
+    )
+    source_first = Operation(
+        operation_id="op-source-first",
+        session_id="session-1",
+        operation_name="agent",
+        status="ok",
+        started_at=point(900, domain="z-source-clock"),
+        ended_at=point(950, domain="z-source-clock"),
+        turn_id="turn-source-first",
+    )
+    source_second = Operation(
+        operation_id="op-source-second",
+        session_id="session-1",
+        operation_name="agent",
+        status="ok",
+        started_at=point(100, domain="a-source-clock"),
+        ended_at=point(150, domain="a-source-clock"),
+        turn_id="turn-source-second",
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        clock_domains=(*valid_bundle.profile.clock_domains, *clocks),
+        operations=(source_first, source_second),
+        events=(),
+        quality_samples=(),
+    )
+
+    result = analyze(bundle)
+
+    assert [item.turn_id for item in result.projections.turns] == [
+        "turn-source-first",
+        "turn-source-second",
+    ]
 
 
 def test_high_fidelity_events_win_over_coarse_operation_starts(valid_bundle) -> None:

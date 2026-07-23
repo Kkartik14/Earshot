@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .analysis import _order_by_comparable_time
 from .contract import (
     CausalLink,
     DerivedAnalysis,
@@ -330,16 +331,6 @@ def _event(value) -> ExplainedEvent:
     )
 
 
-def _operation_order(value) -> tuple[int, str, str, int, str]:
-    basis, domain, coordinate = _coordinate(value.started_at)
-    return (domain is None, domain or "", basis, int(coordinate), value.operation_id)
-
-
-def _event_order(value) -> tuple[int, str, str, int, str]:
-    basis, domain, coordinate = _coordinate(value.time)
-    return (domain is None, domain or "", basis, int(coordinate), value.event_id)
-
-
 def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> IncidentExplanation:
     """Project UI-ready facts without inventing intervals or cross-clock ordering."""
 
@@ -355,20 +346,20 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                     operation,
                     samples,
                 )
-                for operation in sorted(
+                for operation in _order_by_comparable_time(
                     (
                         operations[identity]
                         for identity in turn.operation_ids
                         if identity in operations
                     ),
-                    key=_operation_order,
+                    point=lambda operation: operation.started_at,
                 )
             ),
             events=tuple(
                 _event(event)
-                for event in sorted(
+                for event in _order_by_comparable_time(
                     (events[identity] for identity in turn.event_ids if identity in events),
-                    key=_event_order,
+                    point=lambda event: event.time,
                 )
             ),
             metrics=turn.metrics,
@@ -382,13 +373,13 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
     assigned_operation_ids = {
         operation_id for turn in analysis.projections.turns for operation_id in turn.operation_ids
     }
-    unassigned_source_operations = sorted(
+    unassigned_source_operations = _order_by_comparable_time(
         (
             operation
             for operation in profile.operations
             if operation.operation_id not in assigned_operation_ids
         ),
-        key=_operation_order,
+        point=lambda operation: operation.started_at,
     )
     unassigned_operations = tuple(
         _operation(operation, samples) for operation in unassigned_source_operations
@@ -399,9 +390,9 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
     }
     unassigned_events = tuple(
         _event(event)
-        for event in sorted(
+        for event in _order_by_comparable_time(
             (event for event in profile.events if event.event_id not in assigned_event_ids),
-            key=_event_order,
+            point=lambda event: event.time,
         )
     )
 
