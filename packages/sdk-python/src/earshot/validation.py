@@ -918,6 +918,39 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
             issues,
         )
 
+    # A declared clock calibration may only relate domains this bundle defines.
+    # Same-record shape (from != to, window ordering) is enforced by the model.
+    _id_index(
+        profile.clock_relations,
+        "relation_id",
+        ("profile", "clock_relations"),
+        issues,
+    )
+    for index, relation in enumerate(profile.clock_relations):
+        base = ("profile", "clock_relations", index)
+        for field_name in ("from_clock_domain_id", "to_clock_domain_id"):
+            domain_id = getattr(relation, field_name)
+            if domain_id not in clock_domains:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_UNKNOWN_CLOCK_DOMAIN",
+                        path=base + (field_name,),
+                        message=f"unknown clock domain {domain_id!r}",
+                    )
+                )
+        _check_evidence_clock_refs(
+            relation.evidence,
+            clock_domains,
+            base + ("evidence",),
+            issues,
+        )
+        _check_evidence_source_label(
+            relation.evidence,
+            CaptureClass.METADATA.value,
+            base + ("evidence",),
+            issues,
+        )
+
     privacy_policies = _id_index(
         profile.privacy.capture_classes,
         "capture_class",
