@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.4.0",
-  "input_sha256": "5923a10d1282df3044c6c60403d8dcacfab41880d19ffb684f9ab7893287d015",
+  "analyzer_version": "0.5.0",
+  "input_sha256": "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -143,7 +143,15 @@
           "span_id": "4444444444444444",
           "parent_span_id": null,
           "parent_scope": "external",
-          "links": [],
+          "links": [
+            {
+              "relationship": "cancelled_by",
+              "target_scope": "internal",
+              "target_operation_id": "op-agent",
+              "trace_id": null,
+              "span_id": null
+            }
+          ],
           "error": null,
           "evidence": {
             "source": "fixture_runtime",

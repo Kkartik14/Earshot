@@ -1923,8 +1923,11 @@ export interface components {
              * @default []
              */
             event_ids: string[];
-            /** @default null */
-            interruption_chain: components["schemas"]["InterruptionChainProjection"] | null;
+            /**
+             * Interruption Chains
+             * @default []
+             */
+            interruption_chains: components["schemas"]["InterruptionChainProjection"][];
             /**
              * Interruptions
              * @default []

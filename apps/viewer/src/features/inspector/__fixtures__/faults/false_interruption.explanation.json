@@ -5,7 +5,7 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.4.0",
+  "analyzer_version": "0.5.0",
   "input_sha256": "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa",
   "turns": [
     {

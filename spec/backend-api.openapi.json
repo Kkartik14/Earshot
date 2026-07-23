@@ -4538,16 +4538,13 @@
             "title": "Event Ids",
             "type": "array"
           },
-          "interruption_chain": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/InterruptionChainProjection"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null
+          "interruption_chains": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/InterruptionChainProjection"
+            },
+            "title": "Interruption Chains",
+            "type": "array"
           },
           "interruptions": {
             "default": [],

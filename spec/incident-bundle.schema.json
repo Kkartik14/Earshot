@@ -3005,16 +3005,13 @@
           "title": "Event Ids",
           "type": "array"
         },
-        "interruption_chain": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/InterruptionChainProjection"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
+        "interruption_chains": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InterruptionChainProjection"
+          },
+          "title": "Interruption Chains",
+          "type": "array"
         },
         "interruptions": {
           "default": [],

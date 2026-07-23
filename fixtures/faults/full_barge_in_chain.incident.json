@@ -408,7 +408,14 @@
           "source": "fixture_runtime"
         },
         "instrumentation_scope_attributes": {},
-        "links": [],
+        "links": [
+          {
+            "attributes": {},
+            "relationship": "cancelled_by",
+            "target_operation_id": "op-agent",
+            "target_scope": "internal"
+          }
+        ],
         "operation_id": "op-tool",
         "operation_name": "tool",
         "parent_scope": "external",
