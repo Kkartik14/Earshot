@@ -773,6 +773,35 @@ export interface components {
             /** Signal */
             signal: string;
         };
+        /** ExplainedDiagnosis */
+        ExplainedDiagnosis: {
+            /** Code */
+            code: string;
+            /** Confidence */
+            confidence: string;
+            /** Diagnosis Id */
+            diagnosis_id: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Limitations
+             * @default []
+             */
+            limitations: string[];
+            /** Summary */
+            summary: string;
+        };
+        /** ExplainedError */
+        ExplainedError: {
+            /** Capture Class */
+            capture_class: string;
+            /** Category */
+            category: string;
+            /** Code */
+            code: string;
+            /** Message */
+            message?: string | null;
+        };
         /** ExplainedEvent */
         ExplainedEvent: {
             /** At Nano */
@@ -813,13 +842,38 @@ export interface components {
             /** Source Field */
             source_field?: string | null;
         };
+        /** ExplainedLink */
+        ExplainedLink: {
+            /** Relationship */
+            relationship: string;
+            /** Span Id */
+            span_id?: string | null;
+            /** Target Operation Id */
+            target_operation_id?: string | null;
+            /**
+             * Target Scope
+             * @default unknown
+             */
+            target_scope: string;
+            /** Trace Id */
+            trace_id?: string | null;
+        };
         /** ExplainedMeasurement */
         ExplainedMeasurement: {
             /** Aggregation */
             aggregation: string;
+            /**
+             * Basis
+             * @default provider_measurement
+             */
+            basis: string;
+            /** Confidence */
+            confidence: string;
             evidence?: components["schemas"]["ExplainedEvidence"] | null;
             /** Evidence Ids */
             evidence_ids: string[];
+            /** Limitation */
+            limitation?: string | null;
             /** Name */
             name: string;
             /** Unit */
@@ -848,11 +902,19 @@ export interface components {
             duration_nano?: string | null;
             /** End Nano */
             end_nano?: string | null;
+            /** End Uncertainty Nano */
+            end_uncertainty_nano?: string | null;
+            error?: components["schemas"]["ExplainedError"] | null;
             evidence?: components["schemas"]["ExplainedEvidence"] | null;
             /** Evidence Ids */
             evidence_ids: string[];
             /** Limitation */
             limitation?: string | null;
+            /**
+             * Links
+             * @default []
+             */
+            links: components["schemas"]["ExplainedLink"][];
             /** Measurements */
             measurements: components["schemas"]["ExplainedMeasurement"][];
             /** Model */
@@ -861,6 +923,13 @@ export interface components {
             operation_id: string;
             /** Operation Name */
             operation_name: string;
+            /**
+             * Parent Scope
+             * @default unknown
+             */
+            parent_scope: string;
+            /** Parent Span Id */
+            parent_span_id?: string | null;
             /** Participant Id */
             participant_id?: string | null;
             /** Provider */
@@ -870,8 +939,12 @@ export interface components {
              * @enum {string}
              */
             shape: "point" | "interval";
+            /** Span Id */
+            span_id?: string | null;
             /** Start Nano */
             start_nano: string;
+            /** Start Uncertainty Nano */
+            start_uncertainty_nano?: string | null;
             /** Status */
             status: string;
             /** Stream Id */
@@ -881,6 +954,8 @@ export interface components {
              * @enum {string}
              */
             time_basis: "monotonic" | "source_wall" | "observed_wall";
+            /** Trace Id */
+            trace_id?: string | null;
         };
         /** ExplainedTurn */
         ExplainedTurn: {
@@ -940,6 +1015,11 @@ export interface components {
             completeness: string;
             /** Coverage */
             coverage: components["schemas"]["ExplainedCoverage"][];
+            /**
+             * Diagnoses
+             * @default []
+             */
+            diagnoses: components["schemas"]["ExplainedDiagnosis"][];
             /** Finality */
             finality: string;
             /** Input Sha256 */
@@ -954,6 +1034,16 @@ export interface components {
             session_status: string;
             /** Turns */
             turns: components["schemas"]["ExplainedTurn"][];
+            /**
+             * Unassigned Measurements
+             * @default []
+             */
+            unassigned_measurements: components["schemas"]["ExplainedMeasurement"][];
+            /**
+             * Unassigned Operations
+             * @default []
+             */
+            unassigned_operations: components["schemas"]["ExplainedOperation"][];
         };
         /** IncidentPageResponse */
         IncidentPageResponse: {

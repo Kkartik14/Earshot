@@ -1496,6 +1496,87 @@
         "title": "ExplainedCoverage",
         "type": "object"
       },
+      "ExplainedDiagnosis": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "string"
+          },
+          "diagnosis_id": {
+            "title": "Diagnosis Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "limitations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "diagnosis_id",
+          "code",
+          "summary",
+          "confidence",
+          "evidence_ids"
+        ],
+        "title": "ExplainedDiagnosis",
+        "type": "object"
+      },
+      "ExplainedError": {
+        "additionalProperties": false,
+        "properties": {
+          "capture_class": {
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "required": [
+          "code",
+          "category",
+          "capture_class"
+        ],
+        "title": "ExplainedError",
+        "type": "object"
+      },
       "ExplainedEvent": {
         "additionalProperties": false,
         "properties": {
@@ -1637,11 +1718,72 @@
         "title": "ExplainedEvidence",
         "type": "object"
       },
+      "ExplainedLink": {
+        "additionalProperties": false,
+        "properties": {
+          "relationship": {
+            "title": "Relationship",
+            "type": "string"
+          },
+          "span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Span Id"
+          },
+          "target_operation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Operation Id"
+          },
+          "target_scope": {
+            "default": "unknown",
+            "title": "Target Scope",
+            "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "relationship"
+        ],
+        "title": "ExplainedLink",
+        "type": "object"
+      },
       "ExplainedMeasurement": {
         "additionalProperties": false,
         "properties": {
           "aggregation": {
             "title": "Aggregation",
+            "type": "string"
+          },
+          "basis": {
+            "default": "provider_measurement",
+            "title": "Basis",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
             "type": "string"
           },
           "evidence": {
@@ -1660,6 +1802,17 @@
             },
             "title": "Evidence Ids",
             "type": "array"
+          },
+          "limitation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limitation"
           },
           "name": {
             "title": "Name",
@@ -1689,6 +1842,7 @@
           "value",
           "unit",
           "aggregation",
+          "confidence",
           "evidence_ids"
         ],
         "title": "ExplainedMeasurement",
@@ -1773,6 +1927,27 @@
             ],
             "title": "End Nano"
           },
+          "end_uncertainty_nano": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Uncertainty Nano"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExplainedError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "evidence": {
             "anyOf": [
               {
@@ -1801,6 +1976,14 @@
             ],
             "title": "Limitation"
           },
+          "links": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExplainedLink"
+            },
+            "title": "Links",
+            "type": "array"
+          },
           "measurements": {
             "items": {
               "$ref": "#/components/schemas/ExplainedMeasurement"
@@ -1826,6 +2009,22 @@
           "operation_name": {
             "title": "Operation Name",
             "type": "string"
+          },
+          "parent_scope": {
+            "default": "unknown",
+            "title": "Parent Scope",
+            "type": "string"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id"
           },
           "participant_id": {
             "anyOf": [
@@ -1857,9 +2056,31 @@
             "title": "Shape",
             "type": "string"
           },
+          "span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Span Id"
+          },
           "start_nano": {
             "title": "Start Nano",
             "type": "string"
+          },
+          "start_uncertainty_nano": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Uncertainty Nano"
           },
           "status": {
             "title": "Status",
@@ -1884,6 +2105,17 @@
             ],
             "title": "Time Basis",
             "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
           }
         },
         "required": [
@@ -2042,6 +2274,14 @@
             "title": "Coverage",
             "type": "array"
           },
+          "diagnoses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExplainedDiagnosis"
+            },
+            "title": "Diagnoses",
+            "type": "array"
+          },
           "finality": {
             "title": "Finality",
             "type": "string"
@@ -2077,6 +2317,22 @@
               "$ref": "#/components/schemas/ExplainedTurn"
             },
             "title": "Turns",
+            "type": "array"
+          },
+          "unassigned_measurements": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExplainedMeasurement"
+            },
+            "title": "Unassigned Measurements",
+            "type": "array"
+          },
+          "unassigned_operations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExplainedOperation"
+            },
+            "title": "Unassigned Operations",
             "type": "array"
           }
         },
