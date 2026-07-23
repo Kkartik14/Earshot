@@ -5,15 +5,30 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "6c9811d63f0adede82a049ba07e597f7a524aa3e742359b421cf814b6ea6ce1b",
+  "analyzer_version": "0.4.0",
+  "input_sha256": "27698fb6bd7f637cfbf5df8b9415911d293871f98c93233f1e1d263117f94817",
   "turns": [],
   "coverage": [],
   "omissions": [],
   "limitations": [
     "render_evidence_not_observed"
   ],
-  "diagnoses": [],
+  "diagnoses": [
+    {
+      "diagnosis_id": "network_degraded.021bb265ad680462db1ee5915632319059a2907d2e2406463d0247cc2b44416a",
+      "code": "network.degraded",
+      "summary": "network_degraded",
+      "confidence": "measured",
+      "evidence_ids": [
+        "quality-webrtc"
+      ],
+      "limitations": [
+        "jitter_exceeds_slo",
+        "packet_loss_ratio_exceeds_slo",
+        "round_trip_time_exceeds_slo"
+      ]
+    }
+  ],
   "unassigned_operations": [],
   "unassigned_events": [],
   "unassigned_measurements": [

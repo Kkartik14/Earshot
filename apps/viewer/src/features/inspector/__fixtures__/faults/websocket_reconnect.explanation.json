@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "fb2d2eedf7e6c38de8c1679da7418d6d35ff495ad9e4f254a745ac2696aecf86",
+  "analyzer_version": "0.4.0",
+  "input_sha256": "9e8f2b147a9c457a019109de7f8e008f05bba21f012fd94f6f7376f1305c2e17",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -288,7 +288,20 @@
   "limitations": [
     "render_evidence_not_observed"
   ],
-  "diagnoses": [],
+  "diagnoses": [
+    {
+      "diagnosis_id": "transport_reconnect.3dd07b8e0c8231a23188ae3ada101d4bd64657ea3258333b0add2d90d3706878",
+      "code": "transport.reconnect",
+      "summary": "transport_reconnect",
+      "confidence": "measured",
+      "evidence_ids": [
+        "event-message-duplicate",
+        "event-message-out-of-order",
+        "event-transport-reconnecting"
+      ],
+      "limitations": []
+    }
+  ],
   "unassigned_operations": [],
   "unassigned_events": [],
   "unassigned_measurements": []

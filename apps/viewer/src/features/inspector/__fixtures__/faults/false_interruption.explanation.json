@@ -1,31 +1,31 @@
 {
-  "bundle_id": "fault-slow-endpointing",
+  "bundle_id": "fault-false-interruption",
   "session_id": "fixture-session",
   "session_status": "completed",
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
   "analyzer_version": "0.4.0",
-  "input_sha256": "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625",
+  "input_sha256": "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa",
   "turns": [
     {
       "turn_id": "turn-1",
       "operations": [
         {
-          "operation_id": "op-vad",
-          "operation_name": "vad",
+          "operation_id": "op-agent",
+          "operation_name": "agent",
           "status": "ok",
           "shape": "interval",
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
-          "start_nano": "100000000",
-          "end_nano": "300000000",
-          "duration_nano": "200000000",
+          "start_nano": "400000000",
+          "end_nano": "2000000000",
+          "duration_nano": "1600000000",
           "start_uncertainty_nano": null,
           "end_uncertainty_nano": null,
           "limitation": null,
-          "participant_id": "participant-user",
-          "stream_id": "stream-input",
+          "participant_id": null,
+          "stream_id": null,
           "provider": null,
           "model": null,
           "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -45,55 +45,18 @@
           },
           "measurements": [],
           "evidence_ids": [
-            "op-vad"
-          ]
-        },
-        {
-          "operation_id": "op-turn",
-          "operation_name": "turn_detection",
-          "status": "ok",
-          "shape": "interval",
-          "time_basis": "monotonic",
-          "clock_domain_id": "fault-fixture-clock",
-          "start_nano": "300000000",
-          "end_nano": "1600000000",
-          "duration_nano": "1300000000",
-          "start_uncertainty_nano": null,
-          "end_uncertainty_nano": null,
-          "limitation": null,
-          "participant_id": "participant-user",
-          "stream_id": "stream-input",
-          "provider": null,
-          "model": null,
-          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-          "span_id": "2222222222222222",
-          "parent_span_id": null,
-          "parent_scope": "external",
-          "links": [],
-          "error": null,
-          "evidence": {
-            "source": "fixture_runtime",
-            "observer": "test_harness",
-            "method": "deterministic_fault_injection",
-            "confidence": "measured",
-            "availability": "available",
-            "method_version": "1",
-            "source_field": null
-          },
-          "measurements": [],
-          "evidence_ids": [
-            "op-turn"
+            "op-agent"
           ]
         }
       ],
       "events": [
         {
-          "event_id": "event-speech-ended",
-          "event_name": "earshot.speech.ended",
+          "event_id": "event-interruption-detected",
+          "event_name": "earshot.interruption.detected",
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
-          "at_nano": "300000000",
-          "operation_id": "op-vad",
+          "at_nano": "900000000",
+          "operation_id": null,
           "participant_id": null,
           "stream_id": null,
           "trace_id": null,
@@ -108,16 +71,16 @@
             "source_field": null
           },
           "evidence_ids": [
-            "event-speech-ended"
+            "event-interruption-detected"
           ]
         },
         {
-          "event_id": "event-turn-committed",
-          "event_name": "earshot.turn.committed",
+          "event_id": "event-interruption-ignored",
+          "event_name": "earshot.interruption.ignored",
           "time_basis": "monotonic",
           "clock_domain_id": "fault-fixture-clock",
-          "at_nano": "1600000000",
-          "operation_id": "op-turn",
+          "at_nano": "940000000",
+          "operation_id": null,
           "participant_id": null,
           "stream_id": null,
           "trace_id": null,
@@ -132,7 +95,7 @@
             "source_field": null
           },
           "evidence_ids": [
-            "event-turn-committed"
+            "event-interruption-ignored"
           ]
         }
       ],
@@ -144,10 +107,8 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
-          "limitation": "target_signal_not_observed",
-          "evidence_ids": [
-            "event-turn-committed"
-          ]
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
         },
         "generated_response_latency": {
           "availability": "not_observed",
@@ -155,10 +116,8 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
-          "limitation": "target_signal_not_observed",
-          "evidence_ids": [
-            "event-turn-committed"
-          ]
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
         },
         "sent_response_latency": {
           "availability": "not_observed",
@@ -166,10 +125,8 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
-          "limitation": "target_signal_not_observed",
-          "evidence_ids": [
-            "event-turn-committed"
-          ]
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
         },
         "received_response_latency": {
           "availability": "not_observed",
@@ -177,10 +134,8 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
-          "limitation": "target_signal_not_observed",
-          "evidence_ids": [
-            "event-turn-committed"
-          ]
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
         },
         "render_start_response_latency": {
           "availability": "not_observed",
@@ -188,10 +143,8 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
-          "limitation": "target_signal_not_observed",
-          "evidence_ids": [
-            "event-turn-committed"
-          ]
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
         },
         "response_latency": {
           "availability": "not_observed",
@@ -199,10 +152,8 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
-          "limitation": "target_signal_not_observed",
-          "evidence_ids": [
-            "event-turn-committed"
-          ]
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
         },
         "tools": {
           "operation_count": 0,
@@ -225,16 +176,15 @@
   ],
   "diagnoses": [
     {
-      "diagnosis_id": "endpointing_slow.cbbf0363342fc44f14b6e77dac21aefcf4c7859fe20d28f1e4f3f459921a4303",
-      "code": "endpointing.slow",
-      "summary": "endpointing_slow",
-      "confidence": "inferred",
+      "diagnosis_id": "interruption_false.3e7a70be1c971403d05201ea8216d6d4346f8a5545df43ed1f74ddc7820f650a",
+      "code": "interruption.false",
+      "summary": "interruption_false",
+      "confidence": "measured",
       "evidence_ids": [
-        "op-turn"
+        "event-interruption-detected",
+        "event-interruption-ignored"
       ],
-      "limitations": [
-        "endpointing_latency_exceeds_slo"
-      ]
+      "limitations": []
     }
   ],
   "unassigned_operations": [],

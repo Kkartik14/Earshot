@@ -7,6 +7,7 @@ packages/sdk-python/src/earshot/adapters/providers/__init__.py
 packages/sdk-python/src/earshot/adapters/providers/base.py
 packages/sdk-python/src/earshot/adapters/providers/cartesia.py
 packages/sdk-python/src/earshot/adapters/providers/deepgram.py
+packages/sdk-python/src/earshot/adapters/providers/gemini_live.py
 packages/sdk-python/src/earshot/adapters/providers/openai_realtime.py
 packages/sdk-python/src/earshot/adapters/providers/sarvam.py
 packages/sdk-python/src/earshot/adapters/routing.py
@@ -25,8 +26,16 @@ packages/sdk-python/src/earshot/connectors/types.py
 packages/sdk-python/src/earshot/connectors/vapi.py
 packages/sdk-python/src/earshot/context.py
 packages/sdk-python/src/earshot/contract.py
+packages/sdk-python/src/earshot/engines/__init__.py
+packages/sdk-python/src/earshot/engines/base.py
+packages/sdk-python/src/earshot/engines/device.py
+packages/sdk-python/src/earshot/engines/webrtc.py
 packages/sdk-python/src/earshot/explanation.py
 packages/sdk-python/src/earshot/exporter.py
+packages/sdk-python/src/earshot/exporters/__init__.py
+packages/sdk-python/src/earshot/exporters/openinference.py
+packages/sdk-python/src/earshot/exporters/otlp.py
+packages/sdk-python/src/earshot/exporters/push.py
 packages/sdk-python/src/earshot/generated/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/__init__.py
@@ -35,6 +44,7 @@ packages/sdk-python/src/earshot/measurement_semantics.py
 packages/sdk-python/src/earshot/pipeline.py
 packages/sdk-python/src/earshot/privacy.py
 packages/sdk-python/src/earshot/py.typed
+packages/sdk-python/src/earshot/query.py
 packages/sdk-python/src/earshot/recorder.py
 packages/sdk-python/src/earshot/sdk.py
 packages/sdk-python/src/earshot/storage.py

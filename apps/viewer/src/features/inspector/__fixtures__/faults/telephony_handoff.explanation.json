@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "44c2c9794510becdceeed5af30cd1c05e13a9e5ccd5297f325c7ed68a88b835f",
+  "analyzer_version": "0.4.0",
+  "input_sha256": "7fecd9d7604c5e2186657017afe03a69a1784056909d0fb48e03ca82b2e8d1da",
   "turns": [
     {
       "turn_id": "turn-1",

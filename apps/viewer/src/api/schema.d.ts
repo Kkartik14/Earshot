@@ -514,6 +514,65 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * ClockRelation
+         * @description A declared calibration mapping between two clock domains.
+         *
+         *     ``offset_nano`` converts a ``from``-domain wall timestamp into the ``to``
+         *     domain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``
+         *     is an optional linear parts-per-million rate anchored at ``reference_unix_nano``,
+         *     so the total correction at wall time ``t`` is
+         *     ``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds.
+         *     ``uncertainty_nano`` is the calibration's own error bound and is propagated into
+         *     any cross-domain latency derived through this relation. ``valid_from_unix_nano``
+         *     and ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)
+         *     where the calibration is trustworthy; timestamps outside it are not aligned.
+         */
+        ClockRelation: {
+            /** Attributes */
+            attributes?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Drift Ppm
+             * @default null
+             */
+            drift_ppm: number | null;
+            /** @default null */
+            evidence: components["schemas"]["Evidence"] | null;
+            /** From Clock Domain Id */
+            from_clock_domain_id: string;
+            /** Method */
+            method: string;
+            /** Offset Nano */
+            offset_nano: string;
+            /**
+             * Reference Unix Nano
+             * @default null
+             */
+            reference_unix_nano: string | null;
+            /** Relation Id */
+            relation_id: string;
+            /** To Clock Domain Id */
+            to_clock_domain_id: string;
+            /**
+             * Uncertainty Nano
+             * @default null
+             */
+            uncertainty_nano: string | null;
+            /**
+             * Valid From Unix Nano
+             * @default null
+             */
+            valid_from_unix_nano: string | null;
+            /**
+             * Valid To Unix Nano
+             * @default null
+             */
+            valid_to_unix_nano: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** ConnectorDeliveryResponse */
         ConnectorDeliveryResponse: {
             /** Bundle Id */
@@ -1088,6 +1147,11 @@ export interface components {
              */
             clock_domains: components["schemas"]["ClockDomain"][];
             /**
+             * Clock Relations
+             * @default []
+             */
+            clock_relations: components["schemas"]["ClockRelation"][];
+            /**
              * Coverage
              * @default []
              */
@@ -1181,12 +1245,81 @@ export interface components {
             /** Warnings */
             warnings: components["schemas"]["ApiIssue"][];
         };
+        /**
+         * InterruptionChainProjection
+         * @description The ordered causal chain a single turn's interruption produced.
+         *
+         *     Every stage in the canonical vocabulary is present exactly once, marked
+         *     observed or not. ``effectiveness`` is the barge-in latency from the observed
+         *     overlap to the observed render stop, computed only when both endpoints are
+         *     comparable (same clock, or a declared calibration aligns them); otherwise it
+         *     honestly asserts no value.
+         */
+        InterruptionChainProjection: {
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "accepted" | "ignored" | "false" | "unknown";
+            effectiveness: components["schemas"]["AnalysisMetric"];
+            /** Stages */
+            stages: components["schemas"]["InterruptionStage"][];
+            /** Turn Id */
+            turn_id: string;
+        };
         /** InterruptionProjection */
         InterruptionProjection: {
             /** Event Name */
             event_name: string;
             /** Evidence Ids */
             evidence_ids: string[];
+        };
+        /**
+         * InterruptionStage
+         * @description One canonical stage of a barge-in teardown, observed or not.
+         *
+         *     An observed stage cites a real event/operation/sample and carries the exact
+         *     coordinate that evidence recorded (never a synthesized timestamp). A stage the
+         *     artifact does not contain is reported as ``observed=False`` with a
+         *     ``coverage_reason`` and no coordinate, so absence is coverage, not fabrication.
+         *     ``outcome`` carries the disposition of the ``tool_outcome`` stage (the tool's
+         *     ok/error/timeout/cancelled status) and stays ``None`` for every other stage.
+         */
+        InterruptionStage: {
+            /**
+             * At Nano
+             * @default null
+             */
+            at_nano: string | null;
+            /**
+             * Clock Domain Id
+             * @default null
+             */
+            clock_domain_id: string | null;
+            /**
+             * Coverage Reason
+             * @default null
+             */
+            coverage_reason: string | null;
+            /**
+             * Evidence Id
+             * @default null
+             */
+            evidence_id: string | null;
+            /** Observed */
+            observed: boolean;
+            /**
+             * Outcome
+             * @default null
+             */
+            outcome: string | null;
+            /** Stage */
+            stage: string;
+            /**
+             * Time Basis
+             * @default null
+             */
+            time_basis: string | null;
         };
         /**
          * JsonRawOtlpChunk
@@ -1790,6 +1923,8 @@ export interface components {
              * @default []
              */
             event_ids: string[];
+            /** @default null */
+            interruption_chain: components["schemas"]["InterruptionChainProjection"] | null;
             /**
              * Interruptions
              * @default []

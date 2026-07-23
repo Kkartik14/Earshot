@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "cf411a964326ea028d87837f879b482a6b2f7bb6c4892f8596e08623eff3ffdf",
+  "analyzer_version": "0.4.0",
+  "input_sha256": "c9676bc847fdea0e2970eed076ddf4560a10329b3492b5c126980b32245cfecd",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -429,7 +429,20 @@
   "coverage": [],
   "omissions": [],
   "limitations": [],
-  "diagnoses": [],
+  "diagnoses": [
+    {
+      "diagnosis_id": "stage_slow.84f01ea2474851a5e3ab2e2fde31959d7b809712594457c7232ce5900465954e",
+      "code": "stage.slow",
+      "summary": "stt_stage_slow",
+      "confidence": "inferred",
+      "evidence_ids": [
+        "op-stt"
+      ],
+      "limitations": [
+        "stt_latency_exceeds_slo"
+      ]
+    }
+  ],
   "unassigned_operations": [],
   "unassigned_events": [],
   "unassigned_measurements": []
