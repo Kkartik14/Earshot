@@ -2615,22 +2615,58 @@ def validate_explanation(
     # This prevents a lossy derivation bug from validating itself by recomputing the
     # same incomplete read model. Derived turn metrics are intentionally excluded;
     # exact facts live on their owned operation or in unassigned_measurements.
+    def evidence_fact(value: Any) -> tuple[str | None, ...]:
+        if value is None:
+            return (None,) * 7
+        return (
+            value.source,
+            value.observer,
+            value.method,
+            value.confidence,
+            value.availability,
+            value.method_version,
+            value.source_field,
+        )
+
     def measurement_fact(
-        evidence_id: str,
+        evidence_ids: tuple[str, ...],
         name: str,
         value: bool | int | float,
         unit: str,
         aggregation: str,
-    ) -> tuple[str, str, str, str, str, str]:
-        return evidence_id, name, type(value).__name__, repr(value), unit, aggregation
+        basis: str,
+        confidence: str,
+        limitation: str | None,
+        evidence: Any,
+    ) -> tuple[Any, ...]:
+        return (
+            evidence_ids,
+            name,
+            type(value).__name__,
+            repr(value),
+            unit,
+            aggregation,
+            basis,
+            confidence,
+            limitation,
+            evidence_fact(evidence),
+        )
 
     source_measurement_facts = Counter(
         measurement_fact(
-            sample.sample_id,
+            (sample.sample_id,),
             measurement.name,
             measurement.value,
             measurement.unit,
             measurement.aggregation,
+            "provider_measurement",
+            sample.evidence.confidence if sample.evidence is not None else "unavailable",
+            measurement_value_limitation(
+                measurement.name,
+                measurement.value,
+                measurement.unit,
+            ),
+            sample.evidence,
         )
         for sample in bundle.profile.quality_samples
         for measurement in sample.measurements
@@ -2651,14 +2687,17 @@ def validate_explanation(
     )
     explained_measurement_facts = Counter(
         measurement_fact(
-            evidence_id,
+            measurement.evidence_ids,
             measurement.name,
             measurement.value,
             measurement.unit,
             measurement.aggregation,
+            measurement.basis,
+            measurement.confidence,
+            measurement.limitation,
+            measurement.evidence,
         )
         for measurement in explained_exact_measurements
-        for evidence_id in measurement.evidence_ids
     )
     if source_measurement_facts - explained_measurement_facts:
         issues.append(

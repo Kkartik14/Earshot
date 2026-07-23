@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import earshot
+import earshot.explanation as explanation_module
 from earshot.analysis import ANALYZER_VERSION, analyze_incident
 from earshot.codec import analysis_input_sha256, decode_incident_json
 from earshot.contract import (
@@ -464,6 +465,22 @@ def test_explanation_keeps_every_turn_only_measurement_as_an_exact_unassigned_fa
     )
     assert permuted_analysis == analysis
     assert explain_incident(permuted, permuted_analysis) == explanation
+
+    project_evidence = explanation_module._evidence
+
+    def without_source_field(value):
+        projected = project_evidence(value)
+        if projected is None:
+            return None
+        return projected.model_copy(update={"source_field": None})
+
+    monkeypatch.setattr(explanation_module, "_evidence", without_source_field)
+    provenance_dropped = explanation_module.explain_incident(bundle, analysis)
+    provenance_report = validate_explanation(bundle, analysis, provenance_dropped)
+    assert "EARSHOT_EXPLANATION_MEASUREMENT_DROPPED" in {
+        issue.code for issue in provenance_report.errors
+    }
+    monkeypatch.setattr(explanation_module, "_evidence", project_evidence)
 
     dropped = explanation.model_copy(
         update={
