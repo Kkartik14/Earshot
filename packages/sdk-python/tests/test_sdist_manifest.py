@@ -94,6 +94,13 @@ def _hostile_pythonpath(tmp_path: Path) -> dict[str, str]:
     )
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(fake_package.parent)
+    # This child deliberately imports a copied checkout outside the coverage
+    # source tree. Inheriting pytest-cov's subprocess hooks would write a
+    # statement-only shard beside the parent's branch data, making the final
+    # combine step fail before it can report coverage.
+    for variable in tuple(environment):
+        if variable.startswith("COV_CORE_") or variable == "COVERAGE_PROCESS_START":
+            environment.pop(variable)
     return environment
 
 
