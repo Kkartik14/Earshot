@@ -67,7 +67,12 @@ const STAT_ALLOWLIST: Record<string, Set<string>> = {
     "currentRoundTripTime",
     "roundTripTime",
   ]),
-  transport: new Set(["iceState", "dtlsState", "connectionState", "selectedCandidatePairId"]),
+  transport: new Set([
+    "iceState",
+    "dtlsState",
+    "connectionState",
+    "selectedCandidatePairId",
+  ]),
   "local-candidate": new Set(["networkType"]),
 };
 
@@ -102,7 +107,8 @@ function normalizeStat(stat: Record<string, unknown>): StatMembers | undefined {
     if (typeof value === "number" || typeof value === "boolean") {
       members[key] = value;
     } else if (typeof value === "string") {
-      members[key] = value.length > MAX_STRING_LENGTH ? value.slice(0, MAX_STRING_LENGTH) : value;
+      members[key] =
+        value.length > MAX_STRING_LENGTH ? value.slice(0, MAX_STRING_LENGTH) : value;
     }
     // Non-primitives (objects/arrays) are intentionally skipped.
   }

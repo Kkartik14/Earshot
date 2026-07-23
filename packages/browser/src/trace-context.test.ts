@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createTraceContext, injectTraceHeaders, parseTraceParent } from "./trace-context.js";
+import {
+  createTraceContext,
+  injectTraceHeaders,
+  parseTraceParent,
+} from "./trace-context.js";
 import type { RandomSource } from "./types.js";
 import { sequentialRandom } from "./testing/fakes.js";
 

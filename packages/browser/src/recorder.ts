@@ -48,7 +48,11 @@ import {
   defaultWallOriginMs,
 } from "./env.js";
 import { makeSalt, opaqueDeviceId } from "./privacy.js";
-import { createTraceContext, injectTraceHeaders, parseTraceParent } from "./trace-context.js";
+import {
+  createTraceContext,
+  injectTraceHeaders,
+  parseTraceParent,
+} from "./trace-context.js";
 import type {
   AudioContextLike,
   BrowserClockDomain,
@@ -163,7 +167,10 @@ export class EarshotBrowserRecorder {
     this.sessionId = options.sessionId ?? `sess_${makeSalt(this.random, 8)}`;
     this.clockDomainId = `clk_${makeSalt(this.random, 8)}`;
     this.trace = this.resolveTrace(options);
-    this.maxSnapshots = this.positiveIntOption(options.maxSnapshots, DEFAULT_MAX_SNAPSHOTS);
+    this.maxSnapshots = this.positiveIntOption(
+      options.maxSnapshots,
+      DEFAULT_MAX_SNAPSHOTS,
+    );
     this.maxDeviceEvents = this.positiveIntOption(
       options.maxDeviceEvents,
       DEFAULT_MAX_DEVICE_EVENTS,
@@ -206,7 +213,11 @@ export class EarshotBrowserRecorder {
     options: AttachPeerConnectionOptions = {},
   ): void {
     const intervalMs = options.intervalMs ?? DEFAULT_SAMPLE_INTERVAL_MS;
-    if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+    if (
+      typeof intervalMs !== "number" ||
+      !Number.isFinite(intervalMs) ||
+      intervalMs <= 0
+    ) {
       throw new RangeError(
         `attachPeerConnection: intervalMs must be a positive finite number (got ${String(
           intervalMs,
@@ -476,7 +487,9 @@ export class EarshotBrowserRecorder {
   private positiveIntOption(value: number | undefined, fallback: number): number {
     if (value === undefined) return fallback;
     if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-      throw new RangeError(`buffer bound must be a positive finite number (got ${String(value)})`);
+      throw new RangeError(
+        `buffer bound must be a positive finite number (got ${String(value)})`,
+      );
     }
     return Math.floor(value);
   }

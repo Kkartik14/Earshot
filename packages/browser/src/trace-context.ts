@@ -54,7 +54,9 @@ const TRACEPARENT_RE = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2
  * `null` when the value is absent or not spec-valid (all-zero ids are invalid),
  * so the caller can fall back to minting a fresh context. Never throws.
  */
-export function parseTraceParent(traceparent: string | undefined | null): TraceContext | null {
+export function parseTraceParent(
+  traceparent: string | undefined | null,
+): TraceContext | null {
   if (typeof traceparent !== "string") return null;
   const match = TRACEPARENT_RE.exec(traceparent.trim());
   if (!match) return null;

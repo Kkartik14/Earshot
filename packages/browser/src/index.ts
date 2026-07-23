@@ -29,7 +29,11 @@ export {
   sinkIdToString,
   underrunEvent,
 } from "./device.js";
-export { createTraceContext, injectTraceHeaders, parseTraceParent } from "./trace-context.js";
+export {
+  createTraceContext,
+  injectTraceHeaders,
+  parseTraceParent,
+} from "./trace-context.js";
 export { opaqueDeviceId, makeSalt } from "./privacy.js";
 
 export type {

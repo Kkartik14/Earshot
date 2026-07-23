@@ -190,7 +190,9 @@ describe("bounded buffers + explicit loss reporting (F8)", () => {
     const recorder = createBrowserRecorder();
 
     await recorder.observeMediaDevices(mediaDevices, { permissions });
-    const cov = recorder.drain().coverage.find((c) => c.signal === "device.permission_query");
+    const cov = recorder
+      .drain()
+      .coverage.find((c) => c.signal === "device.permission_query");
 
     expect(cov).toBeDefined();
     expect(cov!.availability).toBe("not_observed");
@@ -233,12 +235,16 @@ describe("trace-context join (F8)", () => {
 
   it("mints a fresh context when no trace is supplied", () => {
     const recorder = createBrowserRecorder({ random: sequentialRandom(5) });
-    expect(recorder.traceContext().traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    expect(recorder.traceContext().traceparent).toMatch(
+      /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/,
+    );
   });
 
   it("mints a fresh context when the supplied traceparent is not spec-valid", () => {
     const recorder = createBrowserRecorder({ traceparent: "garbage-not-a-traceparent" });
-    expect(recorder.traceContext().traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+    expect(recorder.traceContext().traceparent).toMatch(
+      /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/,
+    );
   });
 
   it("never overwrites a traceparent already present on the outgoing headers", () => {
@@ -254,7 +260,10 @@ describe("browser clock-domain identity (F2)", () => {
     const pc = new FakePeerConnection([
       makeStatsReport({ t: { id: "t", type: "transport", iceState: "connected" } }),
     ]);
-    const recorder = createBrowserRecorder({ scheduler, clock: new FakeClock(5000, 5).now });
+    const recorder = createBrowserRecorder({
+      scheduler,
+      clock: new FakeClock(5000, 5).now,
+    });
     recorder.attachPeerConnection(pc);
     await scheduler.fireAll(1);
 

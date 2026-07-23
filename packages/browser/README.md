@@ -77,7 +77,7 @@ Every `timestamp_ms` is a **raw** reading of the injected monotonic clock (e.g.
 recorder's lifetime, so the server records these readings as `monotonic_time_nano`
 inside their **own** browser `ClockDomain` — a browser timestamp is never treated
 as a server-clock observation. Because there is no calibration between the two
-clocks by default, cross-clock latency stays honestly *unavailable* until a caller
+clocks by default, cross-clock latency stays honestly _unavailable_ until a caller
 supplies a `ClockRelation`; `wallOriginMs` (from `performance.timeOrigin`) is what
 such a calibration aligns.
 
