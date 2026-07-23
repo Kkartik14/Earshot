@@ -88,6 +88,82 @@ describe("normalizeStatsReport", () => {
 
     expect(Object.keys(stats)).toEqual(["member-id"]);
   });
+
+  it("privacy sentinel: certificates, fingerprints, usernameFragment, addresses and labels never survive", async () => {
+    // A report seeded with every class of host-identifying member a real
+    // getStats() can expose, alongside the governed metrics we DO consume.
+    const report = makeStatsReport({
+      cert: {
+        id: "cert",
+        type: "certificate",
+        base64Certificate: "MIIB-fake-cert-material-AAAA",
+        fingerprint: "AA:BB:CC:DD:EE:FF",
+        fingerprintAlgorithm: "sha-256",
+      },
+      "in-audio": {
+        id: "in-audio",
+        type: "inbound-rtp",
+        kind: "audio",
+        packetsReceived: 100,
+        packetsLost: 1,
+        jitter: 0.02,
+        // A stray sensitive member on a stat we DO keep must still be dropped.
+        trackIdentifier: "Jabra Elite 75t",
+      },
+      pair: {
+        id: "pair",
+        type: "candidate-pair",
+        selected: true,
+        state: "succeeded",
+        currentRoundTripTime: 0.04,
+        usernameFragment: "s3cr3tUfrag",
+      },
+      local: {
+        id: "local",
+        type: "local-candidate",
+        networkType: "wifi",
+        address: "203.0.113.7",
+        ip: "203.0.113.7",
+        port: 51999,
+        relatedAddress: "10.0.0.5",
+        url: "stun:stun.example.com:3478",
+        usernameFragment: "s3cr3tUfrag",
+        candidateType: "srflx",
+      },
+    });
+
+    const snapshot = normalizeStatsReport(report, 4242);
+    const serialized = JSON.stringify(snapshot);
+
+    // NONE of the host-identifying material survives serialisation.
+    expect(serialized).not.toContain("base64Certificate");
+    expect(serialized).not.toContain("fake-cert-material");
+    expect(serialized).not.toContain("fingerprint");
+    expect(serialized).not.toContain("usernameFragment");
+    expect(serialized).not.toContain("s3cr3tUfrag");
+    expect(serialized).not.toContain("203.0.113.7");
+    expect(serialized).not.toContain("10.0.0.5");
+    expect(serialized).not.toContain("stun.example.com");
+    expect(serialized).not.toContain("Jabra");
+    expect(serialized).not.toContain("candidateType");
+    // The whole unconsumed certificate stat is gone.
+    expect(snapshot.stats.cert).toBeUndefined();
+    // ...but the safe governed telemetry the engine reads is intact.
+    expect(serialized).toContain("wifi");
+    expect(snapshot.stats["in-audio"]!.jitter).toBe(0.02);
+    expect(snapshot.stats["in-audio"]!.packetsReceived).toBe(100);
+    expect(snapshot.stats.local!.networkType).toBe("wifi");
+    expect(snapshot.stats.pair!.currentRoundTripTime).toBe(0.04);
+    expect(snapshot.stats.pair!.selected).toBe(true);
+  });
+
+  it("bounds retained string members to a defensive length cap", () => {
+    const report = makeStatsReport({
+      t: { id: "t", type: "transport", iceState: "x".repeat(5000) },
+    });
+    const stat = normalizeStatsReport(report, 1).stats.t;
+    expect((stat!.iceState as string).length).toBeLessThanOrEqual(128);
+  });
 });
 
 describe("attachPeerConnection interval sampling", () => {
