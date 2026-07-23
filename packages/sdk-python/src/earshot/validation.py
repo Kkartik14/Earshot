@@ -2424,7 +2424,6 @@ def validate_explanation(
     """
 
     from .explanation import IncidentExplanation as _IncidentExplanation
-    from .explanation import _coordinate
     from .explanation import explain_incident as _project_explanation
 
     issues: list[ValidationIssue] = []
@@ -2591,21 +2590,40 @@ def validate_explanation(
         assert value.observed_time_unix_nano is not None
         return "observed_wall", value.clock_domain_id, value.observed_time_unix_nano
 
+    def shared_source_coordinate(
+        start: TimePoint,
+        end: TimePoint,
+    ) -> tuple[str, str, str, str] | None:
+        if start.clock_domain_id is None or start.clock_domain_id != end.clock_domain_id:
+            return None
+        for basis, field_name in (
+            ("monotonic", "monotonic_time_nano"),
+            ("source_wall", "source_time_unix_nano"),
+            ("observed_wall", "observed_time_unix_nano"),
+        ):
+            start_value = getattr(start, field_name)
+            end_value = getattr(end, field_name)
+            if start_value is not None and end_value is not None:
+                return basis, start.clock_domain_id, start_value, end_value
+        return None
+
     def source_operation_fact(source: Operation) -> tuple[Any, ...]:
         basis, domain, start = source_coordinate(source.started_at)
         end: str | None = None
         duration: str | None = None
         limitation: str | None = "end_boundary_not_observed"
         if source.ended_at is not None:
-            end_basis, end_domain, candidate = source_coordinate(source.ended_at)
-            if domain is None or (end_basis, end_domain) != (basis, domain):
+            shared = shared_source_coordinate(source.started_at, source.ended_at)
+            if shared is None:
                 limitation = "end_boundary_not_comparable"
-            elif int(candidate) < int(start):
-                limitation = "invalid_negative_interval"
             else:
-                end = candidate
-                duration = str(int(candidate) - int(start))
-                limitation = None
+                basis, domain, start, candidate = shared
+                if int(candidate) < int(start):
+                    limitation = "invalid_negative_interval"
+                else:
+                    end = candidate
+                    duration = str(int(candidate) - int(start))
+                    limitation = None
         provider = source.attributes.get("gen_ai.provider.name")
         model = source.attributes.get("gen_ai.request.model")
         error = (
@@ -2849,7 +2867,6 @@ def validate_explanation(
         # source recorded one in the same clock representation and it is not before
         # the start. Recompute from the immutable source rather than trusting the
         # flattened projection.
-        start_basis, start_domain, start_value = _coordinate(source.started_at)
         if operation.shape == "interval":
             if (
                 source.ended_at is None
@@ -2864,13 +2881,15 @@ def validate_explanation(
                     )
                 )
                 return
-            end_basis, end_domain, end_value = _coordinate(source.ended_at)
+            shared = shared_source_coordinate(source.started_at, source.ended_at)
             if (
-                start_domain is None
-                or (end_basis, end_domain) != (start_basis, start_domain)
-                or int(end_value) < int(start_value)
-                or operation.end_nano != end_value
-                or operation.duration_nano != str(int(end_value) - int(start_value))
+                shared is None
+                or operation.time_basis != shared[0]
+                or operation.clock_domain_id != shared[1]
+                or operation.start_nano != shared[2]
+                or operation.end_nano != shared[3]
+                or int(shared[3]) < int(shared[2])
+                or operation.duration_nano != str(int(shared[3]) - int(shared[2]))
             ):
                 issues.append(
                     ValidationIssue(

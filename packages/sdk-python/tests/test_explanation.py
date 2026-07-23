@@ -1412,3 +1412,42 @@ def test_explanation_refuses_domainless_wall_clock_interval(
     report = validate_explanation(bundle, analysis, fabricated)
 
     assert "EARSHOT_EXPLANATION_MANUFACTURED_INTERVAL" in {issue.code for issue in report.errors}
+
+
+def test_explanation_uses_shared_source_basis_for_mixed_timepoints(valid_bundle) -> None:
+    operation = Operation(
+        operation_id="op-mixed-timepoint",
+        session_id=valid_bundle.profile.session.session_id,
+        operation_name="llm",
+        status="ok",
+        started_at=TimePoint(
+            monotonic_time_nano="100",
+            source_time_unix_nano="1000",
+            clock_domain_id="server-clock",
+        ),
+        ended_at=TimePoint(
+            source_time_unix_nano="2000",
+            clock_domain_id="server-clock",
+        ),
+        turn_id="turn-mixed-timepoint",
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(operation,),
+        events=(),
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+    analysis = _analyze(bundle)
+
+    explanation = explain_incident(bundle, analysis)
+
+    [turn] = explanation.turns
+    [explained_operation] = turn.operations
+    assert explained_operation.shape == "interval"
+    assert explained_operation.time_basis == "source_wall"
+    assert explained_operation.start_nano == "1000"
+    assert explained_operation.end_nano == "2000"
+    assert explained_operation.duration_nano == "1000"
+    assert explained_operation.limitation is None
+    assert validate_explanation(bundle, analysis, explanation).ok

@@ -220,6 +220,24 @@ def _coordinate(
     return "observed_wall", value.clock_domain_id, value.observed_time_unix_nano
 
 
+def _shared_coordinate(
+    start: TimePoint,
+    end: TimePoint,
+) -> tuple[Literal["monotonic", "source_wall", "observed_wall"], str, str, str] | None:
+    if start.clock_domain_id is None or start.clock_domain_id != end.clock_domain_id:
+        return None
+    for basis, field_name in (
+        ("monotonic", "monotonic_time_nano"),
+        ("source_wall", "source_time_unix_nano"),
+        ("observed_wall", "observed_time_unix_nano"),
+    ):
+        start_value = getattr(start, field_name)
+        end_value = getattr(end, field_name)
+        if start_value is not None and end_value is not None:
+            return basis, start.clock_domain_id, start_value, end_value
+    return None
+
+
 def _sample_belongs_to_operation(
     sample: QualitySample,
     operation: Operation,
@@ -292,15 +310,17 @@ def _operation(
     duration: str | None = None
     limitation = "end_boundary_not_observed"
     if value.ended_at is not None:
-        end_basis, end_domain, candidate = _coordinate(value.ended_at)
-        if domain is None or (end_basis, end_domain) != (basis, domain):
+        shared = _shared_coordinate(value.started_at, value.ended_at)
+        if shared is None:
             limitation = "end_boundary_not_comparable"
-        elif int(candidate) < int(start):
-            limitation = "invalid_negative_interval"
         else:
-            end = candidate
-            duration = str(int(candidate) - int(start))
-            limitation = None
+            basis, domain, start, candidate = shared
+            if int(candidate) < int(start):
+                limitation = "invalid_negative_interval"
+            else:
+                end = candidate
+                duration = str(int(candidate) - int(start))
+                limitation = None
     attributes = value.attributes
     provider = attributes.get("gen_ai.provider.name")
     model = attributes.get("gen_ai.request.model")
