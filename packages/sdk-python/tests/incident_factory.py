@@ -223,8 +223,20 @@ def make_valid_bundle(
 
     events = [
         _event("evt-speech-end", "earshot.speech.ended", 950_000_000),
-        _event("evt-turn", "earshot.turn.committed", 1_000_000_000, operation_id="op-turn"),
-        _event("evt-token", "earshot.response.first_token", 1_150_000_000, operation_id="op-llm"),
+        _event(
+            "evt-turn",
+            "earshot.turn.committed",
+            1_000_000_000,
+            operation_id="op-turn",
+            provenance=evidence(),
+        ),
+        _event(
+            "evt-token",
+            "earshot.response.first_token",
+            1_150_000_000,
+            operation_id="op-llm",
+            provenance=evidence(),
+        ),
         _event(
             "evt-generated",
             "earshot.response.first_audio_generated",

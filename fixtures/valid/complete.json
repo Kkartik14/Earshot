@@ -74,6 +74,14 @@
         "capture_class": "metadata",
         "event_id": "evt-turn",
         "event_name": "earshot.turn.committed",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_span",
+          "observer": "server",
+          "source": "framework_otel"
+        },
         "instrumentation_scope_attributes": {},
         "operation_id": "op-turn",
         "participant_id": "participant-user",
@@ -94,6 +102,14 @@
         "capture_class": "metadata",
         "event_id": "evt-token",
         "event_name": "earshot.response.first_token",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_span",
+          "observer": "server",
+          "source": "framework_otel"
+        },
         "instrumentation_scope_attributes": {},
         "operation_id": "op-llm",
         "participant_id": "participant-agent",
