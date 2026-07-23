@@ -2331,6 +2331,14 @@ def validate_explanation(
         if source is None:
             return
         expected_operation = expected_operations.get(operation.operation_id)
+        if expected_operation is not None and operation != expected_operation:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_OPERATION_MISMATCH",
+                    path=path,
+                    message="explained operation differs from its exact source projection",
+                )
+            )
         if (
             expected_operation is not None
             and operation.measurements != expected_operation.measurements

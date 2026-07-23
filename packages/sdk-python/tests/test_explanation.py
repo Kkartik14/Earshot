@@ -569,6 +569,40 @@ def test_validate_explanation_rejects_changed_operation_measurement() -> None:
     }
 
 
+def test_validate_explanation_rejects_changed_operation_source_fields() -> None:
+    bundle = _fault("tool_timeout_retry")
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    [turn] = explanation.turns
+    source = next(
+        operation for operation in turn.operations if operation.operation_id == "op-tool-attempt-2"
+    )
+    changed = source.model_copy(
+        update={
+            "operation_name": "invented_stage",
+            "start_nano": str(int(source.start_nano) + 1),
+            "participant_id": "invented-participant",
+            "trace_id": "f" * 32,
+            "evidence": None,
+        }
+    )
+    tampered_turn = turn.model_copy(
+        update={
+            "operations": tuple(
+                changed if operation.operation_id == changed.operation_id else operation
+                for operation in turn.operations
+            )
+        }
+    )
+    tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_explanation(bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
