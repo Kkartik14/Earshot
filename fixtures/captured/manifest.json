@@ -16,7 +16,7 @@
       "migration": "none_current_contract",
       "privacy_transform": "pseudonymized_identifiers_no_content_or_media",
       "redaction_tool": "scripts/scrub_captured_fixture.py",
-      "redaction_tool_sha256": "288d6d0362223cebaae4bcb743ec6b7683262d777521e55f6b01457d55459115"
+      "redaction_tool_sha256": "a8cddec86f76bfa670fdcacad5e38493a0441eaf7d2be162f175c282ebd80c70"
     },
     {
       "surface": "pipecat",
@@ -32,7 +32,7 @@
       "migration": "none_current_contract",
       "privacy_transform": "pseudonymized_identifiers_no_content_or_media",
       "redaction_tool": "scripts/scrub_captured_fixture.py",
-      "redaction_tool_sha256": "288d6d0362223cebaae4bcb743ec6b7683262d777521e55f6b01457d55459115"
+      "redaction_tool_sha256": "a8cddec86f76bfa670fdcacad5e38493a0441eaf7d2be162f175c282ebd80c70"
     },
     {
       "surface": "deepgram",
@@ -48,7 +48,7 @@
       "migration": "none_current_contract",
       "privacy_transform": "pseudonymized_identifiers_no_content_or_media",
       "redaction_tool": "scripts/scrub_captured_fixture.py",
-      "redaction_tool_sha256": "288d6d0362223cebaae4bcb743ec6b7683262d777521e55f6b01457d55459115"
+      "redaction_tool_sha256": "a8cddec86f76bfa670fdcacad5e38493a0441eaf7d2be162f175c282ebd80c70"
     },
     {
       "surface": "cartesia",
@@ -64,7 +64,7 @@
       "migration": "none_current_contract",
       "privacy_transform": "pseudonymized_identifiers_no_content_or_media",
       "redaction_tool": "scripts/scrub_captured_fixture.py",
-      "redaction_tool_sha256": "288d6d0362223cebaae4bcb743ec6b7683262d777521e55f6b01457d55459115"
+      "redaction_tool_sha256": "a8cddec86f76bfa670fdcacad5e38493a0441eaf7d2be162f175c282ebd80c70"
     },
     {
       "surface": "sarvam",
@@ -80,7 +80,7 @@
       "migration": "none_current_contract",
       "privacy_transform": "pseudonymized_identifiers_no_content_or_media",
       "redaction_tool": "scripts/scrub_captured_fixture.py",
-      "redaction_tool_sha256": "288d6d0362223cebaae4bcb743ec6b7683262d777521e55f6b01457d55459115"
+      "redaction_tool_sha256": "a8cddec86f76bfa670fdcacad5e38493a0441eaf7d2be162f175c282ebd80c70"
     }
   ],
   "unavailable_real_captures": [
