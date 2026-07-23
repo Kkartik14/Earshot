@@ -316,7 +316,17 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
         "unavailable": 3,
     }
     for name in sorted(set(grouped) | set(invalid)):
-        entries = grouped[name]
+        entries = sorted(
+            grouped[name],
+            key=lambda entry: (
+                entry[0],
+                entry[3],
+                entry[2],
+                type(entry[1]).__name__,
+                repr(entry[1]),
+                entry[4],
+            ),
+        )
         rejected = invalid.get(name, [])
         if rejected:
             limitations = sorted({limitation for _, limitation in rejected})
@@ -387,7 +397,7 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
                 "evidence_ids": evidence_ids,
             }
             continue
-        if "delta" in aggregations:
+        if len(aggregations) > 1:
             projected[name] = {
                 "availability": "unavailable",
                 "basis": "provider_measurement",
@@ -398,9 +408,23 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
             continue
 
         # Instant/cumulative observations are snapshots, not additive windows.
-        # Retain the existing deterministic first-sample projection until the
-        # contract defines a selection policy for those aggregation modes.
-        sample_id, value, unit, _aggregation, confidence = entries[0]
+        # Select the first sample deterministically, but refuse to choose between
+        # conflicting same-name snapshots authored inside that one evidence record.
+        sample_id = entries[0][0]
+        selected_entries = [entry for entry in entries if entry[0] == sample_id]
+        selected_shapes = {
+            (type(entry[1]).__name__, repr(entry[1]), *entry[2:]) for entry in selected_entries
+        }
+        if len(selected_shapes) > 1:
+            projected[name] = {
+                "availability": "unavailable",
+                "basis": "provider_measurement",
+                "confidence": "unavailable",
+                "limitation": "ambiguous_measurements_in_sample",
+                "evidence_ids": [sample_id],
+            }
+            continue
+        _sample_id, value, unit, _aggregation, confidence = selected_entries[0]
         if isinstance(value, int) and abs(value) > _IJSON_INTEGER_MAX:
             projected[name] = {
                 "availability": "unavailable",
@@ -879,20 +903,22 @@ def analyze_incident(
                 )
             )
 
-    render_coverage = next(
-        (entry for entry in profile.coverage if entry.signal in {"render", "client.render"}),
-        None,
-    )
+    render_availabilities = {
+        entry.availability
+        for entry in profile.coverage
+        if entry.signal in {"render", "client.render"}
+    }
     has_render = any(item.operation_name == "render" for item in profile.operations) or any(
         item.event_name == "earshot.audio.render.started" for item in profile.events
     )
     limitations: list[str] = []
     if not has_render:
-        limitation = (
-            f"render_evidence_{render_coverage.availability}"
-            if render_coverage
-            else "render_evidence_not_observed"
-        )
+        if not render_availabilities:
+            limitation = "render_evidence_not_observed"
+        elif len(render_availabilities) == 1:
+            limitation = f"render_evidence_{next(iter(render_availabilities))}"
+        else:
+            limitation = "render_evidence_conflicting_coverage"
         # Missing evidence is a limitation, not a diagnosed failure. Coverage has
         # no fact identity in v1alpha1, so inventing an evidence-free diagnosis would
         # violate the analysis contract.

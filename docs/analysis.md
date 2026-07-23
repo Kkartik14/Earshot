@@ -18,7 +18,7 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
-The current deterministic analyzer identity is `earshot.deterministic@0.2.0`.
+The current deterministic analyzer identity is `earshot.deterministic@0.2.1`.
 Analyzer version is part of the storage cache key; behavior changes such as delta-window
 aggregation therefore cannot reuse a projection produced by an older analyzer.
 
@@ -35,6 +35,10 @@ group, cite every contributing sample, and become unavailable when units or
 aggregation modes conflict or the finite sum overflows. Integer counters are summed
 without float coercion; a total outside the interoperable I-JSON integer domain is
 unavailable instead of rounded. Instant and cumulative observations remain snapshots.
+If one quality sample contains conflicting same-name snapshots, the derived scalar is
+unavailable instead of selecting one by array position; the explanation still retains
+each exact fact. Conflicting `render` and `client.render` coverage declarations likewise
+produce one deterministic conflict limitation rather than depending on input order.
 Unassigned provider samples stay separate: analysis does not manufacture session or
 turn correlation merely to aggregate them.
 

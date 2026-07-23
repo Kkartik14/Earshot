@@ -8,6 +8,7 @@ from earshot.analysis import analyze_incident, comparable_delta
 from earshot.codec import analysis_input_sha256
 from earshot.contract import (
     ClockDomain,
+    Coverage,
     Event,
     Evidence,
     Operation,
@@ -766,6 +767,92 @@ def test_analysis_is_invariant_to_operation_and_event_arrival_order(valid_bundle
     )
     for variant in variants:
         assert analyze(variant).model_dump(mode="python") == expected
+
+
+def test_conflicting_render_coverage_is_order_invariant(valid_bundle) -> None:
+    coverage = (
+        Coverage(
+            signal="render",
+            availability="not_observed",
+            reason="generic render signal was not captured",
+        ),
+        Coverage(
+            signal="client.render",
+            availability="unavailable",
+            reason="client render instrumentation was unavailable",
+        ),
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=tuple(
+            operation
+            for operation in valid_bundle.profile.operations
+            if operation.operation_name != "render"
+        ),
+        events=tuple(
+            event
+            for event in valid_bundle.profile.events
+            if event.event_name != "earshot.audio.render.started"
+        ),
+        coverage=coverage,
+    )
+
+    result = analyze(bundle)
+    permuted = replace_profile(bundle, coverage=tuple(reversed(coverage)))
+
+    assert analyze(permuted) == result
+    assert result.projections.limitations == ("render_evidence_conflicting_coverage",)
+
+
+def test_conflicting_snapshots_in_one_sample_are_order_invariant(valid_bundle) -> None:
+    sample = QualitySample(
+        sample_id="provider-snapshot",
+        session_id="session-1",
+        quality_kind="provider.metric",
+        sample_window=TimeRange(start=point(10), end=point(10)),
+        measurements=(
+            QualityMeasurement(
+                name="provider.queue_depth",
+                value=10,
+                unit="{item}",
+                aggregation="instant",
+            ),
+            QualityMeasurement(
+                name="provider.queue_depth",
+                value=20,
+                unit="{item}",
+                aggregation="instant",
+            ),
+        ),
+        evidence=Evidence(
+            source="provider",
+            observer="server",
+            method="native_metric",
+            confidence="measured",
+            availability="available",
+        ),
+        attributes={"earshot.turn.id": "turn-1"},
+    )
+    bundle = replace_profile(valid_bundle, quality_samples=(sample,))
+    permuted = replace_profile(
+        bundle,
+        quality_samples=(
+            sample.model_copy(update={"measurements": tuple(reversed(sample.measurements))}),
+        ),
+    )
+
+    result = analyze(bundle)
+    permuted_result = analyze(permuted)
+
+    assert permuted_result == result
+    assert metric(result, "provider_measurements")["provider.queue_depth"] == {
+        "availability": "unavailable",
+        "basis": "provider_measurement",
+        "confidence": "unavailable",
+        "limitation": "ambiguous_measurements_in_sample",
+        "evidence_ids": ["provider-snapshot"],
+    }
+    assert explain_incident(permuted, permuted_result) == explain_incident(bundle, result)
 
 
 def test_turn_delta_quality_windows_are_summed_with_all_evidence(valid_bundle) -> None:
