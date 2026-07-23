@@ -679,6 +679,20 @@ def test_validate_explanation_rejects_changed_event_source_fields(valid_bundle) 
     assert "EARSHOT_EXPLANATION_EVENT_MISMATCH" in {issue.code for issue in report.errors}
 
 
+def test_validate_explanation_rejects_duplicate_event(valid_bundle) -> None:
+    analysis = _analyze(valid_bundle)
+    explanation = explain_incident(valid_bundle, analysis)
+    [turn] = explanation.turns
+    tampered_turn = turn.model_copy(update={"events": (*turn.events, turn.events[0])})
+    tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_explanation(valid_bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)

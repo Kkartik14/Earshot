@@ -2445,6 +2445,7 @@ def validate_explanation(
                 )
 
     projected_operation_ids: list[str] = []
+    projected_event_ids: list[str] = []
     for turn_index, turn in enumerate(explanation.turns):
         for operation_index, operation in enumerate(turn.operations):
             projected_operation_ids.append(operation.operation_id)
@@ -2453,6 +2454,7 @@ def validate_explanation(
                 ("explanation", "turns", turn_index, "operations", operation_index),
             )
         for event_index, event in enumerate(turn.events):
+            projected_event_ids.append(event.event_id)
             path = ("explanation", "turns", turn_index, "events", event_index)
             check_refs(event.evidence_ids, evidence_ids, path + ("evidence_ids",))
             if expected_events.get(event.event_id) != event:
@@ -2495,6 +2497,18 @@ def validate_explanation(
                 message="explained operations differ from exact source turn placement",
             )
         )
+
+    seen_event_ids: set[str] = set()
+    for event_index, event_id in enumerate(projected_event_ids):
+        if event_id in seen_event_ids:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH",
+                    path=("explanation", "events", event_index),
+                    message="source event appears more than once in the explanation",
+                )
+            )
+        seen_event_ids.add(event_id)
 
     # Completeness: the union of turn-owned and unassigned operations must be
     # exactly the source operation set. Nothing is silently dropped or invented.
