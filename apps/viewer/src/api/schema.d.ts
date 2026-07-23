@@ -1698,7 +1698,9 @@ export interface components {
         ToolAnalysis: {
             /** Elapsed Ms By Clock Domain */
             elapsed_ms_by_clock_domain?: {
-                [key: string]: number;
+                [key: string]: {
+                    [key: string]: number;
+                };
             };
             /**
              * Evidence Ids

@@ -3982,7 +3982,21 @@
         "properties": {
           "elapsed_ms_by_clock_domain": {
             "additionalProperties": {
-              "type": "number"
+              "additionalProperties": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "propertyNames": {
+                "enum": [
+                  "monotonic",
+                  "source_wall"
+                ]
+              },
+              "type": "object"
+            },
+            "propertyNames": {
+              "maxLength": 256,
+              "minLength": 1
             },
             "title": "Elapsed Ms By Clock Domain",
             "type": "object"
