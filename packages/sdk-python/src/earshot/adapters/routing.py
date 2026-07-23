@@ -50,7 +50,6 @@ SpanConsumer = Callable[[Any], None]
 LossConsumer = Callable[[str], None]
 SpanIdentity = tuple[int, int]
 _AMBIGUOUS_TRACE = object()
-_UNATTRIBUTABLE_SPAN = object()
 
 
 def _span_ids(span: Any) -> tuple[int | None, int | None]:
@@ -80,6 +79,14 @@ class RoutingStatus:
 
     active: bool
     quarantined_span_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SpanDecision:
+    """Start-time ownership plus the ends still expected for this identity."""
+
+    route_key: str | None
+    pending_ends: int = 1
 
 
 class SpanSink:
@@ -169,7 +176,7 @@ class SpanRouter:
         self._predicate = predicate
         self._sinks: dict[str, SpanSink] = {}
         self._retired_sinks: dict[str, SpanSink] = {}
-        self._span_to_session: OrderedDict[SpanIdentity, str | object] = OrderedDict()
+        self._span_to_session: OrderedDict[SpanIdentity, _SpanDecision] = OrderedDict()
         self._trace_to_session: OrderedDict[int, str | object] = OrderedDict()
         self._allow_learned_end_fallback = True
         self._allow_unscoped_fallback = True
@@ -225,28 +232,34 @@ class SpanRouter:
         with self._lock:
             if routing_hint is not None:
                 route_key = self._route_key_for_hint_locked(routing_hint)
-                span_route: str | object = (
-                    route_key if route_key is not None else _UNATTRIBUTABLE_SPAN
-                )
             else:
                 route_key = self._route_for_unscoped_start_locked(trace_id)
-                span_route = route_key if route_key is not None else _UNATTRIBUTABLE_SPAN
-            if route_key is None and routing_hint is None:
-                return
+            identity_collision = False
             if trace_id is not None and span_id is not None:
                 span_identity = (trace_id, span_id)
-                self._span_to_session[span_identity] = span_route
+                existing = self._span_to_session.get(span_identity)
+                if existing is None:
+                    decision = _SpanDecision(route_key)
+                else:
+                    # The SDK promises uniqueness, but custom/broken ID generators
+                    # exist. Once identities collide, neither end can be assigned
+                    # safely and both callbacks must consume the same tombstone.
+                    decision = _SpanDecision(None, existing.pending_ends + 1)
+                    identity_collision = True
+                    self._trace_to_session[trace_id] = _AMBIGUOUS_TRACE
+                    self._trace_to_session.move_to_end(trace_id)
+                self._span_to_session[span_identity] = decision
                 self._span_to_session.move_to_end(span_identity)
                 while len(self._span_to_session) > _MAX_SPAN_STASH:
-                    _, evicted_route = self._span_to_session.popitem(last=False)
-                    if evicted_route is _UNATTRIBUTABLE_SPAN:
-                        # The exact negative decision can no longer be recalled.
-                        # Fail closed for future end-only attribution rather
-                        # than letting this span inherit a learned trace owner.
-                        self._allow_learned_end_fallback = False
-                    elif isinstance(evicted_route, str) and evicted_route not in self._sinks:
-                        self._discard_retired_route_locked(evicted_route)
-            if route_key is None:
+                    _, evicted = self._span_to_session.popitem(last=False)
+                    # Once any exact start decision is lost, an end callback
+                    # cannot distinguish that span from one observed end-only.
+                    # Disable the weaker trace fallback process-wide rather
+                    # than risk reassigning an evicted span to a later owner.
+                    self._allow_learned_end_fallback = False
+                    if evicted.route_key is not None and evicted.route_key not in self._sinks:
+                        self._discard_retired_route_locked(evicted.route_key)
+            if route_key is None or identity_collision:
                 return
             if trace_id is not None:
                 if trace_id not in self._trace_to_session:
@@ -268,11 +281,19 @@ class SpanRouter:
             route_key: str | None = None
             exact_unattributable = False
             if trace_id is not None and span_id is not None:
-                span_route = self._span_to_session.pop((trace_id, span_id), None)
-                if span_route is _UNATTRIBUTABLE_SPAN:
-                    exact_unattributable = True
-                elif isinstance(span_route, str):
-                    route_key = span_route
+                span_identity = (trace_id, span_id)
+                decision = self._span_to_session.get(span_identity)
+                if decision is not None:
+                    exact_unattributable = decision.route_key is None
+                    route_key = decision.route_key
+                    if decision.pending_ends > 1:
+                        self._span_to_session[span_identity] = _SpanDecision(
+                            decision.route_key,
+                            decision.pending_ends - 1,
+                        )
+                        self._span_to_session.move_to_end(span_identity)
+                    else:
+                        self._span_to_session.pop(span_identity)
             if (
                 self._allow_learned_end_fallback
                 and not exact_unattributable
@@ -332,6 +353,10 @@ class SpanRouter:
 
         if routing_hint in self._sinks or routing_hint in self._retired_sinks:
             return routing_hint
+        if not self._allow_unscoped_fallback:
+            # A public session ID is not a generation-scoped routing capability.
+            # After registration turnover, the same ID may name a new session.
+            return None
         matches = [
             route_key for route_key, sink in self._sinks.items() if sink.session_key == routing_hint
         ]
@@ -352,7 +377,7 @@ class SpanRouter:
         return None
 
     def _route_has_inflight_span_locked(self, route_key: str) -> bool:
-        return any(key == route_key for key in self._span_to_session.values())
+        return any(decision.route_key == route_key for decision in self._span_to_session.values())
 
     def _discard_retired_route_locked(self, route_key: str) -> None:
         """Release a retired sink only after no exact late span can reference it."""

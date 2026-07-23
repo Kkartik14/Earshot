@@ -20,6 +20,8 @@ import pytest
 
 pytest.importorskip("opentelemetry.sdk.trace")
 
+from opentelemetry import baggage as otel_baggage
+from opentelemetry import context as otel_context
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SpanProcessor
 from opentelemetry.sdk.trace.id_generator import IdGenerator
@@ -282,6 +284,129 @@ def test_unattributed_open_span_stays_quarantined_after_topology_changes() -> No
     first_bundle = first.recorder.close()
     assert _span_ids(first_bundle) == set()
     assert SECRET not in first_bundle.model_dump_json()
+
+
+def test_unscoped_start_cannot_gain_a_trace_owner_before_end() -> None:
+    """A negative start-time decision cannot be replaced by later trace learning."""
+
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    second = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    second_handle = second.attach(provider)
+    root = provider.get_tracer("test-harness").start_span("shared-root")
+    tracer = provider.get_tracer("livekit-agents")
+
+    with use_span(root, end_on_exit=False):
+        ambiguous = tracer.start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "ambiguous"},
+        )
+        with first_handle.session_scope():
+            tracer.start_span("llm_node", attributes={"lk.room": "first"}).end()
+        ambiguous.end()
+    root.end()
+
+    first_bundle = first.recorder.close()
+    second_bundle = second.recorder.close()
+    assert len(first_bundle.profile.operations) == 1
+    assert _span_ids(second_bundle) == set()
+    assert SECRET not in first_bundle.model_dump_json()
+    assert first_handle.status.quarantined_span_count == 1
+    assert second_handle.status.quarantined_span_count == 1
+
+
+def test_public_session_hint_cannot_cross_registration_turnover() -> None:
+    """Legacy public IDs are unsafe once a registration generation retires."""
+
+    provider = TracerProvider()
+    retired = LiveKitAdapter(_recorder(session_id="reused-session"))
+    retired.attach(provider)
+    retired.detach()
+    current = LiveKitAdapter(_recorder(session_id="reused-session"))
+    current_handle = current.attach(provider)
+    context = otel_baggage.set_baggage("earshot.session.id", "reused-session")
+    token = otel_context.attach(context)
+    try:
+        provider.get_tracer("livekit-agents").start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "stale-public-id"},
+        ).end()
+    finally:
+        otel_context.detach(token)
+
+    current_bundle = current.recorder.close()
+    assert _span_ids(current_bundle) == set()
+    assert SECRET not in current_bundle.model_dump_json()
+    assert current_handle.status.quarantined_span_count == 1
+
+
+def test_colliding_active_span_identity_quarantines_every_owner() -> None:
+    """Duplicate trace/span identities never overwrite the first owner."""
+
+    provider = TracerProvider(id_generator=_CollidingSpanIdGenerator())
+    first = LiveKitAdapter(_recorder())
+    second = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    second_handle = second.attach(provider)
+    root = provider.get_tracer("test-harness").start_span("shared-root")
+    tracer = provider.get_tracer("livekit-agents")
+
+    with use_span(root, end_on_exit=False):
+        with first_handle.session_scope():
+            first_span = tracer.start_span("llm_node", attributes={"lk.room": "first"})
+        with second_handle.session_scope():
+            second_span = tracer.start_span(
+                "llm_node",
+                attributes={"lk.response.text": SECRET, "lk.room": "second"},
+            )
+        first_span.end()
+        second_span.end()
+    root.end()
+
+    for adapter, handle in ((first, first_handle), (second, second_handle)):
+        bundle = adapter.recorder.close()
+        assert _span_ids(bundle) == set()
+        assert SECRET not in bundle.model_dump_json()
+        assert handle.status.quarantined_span_count == 2
+
+
+def test_evicted_exact_decision_disables_later_trace_reassignment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losing exact start state cannot make an older span inherit a new owner."""
+
+    from earshot.adapters import routing
+
+    monkeypatch.setattr(routing, "_MAX_SPAN_STASH", 1)
+    monkeypatch.setattr(routing, "_MAX_TRACE_MAP", 1)
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    second = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    second_handle = second.attach(provider)
+    tracer = provider.get_tracer("livekit-agents")
+    shared_root = provider.get_tracer("test-harness").start_span("shared-root")
+
+    with use_span(shared_root, end_on_exit=False), first_handle.session_scope():
+        old_first = tracer.start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "old-first"},
+        )
+    with first_handle.session_scope():
+        tracer.start_span("llm_node", attributes={"lk.room": "evictor"}).end()
+    with use_span(shared_root, end_on_exit=False), second_handle.session_scope():
+        tracer.start_span("llm_node", attributes={"lk.room": "second"}).end()
+    old_first.end()
+    shared_root.end()
+
+    first_bundle = first.recorder.close()
+    second_bundle = second.recorder.close()
+    assert len(first_bundle.profile.operations) == 1
+    assert len(second_bundle.profile.operations) == 1
+    assert SECRET not in second_bundle.model_dump_json()
+    assert first_handle.status.quarantined_span_count == 1
+    assert second_handle.status.quarantined_span_count == 1
 
 
 def test_conflicting_trace_ownership_remains_ambiguous() -> None:
