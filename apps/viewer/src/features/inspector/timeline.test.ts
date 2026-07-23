@@ -320,6 +320,55 @@ describe("buildTurnDetails", () => {
     expect(stt?.measurements[0].unit).toBe("ms");
   });
 
+  it("retains repeated exact turn measurements with authored provenance", () => {
+    const withTurnFacts = asExplanation({
+      ...explanation,
+      turns: [
+        {
+          ...explanation.turns[0],
+          measurements: [
+            {
+              name: "provider.queue_depth",
+              value: 10,
+              unit: "{item}",
+              aggregation: "instant",
+              basis: "provider_measurement",
+              confidence: "measured",
+              evidence: { source_field: "queue.depth.first" },
+              evidence_ids: ["quality-turn-1"],
+            },
+            {
+              name: "provider.queue_depth",
+              value: 20,
+              unit: "{item}",
+              aggregation: "instant",
+              basis: "provider_measurement",
+              confidence: "measured",
+              evidence: { source_field: "queue.depth.second" },
+              evidence_ids: ["quality-turn-2"],
+            },
+          ],
+        },
+      ],
+    });
+
+    const [detail] = buildTurnDetails(withTurnFacts);
+
+    expect(detail.measurements.map((measurement) => measurement.value)).toEqual([10, 20]);
+    expect(detail.measurements.map((measurement) => measurement.evidenceIds)).toEqual([
+      ["quality-turn-1"],
+      ["quality-turn-2"],
+    ]);
+    expect(detail.measurements.map((measurement) => measurement.sourceField)).toEqual([
+      "queue.depth.first",
+      "queue.depth.second",
+    ]);
+    expect(
+      detail.stages.flatMap((stage) => stage.measurements).map((item) => item.name),
+    ).not.toContain("provider.queue_depth");
+    expect(buildUnassigned(withTurnFacts).measurements).toEqual([]);
+  });
+
   it("exposes all derived metrics under friendly keys", () => {
     const keys = details[0].metrics.map((m) => m.key);
     expect(keys).toContain("first_token");

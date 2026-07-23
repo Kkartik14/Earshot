@@ -2174,6 +2174,13 @@
             "title": "Events",
             "type": "array"
           },
+          "measurements": {
+            "items": {
+              "$ref": "#/components/schemas/ExplainedMeasurement"
+            },
+            "title": "Measurements",
+            "type": "array"
+          },
           "metrics": {
             "$ref": "#/components/schemas/TurnMetrics"
           },
@@ -2193,6 +2200,7 @@
           "turn_id",
           "operations",
           "events",
+          "measurements",
           "metrics"
         ],
         "title": "ExplainedTurn",

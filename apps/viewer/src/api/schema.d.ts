@@ -967,6 +967,8 @@ export interface components {
         ExplainedTurn: {
             /** Events */
             events: components["schemas"]["ExplainedEvent"][];
+            /** Measurements */
+            measurements: components["schemas"]["ExplainedMeasurement"][];
             metrics: components["schemas"]["TurnMetrics"];
             /** Operations */
             operations: components["schemas"]["ExplainedOperation"][];

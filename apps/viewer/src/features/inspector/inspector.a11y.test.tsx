@@ -47,7 +47,16 @@ function stage(name: StageName, over: Partial<StageDetail> = {}): StageDetail {
       sourceField: "sha256:abc",
     },
     measurements: [
-      { name: `earshot.${name}.ttfb`, value: 165, unit: "ms", confidence: "measured" },
+      {
+        reactKey: `quality-${name}`,
+        name: `earshot.${name}.ttfb`,
+        value: 165,
+        unit: "ms",
+        confidence: "measured",
+        aggregation: "instant",
+        basis: "provider_measurement",
+        evidenceIds: [`quality-${name}`],
+      },
     ],
     ...over,
   };
@@ -96,6 +105,7 @@ const turnDetail: TurnDetail = {
       confidence: "measured",
     },
   ],
+  measurements: [],
   events: [
     {
       name: "earshot.speech.ended",
@@ -474,6 +484,53 @@ describe("Detail drawers", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("TurnDrawer renders repeated exact measurement facts separately from metrics", () => {
+    render(
+      <TurnDrawer
+        detail={{
+          ...turnDetail,
+          measurements: [
+            {
+              reactKey: "quality-turn-1",
+              name: "provider.queue_depth",
+              value: 10,
+              unit: "{item}",
+              confidence: "measured",
+              aggregation: "instant",
+              basis: "provider_measurement",
+              evidenceIds: ["quality-turn-1"],
+              sourceField: "queue.depth.first",
+            },
+            {
+              reactKey: "quality-turn-2",
+              name: "provider.queue_depth",
+              value: 20,
+              unit: "{item}",
+              confidence: "measured",
+              aggregation: "instant",
+              basis: "provider_measurement",
+              evidenceIds: ["quality-turn-2"],
+              sourceField: "queue.depth.second",
+            },
+          ],
+        }}
+        coverage={[]}
+        onClose={() => {}}
+        onPickStage={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: /derived metrics/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /measurement facts/i }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("provider.queue_depth")).toHaveLength(2);
+    expect(screen.getByText("10 item")).toBeInTheDocument();
+    expect(screen.getByText("20 item")).toBeInTheDocument();
+    expect(screen.getByText(/queue\.depth\.first.*quality-turn-1/)).toBeInTheDocument();
+    expect(screen.getByText(/queue\.depth\.second.*quality-turn-2/)).toBeInTheDocument();
+  });
+
   it("StageDrawer is a labelled dialog that focuses its close control", () => {
     const onClose = vi.fn();
     render(<StageDrawer index={0} stage={stage("llm")} onClose={onClose} />);
@@ -531,16 +588,24 @@ describe("Detail drawers", () => {
     const noise = stage("stt", {
       measurements: [
         {
+          reactKey: "quality-input-level",
           name: "earshot.audio.input_level",
           value: -21.4,
           unit: "dbfs",
           confidence: "measured",
+          aggregation: "instant",
+          basis: "provider_measurement",
+          evidenceIds: ["quality-input-level"],
         },
         {
+          reactKey: "quality-output",
           name: "earshot.stt.output",
           value: 42,
           unit: "{character}",
           confidence: "measured",
+          aggregation: "instant",
+          basis: "provider_measurement",
+          evidenceIds: ["quality-output"],
         },
       ],
     });
