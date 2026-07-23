@@ -1005,7 +1005,7 @@ def test_validate_explanation_rejects_unassigned_measurement_tampering() -> None
         }
 
 
-def test_validate_explanation_rejects_changed_turn_measurements() -> None:
+def test_validate_explanation_rejects_changed_turn_measurements(monkeypatch) -> None:
     session = earshot.pipeline(
         session_id="changed-turn-measurement-session",
         started_at_unix_nano=1_752_800_000_000_000_000,
@@ -1024,6 +1024,11 @@ def test_validate_explanation_rejects_changed_turn_measurements() -> None:
     )
     tampered = explanation.model_copy(
         update={"turns": (explained_turn.model_copy(update={"metrics": changed_metrics}),)}
+    )
+    monkeypatch.setattr(
+        explanation_module,
+        "explain_incident",
+        lambda _bundle, _analysis: tampered,
     )
 
     report = validate_explanation(bundle, analysis, tampered)
