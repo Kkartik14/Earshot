@@ -1,0 +1,193 @@
+.panel {
+  padding: 8px 20px 4px;
+}
+.panelHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0 10px;
+}
+.panelHead h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx-low);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.note {
+  font-size: 11px;
+  color: var(--tx-low);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* diagnoses */
+.diag {
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--crit);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 11px 13px;
+}
+.diagHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--tx);
+}
+.conf {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--good);
+  background: color-mix(in oklab, var(--good) 15%, transparent);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.summary {
+  margin: 6px 0 8px;
+  font-size: 12px;
+  color: var(--tx-mid);
+  line-height: 1.4;
+}
+.evidence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.evLabel {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  margin-right: 2px;
+}
+.evChip {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--acc);
+  background: color-mix(in oklab, var(--acc) 10%, transparent);
+  border: 1px solid color-mix(in oklab, var(--acc) 30%, transparent);
+  border-radius: 5px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.evChip:hover {
+  background: color-mix(in oklab, var(--acc) 18%, transparent);
+}
+.evChip:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+.evStatic {
+  color: var(--tx-low);
+  background: var(--track);
+  border-color: var(--line);
+  cursor: default;
+}
+.limit {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--tx-low);
+  line-height: 1.4;
+}
+
+/* unassigned operations + measurements */
+.unop {
+  border: 1px solid var(--line-soft);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.unopHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+.unName {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx);
+  flex: 1;
+}
+.unDur {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--tx-mid);
+}
+.statusBadge {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  border: 1px solid;
+  padding: 2px 6px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+
+.measBlock {
+  border: 1px solid var(--line-soft);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 4px 12px;
+}
+.measRow {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.measRow:first-child {
+  border-top: 0;
+}
+.measName {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--tx);
+}
+.measVal {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx);
+  text-align: right;
+}
+.measConf {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--good);
+  background: color-mix(in oklab, var(--good) 15%, transparent);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
