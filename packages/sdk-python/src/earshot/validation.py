@@ -2254,6 +2254,7 @@ def validate_explanation(
 
     from .explanation import IncidentExplanation as _IncidentExplanation
     from .explanation import _coordinate
+    from .explanation import explain_incident as _project_explanation
 
     issues: list[ValidationIssue] = []
     try:
@@ -2277,6 +2278,18 @@ def validate_explanation(
     media_ids = {item.media_id for item in bundle.profile.media_refs}
     operation_ids = set(operations)
     evidence_ids = operation_ids | set(events) | set(quality_samples) | media_ids
+    expected_explanation = _project_explanation(bundle, analysis)
+    expected_operations = {
+        operation.operation_id: operation
+        for turn in expected_explanation.turns
+        for operation in turn.operations
+    }
+    expected_operations.update(
+        {
+            operation.operation_id: operation
+            for operation in expected_explanation.unassigned_operations
+        }
+    )
 
     def check_refs(
         references: tuple[str, ...],
@@ -2317,6 +2330,18 @@ def validate_explanation(
         source = operations.get(operation.operation_id)
         if source is None:
             return
+        expected_operation = expected_operations.get(operation.operation_id)
+        if (
+            expected_operation is not None
+            and operation.measurements != expected_operation.measurements
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_OPERATION_MISMATCH",
+                    path=path + ("measurements",),
+                    message="explained operation measurements differ from owned source evidence",
+                )
+            )
         if operation.status != source.status:
             issues.append(
                 ValidationIssue(

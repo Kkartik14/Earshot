@@ -534,6 +534,41 @@ def test_validate_explanation_rejects_changed_causal_link() -> None:
     }
 
 
+def test_validate_explanation_rejects_changed_operation_measurement() -> None:
+    session = earshot.pipeline(
+        session_id="changed-measurement-session",
+        started_at_unix_nano=1_752_800_000_000_000_000,
+    )
+    with session.turn(turn_id="turn-measurement") as turn:
+        turn.llm("openai", ttft_ms=250)
+    bundle = session.close()
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    [explained_turn] = explanation.turns
+    llm = next(
+        operation for operation in explained_turn.operations if operation.operation_name == "llm"
+    )
+    [measurement] = llm.measurements
+    changed = llm.model_copy(
+        update={"measurements": (measurement.model_copy(update={"value": 1}),)}
+    )
+    tampered_turn = explained_turn.model_copy(
+        update={
+            "operations": tuple(
+                changed if operation.operation_id == changed.operation_id else operation
+                for operation in explained_turn.operations
+            )
+        }
+    )
+    tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_explanation(bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
