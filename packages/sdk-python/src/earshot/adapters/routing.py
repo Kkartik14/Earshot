@@ -148,6 +148,7 @@ class SpanRouter:
     def __init__(self, predicate: SpanPredicate) -> None:
         self._predicate = predicate
         self._sinks: dict[str, SpanSink] = {}
+        self._retired_sinks: dict[str, SpanSink] = {}
         self._span_to_session: OrderedDict[SpanIdentity, str] = OrderedDict()
         self._trace_to_session: OrderedDict[int, str] = OrderedDict()
         self._quarantined = 0
@@ -164,16 +165,13 @@ class SpanRouter:
             if self._sinks.get(sink.route_key) is not sink:
                 return
             self._sinks.pop(sink.route_key, None)
-            self._trace_to_session = OrderedDict(
-                (trace, key)
-                for trace, key in self._trace_to_session.items()
-                if key != sink.route_key
-            )
-            self._span_to_session = OrderedDict(
-                (span, key)
-                for span, key in self._span_to_session.items()
-                if key != sink.route_key
-            )
+            if self._route_has_inflight_span_locked(sink.route_key):
+                # Keep only content-free routing identity until every span that
+                # started before detach ends. This prevents the next sole sink
+                # from receiving a late span owned by the retired registration.
+                self._retired_sinks[sink.route_key] = sink
+            else:
+                self._discard_retired_route_locked(sink.route_key)
 
     @property
     def sink_count(self) -> int:
@@ -188,7 +186,11 @@ class SpanRouter:
     @property
     def routing_state_size(self) -> int:
         with self._lock:
-            return len(self._span_to_session) + len(self._trace_to_session)
+            return (
+                len(self._span_to_session)
+                + len(self._trace_to_session)
+                + len(self._retired_sinks)
+            )
 
     # -- processor callbacks ---------------------------------------------
     def on_start(self, span: Any, parent_context: Any | None) -> None:
@@ -207,7 +209,9 @@ class SpanRouter:
                 self._span_to_session[span_identity] = route_key
                 self._span_to_session.move_to_end(span_identity)
                 while len(self._span_to_session) > _MAX_SPAN_STASH:
-                    self._span_to_session.popitem(last=False)
+                    _, evicted_route = self._span_to_session.popitem(last=False)
+                    if evicted_route not in self._sinks:
+                        self._discard_retired_route_locked(evicted_route)
             if trace_id is not None and trace_id not in self._trace_to_session:
                 self._trace_to_session[trace_id] = route_key
                 while len(self._trace_to_session) > _MAX_TRACE_MAP:
@@ -227,14 +231,28 @@ class SpanRouter:
                 # Unambiguous single session: no attribution needed.
                 route_key = next(iter(self._sinks))
             sink = self._sinks.get(route_key) if route_key is not None else None
+            retired_sink = (
+                self._retired_sinks.get(route_key) if route_key is not None else None
+            )
             if sink is None:
                 self._quarantined += 1
-                affected_sinks = tuple(self._sinks.values())
+                affected_sinks = (
+                    (retired_sink,)
+                    if retired_sink is not None
+                    else tuple(self._sinks.values()) if route_key is None else ()
+                )
             else:
                 affected_sinks = ()
+            if route_key is not None and route_key not in self._sinks:
+                self._discard_retired_route_locked(route_key)
         if sink is None:
             for affected_sink in affected_sinks:
-                affected_sink.record_loss("unattributed_span_quarantined")
+                reason = (
+                    "routing_target_closed"
+                    if affected_sink is retired_sink
+                    else "unattributed_span_quarantined"
+                )
+                affected_sink.record_loss(reason)
             return
         # Deliver outside the lock; the adapter guards its own recorder.
         if not sink.consume(span):
@@ -270,10 +288,28 @@ class SpanRouter:
         ]
         return matches[0] if len(matches) == 1 else None
 
+    def _route_has_inflight_span_locked(self, route_key: str) -> bool:
+        return any(key == route_key for key in self._span_to_session.values())
+
+    def _discard_retired_route_locked(self, route_key: str) -> None:
+        """Release a retired sink only after no exact late span can reference it."""
+
+        if self._route_has_inflight_span_locked(route_key):
+            return
+        self._retired_sinks.pop(route_key, None)
+        self._trace_to_session = OrderedDict(
+            (trace, key)
+            for trace, key in self._trace_to_session.items()
+            if key != route_key
+        )
+
     def _mark_stale(self) -> None:
         self._stale = True
         with self._lock:
+            for sink in (*self._sinks.values(), *self._retired_sinks.values()):
+                sink.close()
             self._sinks.clear()
+            self._retired_sinks.clear()
             self._span_to_session.clear()
             self._trace_to_session.clear()
 
@@ -333,7 +369,8 @@ def _reset_after_fork() -> None:
 
 import os  # noqa: E402
 
-os.register_at_fork(after_in_child=_reset_after_fork)
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_after_fork)
 
 
 class RoutingHandle:

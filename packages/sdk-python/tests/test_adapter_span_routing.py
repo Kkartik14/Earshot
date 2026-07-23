@@ -9,6 +9,8 @@ forever.
 
 from __future__ import annotations
 
+import os
+import select
 import threading
 
 import pytest
@@ -16,6 +18,7 @@ import pytest
 pytest.importorskip("opentelemetry.sdk.trace")
 
 from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SpanProcessor
 from opentelemetry.sdk.trace.id_generator import IdGenerator
 
 from earshot.adapters import (
@@ -41,6 +44,29 @@ class _CollidingSpanIdGenerator(IdGenerator):
 
     def generate_span_id(self) -> int:
         return 42
+
+
+class _BlockingEndProcessor(SpanProcessor):
+    """Pause OTel before Earshot's later-registered processor sees an end."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def on_start(self, span, parent_context=None) -> None:
+        del span, parent_context
+
+    def on_end(self, span) -> None:
+        del span
+        self.started.set()
+        assert self.release.wait(5)
+
+    def shutdown(self) -> None:
+        return None
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        del timeout_millis
+        return True
 
 
 def _recorder(*, session_id: str | None = None) -> IncidentRecorder:
@@ -141,6 +167,130 @@ def test_duplicate_user_session_ids_keep_independent_active_routes() -> None:
     second_bundle = second.recorder.close()
     assert _span_ids(first_bundle) == {format(first_ids[0], "016x")}
     assert _span_ids(second_bundle) == {format(item, "016x") for item in second_ids}
+
+
+def test_span_ending_after_detach_is_not_delivered_to_the_next_session() -> None:
+    """A late end retains its retired route and never uses the sole-sink fallback."""
+
+    provider = TracerProvider()
+    retired = LiveKitAdapter(_recorder())
+    retired_handle = retired.attach(provider)
+    with retired_handle.session_scope():
+        late_span = provider.get_tracer("livekit-agents").start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "retired"},
+        )
+
+    retired.detach()
+    current = LiveKitAdapter(_recorder())
+    current.attach(provider)
+    late_span.end()
+
+    assert not retired_handle.status.active
+    assert retired_handle.status.quarantined_span_count == 1
+    assert _span_ids(retired.recorder.close()) == set()
+    current_bundle = current.recorder.close()
+    assert _span_ids(current_bundle) == set()
+    assert SECRET not in current_bundle.model_dump_json()
+
+
+def test_on_end_waiting_behind_detach_cannot_deliver_after_close_returns() -> None:
+    """A concurrent OTel end observed after close is quarantined, never delivered."""
+
+    provider = TracerProvider()
+    blocker = _BlockingEndProcessor()
+    provider.add_span_processor(blocker)
+    retired = LiveKitAdapter(_recorder())
+    retired_handle = retired.attach(provider)
+    with retired_handle.session_scope():
+        late_span = provider.get_tracer("livekit-agents").start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "retired-race"},
+        )
+
+    end_errors: list[BaseException] = []
+
+    def end_span() -> None:
+        try:
+            late_span.end()
+        except BaseException as error:  # pragma: no cover - asserted below
+            end_errors.append(error)
+
+    end_thread = threading.Thread(target=end_span)
+    end_thread.start()
+    assert blocker.started.wait(5)
+    try:
+        retired.detach()
+        assert not retired_handle.status.active
+        current = LiveKitAdapter(_recorder())
+        current.attach(provider)
+    finally:
+        blocker.release.set()
+        end_thread.join(5)
+
+    assert not end_thread.is_alive()
+    assert end_errors == []
+    assert retired_handle.status.quarantined_span_count == 1
+    assert _span_ids(retired.recorder.close()) == set()
+    current_bundle = current.recorder.close()
+    assert _span_ids(current_bundle) == set()
+    assert SECRET not in current_bundle.model_dump_json()
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "fork") or not hasattr(os, "register_at_fork"),
+    reason="requires POSIX fork hooks",
+)
+def test_fork_retires_inherited_routes_before_child_reattaches() -> None:
+    """A child starts with no active inherited sink and can attach independently."""
+
+    provider = TracerProvider(shutdown_on_exit=False)
+    inherited = LiveKitAdapter(_recorder())
+    inherited_handle = inherited.attach(provider)
+    read_fd, write_fd = os.pipe()
+    child_pid = os.fork()
+    if child_pid == 0:  # pragma: no cover - assertions run in the parent
+        exit_code = 0
+        try:
+            os.close(read_fd)
+            child = LiveKitAdapter(_recorder())
+            child_handle = child.attach(provider)
+            with child_handle.session_scope():
+                _emit_livekit_span(provider, room="child", span_id_box=[])
+            child_bundle = child.recorder.close()
+            inherited_bundle = inherited.recorder.close()
+            result = ",".join(
+                (
+                    str(inherited_handle.status.active),
+                    str(len(child_bundle.profile.operations)),
+                    str(len(inherited_bundle.profile.operations)),
+                )
+            )
+            os.write(write_fd, result.encode())
+            child.detach()
+        except BaseException:
+            exit_code = 1
+        finally:
+            os.close(write_fd)
+            os._exit(exit_code)
+
+    os.close(write_fd)
+    try:
+        readable, _, _ = select.select([read_fd], [], [], 5)
+        assert readable, "forked routing child did not make progress"
+        inherited_active, child_operations, inherited_operations = (
+            os.read(read_fd, 256).decode().split(",")
+        )
+        assert inherited_active == "False"
+        assert child_operations == "1"
+        assert inherited_operations == "0"
+        waited_pid, wait_status = os.waitpid(child_pid, 0)
+        assert waited_pid == child_pid
+        assert os.waitstatus_to_exitcode(wait_status) == 0
+    finally:
+        os.close(read_fd)
+        inherited.detach()
+        inherited.recorder.close()
 
 
 def test_overlapping_traces_with_the_same_span_id_do_not_collide() -> None:
