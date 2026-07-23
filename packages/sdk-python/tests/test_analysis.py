@@ -548,16 +548,16 @@ def test_input_stream_transport_cannot_author_response_boundary(valid_bundle) ->
     assert metric(result, "response_latency")["basis"] != "transport_estimate"
 
 
-def test_input_stream_output_event_cannot_author_response_boundary(valid_bundle) -> None:
+def test_input_owned_linked_operation_cannot_author_response_boundary(valid_bundle) -> None:
     wrong_direction = next(
         event
         for event in valid_bundle.profile.events
         if event.event_name == "earshot.audio.first_byte_sent"
     ).model_copy(
         update={
-            "operation_id": None,
-            "participant_id": "participant-user",
-            "stream_id": "stream-input",
+            "operation_id": "op-turn",
+            "participant_id": None,
+            "stream_id": None,
         }
     )
     events = tuple(
@@ -585,7 +585,7 @@ def test_output_stream_speech_end_cannot_anchor_user_turn(valid_bundle) -> None:
         update={
             "operation_id": None,
             "participant_id": "participant-agent",
-            "stream_id": "stream-output",
+            "stream_id": None,
         }
     )
     events = tuple(
@@ -612,7 +612,7 @@ def test_output_stream_turn_detection_cannot_anchor_user_turn(valid_bundle) -> N
         operation.model_copy(
             update={
                 "participant_id": "participant-agent",
-                "stream_id": "stream-output",
+                "stream_id": None,
             }
         )
         if operation.operation_name == "turn_detection"
@@ -630,6 +630,27 @@ def test_output_stream_turn_detection_cannot_anchor_user_turn(valid_bundle) -> N
     result = analyze(bundle)
 
     assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
+def test_user_owned_streamless_render_cannot_author_output_boundary(valid_bundle) -> None:
+    operations = tuple(
+        operation.model_copy(update={"participant_id": "participant-user", "stream_id": None})
+        if operation.operation_name == "render"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.audio.render.started"
+    )
+    bundle = replace_profile(valid_bundle, operations=operations, events=events)
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "render_start_response_latency")["availability"] == "not_observed"
+    assert "render_evidence_available" in result.projections.limitations
 
 
 @pytest.mark.parametrize(

@@ -31,6 +31,11 @@ ANALYZER_NAME = "earshot.deterministic"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
 _SUCCESS_BOUNDARY_STATUSES = frozenset({"completed", "ok", "unset"})
 _PROVIDER_DURATION_ATTRIBUTE = "earshot.analysis.provider_duration_attribute"
+_PARTICIPANT_ROLE_DIRECTION = {
+    "agent": "output",
+    "assistant": "output",
+    "user": "input",
+}
 _CONFIDENCE_RANK = {
     "measured": 0,
     "estimated": 1,
@@ -96,10 +101,48 @@ def _matches_stream_direction(
     expected_direction: str,
     *,
     require_explicit: bool = False,
+    participant_directions: Mapping[str, str] | None = None,
+    operations_by_id: Mapping[str, Operation] | None = None,
+    operations_by_otel: Mapping[tuple[str, str], Operation] | None = None,
 ) -> bool:
-    if value.stream_id is None:
-        return not require_explicit
-    return stream_directions.get(value.stream_id) == expected_direction
+    directions: set[str] = set()
+    unresolved_stream = False
+
+    def add_record_ownership(record: Operation | Event) -> None:
+        nonlocal unresolved_stream
+        if record.stream_id is not None:
+            direction = stream_directions.get(record.stream_id)
+            if direction is None:
+                unresolved_stream = True
+            else:
+                directions.add(direction)
+        if record.participant_id is not None and participant_directions is not None:
+            direction = participant_directions.get(record.participant_id)
+            if direction is not None:
+                directions.add(direction)
+
+    add_record_ownership(value)
+    if isinstance(value, Event):
+        linked_operation = (
+            operations_by_id.get(value.operation_id)
+            if operations_by_id is not None and value.operation_id is not None
+            else None
+        )
+        if (
+            linked_operation is None
+            and operations_by_otel is not None
+            and value.trace_id is not None
+            and value.span_id is not None
+        ):
+            linked_operation = operations_by_otel.get((value.trace_id, value.span_id))
+        if linked_operation is not None:
+            add_record_ownership(linked_operation)
+
+    if unresolved_stream:
+        return False
+    if directions:
+        return directions == {expected_direction}
+    return not require_explicit
 
 
 @dataclass(frozen=True)
@@ -702,24 +745,36 @@ def _turn_projection(
     events: Sequence[Event],
     quality_samples: Sequence[QualitySample] = (),
     stream_directions: Mapping[str, str] | None = None,
+    participant_directions: Mapping[str, str] | None = None,
+    operations_by_id: Mapping[str, Operation] | None = None,
+    operations_by_otel: Mapping[tuple[str, str], Operation] | None = None,
 ) -> dict:
     directions = stream_directions or {}
-    input_events = tuple(
-        event for event in events if _matches_stream_direction(event, directions, "input")
-    )
-    output_events = tuple(
-        event for event in events if _matches_stream_direction(event, directions, "output")
-    )
+
+    def matches(
+        value: Operation | Event,
+        expected_direction: str,
+        *,
+        require_explicit: bool = False,
+    ) -> bool:
+        return _matches_stream_direction(
+            value,
+            directions,
+            expected_direction,
+            require_explicit=require_explicit,
+            participant_directions=participant_directions,
+            operations_by_id=operations_by_id,
+            operations_by_otel=operations_by_otel,
+        )
+
+    input_events = tuple(event for event in events if matches(event, "input"))
+    output_events = tuple(event for event in events if matches(event, "output"))
     committed = _earliest_event(input_events, {"earshot.turn.committed"})
     speech_ended = _earliest_event(input_events, {"earshot.speech.ended"})
     anchor = committed or speech_ended
     if anchor is None:
         turn_detection = _first_operation(
-            tuple(
-                operation
-                for operation in operations
-                if _matches_stream_direction(operation, directions, "input")
-            ),
+            tuple(operation for operation in operations if matches(operation, "input")),
             {"turn_detection"},
         )
         if turn_detection is not None:
@@ -746,11 +801,7 @@ def _turn_projection(
     generated_is_provider_projection = False
     if generated is None:
         generated = _first_provider_latency_event(
-            tuple(
-                operation
-                for operation in operations
-                if _matches_stream_direction(operation, directions, "output")
-            ),
+            tuple(operation for operation in operations if matches(operation, "output")),
             {"tts"},
             "earshot.response.first_audio_generated",
             ("lk.response.ttfb", "metrics.ttfb"),
@@ -761,12 +812,7 @@ def _turn_projection(
             tuple(
                 operation
                 for operation in operations
-                if _matches_stream_direction(
-                    operation,
-                    directions,
-                    "output",
-                    require_explicit=True,
-                )
+                if matches(operation, "output", require_explicit=True)
             ),
             {"transport_send"},
         )
@@ -780,12 +826,7 @@ def _turn_projection(
             tuple(
                 operation
                 for operation in operations
-                if _matches_stream_direction(
-                    operation,
-                    directions,
-                    "output",
-                    require_explicit=True,
-                )
+                if matches(operation, "output", require_explicit=True)
             ),
             {"transport_receive"},
         )
@@ -796,11 +837,7 @@ def _turn_projection(
         )
     if rendered is None:
         render = _first_operation(
-            tuple(
-                operation
-                for operation in operations
-                if _matches_stream_direction(operation, directions, "output")
-            ),
+            tuple(operation for operation in operations if matches(operation, "output")),
             {"render"},
         )
         rendered = (
@@ -953,7 +990,13 @@ def analyze_incident(
     turn_quality: dict[str, list[QualitySample]] = defaultdict(list)
     unassigned_quality: list[QualitySample] = []
     stream_directions = {stream.stream_id: stream.direction for stream in profile.audio_streams}
+    participant_directions = {
+        participant.participant_id: direction
+        for participant in profile.participants
+        if (direction := _PARTICIPANT_ROLE_DIRECTION.get(participant.role)) is not None
+    }
     operation_turns = _operation_turn_ids(profile.operations)
+    operations_by_id = {operation.operation_id: operation for operation in profile.operations}
     operation_by_otel = {
         (operation.trace_id, operation.span_id): operation
         for operation in profile.operations
@@ -1015,6 +1058,9 @@ def analyze_incident(
             tuple(turn_events[turn_id]),
             tuple(turn_quality[turn_id]),
             stream_directions,
+            participant_directions,
+            operations_by_id,
+            operation_by_otel,
         )
         for turn_id in ordered_turn_ids
     ]
@@ -1043,11 +1089,25 @@ def analyze_incident(
     has_render = any(
         item.operation_name == "render"
         and item.status in _SUCCESS_BOUNDARY_STATUSES
-        and _matches_stream_direction(item, stream_directions, "output")
+        and _matches_stream_direction(
+            item,
+            stream_directions,
+            "output",
+            participant_directions=participant_directions,
+            operations_by_id=operations_by_id,
+            operations_by_otel=operation_by_otel,
+        )
         for item in profile.operations
     ) or any(
         item.event_name == "earshot.audio.render.started"
-        and _matches_stream_direction(item, stream_directions, "output")
+        and _matches_stream_direction(
+            item,
+            stream_directions,
+            "output",
+            participant_directions=participant_directions,
+            operations_by_id=operations_by_id,
+            operations_by_otel=operation_by_otel,
+        )
         for item in profile.events
     )
     limitations: list[str] = []
