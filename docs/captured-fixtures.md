@@ -13,19 +13,18 @@ that gap.
 
 ## Currently retained
 
-| Surface  | Source evidence                 | Captured   | Artifact                 |
-| -------- | ------------------------------- | ---------- | ------------------------ |
-| LiveKit  | `livekit-agents==1.6.5` session | 2026-07-17 | `livekit.incident.json`  |
-| Pipecat  | `pipecat-ai==1.5.0` session     | 2026-07-17 | `pipecat.incident.json`  |
-| Deepgram | Provider delivery               | 2026-07-19 | `deepgram.incident.json` |
-| Cartesia | Provider delivery               | 2026-07-19 | `cartesia.incident.json` |
-| Sarvam   | Provider delivery               | 2026-07-19 | `sarvam.incident.json`   |
+| Surface  | Source evidence                          | Captured   | Artifact                 |
+| -------- | ---------------------------------------- | ---------- | ------------------------ |
+| LiveKit  | `livekit-agents==1.6.5` session          | 2026-07-23 | `livekit.incident.json`  |
+| Pipecat  | `pipecat-ai==1.5.0` session              | 2026-07-23 | `pipecat.incident.json`  |
+| Deepgram | Listen v1 WebSocket, `nova-3`            | 2026-07-23 | `deepgram.incident.json` |
+| Cartesia | WebSocket API `2024-11-13`, `sonic-2`    | 2026-07-23 | `cartesia.incident.json` |
+| Sarvam   | Streaming STT, `saaras:v3`, `transcribe` | 2026-07-23 | `sarvam.incident.json`   |
 
-The retained source artifacts used the obsolete pre-alpha labels `1.0.0` for the
-contract and semantic profile. Their structures pass the current contract unchanged;
-the retained copies therefore migrate only those labels to `0.1.0` before validation.
-This is a compatibility-label correction, not a claim that arbitrary `1.0.0` artifacts
-are supported.
+All five artifacts were recaptured from the checked-in drivers against real framework
+or provider sessions on the date shown. They were emitted directly with the current
+contract/profile and current adapter versions; no schema or version-label migration was
+applied.
 
 ## Capture and scrubbing policy
 
@@ -45,6 +44,13 @@ directly. Before an artifact enters `fixtures/captured`:
    publishable.
 5. Run both `validate_incident()` and the public CLI. Commit the artifact only when both
    accept it without warnings or errors.
+
+Run `scripts/scrub_captured_fixture.py` for the pseudonymization and eligibility checks.
+The manifest pins SHA-256 digests of the ignored source artifact, public artifact,
+capture driver, and redaction tool. CI recomputes every digest it can access and checks
+the adapter version embedded in each public artifact. The source digest is an attestation
+that can be compared with the governed ignored capture during an audit; the source itself
+must not be committed.
 
 The committed artifact is evidence of the captured adapter behavior, not a recording of
 the conversation. Audio files used to drive provider checks, raw provider deliveries,
@@ -66,8 +72,9 @@ references, and capture no class other than metadata.
 ## Refreshing a fixture
 
 Use the exact supported dependency range documented for the adapter, save the result to
-the gitignored `.earshot` area, and record only the execution date and dependency version
-in the manifest. Apply the scrubbing policy above, inspect the diff, then run the complete
+the gitignored `.earshot` area, and record the execution date, dependency/API version,
+source digest, checked-in driver digest, redactor digest, and public artifact digest in
+the manifest. Apply the scrubbing policy above, inspect the diff, then run the complete
 fixture test and CLI loop. Replacing a real capture with a constructed dictionary is not
 a refresh; keep such data under conformance or fault fixtures instead.
 
