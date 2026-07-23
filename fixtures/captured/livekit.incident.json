@@ -5,13 +5,13 @@
     "clock_domains": [
       {
         "attributes": {},
-        "clock_domain_id": "captured-livekit-id-0001",
+        "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
         "kind": "process_monotonic",
-        "monotonic_origin_nano": "473854705983583",
+        "monotonic_origin_nano": "697547952516666",
         "observer": "earshot.sdk",
         "synchronization_method": "same_process_sample",
         "uncertainty_nano": "0",
-        "wall_origin_unix_nano": "1784305286618544000"
+        "wall_origin_unix_nano": "1784817899640095000"
       }
     ],
     "coverage": [
@@ -28,7 +28,7 @@
           "earshot.source.event.name": "sha256:b54d649c5709dad1d9289c20f195aa4b2d7117832ca8002f5dcfc747628af0f4"
         },
         "capture_class": "metadata",
-        "event_id": "captured-livekit-id-0002",
+        "event_id": "captured-livekit-event-1",
         "event_name": "otel.span_event",
         "evidence": {
           "attributes": {},
@@ -42,27 +42,27 @@
         },
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
-        "operation_id": "captured-livekit-id-0003",
+        "operation_id": "captured-livekit-operation-1",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000001",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
         "time": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293639852000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491619000"
         },
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
           "earshot.source.event.name": "sha256:4a687b8c7b4f343d4ed125e82ec8fdd8f2626bdf8db7e1eea930899886659e14"
         },
         "capture_class": "metadata",
-        "event_id": "captured-livekit-id-0004",
+        "event_id": "captured-livekit-event-2",
         "event_name": "otel.span_event",
         "evidence": {
           "attributes": {},
@@ -76,27 +76,27 @@
         },
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
-        "operation_id": "captured-livekit-id-0003",
+        "operation_id": "captured-livekit-operation-1",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000001",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
         "time": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293639859000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491623000"
         },
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
           "earshot.source.event.name": "sha256:7e0310f5a19c3764614eb0e1e7de9e9bc4f8c08fb64d72ef4106d0fac7ce4a71"
         },
         "capture_class": "metadata",
-        "event_id": "captured-livekit-id-0005",
+        "event_id": "captured-livekit-event-3",
         "event_name": "otel.span_event",
         "evidence": {
           "attributes": {},
@@ -110,27 +110,27 @@
         },
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
-        "operation_id": "captured-livekit-id-0003",
+        "operation_id": "captured-livekit-operation-1",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000001",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
         "time": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293993382000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906597429000"
         },
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
-          "earshot.duration.turn_callback_seconds": 2.708984538912773e-6
+          "earshot.duration.turn_callback_seconds": 1.1249212548136711e-06
         },
         "capture_class": "metadata",
-        "event_id": "captured-livekit-id-0006",
+        "event_id": "captured-livekit-event-4",
         "event_name": "earshot.turn.committed",
         "evidence": {
           "attributes": {},
@@ -144,12 +144,12 @@
         },
         "instrumentation_scope_attributes": {},
         "resource": {},
-        "session_id": "captured-livekit-session",
+        "session_id": "captured-livekit-session-1",
         "time": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294700455275"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907913059995"
         },
-        "turn_id": "captured-livekit-id-0007"
+        "turn_id": "captured-livekit-turn-1"
       }
     ],
     "manifest": {
@@ -162,9 +162,9 @@
         }
       ],
       "attributes": {},
-      "bundle_id": "captured-livekit-2026-07",
+      "bundle_id": "captured-livekit-bundle-1",
       "completeness": "complete",
-      "created_at_unix_nano": "1784305286618544000",
+      "created_at_unix_nano": "1784817899640095000",
       "finality": "final",
       "producer": {
         "language": "python",
@@ -174,7 +174,7 @@
       },
       "schema_version": "0.1.0",
       "semantic_profile_version": "0.1.0",
-      "session_id": "captured-livekit-session"
+      "session_id": "captured-livekit-session-1"
     },
     "media_refs": [],
     "operations": [
@@ -184,8 +184,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305288283729000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901490782000"
         },
         "evidence": {
           "attributes": {},
@@ -200,24 +200,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0008",
+        "operation_id": "captured-livekit-operation-2",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000002",
+        "parent_span_id": "9bac4bcd7690456f",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000003",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "b46393fd872440df",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305288226839000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901415963000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -225,8 +225,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305288284873000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901492406000"
         },
         "evidence": {
           "attributes": {},
@@ -241,24 +241,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0009",
+        "operation_id": "captured-livekit-operation-3",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000003",
+        "parent_span_id": "b46393fd872440df",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000004",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "ee1019aeb159be19",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305288284861000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901492388000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -266,8 +266,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305292197242880"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817905409260032"
         },
         "evidence": {
           "attributes": {},
@@ -282,24 +282,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0010",
+        "operation_id": "captured-livekit-operation-4",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000005",
+        "parent_span_id": "30454e43a6df392a",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000006",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "858b27edcf313af7",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305289013630208"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817902230810880"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -313,8 +313,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293632860928"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906485912064"
         },
         "evidence": {
           "attributes": {},
@@ -325,12 +325,12 @@
           "observer": "server",
           "sample_window": {
             "end": {
-              "clock_domain_id": "captured-livekit-id-0001",
-              "source_time_unix_nano": "1784305293632860928"
+              "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+              "source_time_unix_nano": "1784817906485912064"
             },
             "start": {
-              "clock_domain_id": "captured-livekit-id-0001",
-              "source_time_unix_nano": "1784305292774355803"
+              "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+              "source_time_unix_nano": "1784817905985797898"
             }
           },
           "source": "livekit",
@@ -338,14 +338,14 @@
         },
         "instrumentation_scope_attributes": {},
         "links": [],
-        "operation_id": "captured-livekit-id-0011",
+        "operation_id": "captured-livekit-operation-5",
         "operation_name": "stt",
         "parent_scope": "unknown",
         "resource": {},
-        "session_id": "captured-livekit-session",
+        "session_id": "captured-livekit-session-1",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305292774355803"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817905985797898"
         },
         "status": "ok"
       },
@@ -356,8 +356,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293641754000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906492879000"
         },
         "evidence": {
           "attributes": {},
@@ -372,24 +372,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0012",
+        "operation_id": "captured-livekit-operation-6",
         "operation_name": "turn_detection",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000005",
+        "parent_span_id": "30454e43a6df392a",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000007",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "2f34cccaea80a45b",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293639369000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491280000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -397,8 +397,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293992565000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906595729000"
         },
         "evidence": {
           "attributes": {},
@@ -413,24 +413,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0013",
+        "operation_id": "captured-livekit-operation-7",
         "operation_name": "llm",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000001",
+        "parent_span_id": "f5d39204a148726a",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000008",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "d5d4d2008c015248",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293639884000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491638000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -439,19 +439,19 @@
           "earshot.framework.operation.name": "llm_request",
           "earshot.metric.model.total_tokens": 56,
           "earshot.metric.request.cancelled": false,
-          "earshot.request.id": "captured-livekit-id-0014",
+          "earshot.request.id": "captured-livekit-correlation-1",
           "gen_ai.operation.name": "chat",
           "gen_ai.provider.name": "api.groq.com",
           "gen_ai.request.model": "llama-3.1-8b-instant",
           "gen_ai.usage.input_cached_tokens": 0,
           "gen_ai.usage.input_tokens": 53,
           "gen_ai.usage.output_tokens": 3,
-          "lk.response.ttft": 0.35265879100188613
+          "lk.response.ttft": 0.10406312497798353
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293993640000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906597752000"
         },
         "evidence": {
           "attributes": {},
@@ -466,36 +466,36 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0003",
+        "operation_id": "captured-livekit-operation-1",
         "operation_name": "llm",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000009",
+        "parent_span_id": "f714e6a092010712",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000001",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293639830000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491597000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
           "earshot.framework.operation.name": "llm_node",
           "gen_ai.provider.name": "api.groq.com",
           "gen_ai.request.model": "llama-3.1-8b-instant",
-          "lk.response.ttft": 0.35283704102039337
+          "lk.response.ttft": 0.10413950006477535
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293995387000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906600505000"
         },
         "evidence": {
           "attributes": {},
@@ -510,38 +510,38 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0015",
+        "operation_id": "captured-livekit-operation-8",
         "operation_name": "llm",
         "parent_scope": "unknown",
-        "parent_span_id": "000000000000000a",
+        "parent_span_id": "bba464a4016ebcca",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000009",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f714e6a092010712",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293639487000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491375000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
           "earshot.framework.operation.name": "user_turn",
           "gen_ai.provider.name": "api.groq.com",
           "gen_ai.request.model": "whisper-large-v3-turbo",
-          "lk.end_of_turn_delay": 2.5007410049438477,
+          "lk.end_of_turn_delay": 2.501241683959961,
           "lk.transcript_confidence": 0.0,
-          "lk.transcription_delay": 1.4372880458831787
+          "lk.transcription_delay": 1.0781886577606201
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294699036000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907911085000"
         },
         "evidence": {
           "attributes": {},
@@ -556,24 +556,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0016",
+        "operation_id": "captured-livekit-operation-9",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000002",
+        "parent_span_id": "9bac4bcd7690456f",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000005",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "30454e43a6df392a",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305289013630208"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817902230810880"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -581,8 +581,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295272107000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909208489000"
         },
         "evidence": {
           "attributes": {},
@@ -597,24 +597,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0017",
+        "operation_id": "captured-livekit-operation-10",
         "operation_name": "tts",
         "parent_scope": "unknown",
-        "parent_span_id": "000000000000000b",
+        "parent_span_id": "88f19ff0a963465f",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "000000000000000c",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "37362e9687c1f60e",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294710768000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907922524000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -624,15 +624,15 @@
           "earshot.metric.connection.reused": false,
           "earshot.metric.request.cancelled": false,
           "earshot.metric.request.streamed": false,
-          "earshot.request.id": "captured-livekit-id-0018",
+          "earshot.request.id": "captured-livekit-correlation-2",
           "gen_ai.provider.name": "Groq",
           "gen_ai.request.model": "canopylabs/orpheus-v1-english",
-          "lk.response.ttfb": 0.2146212499937974
+          "lk.response.ttfb": 0.962240333086811
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295273598000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909211921000"
         },
         "evidence": {
           "attributes": {},
@@ -647,24 +647,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0019",
+        "operation_id": "captured-livekit-operation-11",
         "operation_name": "tts",
         "parent_scope": "unknown",
-        "parent_span_id": "000000000000000d",
+        "parent_span_id": "d72f00b665dd26fa",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "000000000000000b",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "88f19ff0a963465f",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294710710000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907922457000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -672,8 +672,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295275043000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909214757000"
         },
         "evidence": {
           "attributes": {},
@@ -688,24 +688,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0020",
+        "operation_id": "captured-livekit-operation-12",
         "operation_name": "tts",
         "parent_scope": "unknown",
-        "parent_span_id": "000000000000000e",
+        "parent_span_id": "b7a41cf05702bc56",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "000000000000000d",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "d72f00b665dd26fa",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294704274000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907918502000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -713,8 +713,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295275548000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909215575000"
         },
         "evidence": {
           "attributes": {},
@@ -729,36 +729,36 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0021",
+        "operation_id": "captured-livekit-operation-13",
         "operation_name": "tts",
         "parent_scope": "unknown",
-        "parent_span_id": "000000000000000f",
+        "parent_span_id": "355412b03e26b007",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "000000000000000e",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "b7a41cf05702bc56",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294704227000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907918446000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
           "earshot.framework.operation.name": "tts_node",
           "gen_ai.provider.name": "Groq",
           "gen_ai.request.model": "canopylabs/orpheus-v1-english",
-          "lk.response.ttfb": 0.21482925000600517
+          "lk.response.ttfb": 0.9628199590370059
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295275872000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909216449000"
         },
         "evidence": {
           "attributes": {},
@@ -773,24 +773,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0022",
+        "operation_id": "captured-livekit-operation-14",
         "operation_name": "tts",
         "parent_scope": "unknown",
-        "parent_span_id": "000000000000000a",
+        "parent_span_id": "bba464a4016ebcca",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "000000000000000f",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "355412b03e26b007",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294703714000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907917634000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -798,8 +798,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295277452000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909219336000"
         },
         "evidence": {
           "attributes": {},
@@ -814,37 +814,37 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0023",
+        "operation_id": "captured-livekit-operation-15",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "000000000000000a",
+        "parent_span_id": "bba464a4016ebcca",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000010",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "b3f09550bd54c8d2",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305294925545984"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817908885326080"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
           "earshot.framework.operation.name": "agent_turn",
-          "lk.e2e_latency": 2.7274298667907715,
-          "lk.generation_id": "captured-livekit-id-0024",
+          "lk.e2e_latency": 3.4756789207458496,
+          "lk.generation_id": "captured-livekit-generation-1",
           "lk.interrupted": false,
-          "lk.speech_id": "captured-livekit-id-0007"
+          "lk.speech_id": "captured-livekit-turn-1"
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295277717000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909219916000"
         },
         "evidence": {
           "attributes": {},
@@ -859,25 +859,25 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0025",
+        "operation_id": "captured-livekit-operation-16",
         "operation_name": "agent",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000002",
+        "parent_span_id": "9bac4bcd7690456f",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "000000000000000a",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "bba464a4016ebcca",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305293635877000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906488147000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001",
-        "turn_id": "captured-livekit-id-0007"
+        "trace_id": "7f78033f007720c588cf8963481cf806",
+        "turn_id": "captured-livekit-turn-1"
       },
       {
         "attributes": {
@@ -885,8 +885,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295278566000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909221687000"
         },
         "evidence": {
           "attributes": {},
@@ -901,24 +901,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0026",
+        "operation_id": "captured-livekit-operation-17",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000011",
+        "parent_span_id": "02023ccf719134d4",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000012",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "30a5de064021efe3",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295278560000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909221673000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -926,8 +926,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295278864000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909222410000"
         },
         "evidence": {
           "attributes": {},
@@ -942,24 +942,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0027",
+        "operation_id": "captured-livekit-operation-18",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000002",
+        "parent_span_id": "9bac4bcd7690456f",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000011",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "02023ccf719134d4",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295278490000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909221544000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       },
       {
         "attributes": {
@@ -967,8 +967,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305295279993000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909224167000"
         },
         "evidence": {
           "attributes": {},
@@ -983,23 +983,23 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "livekit-agents",
         "links": [],
-        "operation_id": "captured-livekit-id-0028",
+        "operation_id": "captured-livekit-operation-19",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-livekit-session",
-        "span_id": "0000000000000002",
+        "session_id": "captured-livekit-session-1",
+        "span_id": "9bac4bcd7690456f",
         "started_at": {
-          "clock_domain_id": "captured-livekit-id-0001",
-          "source_time_unix_nano": "1784305288226412000"
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901415259000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "7f78033f007720c588cf8963481cf806"
       }
     ],
     "participants": [],
@@ -1069,7 +1069,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0029",
+          "omission_id": "captured-livekit-omission-1",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1079,7 +1079,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0030",
+          "omission_id": "captured-livekit-omission-2",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1089,7 +1089,7 @@
           },
           "capture_class": "audio",
           "count": 1,
-          "omission_id": "captured-livekit-id-0031",
+          "omission_id": "captured-livekit-omission-3",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1099,7 +1099,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0032",
+          "omission_id": "captured-livekit-omission-4",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1109,7 +1109,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0033",
+          "omission_id": "captured-livekit-omission-5",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1119,7 +1119,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0034",
+          "omission_id": "captured-livekit-omission-6",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1129,7 +1129,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0035",
+          "omission_id": "captured-livekit-omission-7",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1139,7 +1139,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0036",
+          "omission_id": "captured-livekit-omission-8",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1149,7 +1149,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0037",
+          "omission_id": "captured-livekit-omission-9",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1159,7 +1159,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0038",
+          "omission_id": "captured-livekit-omission-10",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1169,7 +1169,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0039",
+          "omission_id": "captured-livekit-omission-11",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1179,7 +1179,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0040",
+          "omission_id": "captured-livekit-omission-12",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1189,7 +1189,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0041",
+          "omission_id": "captured-livekit-omission-13",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1199,7 +1199,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0042",
+          "omission_id": "captured-livekit-omission-14",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1209,7 +1209,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0043",
+          "omission_id": "captured-livekit-omission-15",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1219,7 +1219,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0044",
+          "omission_id": "captured-livekit-omission-16",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1229,7 +1229,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0045",
+          "omission_id": "captured-livekit-omission-17",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1239,7 +1239,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0046",
+          "omission_id": "captured-livekit-omission-18",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1249,7 +1249,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0047",
+          "omission_id": "captured-livekit-omission-19",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1259,7 +1259,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0048",
+          "omission_id": "captured-livekit-omission-20",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1269,7 +1269,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0049",
+          "omission_id": "captured-livekit-omission-21",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1279,7 +1279,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0050",
+          "omission_id": "captured-livekit-omission-22",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1289,7 +1289,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0051",
+          "omission_id": "captured-livekit-omission-23",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1299,7 +1299,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0052",
+          "omission_id": "captured-livekit-omission-24",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1309,7 +1309,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-livekit-id-0053",
+          "omission_id": "captured-livekit-omission-25",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1319,7 +1319,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0054",
+          "omission_id": "captured-livekit-omission-26",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1329,7 +1329,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0055",
+          "omission_id": "captured-livekit-omission-27",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1339,7 +1339,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0056",
+          "omission_id": "captured-livekit-omission-28",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1349,7 +1349,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-livekit-id-0057",
+          "omission_id": "captured-livekit-omission-29",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1359,7 +1359,7 @@
           },
           "capture_class": "audio",
           "count": 1,
-          "omission_id": "captured-livekit-id-0058",
+          "omission_id": "captured-livekit-omission-30",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1369,7 +1369,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0059",
+          "omission_id": "captured-livekit-omission-31",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1379,7 +1379,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0060",
+          "omission_id": "captured-livekit-omission-32",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1389,7 +1389,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0061",
+          "omission_id": "captured-livekit-omission-33",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1399,7 +1399,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0062",
+          "omission_id": "captured-livekit-omission-34",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1409,7 +1409,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0063",
+          "omission_id": "captured-livekit-omission-35",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1419,7 +1419,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0064",
+          "omission_id": "captured-livekit-omission-36",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1429,7 +1429,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0065",
+          "omission_id": "captured-livekit-omission-37",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1439,7 +1439,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-livekit-id-0066",
+          "omission_id": "captured-livekit-omission-38",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1449,7 +1449,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-livekit-id-0067",
+          "omission_id": "captured-livekit-omission-39",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1459,7 +1459,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-livekit-id-0068",
+          "omission_id": "captured-livekit-omission-40",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1469,7 +1469,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0069",
+          "omission_id": "captured-livekit-omission-41",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1479,7 +1479,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0070",
+          "omission_id": "captured-livekit-omission-42",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -1489,7 +1489,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-livekit-id-0071",
+          "omission_id": "captured-livekit-omission-43",
           "reason": "capture_class_disabled",
           "source_refs": []
         }
@@ -1524,14 +1524,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.016044835094362497
+            "value": 0.018441332620568573
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 0.346589541004505
+            "value": 0.34686825005337596
           },
           {
             "aggregation": "delta",
@@ -1543,18 +1543,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0072",
+        "sample_id": "captured-livekit-sample-1",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305289424094976"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902641900032"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305289424094976"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902641900032"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -1582,14 +1582,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.01865837600780651
+            "value": 0.020951205515302718
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 0.3511001670267433
+            "value": 0.3527914580190554
           },
           {
             "aggregation": "delta",
@@ -1601,18 +1601,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0073",
+        "sample_id": "captured-livekit-sample-2",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305289429191936"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902647801088"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305289429191936"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902647801088"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -1640,14 +1640,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.020634208049159497
+            "value": 0.021806459175422788
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 1.3845348750473931
+            "value": 1.3861468329560012
           },
           {
             "aggregation": "delta",
@@ -1659,18 +1659,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0074",
+        "sample_id": "captured-livekit-sample-3",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305290462631936"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903681160960"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305290462631936"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903681160960"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -1698,14 +1698,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.02000279101775959
+            "value": 0.0199881240259856
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 1.386047707987018
+            "value": 1.3877762920456007
           },
           {
             "aggregation": "delta",
@@ -1717,18 +1717,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0075",
+        "sample_id": "captured-livekit-sample-4",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305290463557888"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903682812928"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305290463557888"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903682812928"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -1756,14 +1756,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.017441751318983734
+            "value": 0.0201688758097589
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 2.4239230420207605
+            "value": 2.425582625088282
           },
           {
             "aggregation": "delta",
@@ -1775,18 +1775,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0076",
+        "sample_id": "captured-livekit-sample-5",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305291502023936"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904720624896"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305291502023936"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904720624896"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -1814,14 +1814,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.014628622273448855
+            "value": 0.023796709720045328
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 2.4252444580197334
+            "value": 2.427433417062275
           },
           {
             "aggregation": "delta",
@@ -1833,18 +1833,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0077",
+        "sample_id": "captured-livekit-sample-6",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305291502758912"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904722454016"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305291502758912"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904722454016"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -1872,14 +1872,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.019405293045565486
+            "value": 0.015563083114102483
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 3.490526959009003
+            "value": 3.4872438750462607
           },
           {
             "aggregation": "delta",
@@ -1891,18 +1891,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0078",
+        "sample_id": "captured-livekit-sample-7",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305292568633088"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905782269952"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305292568633088"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905782269952"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -1930,14 +1930,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.01815966801950708
+            "value": 0.014734417898580432
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 3.4924624580307864
+            "value": 3.488032125052996
           },
           {
             "aggregation": "delta",
@@ -1949,25 +1949,25 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0079",
+        "sample_id": "captured-livekit-sample-8",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305292569981952"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905783079936"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305292569981952"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905783079936"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
           "earshot.framework.metric.name": "sha256:f5aa55533e92e0d627d7a53b85d194c6be8ee5fdf4d9486e89d43a1e95cb47e9",
           "earshot.framework.name": "livekit",
           "earshot.framework.version": "1.6.5",
-          "earshot.operation.id": "captured-livekit-id-0011",
+          "earshot.operation.id": "captured-livekit-operation-5",
           "gen_ai.provider.name": "api.groq.com",
           "gen_ai.request.model": "whisper-large-v3-turbo"
         },
@@ -2022,142 +2022,26 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0080",
+        "sample_id": "captured-livekit-sample-9",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293632860928"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906485912064"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293632860928"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906485912064"
           }
         },
-        "session_id": "captured-livekit-session"
-      },
-      {
-        "attributes": {
-          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
-          "earshot.framework.name": "livekit",
-          "earshot.framework.version": "1.6.5",
-          "gen_ai.provider.name": "ONNX",
-          "gen_ai.request.model": "silero"
-        },
-        "capture_class": "metadata",
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "metrics_listener",
-          "method_version": "1.6.5",
-          "observer": "server",
-          "source": "livekit",
-          "source_field": "vad_metrics"
-        },
-        "instrumentation_scope_attributes": {},
-        "measurements": [
-          {
-            "aggregation": "delta",
-            "attributes": {},
-            "name": "earshot.duration.inference_seconds",
-            "unit": "s",
-            "value": 0.01472875103354454
-          },
-          {
-            "aggregation": "instant",
-            "attributes": {},
-            "name": "earshot.duration.vad.idle_seconds",
-            "unit": "s",
-            "value": 0.8929592500207946
-          },
-          {
-            "aggregation": "delta",
-            "attributes": {},
-            "name": "earshot.metric.inference.count",
-            "unit": "count",
-            "value": 32
-          }
-        ],
-        "quality_kind": "pipeline.metric",
-        "resource": {},
-        "sample_id": "captured-livekit-id-0081",
-        "sample_window": {
-          "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293667158016"
-          },
-          "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293667158016"
-          }
-        },
-        "session_id": "captured-livekit-session"
-      },
-      {
-        "attributes": {
-          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
-          "earshot.framework.name": "livekit",
-          "earshot.framework.version": "1.6.5",
-          "gen_ai.provider.name": "ONNX",
-          "gen_ai.request.model": "silero"
-        },
-        "capture_class": "metadata",
-        "evidence": {
-          "attributes": {},
-          "availability": "available",
-          "confidence": "measured",
-          "method": "metrics_listener",
-          "method_version": "1.6.5",
-          "observer": "server",
-          "source": "livekit",
-          "source_field": "vad_metrics"
-        },
-        "instrumentation_scope_attributes": {},
-        "measurements": [
-          {
-            "aggregation": "delta",
-            "attributes": {},
-            "name": "earshot.duration.inference_seconds",
-            "unit": "s",
-            "value": 0.01978279516333714
-          },
-          {
-            "aggregation": "instant",
-            "attributes": {},
-            "name": "earshot.duration.vad.idle_seconds",
-            "unit": "s",
-            "value": 0.8952623329823837
-          },
-          {
-            "aggregation": "delta",
-            "attributes": {},
-            "name": "earshot.metric.inference.count",
-            "unit": "count",
-            "value": 32
-          }
-        ],
-        "quality_kind": "pipeline.metric",
-        "resource": {},
-        "sample_id": "captured-livekit-id-0082",
-        "sample_window": {
-          "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293669485056"
-          },
-          "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293669485056"
-          }
-        },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
           "earshot.framework.metric.name": "sha256:5ec5051ee998381a84e9adbba03548c9caf2c9769129a92f685dc18afa405eef",
           "earshot.framework.name": "livekit",
           "earshot.framework.version": "1.6.5",
-          "earshot.operation.id": "captured-livekit-id-0003",
-          "earshot.request.id": "captured-livekit-id-0014",
+          "earshot.operation.id": "captured-livekit-operation-1",
+          "earshot.request.id": "captured-livekit-correlation-1",
           "gen_ai.provider.name": "api.groq.com",
           "gen_ai.request.model": "llama-3.1-8b-instant"
         },
@@ -2215,28 +2099,28 @@
             "attributes": {},
             "name": "lk.response.ttft",
             "unit": "s",
-            "value": 0.35265879100188613
+            "value": 0.10406312497798353
           }
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-livekit-id-0083",
+        "sample_id": "captured-livekit-sample-10",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293993321984"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906597125120"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305293993321984"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906597125120"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -2264,14 +2148,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.015850040828809142
+            "value": 0.017500293208286166
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 1.9068660410121083
+            "value": 0.9152842910261825
           },
           {
             "aggregation": "delta",
@@ -2283,18 +2167,18 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0084",
+        "sample_id": "captured-livekit-sample-11",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305294681093120"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906900992000"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305294681093120"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906900992000"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
@@ -2322,14 +2206,14 @@
             "attributes": {},
             "name": "earshot.duration.inference_seconds",
             "unit": "s",
-            "value": 0.016591125109698623
+            "value": 0.01731895678676665
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "earshot.duration.vad.idle_seconds",
             "unit": "s",
-            "value": 1.9084373749792576
+            "value": 0.9170704591087997
           },
           {
             "aggregation": "delta",
@@ -2341,24 +2225,24 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0085",
+        "sample_id": "captured-livekit-sample-12",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305294682640896"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906902799104"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305294682640896"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906902799104"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
           "earshot.framework.name": "livekit",
           "earshot.framework.version": "1.6.5",
-          "earshot.turn.id": "captured-livekit-id-0007",
+          "earshot.turn.id": "captured-livekit-turn-1",
           "gen_ai.provider.name": "livekit",
           "gen_ai.request.model": "turn-detector-v1-mini"
         },
@@ -2380,41 +2264,41 @@
             "attributes": {},
             "name": "earshot.duration.turn_callback_seconds",
             "unit": "s",
-            "value": 2.708984538912773e-6
+            "value": 1.1249212548136711e-06
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "lk.eou.endpointing_delay",
             "unit": "s",
-            "value": 2.5007410049438477
+            "value": 2.501241683959961
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "lk.eou.transcription_delay",
             "unit": "s",
-            "value": 1.4372880458831787
+            "value": 1.0781886577606201
           }
         ],
         "quality_kind": "pipeline.metric",
         "resource": {},
-        "sample_id": "captured-livekit-id-0086",
+        "sample_id": "captured-livekit-sample-13",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305294700457984"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907913061120"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305294700457984"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907913061120"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
-          "earshot.conversation.item.id": "captured-livekit-id-0087",
+          "earshot.conversation.item.id": "captured-livekit-conversation_item-1",
           "earshot.conversation.role": "user"
         },
         "capture_class": "metadata",
@@ -2435,45 +2319,277 @@
             "attributes": {},
             "name": "livekit.transcription_delay",
             "unit": "s",
-            "value": 1.4372880458831787
+            "value": 1.0781886577606201
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "livekit.end_of_turn_delay",
             "unit": "s",
-            "value": 2.5007410049438477
+            "value": 2.501241683959961
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "livekit.on_user_turn_completed_delay",
             "unit": "s",
-            "value": 2.708984538912773e-6
+            "value": 1.1249212548136711e-06
           }
         ],
         "quality_kind": "pipeline.latency",
         "resource": {},
-        "sample_id": "captured-livekit-id-0088",
+        "sample_id": "captured-livekit-sample-14",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305292198116096"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905409647104"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305289013630208"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902230810880"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.022017872892320156
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 1.9393687500851229
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-15",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907925103104"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907925103104"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.02815516502596438
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 1.9420931250788271
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-16",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907927805952"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907927805952"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.019620832754299045
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 2.9428531660232693
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-17",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908928570880"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908928570880"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.02014691475778818
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 2.9450100420508534
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-18",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908930748928"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908930748928"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
           "earshot.framework.metric.name": "sha256:b121d7a9482ac64740b3f6d7fe6dea84bf136518c989819b4633cde6f9b2afda",
           "earshot.framework.name": "livekit",
           "earshot.framework.version": "1.6.5",
-          "earshot.operation.id": "captured-livekit-id-0019",
-          "earshot.request.id": "captured-livekit-id-0018",
+          "earshot.operation.id": "captured-livekit-operation-11",
+          "earshot.request.id": "captured-livekit-correlation-2",
           "gen_ai.provider.name": "Groq",
           "gen_ai.request.model": "canopylabs/orpheus-v1-english"
         },
@@ -2545,32 +2661,32 @@
             "attributes": {},
             "name": "lk.response.ttfb",
             "unit": "s",
-            "value": 0.2146212499937974
+            "value": 0.962240333086811
           }
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-livekit-id-0089",
+        "sample_id": "captured-livekit-sample-19",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305295273233920"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909210717952"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305295273233920"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909210717952"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
-          "earshot.conversation.item.id": "captured-livekit-id-0090",
+          "earshot.conversation.item.id": "captured-livekit-conversation_item-2",
           "earshot.conversation.role": "assistant"
         },
         "capture_class": "metadata",
@@ -2591,49 +2707,49 @@
             "attributes": {},
             "name": "livekit.llm_node_ttft",
             "unit": "s",
-            "value": 0.35283704102039337
+            "value": 0.10413950006477535
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "livekit.tts_node_ttfb",
             "unit": "s",
-            "value": 0.21482925000600517
+            "value": 0.9628199590370059
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "livekit.playback_latency",
             "unit": "s",
-            "value": 0.00013685226440429688
+            "value": 0.00034308433532714844
           },
           {
             "aggregation": "instant",
             "attributes": {},
             "name": "livekit.e2e_latency",
             "unit": "s",
-            "value": 2.7274298667907715
+            "value": 3.4756789207458496
           }
         ],
         "quality_kind": "pipeline.latency",
         "resource": {},
-        "sample_id": "captured-livekit-id-0091",
+        "sample_id": "captured-livekit-sample-20",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305295276527104"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909217597952"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305294925545984"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908885326080"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       },
       {
         "attributes": {
-          "earshot.operation.id": "captured-livekit-id-0025",
-          "earshot.turn.id": "captured-livekit-id-0007"
+          "earshot.operation.id": "captured-livekit-operation-16",
+          "earshot.turn.id": "captured-livekit-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -2654,42 +2770,42 @@
             "attributes": {},
             "name": "livekit.e2e_latency",
             "unit": "s",
-            "value": 2.7274298667907715
+            "value": 3.4756789207458496
           }
         ],
         "quality_kind": "pipeline.latency",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-livekit-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-livekit-id-0092",
+        "sample_id": "captured-livekit-sample-21",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305295277717000"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909219916000"
           },
           "start": {
-            "clock_domain_id": "captured-livekit-id-0001",
-            "source_time_unix_nano": "1784305295277717000"
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909219916000"
           }
         },
-        "session_id": "captured-livekit-session"
+        "session_id": "captured-livekit-session-1"
       }
     ],
     "session": {
       "attributes": {},
       "ended_at": {
-        "clock_domain_id": "captured-livekit-id-0001",
-        "monotonic_time_nano": "8661735958",
-        "source_time_unix_nano": "1784305295280319000"
+        "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+        "monotonic_time_nano": "9584674250",
+        "source_time_unix_nano": "1784817909224817000"
       },
-      "session_id": "captured-livekit-session",
+      "session_id": "captured-livekit-session-1",
       "started_at": {
-        "clock_domain_id": "captured-livekit-id-0001",
+        "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
         "monotonic_time_nano": "0",
-        "source_time_unix_nano": "1784305286618544000"
+        "source_time_unix_nano": "1784817899640095000"
       },
       "status": "completed"
     }

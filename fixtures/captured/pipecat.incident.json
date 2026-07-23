@@ -5,13 +5,13 @@
     "clock_domains": [
       {
         "attributes": {},
-        "clock_domain_id": "captured-pipecat-id-0001",
+        "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
         "kind": "process_monotonic",
-        "monotonic_origin_nano": "473864685655875",
+        "monotonic_origin_nano": "697577133090000",
         "observer": "earshot.sdk",
         "synchronization_method": "same_process_sample",
         "uncertainty_nano": "0",
-        "wall_origin_unix_nano": "1784305296598261000"
+        "wall_origin_unix_nano": "1784817928820816000"
       }
     ],
     "coverage": [
@@ -33,9 +33,9 @@
         }
       ],
       "attributes": {},
-      "bundle_id": "captured-pipecat-2026-07",
+      "bundle_id": "captured-pipecat-bundle-1",
       "completeness": "complete",
-      "created_at_unix_nano": "1784305296598261000",
+      "created_at_unix_nano": "1784817928820816000",
       "finality": "final",
       "producer": {
         "language": "python",
@@ -45,7 +45,7 @@
       },
       "schema_version": "0.1.0",
       "semantic_profile_version": "0.1.0",
-      "session_id": "captured-pipecat-session"
+      "session_id": "captured-pipecat-session-1"
     },
     "media_refs": [],
     "operations": [
@@ -58,8 +58,8 @@
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305301839632000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817934486610000"
         },
         "evidence": {
           "attributes": {},
@@ -74,24 +74,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "pipecat",
         "links": [],
-        "operation_id": "captured-pipecat-id-0002",
+        "operation_id": "captured-pipecat-operation-1",
         "operation_name": "stt",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000001",
+        "parent_span_id": "1ae2989ebfda091a",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-pipecat-session",
-        "span_id": "0000000000000002",
+        "session_id": "captured-pipecat-session-1",
+        "span_id": "edf7454fd6fad0d6",
         "started_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305297774991872"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817930488367104"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "f52bb2abca93422cc205cea530bd2230"
       },
       {
         "attributes": {
@@ -102,12 +102,12 @@
           "gen_ai.request.model": "llama-3.1-8b-instant",
           "gen_ai.usage.input_tokens": 53,
           "gen_ai.usage.output_tokens": 3,
-          "metrics.ttfb": 0.23218107223510742
+          "metrics.ttfb": 0.1152799129486084
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305307079081000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817939611719000"
         },
         "evidence": {
           "attributes": {},
@@ -122,24 +122,24 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "pipecat",
         "links": [],
-        "operation_id": "captured-pipecat-id-0003",
+        "operation_id": "captured-pipecat-operation-2",
         "operation_name": "llm",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000001",
+        "parent_span_id": "1ae2989ebfda091a",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-pipecat-session",
-        "span_id": "0000000000000003",
+        "session_id": "captured-pipecat-session-1",
+        "span_id": "b9f1e71922ea7b5a",
         "started_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305306843643000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817939492937000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "f52bb2abca93422cc205cea530bd2230"
       },
       {
         "attributes": {
@@ -149,12 +149,12 @@
           "gen_ai.provider.name": "groq",
           "gen_ai.request.model": "canopylabs/orpheus-v1-english",
           "metrics.character_count": 6,
-          "metrics.ttfb": 0.561892032623291
+          "metrics.ttfb": 0.5759949684143066
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305307644404000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817940192349000"
         },
         "evidence": {
           "attributes": {},
@@ -169,39 +169,39 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "pipecat",
         "links": [],
-        "operation_id": "captured-pipecat-id-0004",
+        "operation_id": "captured-pipecat-operation-3",
         "operation_name": "tts",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000001",
+        "parent_span_id": "1ae2989ebfda091a",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-pipecat-session",
-        "span_id": "0000000000000004",
+        "session_id": "captured-pipecat-session-1",
+        "span_id": "9edcc9a9bac4083d",
         "started_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305307081911000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817939615958000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "f52bb2abca93422cc205cea530bd2230"
       },
       {
         "attributes": {
-          "conversation.id": "captured-pipecat-id-0005",
+          "conversation.id": "captured-pipecat-conversation-1",
           "earshot.framework.operation.name": "turn",
-          "turn.duration_seconds": 9.891923625,
+          "turn.duration_seconds": 9.722813917,
           "turn.number": 1,
           "turn.type": "conversation",
-          "turn.user_bot_latency_seconds": 6.307773113250732,
+          "turn.user_bot_latency_seconds": 6.138855218887329,
           "turn.was_interrupted": true
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305307665363000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817940209552000"
         },
         "evidence": {
           "attributes": {},
@@ -216,36 +216,36 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "pipecat.turn",
         "links": [],
-        "operation_id": "captured-pipecat-id-0006",
+        "operation_id": "captured-pipecat-operation-4",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
-        "parent_span_id": "0000000000000005",
+        "parent_span_id": "20b0cfe962675bb0",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-pipecat-session",
-        "span_id": "0000000000000001",
+        "session_id": "captured-pipecat-session-1",
+        "span_id": "1ae2989ebfda091a",
         "started_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305297773732000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817930487103000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001",
-        "turn_id": "captured-pipecat-id-0007"
+        "trace_id": "f52bb2abca93422cc205cea530bd2230",
+        "turn_id": "captured-pipecat-turn-1"
       },
       {
         "attributes": {
-          "conversation.id": "captured-pipecat-id-0005",
+          "conversation.id": "captured-pipecat-conversation-1",
           "conversation.type": "voice",
           "earshot.framework.operation.name": "sha256:8b34dbc2c05eb4d7e25d48efeace82456b16cee760bcae80c157f52a3c2e787b"
         },
         "capture_class": "metadata",
         "ended_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305307668069000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817940211876000"
         },
         "evidence": {
           "attributes": {},
@@ -260,23 +260,23 @@
         "instrumentation_scope_attributes": {},
         "instrumentation_scope_name": "pipecat.turn",
         "links": [],
-        "operation_id": "captured-pipecat-id-0008",
+        "operation_id": "captured-pipecat-operation-5",
         "operation_name": "framework_operation",
         "parent_scope": "unknown",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "session_id": "captured-pipecat-session",
-        "span_id": "0000000000000005",
+        "session_id": "captured-pipecat-session-1",
+        "span_id": "20b0cfe962675bb0",
         "started_at": {
-          "clock_domain_id": "captured-pipecat-id-0001",
-          "source_time_unix_nano": "1784305297773496000"
+          "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+          "source_time_unix_nano": "1784817930486826000"
         },
         "status": "unset",
-        "trace_id": "00000000000000000000000000000001"
+        "trace_id": "f52bb2abca93422cc205cea530bd2230"
       }
     ],
     "participants": [],
@@ -346,7 +346,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0009",
+          "omission_id": "captured-pipecat-omission-1",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -356,7 +356,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0010",
+          "omission_id": "captured-pipecat-omission-2",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -366,7 +366,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0011",
+          "omission_id": "captured-pipecat-omission-3",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -376,7 +376,7 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0012",
+          "omission_id": "captured-pipecat-omission-4",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -386,7 +386,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0013",
+          "omission_id": "captured-pipecat-omission-5",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -396,7 +396,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0014",
+          "omission_id": "captured-pipecat-omission-6",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -406,7 +406,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0015",
+          "omission_id": "captured-pipecat-omission-7",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -416,7 +416,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0016",
+          "omission_id": "captured-pipecat-omission-8",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -426,7 +426,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0017",
+          "omission_id": "captured-pipecat-omission-9",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -436,7 +436,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0018",
+          "omission_id": "captured-pipecat-omission-10",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -446,7 +446,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0019",
+          "omission_id": "captured-pipecat-omission-11",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -456,7 +456,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0020",
+          "omission_id": "captured-pipecat-omission-12",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -466,7 +466,7 @@
           },
           "capture_class": "model_payload",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0021",
+          "omission_id": "captured-pipecat-omission-13",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -476,7 +476,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0022",
+          "omission_id": "captured-pipecat-omission-14",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -486,7 +486,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0023",
+          "omission_id": "captured-pipecat-omission-15",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -496,7 +496,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0024",
+          "omission_id": "captured-pipecat-omission-16",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -506,7 +506,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0025",
+          "omission_id": "captured-pipecat-omission-17",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -516,7 +516,7 @@
           },
           "capture_class": "metadata",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0026",
+          "omission_id": "captured-pipecat-omission-18",
           "reason": "capture_class_disabled",
           "source_refs": []
         },
@@ -526,18 +526,18 @@
           },
           "capture_class": "transcript",
           "count": 1,
-          "omission_id": "captured-pipecat-id-0027",
+          "omission_id": "captured-pipecat-omission-19",
           "reason": "capture_class_disabled",
           "source_refs": []
         }
       ],
       "policy_id": "earshot.metadata-only",
-      "policy_version": "1"
+      "policy_version": "captured-pipecat-turn-1"
     },
     "quality_samples": [
       {
         "attributes": {
-          "earshot.operation.id": "captured-pipecat-id-0003"
+          "earshot.operation.id": "captured-pipecat-operation-2"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -565,27 +565,27 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-pipecat-id-0028",
+        "sample_id": "captured-pipecat-sample-1",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307079081000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939611719000"
           },
           "start": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305306843643000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939492937000"
           }
         },
-        "session_id": "captured-pipecat-session"
+        "session_id": "captured-pipecat-session-1"
       },
       {
         "attributes": {
-          "earshot.operation.id": "captured-pipecat-id-0003"
+          "earshot.operation.id": "captured-pipecat-operation-2"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -613,27 +613,27 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-pipecat-id-0029",
+        "sample_id": "captured-pipecat-sample-2",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307079081000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939611719000"
           },
           "start": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305306843643000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939492937000"
           }
         },
-        "session_id": "captured-pipecat-session"
+        "session_id": "captured-pipecat-session-1"
       },
       {
         "attributes": {
-          "earshot.operation.id": "captured-pipecat-id-0003"
+          "earshot.operation.id": "captured-pipecat-operation-2"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -656,32 +656,32 @@
             "attributes": {},
             "name": "pipecat.llm.ttfb",
             "unit": "s",
-            "value": 0.23218107223510742
+            "value": 0.1152799129486084
           }
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-pipecat-id-0030",
+        "sample_id": "captured-pipecat-sample-3",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307079081000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939611719000"
           },
           "start": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305306843643000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939492937000"
           }
         },
-        "session_id": "captured-pipecat-session"
+        "session_id": "captured-pipecat-session-1"
       },
       {
         "attributes": {
-          "earshot.operation.id": "captured-pipecat-id-0004"
+          "earshot.operation.id": "captured-pipecat-operation-3"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -709,27 +709,27 @@
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-pipecat-id-0031",
+        "sample_id": "captured-pipecat-sample-4",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307644404000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817940192349000"
           },
           "start": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307081911000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939615958000"
           }
         },
-        "session_id": "captured-pipecat-session"
+        "session_id": "captured-pipecat-session-1"
       },
       {
         "attributes": {
-          "earshot.operation.id": "captured-pipecat-id-0004"
+          "earshot.operation.id": "captured-pipecat-operation-3"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -752,33 +752,33 @@
             "attributes": {},
             "name": "pipecat.tts.ttfb",
             "unit": "s",
-            "value": 0.561892032623291
+            "value": 0.5759949684143066
           }
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-pipecat-id-0032",
+        "sample_id": "captured-pipecat-sample-5",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307644404000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817940192349000"
           },
           "start": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307081911000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817939615958000"
           }
         },
-        "session_id": "captured-pipecat-session"
+        "session_id": "captured-pipecat-session-1"
       },
       {
         "attributes": {
-          "earshot.operation.id": "captured-pipecat-id-0006",
-          "earshot.turn.id": "captured-pipecat-id-0007"
+          "earshot.operation.id": "captured-pipecat-operation-4",
+          "earshot.turn.id": "captured-pipecat-turn-1"
         },
         "capture_class": "metadata",
         "evidence": {
@@ -801,42 +801,42 @@
             "attributes": {},
             "name": "pipecat.turn.user_bot_latency",
             "unit": "s",
-            "value": 6.307773113250732
+            "value": 6.138855218887329
           }
         ],
         "quality_kind": "pipeline.metric",
         "resource": {
-          "service.name": "captured-voice-app",
+          "service.name": "captured-pipecat-service-1",
           "telemetry.sdk.language": "python",
           "telemetry.sdk.name": "opentelemetry",
           "telemetry.sdk.version": "1.39.1"
         },
-        "sample_id": "captured-pipecat-id-0033",
+        "sample_id": "captured-pipecat-sample-6",
         "sample_window": {
           "end": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305307665363000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817940209552000"
           },
           "start": {
-            "clock_domain_id": "captured-pipecat-id-0001",
-            "source_time_unix_nano": "1784305297773732000"
+            "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+            "source_time_unix_nano": "1784817930487103000"
           }
         },
-        "session_id": "captured-pipecat-session"
+        "session_id": "captured-pipecat-session-1"
       }
     ],
     "session": {
       "attributes": {},
       "ended_at": {
-        "clock_domain_id": "captured-pipecat-id-0001",
-        "monotonic_time_nano": "11071829041",
-        "source_time_unix_nano": "1784305307670139000"
+        "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
+        "monotonic_time_nano": "11393058166",
+        "source_time_unix_nano": "1784817940213932000"
       },
-      "session_id": "captured-pipecat-session",
+      "session_id": "captured-pipecat-session-1",
       "started_at": {
-        "clock_domain_id": "captured-pipecat-id-0001",
+        "clock_domain_id": "process-4543f2c347644c3080294d7537b706db",
         "monotonic_time_nano": "0",
-        "source_time_unix_nano": "1784305296598261000"
+        "source_time_unix_nano": "1784817928820816000"
       },
       "status": "completed"
     }
