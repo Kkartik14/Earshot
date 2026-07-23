@@ -201,7 +201,7 @@ const uncertaintyMs = (value: string | null | undefined): number | null => {
   return Number(n) / 1_000_000;
 };
 
-const INTERRUPTION_EVENT = (name: string): boolean => name.includes("interruption");
+const ACCEPTED_INTERRUPTION_EVENT = "earshot.interruption.accepted";
 
 export interface StageBar {
   operationId: string;
@@ -389,9 +389,7 @@ export function hasCascadeChain(operations: { role: OperationRole }[]): boolean 
 }
 
 function isInterrupted(turn: ExplainedTurn): boolean {
-  return turn.events.some(
-    (event) => event.event_name === "earshot.interruption.accepted",
-  );
+  return turn.events.some((event) => event.event_name === ACCEPTED_INTERRUPTION_EVENT);
 }
 
 export function buildTimeline(explanation: ExplanationLike): Timeline {
@@ -528,8 +526,8 @@ const measurementViews = (measurements: ExplainedMeasurement[]): MeasurementView
     }));
 
 /** Resolve source-authored links and same-trace parent span identities against
- * operations actually present in this turn. External/unknown targets stay as
- * node-level tags. No arrival-order or stage-order edge is ever invented. */
+ * operations actually present in this turn. External and unresolved targets stay
+ * as node-level tags. No arrival-order or stage-order edge is ever invented. */
 function resolveLinks(windows: OperationWindow[]): {
   linksByOp: Map<string, LinkView[]>;
   edges: EdgeView[];
@@ -549,12 +547,18 @@ function resolveLinks(windows: OperationWindow[]): {
   for (const w of windows) {
     const views: LinkView[] = [];
     for (const link of w.op.links ?? []) {
-      const target = link.target_operation_id ?? null;
-      const resolved = target != null && presentIds.has(target);
+      const targetScope = link.target_scope ?? "unknown";
+      const spanTargetKey =
+        targetScope === "internal" ? spanKey(link.trace_id, link.span_id) : null;
+      const spanTarget =
+        spanTargetKey == null ? undefined : operationBySpan.get(spanTargetKey);
+      const target = link.target_operation_id ?? spanTarget?.operationId ?? null;
+      const resolved =
+        targetScope !== "external" && target != null && presentIds.has(target);
       views.push({
         relationship: link.relationship,
         targetOperationId: target,
-        targetScope: link.target_scope ?? "unknown",
+        targetScope,
         resolved,
       });
       if (resolved && target != null) {
@@ -594,7 +598,7 @@ function attachEventsToOps(windows: OperationWindow[], events: ExplainedEvent[])
   const interruptByOp = new Map<string, string>();
   for (const event of events) {
     const target = eventTarget(event);
-    if (target != null && INTERRUPTION_EVENT(event.event_name)) {
+    if (target != null && event.event_name === ACCEPTED_INTERRUPTION_EVENT) {
       interruptByOp.set(target, event.event_name);
     }
   }

@@ -545,6 +545,107 @@ describe("generic operation list", () => {
 // error/unassigned shapes rather than hand-built stand-ins.
 
 describe("causal edges from links", () => {
+  it("keeps an explicitly external link outside the local call graph", () => {
+    const source = turnOf([
+      { operation_id: "op-source", operation_name: "agent" },
+      { operation_id: "op-local-collision", operation_name: "tool" },
+    ]);
+    const [turn] = source.turns;
+    const [sourceOperation, localCollision] = turn.operations;
+    const [detail] = buildTurnDetails(
+      asExplanation({
+        ...source,
+        turns: [
+          {
+            ...turn,
+            operations: [
+              {
+                ...sourceOperation,
+                links: [
+                  {
+                    relationship: "consumes",
+                    target_scope: "external",
+                    target_operation_id: "op-local-collision",
+                  },
+                ],
+              },
+              localCollision,
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(detail.edges).toEqual([]);
+    expect(detail.stages[0].links).toEqual([
+      {
+        relationship: "consumes",
+        targetOperationId: "op-local-collision",
+        targetScope: "external",
+        resolved: false,
+      },
+    ]);
+  });
+
+  it("resolves an internal trace/span-only link to its observed operation", () => {
+    const traceId = "a".repeat(32);
+    const targetSpanId = "1".repeat(16);
+    const source = turnOf([
+      {
+        operation_id: "op-source",
+        operation_name: "agent",
+        trace_id: traceId,
+        span_id: "2".repeat(16),
+      },
+      {
+        operation_id: "op-target",
+        operation_name: "tool",
+        trace_id: traceId,
+        span_id: targetSpanId,
+      },
+    ]);
+    const [turn] = source.turns;
+    const [sourceOperation, targetOperation] = turn.operations;
+    const [detail] = buildTurnDetails(
+      asExplanation({
+        ...source,
+        turns: [
+          {
+            ...turn,
+            operations: [
+              {
+                ...sourceOperation,
+                links: [
+                  {
+                    relationship: "consumes",
+                    target_scope: "internal",
+                    trace_id: traceId,
+                    span_id: targetSpanId,
+                  },
+                ],
+              },
+              targetOperation,
+            ],
+          },
+        ],
+      }),
+    );
+
+    expect(detail.edges).toEqual([
+      {
+        fromOperationId: "op-source",
+        toOperationId: "op-target",
+        relationship: "consumes",
+      },
+    ]);
+    expect(detail.stages[0].links[0]).toEqual({
+      relationship: "consumes",
+      targetOperationId: "op-target",
+      targetScope: "internal",
+      resolved: true,
+    });
+  });
+
   it("renders an observed in-trace parent edge", () => {
     const [detail] = buildTurnDetails(
       turnOf([
@@ -790,6 +891,33 @@ describe("interruption attachment", () => {
     const [detail] = buildTurnDetails(explanation);
 
     expect(detail.events[0].attachedOperationId).toBeNull();
+    expect(detail.stages[0].interruptedByEvent).toBeUndefined();
+  });
+
+  it("does not relabel detected or ignored interruption evidence as accepted", () => {
+    const source = turnOf([{ operation_id: "op-agent", operation_name: "agent" }]);
+    const [turn] = source.turns;
+    const events = ["detected", "ignored"].map((outcome, index) => ({
+      event_id: `evt-interruption-${outcome}`,
+      event_name: `earshot.interruption.${outcome}`,
+      operation_id: "op-agent",
+      time_basis: "monotonic" as const,
+      clock_domain_id: "generic-clock",
+      at_nano: String(1500 + index),
+      evidence_ids: [`evt-interruption-${outcome}`],
+    }));
+    const [detail] = buildTurnDetails(
+      asExplanation({
+        ...source,
+        turns: [{ ...turn, events }],
+      }),
+    );
+
+    expect(detail.interrupted).toBe(false);
+    expect(detail.events.map((event) => event.attachedOperationId)).toEqual([
+      "op-agent",
+      "op-agent",
+    ]);
     expect(detail.stages[0].interruptedByEvent).toBeUndefined();
   });
 
