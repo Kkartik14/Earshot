@@ -27,7 +27,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..pipeline import TurnRecorder
+from ..observation import ObservationSink
 from .base import (
     BrowserClockDomain,
     EngineCoverage,
@@ -84,14 +84,14 @@ class WebRtcFacts:
     route_changed: bool = False
     clock: _AppliedClock | None = None
 
-    def apply(self, turn: TurnRecorder) -> None:
-        """Write every derived fact onto ``turn`` (coverage, then samples, events).
+    def apply(self, sink: ObservationSink) -> None:
+        """Write every derived fact onto ``sink`` (coverage, then samples, events).
 
         When a browser clock domain was supplied to :func:`analyze_webrtc_stats`,
         the samples/events land in that domain at their raw browser timestamps.
         """
 
-        apply_facts(turn, self.coverage, self.measurements, self.events, self.clock)
+        apply_facts(sink, self.coverage, self.measurements, self.events, self.clock)
 
 
 def analyze_webrtc_stats(
@@ -172,15 +172,15 @@ def analyze_webrtc_stats(
 
 
 def apply_webrtc_stats(
-    turn: TurnRecorder,
+    sink: ObservationSink,
     snapshots: Sequence[Mapping[str, Any]],
     *,
     clock_domain: BrowserClockDomain | None = None,
 ) -> WebRtcFacts:
-    """Derive and record ``getStats`` facts onto ``turn``; return the facts."""
+    """Derive and record ``getStats`` facts onto ``sink``; return the facts."""
 
     facts = analyze_webrtc_stats(snapshots, clock_domain=clock_domain)
-    facts.apply(turn)
+    facts.apply(sink)
     return facts
 
 

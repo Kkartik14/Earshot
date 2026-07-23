@@ -30,7 +30,7 @@ import uuid
 import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .clock import Clock
 from .contract import (
@@ -49,6 +49,21 @@ from .privacy import CaptureClass
 from .recorder import IncidentRecorder, RecorderConfig
 from .sdk import _runtime_snapshot
 from .versions import PIPELINE_ADAPTER_VERSION
+
+if TYPE_CHECKING:  # pragma: no cover - a type-checker-only assertion, no runtime cost
+    from .observation import ObservationSink
+
+    def _turn_recorder_is_an_observation_sink(turn: TurnRecorder) -> ObservationSink:
+        """Fail type-checking if the capture seam drifts away from the recorder.
+
+        ``TurnRecorder`` satisfies :class:`ObservationSink` structurally -- it does
+        not inherit it -- so nothing stops the two from silently diverging except
+        this assertion. The import stays behind ``TYPE_CHECKING`` because the
+        protocol module must never import back into the pipeline.
+        """
+
+        return turn
+
 
 _MS_TO_NANO = 1_000_000
 _USER = "participant-user"
@@ -90,6 +105,10 @@ class TurnRecorder:
     Stages are placed on the turn clock in call order. A scalar latency does not
     prove a stage interval, so stage operations are points with app-inferred
     evidence while provider-reported latencies are separate governed measurements.
+
+    This is also the server pipeline's :class:`~earshot.observation.ObservationSink`
+    -- the fact verbs below are the seam diagnostic engines and provider adapters
+    author through, and they must keep satisfying that protocol.
     """
 
     def __init__(self, session: PipelineSession, turn_id: str, turn_index: int) -> None:

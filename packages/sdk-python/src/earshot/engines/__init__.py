@@ -1,9 +1,10 @@
 """Deterministic, server-side diagnostic engines over raw browser telemetry.
 
 These engines are the server-side consumer of what a browser collector emits.
-Each turns raw, standard telemetry into governed earshot facts through the
-recorder/pipeline seams, so the existing boundary-attribution analyzer diagnoses
-the result without any browser in the loop:
+Each turns raw, standard telemetry into governed earshot facts through the single
+capture seam -- :class:`~earshot.observation.ObservationSink` -- so the existing
+boundary-attribution analyzer diagnoses the result without any browser in the
+loop:
 
 * :func:`~earshot.engines.webrtc.analyze_webrtc_stats` -- a W3C ``getStats``
   delta engine (packet loss, jitter, RTT, jitter-buffer growth, concealment,
@@ -13,8 +14,10 @@ the result without any browser in the loop:
   mismatch, under-run, ``baseLatency`` / ``outputLatency``).
 
 Each ``analyze_*`` is a pure function returning an immutable facts value; the
-paired ``apply_*`` derives and records onto a
-:class:`~earshot.pipeline.TurnRecorder`.
+paired ``apply_*`` derives and records onto any
+:class:`~earshot.observation.ObservationSink`. The server pipeline's
+:class:`~earshot.pipeline.TurnRecorder` is one such sink; a browser, native, or
+backend collector supplies its own without changing an engine.
 """
 
 from __future__ import annotations

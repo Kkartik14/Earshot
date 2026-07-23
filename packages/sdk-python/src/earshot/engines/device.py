@@ -25,7 +25,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..pipeline import TurnRecorder
+from ..observation import ObservationSink
 from .base import (
     BrowserClockDomain,
     EngineCoverage,
@@ -85,14 +85,14 @@ class DeviceFacts:
     stale: bool = False
     clock: _AppliedClock | None = None
 
-    def apply(self, turn: TurnRecorder) -> None:
-        """Write every derived fact onto ``turn`` (coverage, then samples, events).
+    def apply(self, sink: ObservationSink) -> None:
+        """Write every derived fact onto ``sink`` (coverage, then samples, events).
 
         When a browser clock domain was supplied to :func:`analyze_audio_graph`,
         the samples/events land in that domain at their raw browser timestamps.
         """
 
-        apply_facts(turn, self.coverage, self.measurements, self.events, self.clock)
+        apply_facts(sink, self.coverage, self.measurements, self.events, self.clock)
 
 
 def analyze_audio_graph(
@@ -138,15 +138,15 @@ def analyze_audio_graph(
 
 
 def apply_audio_graph(
-    turn: TurnRecorder,
+    sink: ObservationSink,
     events: Sequence[Mapping[str, Any]],
     *,
     clock_domain: BrowserClockDomain | None = None,
 ) -> DeviceFacts:
-    """Derive and record audio-graph facts onto ``turn``; return the facts."""
+    """Derive and record audio-graph facts onto ``sink``; return the facts."""
 
     facts = analyze_audio_graph(events, clock_domain=clock_domain)
-    facts.apply(turn)
+    facts.apply(sink)
     return facts
 
 

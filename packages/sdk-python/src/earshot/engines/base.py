@@ -4,9 +4,15 @@ A diagnostic engine turns raw browser telemetry (W3C ``RTCStatsReport``
 snapshots, Web Audio / device-lifecycle events) into *governed facts*: quality
 measurements, point events, and coverage notes. The engine itself never touches
 a recorder -- it returns an immutable ``EngineFacts`` value that a caller applies
-to a :class:`~earshot.pipeline.TurnRecorder`. This keeps the derivation pure and
-byte-for-byte deterministic (and therefore trivially testable without a browser),
-while reusing the exact same authoring seams the raw provider adapters use.
+to an :class:`~earshot.observation.ObservationSink`. This keeps the derivation
+pure and byte-for-byte deterministic (and therefore trivially testable without a
+browser), while reusing the exact same authoring seams the raw provider adapters
+use.
+
+Nothing here knows what the sink is. The server pipeline's ``TurnRecorder``
+satisfies the protocol, but so does a browser, native, or backend collector's own
+sink -- which is the point: the engine is the derivation, and where its facts land
+is the caller's decision.
 
 Two disciplines are load-bearing across every engine and are enforced here by
 construction rather than convention:
@@ -25,7 +31,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from ..contract import ClockDomain
-from ..pipeline import TurnRecorder
+from ..observation import ObservationSink
 
 # Default reading uncertainty (1ms) for a browser monotonic clock: browsers
 # coarsen ``performance.now()``, so browser-derived facts carry this forward as
@@ -111,8 +117,8 @@ class EngineMeasurement:
     source_field: str
     basis: str | None = None
 
-    def apply(self, turn: TurnRecorder, clock: _AppliedClock | None = None) -> None:
-        turn.record_measurement(
+    def apply(self, sink: ObservationSink, clock: _AppliedClock | None = None) -> None:
+        sink.record_measurement(
             self.name,
             self.value,
             unit=self.unit,
@@ -140,8 +146,8 @@ class EngineEvent:
     confidence: str
     source_field: str
 
-    def apply(self, turn: TurnRecorder, clock: _AppliedClock | None = None) -> None:
-        turn.record_event(
+    def apply(self, sink: ObservationSink, clock: _AppliedClock | None = None) -> None:
+        sink.record_event(
             self.name,
             at_ms=self.at_ms,
             participant=self.participant,
@@ -163,12 +169,12 @@ class EngineCoverage:
     availability: str
     reason: str
 
-    def apply(self, turn: TurnRecorder) -> None:
-        turn.record_coverage(self.signal, self.availability, self.reason)
+    def apply(self, sink: ObservationSink) -> None:
+        sink.record_coverage(self.signal, self.availability, self.reason)
 
 
 def apply_facts(
-    turn: TurnRecorder,
+    sink: ObservationSink,
     coverage: Iterable[EngineCoverage],
     measurements: Iterable[EngineMeasurement],
     events: Iterable[EngineEvent],
@@ -182,13 +188,13 @@ def apply_facts(
     """
 
     if clock is not None:
-        turn.register_clock_domain(clock.domain.to_contract())
+        sink.register_clock_domain(clock.domain.to_contract())
     for note in coverage:
-        note.apply(turn)
+        note.apply(sink)
     for measurement in measurements:
-        measurement.apply(turn, clock)
+        measurement.apply(sink, clock)
     for event in events:
-        event.apply(turn, clock)
+        event.apply(sink, clock)
 
 
 @dataclass(frozen=True, slots=True)
