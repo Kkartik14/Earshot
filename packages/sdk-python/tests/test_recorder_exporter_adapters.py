@@ -1622,7 +1622,13 @@ def test_pipecat_attach_uses_existing_provider_without_replacing_it() -> None:
         PipecatAdapter(_pipecat_recorder()).attach(object())
 
 
-def test_pipecat_optional_span_processor_has_actionable_dependency_error(monkeypatch) -> None:
+def test_recorder_bound_pipecat_span_processor_is_rejected() -> None:
+    adapter = PipecatAdapter(_pipecat_recorder())
+    with pytest.raises(RuntimeError, match="attach"):
+        adapter.create_span_processor()
+
+
+def test_pipecat_optional_attach_has_actionable_dependency_error(monkeypatch) -> None:
     real_import = builtins.__import__
 
     def import_without_otel(name, *args, **kwargs):
@@ -1630,10 +1636,13 @@ def test_pipecat_optional_span_processor_has_actionable_dependency_error(monkeyp
             raise ImportError("forced missing optional dependency")
         return real_import(name, *args, **kwargs)
 
+    class Provider:
+        def add_span_processor(self, processor) -> None:
+            del processor
+
     monkeypatch.setattr(builtins, "__import__", import_without_otel)
-    adapter = PipecatAdapter(_pipecat_recorder())
     with pytest.raises(AdapterDependencyError, match="opentelemetry-sdk"):
-        adapter.create_span_processor()
+        PipecatAdapter(_pipecat_recorder()).attach(Provider())
 
 
 def test_pipecat_rejects_unsupported_or_missing_timestamp_shape() -> None:
@@ -1867,10 +1876,17 @@ def test_adapter_callbacks_remain_fail_open_after_recorder_close() -> None:
     livekit.recorder.close()
     listeners["metrics_collected"]({"metrics": {"type": "vad_metrics"}})  # type: ignore[operator]
 
+    sdk_trace = pytest.importorskip("opentelemetry.sdk.trace")
     pipecat = PipecatAdapter(_pipecat_recorder())
-    processor = pipecat.create_span_processor()
+    provider = sdk_trace.TracerProvider()
+    handle = pipecat.attach(provider)
     pipecat.recorder.close()
-    processor.on_end(SimpleNamespace())
+    with handle.session_scope(), provider.get_tracer("pipecat").start_as_current_span(
+        "llm",
+        attributes={"conversation.id": "closed-recorder"},
+    ):
+        pass
+    pipecat.detach()
 
 
 def test_livekit_listener_supports_direct_two_argument_event_api() -> None:

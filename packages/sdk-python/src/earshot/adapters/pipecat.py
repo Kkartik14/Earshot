@@ -759,41 +759,12 @@ class PipecatAdapter:
         raise TypeError("Pipecat span lacks a supported timestamp")
 
     def create_span_processor(self) -> object:
-        """Create a processor to add to the application's existing provider."""
+        """Reject the unsafe legacy recorder-bound processor factory."""
 
-        try:
-            from opentelemetry.sdk.trace import ReadableSpan, Span
-            from opentelemetry.sdk.trace.export import SpanProcessor
-        except ImportError as error:  # pragma: no cover - optional dependency
-            raise AdapterDependencyError(
-                "Pipecat OTel integration requires opentelemetry-sdk"
-            ) from error
-
-        adapter = self
-
-        class EarshotPipecatSpanProcessor(SpanProcessor):
-            def on_start(self, span: Span, parent_context: object | None = None) -> None:
-                del span, parent_context
-
-            def on_end(self, span: ReadableSpan) -> None:
-                if not adapter._is_pipecat_span(span):
-                    return
-                try:
-                    adapter.consume_span(span)
-                except Exception:
-                    adapter._record_coverage_safe(
-                        "pipecat.span",
-                        "unsupported_span_shape",
-                    )
-
-            def shutdown(self) -> None:
-                return None
-
-            def force_flush(self, timeout_millis: int = 30_000) -> bool:
-                del timeout_millis
-                return True
-
-        return EarshotPipecatSpanProcessor()
+        raise RuntimeError(
+            "recorder-bound span processors bypass session isolation; "
+            "use attach(existing_tracer_provider)"
+        )
 
     @staticmethod
     def _is_pipecat_span(span: object) -> bool:
@@ -834,14 +805,19 @@ class PipecatAdapter:
         ingest one another's spans and release routing state on :meth:`detach`.
         """
 
-        handle = routing.attach_adapter(
-            tracer_provider,
-            "pipecat",
-            self._is_pipecat_span,
-            self.recorder.session_id,
-            self._consume_routed_span,
-            self._record_routing_loss,
-        )
+        try:
+            handle = routing.attach_adapter(
+                tracer_provider,
+                "pipecat",
+                self._is_pipecat_span,
+                self.recorder.session_id,
+                self._consume_routed_span,
+                self._record_routing_loss,
+            )
+        except ImportError as error:  # pragma: no cover - optional dependency
+            raise AdapterDependencyError(
+                "Pipecat OTel integration requires opentelemetry-sdk"
+            ) from error
         with self._lock:
             previous = self._routing_handle
             self._routing_handle = handle

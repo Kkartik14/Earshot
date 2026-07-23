@@ -1638,7 +1638,12 @@ def test_span_processor_attach_is_additive_and_validates_provider() -> None:
         LiveKitAdapter(recorder()).attach_span_processor(object())
 
 
-def test_optional_livekit_span_processor_has_actionable_dependency_error(monkeypatch) -> None:
+def test_recorder_bound_livekit_span_processor_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="attach_span_processor"):
+        LiveKitAdapter(recorder()).create_span_processor()
+
+
+def test_optional_livekit_attach_has_actionable_dependency_error(monkeypatch) -> None:
     real_import = builtins.__import__
 
     def import_without_otel(name, *args, **kwargs):
@@ -1646,9 +1651,13 @@ def test_optional_livekit_span_processor_has_actionable_dependency_error(monkeyp
             raise ImportError("forced missing optional dependency")
         return real_import(name, *args, **kwargs)
 
+    class Provider:
+        def add_span_processor(self, processor) -> None:
+            del processor
+
     monkeypatch.setattr(builtins, "__import__", import_without_otel)
     with pytest.raises(AdapterDependencyError, match="opentelemetry-sdk"):
-        LiveKitAdapter(recorder()).create_span_processor()
+        LiveKitAdapter(recorder()).attach_span_processor(Provider())
 
 
 def test_span_processor_filter_accepts_only_livekit_scopes_or_attributes() -> None:
