@@ -48,9 +48,31 @@
   font-size: 10px;
 }
 
-/* arrival-order hint between consecutive operations (not a causal edge) */
+/* real causal edge, derived from an operation's links */
 .edge {
   stroke: var(--tx-low);
   stroke-width: 1.4;
   fill: none;
+}
+.edgeLabel {
+  fill: var(--tx-mid);
+  font-family: var(--mono);
+  font-size: 9px;
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+/* per-operation status / error badge, coloured by tone */
+.badge {
+  fill: color-mix(in oklab, var(--bc) 16%, var(--panel-2));
+  stroke: color-mix(in oklab, var(--bc) 45%, transparent);
+  stroke-width: 1;
+}
+.badgeText {
+  fill: var(--bc);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
 }
