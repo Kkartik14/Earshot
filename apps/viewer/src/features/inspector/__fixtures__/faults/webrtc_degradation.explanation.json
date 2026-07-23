@@ -10,7 +10,9 @@
   "turns": [],
   "coverage": [],
   "omissions": [],
-  "limitations": ["render_evidence_not_observed"],
+  "limitations": [
+    "render_evidence_not_observed"
+  ],
   "diagnoses": [],
   "unassigned_operations": [],
   "unassigned_events": [],
@@ -32,7 +34,9 @@
         "method_version": "1",
         "source_field": null
       },
-      "evidence_ids": ["quality-webrtc"]
+      "evidence_ids": [
+        "quality-webrtc"
+      ]
     },
     {
       "name": "packet_loss_ratio",
@@ -51,7 +55,9 @@
         "method_version": "1",
         "source_field": null
       },
-      "evidence_ids": ["quality-webrtc"]
+      "evidence_ids": [
+        "quality-webrtc"
+      ]
     },
     {
       "name": "round_trip_time",
@@ -70,7 +76,9 @@
         "method_version": "1",
         "source_field": null
       },
-      "evidence_ids": ["quality-webrtc"]
+      "evidence_ids": [
+        "quality-webrtc"
+      ]
     }
   ]
 }

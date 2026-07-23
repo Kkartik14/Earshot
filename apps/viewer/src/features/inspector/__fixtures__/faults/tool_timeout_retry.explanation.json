@@ -44,7 +44,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-tool-attempt-1"]
+          "evidence_ids": [
+            "op-tool-attempt-1"
+          ]
         },
         {
           "operation_id": "op-tool-attempt-2",
@@ -87,7 +89,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-tool-attempt-2"]
+          "evidence_ids": [
+            "op-tool-attempt-2"
+          ]
         },
         {
           "operation_id": "op-downstream-agent",
@@ -130,7 +134,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-downstream-agent"]
+          "evidence_ids": [
+            "op-downstream-agent"
+          ]
         }
       ],
       "events": [
@@ -154,9 +160,12 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-retry-resumed"]
+          "evidence_ids": [
+            "event-retry-resumed"
+          ]
         }
       ],
+      "measurements": [],
       "metrics": {
         "first_token_latency": {
           "availability": "not_observed",
@@ -218,7 +227,10 @@
           "elapsed_ms_by_clock_domain": {
             "fault-fixture-clock": 1300.0
           },
-          "evidence_ids": ["op-tool-attempt-1", "op-tool-attempt-2"]
+          "evidence_ids": [
+            "op-tool-attempt-1",
+            "op-tool-attempt-2"
+          ]
         },
         "provider_measurements": {}
       }
@@ -226,14 +238,18 @@
   ],
   "coverage": [],
   "omissions": [],
-  "limitations": ["render_evidence_not_observed"],
+  "limitations": [
+    "render_evidence_not_observed"
+  ],
   "diagnoses": [
     {
       "diagnosis_id": "operation_failed.429631dfdeca6b6c6e1ee53ab14086c3b55fe4edb66c0e9b9fb3dae0e599ff84",
       "code": "operation.failed",
       "summary": "operation_failed",
       "confidence": "measured",
-      "evidence_ids": ["op-tool-attempt-1"],
+      "evidence_ids": [
+        "op-tool-attempt-1"
+      ],
       "limitations": []
     }
   ],
