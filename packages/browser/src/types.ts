@@ -130,14 +130,74 @@ export interface TraceContext {
   spanId: string;
 }
 
+/**
+ * The browser's own clock identity, carried so the server never mistakes a
+ * browser timestamp for a server-clock observation.
+ *
+ * Every `timestamp_ms` in this payload's snapshots/events is a RAW reading of
+ * this clock — a monotonic `performance.now()` (or `Date.now()`) value, NOT
+ * rebased to zero. The server records those readings as `monotonic_time_nano`
+ * inside a declared `ClockDomain` whose id is `id`; because there is no
+ * calibration (`ClockRelation`) to the server clock, cross-clock latency stays
+ * honestly *unavailable* unless a caller supplies one. The id is stable for the
+ * recorder's lifetime, so batches drained separately share one continuous
+ * browser timeline instead of each restarting at zero.
+ */
+export interface BrowserClockDomain {
+  /** Stable opaque per-recorder clock id, e.g. `clk_<16hex>`. */
+  id: string;
+  /** The clock family — a monotonic browser clock, not the server wall clock. */
+  kind: "browser_monotonic";
+  /** The unit every `timestamp_ms` in this payload is expressed in. */
+  unit: "ms";
+  /**
+   * The clock's own reading uncertainty, in ms. Browsers coarsen
+   * `performance.now()` (often to ~1ms), so this is carried forward as the
+   * `uncertainty_nano` of every browser-domain fact rather than pretending the
+   * readings are exact.
+   */
+  uncertaintyMs: number;
+  /**
+   * The Unix-epoch wall time (ms) the monotonic origin corresponds to
+   * (`performance.timeOrigin`). Browser wall time at reading `t` is
+   * `wallOriginMs + t`. The server carries this as the domain's wall origin so a
+   * declared client<->server `ClockRelation` has a wall timestamp to align —
+   * without one, cross-clock latency stays unavailable. `null` when the runtime
+   * exposes no wall origin (then only the monotonic reading is carried and
+   * calibration is impossible).
+   */
+  wallOriginMs: number | null;
+}
+
+/**
+ * An explicit *unknown* the capture kernel recorded rather than dropping
+ * silently: a bounded-buffer overflow, a `getStats()`/permission error, or an
+ * overlapping sample it skipped. The server can ledger these as coverage so a
+ * gap is never mistaken for a clean measurement.
+ */
+export interface CaptureCoverage {
+  /** The fact source the gap concerns (e.g. `webrtc.snapshots`). */
+  signal: string;
+  /** `partial` | `not_observed` | `available`. */
+  availability: string;
+  /** Why the gap exists (e.g. `buffer_overflow_oldest_dropped`). */
+  reason: string;
+  /** How many observations were lost/skipped in this window, when countable. */
+  droppedCount?: number;
+}
+
 /** The unit the client POSTs to the server, which feeds the two engines. */
 export interface CapturePayload {
   sessionId: string;
   traceContext: TraceContext;
+  /** The browser clock these snapshots'/events' `timestamp_ms` values belong to. */
+  clockDomain: BrowserClockDomain;
   /** Ordered `getStats` snapshots -> `analyze_webrtc_stats`. */
   snapshots: WebRtcSnapshot[];
   /** Ordered device/audio events -> `analyze_audio_graph`. */
   deviceEvents: DeviceEvent[];
+  /** Explicit coverage gaps recorded this window (never silent loss). */
+  coverage: CaptureCoverage[];
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@
 import type { Clock, RandomSource, Scheduler } from "./types.js";
 
 interface HostGlobals {
-  performance?: { now?: () => number };
+  performance?: { now?: () => number; timeOrigin?: number };
   setInterval?: (handler: () => void, ms: number) => unknown;
   clearInterval?: (handle: unknown) => void;
   crypto?: { getRandomValues?: (bytes: Uint8Array) => Uint8Array };
@@ -23,6 +23,20 @@ export const defaultClock: Clock = () => {
   const now = host.performance?.now;
   return typeof now === "function" ? now.call(host.performance) : Date.now();
 };
+
+/**
+ * The Unix-epoch wall time (ms) the monotonic clock's origin corresponds to
+ * (`performance.timeOrigin`). Falls back to reconstructing it from
+ * `Date.now() - performance.now()`, or `null` when no monotonic clock exists (so
+ * only the raw reading is carried and no wall calibration is possible).
+ */
+export function defaultWallOriginMs(): number | null {
+  const origin = host.performance?.timeOrigin;
+  if (typeof origin === "number" && Number.isFinite(origin)) return origin;
+  const now = host.performance?.now;
+  if (typeof now === "function") return Date.now() - now.call(host.performance);
+  return null;
+}
 
 /** Host `setInterval`/`clearInterval`, or inert no-ops if absent. */
 export const defaultScheduler: Scheduler = {

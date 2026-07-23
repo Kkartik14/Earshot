@@ -66,6 +66,11 @@ export class FakeScheduler implements Scheduler {
     return this.tasks.size;
   }
 
+  /** The live interval handlers, for tests that drive concurrency by hand. */
+  handlers(): Array<() => unknown> {
+    return [...this.tasks.values()];
+  }
+
   /** Invoke every live interval `times` times, awaiting each (async) tick. */
   async fireAll(times = 1): Promise<void> {
     for (let i = 0; i < times; i += 1) {
@@ -113,6 +118,34 @@ export class FakePeerConnection implements PeerConnectionLike {
     return report
       ? Promise.resolve(report)
       : Promise.reject(new Error("FakePeerConnection: no reports configured"));
+  }
+}
+
+/**
+ * A `RTCPeerConnection` whose `getStats()` stays pending until `resolveNext()`
+ * is called, letting a test hold a sample in flight and prove the recorder skips
+ * an overlapping one instead of running two concurrently.
+ */
+export class ControllablePeerConnection implements PeerConnectionLike {
+  getStatsCalls = 0;
+  private readonly resolvers: Array<(report: RTCStatsReportLike) => void> = [];
+
+  constructor(private readonly report: RTCStatsReportLike) {}
+
+  getStats(): Promise<RTCStatsReportLike> {
+    this.getStatsCalls += 1;
+    return new Promise<RTCStatsReportLike>((resolve) => this.resolvers.push(resolve));
+  }
+
+  /** How many getStats() promises are still awaiting a resolution. */
+  get pending(): number {
+    return this.resolvers.length;
+  }
+
+  /** Resolve the oldest in-flight getStats() with the fixed report. */
+  resolveNext(): void {
+    const resolve = this.resolvers.shift();
+    if (resolve) resolve(this.report);
   }
 }
 

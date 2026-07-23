@@ -45,14 +45,39 @@ export function createTraceContext(random: RandomSource): TraceContext {
   };
 }
 
+/** `version(2)-traceid(32)-spanid(16)-flags(2)`, all lower-case hex. */
+const TRACEPARENT_RE = /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
+
 /**
- * Return a new headers object with `traceparent` set, merged over any provided
- * headers. Pure (does not mutate the input) so it is safe to hand a shared
+ * Parse a W3C `traceparent` header into a `TraceContext` so the recorder can
+ * JOIN the application's existing trace instead of minting its own. Returns
+ * `null` when the value is absent or not spec-valid (all-zero ids are invalid),
+ * so the caller can fall back to minting a fresh context. Never throws.
+ */
+export function parseTraceParent(traceparent: string | undefined | null): TraceContext | null {
+  if (typeof traceparent !== "string") return null;
+  const match = TRACEPARENT_RE.exec(traceparent.trim());
+  if (!match) return null;
+  const [, , traceId, spanId] = match;
+  // All-zero trace-/span-ids are invalid per the spec.
+  if (/^0+$/.test(traceId!) || /^0+$/.test(spanId!)) return null;
+  return { traceId: traceId!, spanId: spanId!, traceparent: traceparent.trim() };
+}
+
+/**
+ * Return a new headers object carrying a `traceparent`, merged over any provided
+ * headers. If the caller already set a `traceparent` we PRESERVE it — the
+ * application's own trace is never overwritten; we only fill one in when none is
+ * present. Pure (does not mutate the input) so it is safe to hand a shared
  * default-headers object.
  */
 export function injectTraceHeaders(
   context: TraceContext,
   headers: Record<string, string> = {},
 ): Record<string, string> {
+  const existing = headers.traceparent;
+  if (typeof existing === "string" && existing.length > 0) {
+    return { ...headers };
+  }
   return { ...headers, traceparent: context.traceparent };
 }
