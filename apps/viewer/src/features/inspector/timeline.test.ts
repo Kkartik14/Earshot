@@ -564,6 +564,44 @@ describe("generic operation list", () => {
     expect(tool?.leadMs).toBeNull();
   });
 
+  it("converts a lead measurement to milliseconds using its declared unit", () => {
+    const stages = buildTimeline(
+      turnOf([
+        {
+          operation_name: "llm",
+          start_nano: "1000",
+          // Producers that report the lead in SECONDS (e.g. Pipecat metrics.ttfb,
+          // LiveKit *_latency, both unit="s") must not be read as raw ms.
+          measurements: [{ name: "earshot.llm.ttft", value: 2, unit: "s" }],
+        },
+        {
+          operation_name: "tts",
+          start_nano: "2000",
+          measurements: [{ name: "earshot.tts.ttfb", value: 90, unit: "ms" }],
+        },
+      ]),
+    ).turns[0].stages;
+    const llm = stages.find((s) => s.role === "llm");
+    const tts = stages.find((s) => s.role === "tts");
+    // 2 s -> 2000 ms, not 2 ms.
+    expect(llm?.leadMs).toBe(2000);
+    // A milliseconds-unit lead passes through unchanged.
+    expect(tts?.leadMs).toBe(90);
+  });
+
+  it("leaves a lead measurement in an unconvertible unit unplaced instead of mislabeling it as ms", () => {
+    const stages = buildTimeline(
+      turnOf([
+        {
+          operation_name: "stt",
+          start_nano: "1000",
+          measurements: [{ name: "earshot.stt.ttfb", value: 5, unit: "{frame}" }],
+        },
+      ]),
+    ).turns[0].stages;
+    expect(stages.find((s) => s.role === "stt")?.leadMs).toBeNull();
+  });
+
   it("carries each measurement's real unit through to the drawer view", () => {
     const details = buildTurnDetails(
       turnOf([

@@ -305,6 +305,32 @@ const coordinateDeltaMs = (
   return Number(coordinate - originCoordinate) / 1_000_000;
 };
 
+/** Normalize a cascade lead measurement (STT/LLM TTFB, LLM TTFT) to milliseconds
+ * by its declared unit. The lead is a provider scalar whose unit is NOT fixed to
+ * ms: the measurement contract permits provider-specific units, and sibling
+ * producers report the same latencies in seconds (Pipecat `metrics.ttfb` and
+ * LiveKit `*_latency` both carry `unit="s"`). Reading `value` as raw ms would be
+ * 1000x wrong for a seconds lead. An unexpected unit is left unavailable rather
+ * than silently mislabeled as milliseconds. */
+const leadMeasurementMs = (lead: ExplainedMeasurement | undefined): number | null => {
+  if (
+    lead == null ||
+    typeof lead.value !== "number" ||
+    !Number.isFinite(lead.value) ||
+    lead.value < 0
+  ) {
+    return null;
+  }
+  switch (lead.unit) {
+    case "ms":
+      return lead.value;
+    case "s":
+      return lead.value * 1000;
+    default:
+      return null;
+  }
+};
+
 /** Placement over EVERY operation in the turn, using the analyzer's facts.
  * The clock-alignment origin is computed across all operations (not just the
  * cascade), preserving the "leave the whole turn unplaced if any op is
@@ -362,13 +388,7 @@ function computeOperations(turn: ExplainedTurn): OperationWindow[] {
       startMs != null && explicitDuration != null ? startMs + explicitDuration : null;
     const timing =
       startMs == null ? "unavailable" : op.shape === "interval" ? "interval" : "point";
-    const leadMs =
-      lead != null &&
-      typeof lead.value === "number" &&
-      Number.isFinite(lead.value) &&
-      lead.value >= 0
-        ? lead.value
-        : null;
+    const leadMs = leadMeasurementMs(lead);
     return {
       op,
       operationId,
