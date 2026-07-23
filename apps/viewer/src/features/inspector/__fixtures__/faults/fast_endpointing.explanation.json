@@ -1,0 +1,202 @@
+{
+  "bundle_id": "fault-fast-endpointing",
+  "session_id": "fixture-session",
+  "session_status": "completed",
+  "finality": "final",
+  "completeness": "complete",
+  "analyzer_name": "earshot.deterministic",
+  "analyzer_version": "0.1.0",
+  "input_sha256": "75b227e1ffab2accb73e48305580aa400f3457ec5b7f3877810ede7df26d2993",
+  "turns": [
+    {
+      "turn_id": "turn-1",
+      "operations": [
+        {
+          "operation_id": "op-vad",
+          "operation_name": "vad",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "100000000",
+          "end_nano": "300000000",
+          "duration_nano": "200000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-user",
+          "stream_id": "stream-input",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "1111111111111111",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": ["op-vad"]
+        },
+        {
+          "operation_id": "op-turn",
+          "operation_name": "turn_detection",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "300000000",
+          "end_nano": "380000000",
+          "duration_nano": "80000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-user",
+          "stream_id": "stream-input",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "2222222222222222",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": ["op-turn"]
+        }
+      ],
+      "events": [
+        {
+          "event_id": "event-speech-ended",
+          "event_name": "earshot.speech.ended",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "300000000",
+          "operation_id": "op-vad",
+          "participant_id": null,
+          "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": ["event-speech-ended"]
+        },
+        {
+          "event_id": "event-turn-committed",
+          "event_name": "earshot.turn.committed",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "380000000",
+          "operation_id": "op-turn",
+          "participant_id": null,
+          "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": ["event-turn-committed"]
+        }
+      ],
+      "metrics": {
+        "first_token_latency": {
+          "availability": "not_observed",
+          "basis": "first_token",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "target_signal_not_observed",
+          "evidence_ids": ["event-turn-committed"]
+        },
+        "generated_response_latency": {
+          "availability": "not_observed",
+          "basis": "generated",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "target_signal_not_observed",
+          "evidence_ids": ["event-turn-committed"]
+        },
+        "sent_response_latency": {
+          "availability": "not_observed",
+          "basis": "sent",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "target_signal_not_observed",
+          "evidence_ids": ["event-turn-committed"]
+        },
+        "received_response_latency": {
+          "availability": "not_observed",
+          "basis": "received",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "target_signal_not_observed",
+          "evidence_ids": ["event-turn-committed"]
+        },
+        "render_start_response_latency": {
+          "availability": "not_observed",
+          "basis": "render",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "target_signal_not_observed",
+          "evidence_ids": ["event-turn-committed"]
+        },
+        "response_latency": {
+          "availability": "not_observed",
+          "basis": "tts_estimate",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "target_signal_not_observed",
+          "evidence_ids": ["event-turn-committed"]
+        },
+        "tools": {
+          "operation_count": 0,
+          "total_work_ms": 0.0,
+          "elapsed_ms_by_clock_domain": {},
+          "evidence_ids": []
+        },
+        "provider_measurements": {}
+      }
+    }
+  ],
+  "coverage": [],
+  "omissions": [],
+  "limitations": ["render_evidence_not_observed"],
+  "diagnoses": [],
+  "unassigned_operations": [],
+  "unassigned_measurements": []
+}

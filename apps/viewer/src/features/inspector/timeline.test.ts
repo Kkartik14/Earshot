@@ -6,6 +6,9 @@ import telephonyHandoff from "./__fixtures__/faults/telephony_handoff.explanatio
 import websocketReconnect from "./__fixtures__/faults/websocket_reconnect.explanation.json";
 import webrtcDegradation from "./__fixtures__/faults/webrtc_degradation.explanation.json";
 import nativeInterruption from "./__fixtures__/faults/native_s2s_interruption.explanation.json";
+import bargeIn from "./__fixtures__/faults/barge_in.explanation.json";
+import deviceUnavailable from "./__fixtures__/faults/device_unavailable.explanation.json";
+import fastEndpointing from "./__fixtures__/faults/fast_endpointing.explanation.json";
 import {
   buildDiagnoses,
   buildSummary,
@@ -785,5 +788,69 @@ describe("interruption attachment", () => {
     expect(interruption).toBeDefined();
     expect(interruption?.attachedOperationId).toBeNull();
     expect(detail.stages.every((s) => s.interruptedByEvent == null)).toBe(true);
+  });
+});
+
+describe("remaining fault-family projections", () => {
+  it("renders the observed barge-in cancellations and their explicit event owners", () => {
+    const [detail] = buildTurnDetails(asExplanation(bargeIn));
+
+    expect(detail.stages.map((stage) => [stage.operationId, stage.status])).toEqual([
+      ["op-agent", "cancelled"],
+      ["op-tts", "cancelled"],
+      ["op-render", "cancelled"],
+    ]);
+    expect(
+      detail.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.interruption.detected", null],
+      ["earshot.interruption.accepted", null],
+      ["earshot.model.cancelled", "op-agent"],
+      ["earshot.audio.queued.discarded", "op-tts"],
+      ["earshot.audio.render.stopped", "op-render"],
+    ]);
+    expect(detail.edges).toEqual([]);
+  });
+
+  it("keeps unavailable-device evidence as events and backend-authored coverage", () => {
+    const explanation = asExplanation(deviceUnavailable);
+    const [detail] = buildTurnDetails(explanation);
+
+    expect(detail.stages).toEqual([]);
+    expect(detail.events.map((event) => event.name)).toEqual([
+      "earshot.device.permission_denied",
+      "earshot.device.audio_context_suspended",
+    ]);
+    expect(
+      getCoverage(explanation)
+        .filter((row) => row.availability === "not_observed")
+        .map((row) => [row.signal, row.reason]),
+    ).toEqual([
+      ["device.microphone", "permission_denied"],
+      ["capture", "device_unavailable"],
+      ["client.render", "app_backgrounded"],
+    ]);
+  });
+
+  it("renders fast endpointing from the observed VAD and commit boundaries", () => {
+    const [detail] = buildTurnDetails(asExplanation(fastEndpointing));
+
+    expect(
+      detail.stages.map((stage) => [
+        stage.operationId,
+        stage.startMs,
+        stage.endMs,
+      ]),
+    ).toEqual([
+      ["op-vad", 0, 200],
+      ["op-turn", 200, 280],
+    ]);
+    expect(
+      detail.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.speech.ended", "op-vad"],
+      ["earshot.turn.committed", "op-turn"],
+    ]);
+    expect(detail.edges).toEqual([]);
   });
 });
