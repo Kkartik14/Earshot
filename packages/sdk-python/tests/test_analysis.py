@@ -13,6 +13,7 @@ from earshot.contract import (
     Operation,
     QualityMeasurement,
     QualitySample,
+    TimePoint,
     TimeRange,
 )
 from earshot.explanation import explain_incident
@@ -122,21 +123,29 @@ def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation
             turn_id="turn-mixed-clocks",
         ),
         Operation(
-            operation_id="op-z-early",
-            session_id="session-1",
-            operation_name="agent",
-            status="ok",
-            started_at=point(100, domain="z-source-clock"),
-            ended_at=point(150, domain="z-source-clock"),
-            turn_id="turn-mixed-clocks",
-        ),
-        Operation(
             operation_id="op-a-late",
             session_id="session-1",
             operation_name="agent",
             status="ok",
             started_at=point(400, domain="a-source-clock"),
             ended_at=point(450, domain="a-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Operation(
+            operation_id="op-observed-only",
+            session_id="session-1",
+            operation_name="agent",
+            status="ok",
+            started_at=TimePoint(observed_time_unix_nano="250"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Operation(
+            operation_id="op-z-early",
+            session_id="session-1",
+            operation_name="agent",
+            status="ok",
+            started_at=point(100, domain="z-source-clock"),
+            ended_at=point(150, domain="z-source-clock"),
             turn_id="turn-mixed-clocks",
         ),
         Operation(
@@ -158,17 +167,24 @@ def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation
             turn_id="turn-mixed-clocks",
         ),
         Event(
-            event_id="evt-z-early",
-            session_id="session-1",
-            event_name="earshot.test.marker",
-            time=point(110, domain="z-source-clock"),
-            turn_id="turn-mixed-clocks",
-        ),
-        Event(
             event_id="evt-a-late",
             session_id="session-1",
             event_name="earshot.test.marker",
             time=point(410, domain="a-source-clock"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Event(
+            event_id="evt-observed-only",
+            session_id="session-1",
+            event_name="earshot.test.marker",
+            time=TimePoint(observed_time_unix_nano="260"),
+            turn_id="turn-mixed-clocks",
+        ),
+        Event(
+            event_id="evt-z-early",
+            session_id="session-1",
+            event_name="earshot.test.marker",
+            time=point(110, domain="z-source-clock"),
             turn_id="turn-mixed-clocks",
         ),
         Event(
@@ -195,14 +211,16 @@ def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation
     [projected_turn] = analysis.projections.turns
     assert projected_turn.operation_ids == (
         "op-z-early",
-        "op-z-late",
         "op-a-early",
+        "op-observed-only",
+        "op-z-late",
         "op-a-late",
     )
     assert projected_turn.event_ids == (
         "evt-z-early",
-        "evt-z-late",
         "evt-a-early",
+        "evt-observed-only",
+        "evt-z-late",
         "evt-a-late",
     )
 
@@ -210,14 +228,16 @@ def test_incomparable_clock_groups_keep_source_order_in_analysis_and_explanation
     [explained_turn] = explanation.turns
     assert tuple(item.operation_id for item in explained_turn.operations) == (
         "op-z-early",
-        "op-z-late",
         "op-a-early",
+        "op-observed-only",
+        "op-z-late",
         "op-a-late",
     )
     assert tuple(item.event_id for item in explained_turn.events) == (
         "evt-z-early",
-        "evt-z-late",
         "evt-a-early",
+        "evt-observed-only",
+        "evt-z-late",
         "evt-a-late",
     )
 
@@ -236,27 +256,36 @@ def test_incomparable_turn_clock_groups_keep_source_order(valid_bundle) -> None:
         ClockDomain(clock_domain_id="a-source-clock", kind="monotonic", observer="server"),
     )
     source_first = Operation(
-        operation_id="op-source-first",
+        operation_id="op-z-late",
         session_id="session-1",
         operation_name="agent",
         status="ok",
         started_at=point(900, domain="z-source-clock"),
         ended_at=point(950, domain="z-source-clock"),
-        turn_id="turn-source-first",
+        turn_id="turn-z-late",
     )
-    source_second = Operation(
-        operation_id="op-source-second",
+    source_middle = Operation(
+        operation_id="op-a-middle",
         session_id="session-1",
         operation_name="agent",
         status="ok",
-        started_at=point(100, domain="a-source-clock"),
-        ended_at=point(150, domain="a-source-clock"),
-        turn_id="turn-source-second",
+        started_at=point(500, domain="a-source-clock"),
+        ended_at=point(550, domain="a-source-clock"),
+        turn_id="turn-a-middle",
+    )
+    source_last = Operation(
+        operation_id="op-z-early",
+        session_id="session-1",
+        operation_name="agent",
+        status="ok",
+        started_at=point(100, domain="z-source-clock"),
+        ended_at=point(150, domain="z-source-clock"),
+        turn_id="turn-z-early",
     )
     bundle = replace_profile(
         valid_bundle,
         clock_domains=(*valid_bundle.profile.clock_domains, *clocks),
-        operations=(source_first, source_second),
+        operations=(source_first, source_middle, source_last),
         events=(),
         quality_samples=(),
     )
@@ -264,8 +293,9 @@ def test_incomparable_turn_clock_groups_keep_source_order(valid_bundle) -> None:
     result = analyze(bundle)
 
     assert [item.turn_id for item in result.projections.turns] == [
-        "turn-source-first",
-        "turn-source-second",
+        "turn-z-early",
+        "turn-a-middle",
+        "turn-z-late",
     ]
 
 

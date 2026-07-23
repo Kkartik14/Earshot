@@ -51,36 +51,37 @@ def _order_by_comparable_coordinate(
     *,
     coordinate: Callable[[_T], _Coordinate | None],
 ) -> tuple[_T, ...]:
-    """Order numerically within comparable groups and retain group source order.
+    """Order numerically within comparable groups without moving group slots.
 
-    Clock-domain and timestamp-basis labels identify groups; they never rank one
-    incomparable group ahead of another. Equal coordinates retain source order.
+    Clock-domain and timestamp-basis labels identify groups; their exact source
+    interleaving is retained. Equal coordinates and ungrouped items stay in source
+    order.
     """
 
-    group_order: list[tuple[str, str, str]] = []
-    grouped: dict[tuple[str, str, str], list[tuple[_T, int | None]]] = {}
-    for source_index, item in enumerate(items):
+    slots: list[tuple[tuple[str, str] | None, _T]] = []
+    grouped: dict[tuple[str, str], list[tuple[_T, int]]] = {}
+    for item in items:
         item_coordinate = coordinate(item)
         if item_coordinate is None:
-            group = ("source", str(source_index), "")
-            value = None
+            slots.append((None, item))
         else:
             domain, basis, value = item_coordinate
-            group = ("coordinate", domain, basis)
-        if group not in grouped:
-            group_order.append(group)
-            grouped[group] = []
-        grouped[group].append((item, value))
+            group = (domain, basis)
+            slots.append((group, item))
+            grouped.setdefault(group, []).append((item, value))
 
+    sorted_groups = {
+        group: sorted(entries, key=lambda entry: entry[1]) for group, entries in grouped.items()
+    }
+    offsets = {group: 0 for group in sorted_groups}
     ordered: list[_T] = []
-    for group in group_order:
-        entries = grouped[group]
-        if group[0] == "coordinate":
-            entries = sorted(
-                entries,
-                key=lambda entry: entry[1] if entry[1] is not None else 0,
-            )
-        ordered.extend(item for item, _value in entries)
+    for group, source_item in slots:
+        if group is None:
+            ordered.append(source_item)
+            continue
+        offset = offsets[group]
+        ordered.append(sorted_groups[group][offset][0])
+        offsets[group] = offset + 1
     return tuple(ordered)
 
 
