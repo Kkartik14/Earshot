@@ -2325,6 +2325,27 @@ def validate_explanation(
                     message="explained operation status differs from source evidence",
                 )
             )
+        expected_error = (
+            None
+            if source.error is None
+            else {
+                "code": source.error.code,
+                "category": source.error.category,
+                "capture_class": source.error.capture_class,
+                "message": None,
+            }
+        )
+        actual_error = (
+            operation.error.model_dump(mode="python") if operation.error is not None else None
+        )
+        if actual_error != expected_error:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_OPERATION_MISMATCH",
+                    path=path + ("error",),
+                    message="explained operation error differs from governed source evidence",
+                )
+            )
         # Never manufacture an interval: an end coordinate is only honest when the
         # source recorded one in the same clock representation and it is not before
         # the start. Recompute from the immutable source rather than trusting the

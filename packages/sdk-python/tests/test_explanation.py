@@ -6,7 +6,7 @@ import earshot
 from earshot.analysis import ANALYZER_VERSION, analyze_incident
 from earshot.codec import analysis_input_sha256, decode_incident_json
 from earshot.contract import ErrorRecord, QualityMeasurement, QualitySample, TimeRange
-from earshot.explanation import ExplainedDiagnosis, explain_incident
+from earshot.explanation import ExplainedDiagnosis, ExplainedError, explain_incident
 from earshot.validation import validate_explanation
 from incident_factory import LLM_SPAN_ID, ROOT_SPAN_ID, TRACE_ID, point
 from test_contract_validation import replace_profile
@@ -454,6 +454,40 @@ def test_validate_explanation_rejects_changed_operation_status() -> None:
         operation for operation in turn.operations if operation.operation_id == "op-tool-attempt-1"
     )
     changed = failed.model_copy(update={"status": "ok"})
+    tampered_turn = turn.model_copy(
+        update={
+            "operations": tuple(
+                changed if operation.operation_id == changed.operation_id else operation
+                for operation in turn.operations
+            )
+        }
+    )
+    tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_explanation(bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
+def test_validate_explanation_rejects_changed_operation_error() -> None:
+    bundle = _fault("tool_timeout_retry")
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    [turn] = explanation.turns
+    failed = next(
+        operation for operation in turn.operations if operation.operation_id == "op-tool-attempt-1"
+    )
+    changed = failed.model_copy(
+        update={
+            "error": ExplainedError(
+                code="invented.failure",
+                category="provider",
+                capture_class="diagnostic_payload",
+            )
+        }
+    )
     tampered_turn = turn.model_copy(
         update={
             "operations": tuple(
