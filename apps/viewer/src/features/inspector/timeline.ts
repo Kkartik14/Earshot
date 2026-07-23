@@ -166,13 +166,17 @@ export interface LinkView {
   resolved: boolean;
 }
 
-const HEALTHY_STATUS = new Set([
+const NON_ABNORMAL_STATUS = new Set([
   "ok",
   "completed",
   "complete",
   "success",
   "succeeded",
   "done",
+  // OTel UNSET and an unknown source status assert no failure. Preserve the
+  // source label, but do not manufacture an abnormal state from missing proof.
+  "unset",
+  "unknown",
 ]);
 
 const errorView = (e: ExplainedError | null | undefined): ErrorView | undefined =>
@@ -187,7 +191,7 @@ export function operationStatus(op: {
   error?: ExplainedError | null;
 }): StatusView {
   const error = errorView(op.error);
-  const abnormal = error != null || !HEALTHY_STATUS.has(op.status);
+  const abnormal = error != null || !NON_ABNORMAL_STATUS.has(op.status);
   const tone: Tone = error != null ? "crit" : statusTone(op.status);
   const label = error != null ? `${error.code} · ${error.category}` : op.status;
   return { abnormal, tone, label, error };

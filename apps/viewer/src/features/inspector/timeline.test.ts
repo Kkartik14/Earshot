@@ -21,6 +21,7 @@ import {
   buildTurnDetails,
   buildUnassigned,
   getCoverage,
+  operationStatus,
   type AnalysisLike,
   type ExplanationLike,
   type IncidentLike,
@@ -715,6 +716,18 @@ describe("causal edges from links", () => {
 });
 
 describe("per-operation error / status", () => {
+  it.each(["unset", "unknown"])(
+    "keeps neutral %s status from becoming an abnormal badge",
+    (status) => {
+      expect(operationStatus({ status })).toEqual({
+        abnormal: false,
+        tone: "muted",
+        label: status,
+        error: undefined,
+      });
+    },
+  );
+
   it("flags the timed-out tool attempt as abnormal with a warn tone", () => {
     const detail = buildTurnDetails(asExplanation(toolTimeoutRetry))[0];
     const attempt1 = detail.stages.find((s) => s.operationId === "op-tool-attempt-1");
