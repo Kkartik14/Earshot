@@ -603,6 +603,23 @@ def test_validate_explanation_rejects_changed_operation_source_fields() -> None:
     }
 
 
+def test_validate_explanation_rejects_duplicate_operation() -> None:
+    bundle = _fault("tool_timeout_retry")
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    [turn] = explanation.turns
+    tampered_turn = turn.model_copy(
+        update={"operations": (*turn.operations, turn.operations[0])}
+    )
+    tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_explanation(bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_OPERATION_PLACEMENT_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)

@@ -2458,6 +2458,17 @@ def validate_explanation(
 
     # Completeness: the union of turn-owned and unassigned operations must be
     # exactly the source operation set. Nothing is silently dropped or invented.
+    seen_operation_ids: set[str] = set()
+    for operation_index, operation_id in enumerate(projected_operation_ids):
+        if operation_id in seen_operation_ids:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_OPERATION_PLACEMENT_MISMATCH",
+                    path=("explanation", "operations", operation_index),
+                    message="source operation appears more than once in the explanation",
+                )
+            )
+        seen_operation_ids.add(operation_id)
     projected_set = set(projected_operation_ids)
     for _missing in sorted(operation_ids - projected_set):
         issues.append(
