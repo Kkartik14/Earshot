@@ -25,13 +25,14 @@ from __future__ import annotations
 
 import contextlib
 import math
+import time
 import uuid
 import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from typing import Any
 
-from .clock import ManualClock
+from .clock import Clock
 from .contract import (
     Adapter,
     Evidence,
@@ -50,6 +51,29 @@ from .versions import PIPELINE_ADAPTER_VERSION
 _MS_TO_NANO = 1_000_000
 _USER = "participant-user"
 _AGENT = "participant-agent"
+
+
+class _LifecycleClock:
+    """Real elapsed clock whose wall origin may be supplied by the caller."""
+
+    def __init__(self, wall_origin_nano: int) -> None:
+        self._wall_origin_nano = wall_origin_nano
+        self._monotonic_origin_nano: int | None = None
+
+    def _elapsed_nano(self) -> int:
+        now = time.monotonic_ns()
+        if self._monotonic_origin_nano is None:
+            self._monotonic_origin_nano = now
+            return 0
+        return now - self._monotonic_origin_nano
+
+    def unix_nano(self) -> int:
+        return self._wall_origin_nano + self._elapsed_nano()
+
+    def monotonic_nano(self) -> int:
+        if self._monotonic_origin_nano is None:
+            self._monotonic_origin_nano = time.monotonic_ns()
+        return time.monotonic_ns()
 
 
 def _confidence_source(confidence: str) -> str:
@@ -537,13 +561,18 @@ class PipelineSession:
         started_at_unix_nano: int | None = None,
         producer_name: str = "earshot.pipeline",
         config: RecorderConfig | None = None,
+        clock: Clock | None = None,
     ) -> None:
-        import time as _time
-
-        self.start_wall_nano = (
-            started_at_unix_nano if started_at_unix_nano is not None else _time.time_ns()
-        )
-        self._clock = ManualClock(wall=self.start_wall_nano, monotonic=0)
+        if clock is not None and started_at_unix_nano is not None:
+            raise ValueError("clock and started_at_unix_nano are mutually exclusive")
+        if clock is None:
+            self.start_wall_nano = (
+                started_at_unix_nano if started_at_unix_nano is not None else time.time_ns()
+            )
+            self._clock: Clock = _LifecycleClock(self.start_wall_nano)
+        else:
+            self._clock = clock
+            self.start_wall_nano = clock.unix_nano()
         resolved_session_id = session_id or f"session-{uuid.uuid4().hex}"
         (
             runtime_config,
@@ -643,21 +672,11 @@ class PipelineSession:
     def close(self, status: str = "completed") -> IncidentBundle:
         """Finalize and return the immutable incident for ingestion or analysis.
 
-        The session lifecycle spans only observed activity. When no turn observed
-        any timing, the session end equals its start and an explicit
-        ``session.timeline`` not-observed coverage records that the conversation
-        duration was never seen — it is never fabricated from latency scalars.
+        Session duration comes from the lifecycle clock. Turn-relative offsets and
+        provider latency scalars never advance that clock or determine session end.
         """
 
         if not self._closed:
-            if self._cursor_nano <= 0:
-                self.recorder.record_coverage(
-                    "session.timeline",
-                    "not_observed",
-                    "conversation_timeline_not_observed",
-                )
-            else:
-                self._clock.advance(self._cursor_nano)
             self._closed = True
         return self.recorder.close(status=status)
 
@@ -670,6 +689,7 @@ def pipeline(
     started_at_unix_nano: int | None = None,
     producer_name: str = "earshot.pipeline",
     config: RecorderConfig | None = None,
+    clock: Clock | None = None,
 ) -> PipelineSession:
     """Start a provider-neutral pipeline capture session.
 
@@ -685,4 +705,5 @@ def pipeline(
         started_at_unix_nano=started_at_unix_nano,
         producer_name=producer_name,
         config=config,
+        clock=clock,
     )

@@ -8,6 +8,7 @@ import pytest
 
 import earshot
 from earshot.analysis import analyze_incident
+from earshot.clock import ManualClock
 from earshot.codec import analysis_input_sha256, encode_incident_protobuf
 from earshot.storage import IncidentStore
 from earshot.validation import validate_incident
@@ -203,21 +204,24 @@ def test_failed_turn_does_not_reuse_its_clock_origin() -> None:
     )
 
 
-def test_scalars_only_session_reports_no_fabricated_duration() -> None:
-    sess = earshot.pipeline(session_id="scalars-only", started_at_unix_nano=START)
+def test_session_duration_comes_from_its_lifecycle_clock_not_latency_scalars() -> None:
+    clock = ManualClock(wall=START, monotonic=8_000_000_000)
+    sess = earshot.pipeline(session_id="scalars-only", clock=clock)
     for _ in range(2):
         with sess.turn() as turn:
             turn.stt("deepgram", ttfb_ms=180)
             turn.llm("openai", ttft_ms=350, completion_ms=600)
             turn.tts("cartesia", ttfb_ms=90)
+    clock.advance(275_000_000)
     bundle = sess.close()
 
     session = bundle.profile.session
-    # No observed offsets were supplied, so the conversation duration is unknown
-    # and must never be summed from latency scalars (old behaviour: ~2740 ms).
-    assert session.ended_at.monotonic_time_nano == session.started_at.monotonic_time_nano
+    # The lifecycle elapsed by 275 ms. Provider scalars neither inflate that to
+    # their sum (old behaviour: ~2740 ms) nor collapse it to zero.
+    assert int(session.ended_at.monotonic_time_nano) == 275_000_000
+    assert int(session.ended_at.source_time_unix_nano) == START + 275_000_000
     coverage = {(item.signal, item.availability) for item in bundle.profile.coverage}
-    assert ("session.timeline", "not_observed") in coverage
+    assert ("session.timeline", "not_observed") not in coverage
 
 
 def test_no_synthetic_inter_turn_gap() -> None:
