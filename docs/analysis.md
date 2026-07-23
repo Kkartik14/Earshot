@@ -75,10 +75,13 @@ Provider TTFT/TTFB can project a point only when its semantics are known. LiveKi
 RealtimeModelMetrics TTFT is first audio token, so it authors first-audio-generated and
 never a text-token fact. The response metric uses the strongest available boundary and
 labels a fallback `receive_estimate`, `transport_estimate`, or `tts_estimate`.
-Failed, timed-out, cancelled, or errored operations never author synthetic endpointing,
-provider-output, transport, receive, or render boundaries. A provider duration also
-cannot project beyond a comparable recorded operation end. Derived latency confidence
-is the weakest of clock certainty and both boundary evidence records.
+Operation-derived boundaries fail closed to the known `ok`, `completed`, and OTel
+`unset` statuses; other status spellings never author synthetic endpointing,
+provider-output, transport, receive, or render boundaries. When stream ownership is
+present, user anchors require an input stream and audio-response facts require an output
+stream; generic transport fallbacks require an explicit output stream. A provider
+duration also cannot project beyond a comparable recorded operation end. Derived
+latency confidence is the weakest of clock certainty and both boundary evidence records.
 When a turn anchor is absent, or preemptive generation makes a same-clock point precede
 turn commitment, equivalent LiveKit/Pipecat LLM TTFT and TTS TTFB measurements feed the
 same derived first-token/first-audio projections. Their native measurement names remain

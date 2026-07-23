@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -29,7 +29,7 @@ from .versions import ANALYZER_VERSION
 
 ANALYZER_NAME = "earshot.deterministic"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
-_NON_SUCCESS_BOUNDARY_STATUSES = frozenset({"cancelled", "error", "failed", "timeout"})
+_SUCCESS_BOUNDARY_STATUSES = frozenset({"completed", "ok", "unset"})
 _CONFIDENCE_RANK = {
     "measured": 0,
     "estimated": 1,
@@ -87,6 +87,18 @@ def _order_by_comparable_time(
         coordinate=lambda item: _comparable_coordinate(point(item)),
         identity=identity,
     )
+
+
+def _matches_stream_direction(
+    value: Operation | Event,
+    stream_directions: Mapping[str, str],
+    expected_direction: str,
+    *,
+    require_explicit: bool = False,
+) -> bool:
+    if value.stream_id is None:
+        return not require_explicit
+    return stream_directions.get(value.stream_id) == expected_direction
 
 
 @dataclass(frozen=True)
@@ -275,7 +287,7 @@ def _first_provider_latency_event(
         event
         for operation in operations
         if operation.operation_name in operation_names
-        if operation.status not in _NON_SUCCESS_BOUNDARY_STATUSES
+        if operation.status in _SUCCESS_BOUNDARY_STATUSES
         if (event := _provider_latency_event(operation, event_name, attribute_names)) is not None
     ]
     return _earliest_event(candidates, {event_name})
@@ -462,8 +474,7 @@ def _first_operation(operations: Sequence[Operation], names: set[str]) -> Operat
     candidates = [
         operation
         for operation in operations
-        if operation.operation_name in names
-        and operation.status not in _NON_SUCCESS_BOUNDARY_STATUSES
+        if operation.operation_name in names and operation.status in _SUCCESS_BOUNDARY_STATUSES
     ]
     if not candidates:
         return None
@@ -651,20 +662,35 @@ def _turn_projection(
     operations: Sequence[Operation],
     events: Sequence[Event],
     quality_samples: Sequence[QualitySample] = (),
+    stream_directions: Mapping[str, str] | None = None,
 ) -> dict:
-    committed = _earliest_event(events, {"earshot.turn.committed"})
-    speech_ended = _earliest_event(events, {"earshot.speech.ended"})
+    directions = stream_directions or {}
+    input_events = tuple(
+        event for event in events if _matches_stream_direction(event, directions, "input")
+    )
+    output_events = tuple(
+        event for event in events if _matches_stream_direction(event, directions, "output")
+    )
+    committed = _earliest_event(input_events, {"earshot.turn.committed"})
+    speech_ended = _earliest_event(input_events, {"earshot.speech.ended"})
     anchor = committed or speech_ended
     if anchor is None:
-        turn_detection = _first_operation(operations, {"turn_detection"})
+        turn_detection = _first_operation(
+            tuple(
+                operation
+                for operation in operations
+                if _matches_stream_direction(operation, directions, "input")
+            ),
+            {"turn_detection"},
+        )
         if turn_detection is not None:
             anchor = _operation_end_event(turn_detection, "earshot.turn.committed")
 
     first_token = _earliest_event(events, {"earshot.response.first_token"})
-    generated = _earliest_event(events, {"earshot.response.first_audio_generated"})
-    sent = _earliest_event(events, {"earshot.audio.first_byte_sent"})
-    received = _earliest_event(events, {"earshot.audio.first_packet_received"})
-    rendered = _earliest_event(events, {"earshot.audio.render.started"})
+    generated = _earliest_event(output_events, {"earshot.response.first_audio_generated"})
+    sent = _earliest_event(output_events, {"earshot.audio.first_byte_sent"})
+    received = _earliest_event(output_events, {"earshot.audio.first_packet_received"})
+    rendered = _earliest_event(output_events, {"earshot.audio.render.started"})
 
     # Explicit events are highest fidelity. A provider TTFT/TTFB duration can be
     # projected from operation start, but operation start alone is never treated
@@ -681,28 +707,63 @@ def _turn_projection(
     generated_is_provider_projection = False
     if generated is None:
         generated = _first_provider_latency_event(
-            operations,
+            tuple(
+                operation
+                for operation in operations
+                if _matches_stream_direction(operation, directions, "output")
+            ),
             {"tts"},
             "earshot.response.first_audio_generated",
             ("lk.response.ttfb", "metrics.ttfb"),
         )
         generated_is_provider_projection = generated is not None
     if sent is None:
-        transport = _first_operation(operations, {"transport_send"})
+        transport = _first_operation(
+            tuple(
+                operation
+                for operation in operations
+                if _matches_stream_direction(
+                    operation,
+                    directions,
+                    "output",
+                    require_explicit=True,
+                )
+            ),
+            {"transport_send"},
+        )
         sent = (
             _operation_start_event(transport, "earshot.audio.first_byte_sent")
             if transport
             else None
         )
     if received is None:
-        transport = _first_operation(operations, {"transport_receive"})
+        transport = _first_operation(
+            tuple(
+                operation
+                for operation in operations
+                if _matches_stream_direction(
+                    operation,
+                    directions,
+                    "output",
+                    require_explicit=True,
+                )
+            ),
+            {"transport_receive"},
+        )
         received = (
             _operation_start_event(transport, "earshot.audio.first_packet_received")
             if transport
             else None
         )
     if rendered is None:
-        render = _first_operation(operations, {"render"})
+        render = _first_operation(
+            tuple(
+                operation
+                for operation in operations
+                if _matches_stream_direction(operation, directions, "output")
+            ),
+            {"render"},
+        )
         rendered = (
             _operation_start_event(render, "earshot.audio.render.started") if render else None
         )
@@ -852,6 +913,7 @@ def analyze_incident(
     turn_events: dict[str, list[Event]] = defaultdict(list)
     turn_quality: dict[str, list[QualitySample]] = defaultdict(list)
     unassigned_quality: list[QualitySample] = []
+    stream_directions = {stream.stream_id: stream.direction for stream in profile.audio_streams}
     operation_turns = _operation_turn_ids(profile.operations)
     operation_by_otel = {
         (operation.trace_id, operation.span_id): operation
@@ -913,6 +975,7 @@ def analyze_incident(
             tuple(turn_operations[turn_id]),
             tuple(turn_events[turn_id]),
             tuple(turn_quality[turn_id]),
+            stream_directions,
         )
         for turn_id in ordered_turn_ids
     ]
@@ -938,8 +1001,15 @@ def analyze_incident(
         for entry in profile.coverage
         if entry.signal in {"render", "client.render"}
     }
-    has_render = any(item.operation_name == "render" for item in profile.operations) or any(
-        item.event_name == "earshot.audio.render.started" for item in profile.events
+    has_render = any(
+        item.operation_name == "render"
+        and item.status in _SUCCESS_BOUNDARY_STATUSES
+        and _matches_stream_direction(item, stream_directions, "output")
+        for item in profile.operations
+    ) or any(
+        item.event_name == "earshot.audio.render.started"
+        and _matches_stream_direction(item, stream_directions, "output")
+        for item in profile.events
     )
     limitations: list[str] = []
     if not has_render:

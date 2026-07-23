@@ -489,6 +489,148 @@ def test_failed_operation_does_not_author_output_boundary(
     assert metric(result, metric_name)["availability"] == "not_observed"
 
 
+@pytest.mark.parametrize("status", ("canceled", "cancelled", "timed_out", "unknown"))
+def test_non_success_status_spelling_fails_closed(valid_bundle, status: str) -> None:
+    operations = tuple(
+        operation.model_copy(update={"status": status})
+        if operation.operation_name == "render"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.audio.render.started"
+    )
+
+    result = analyze(replace_profile(valid_bundle, operations=operations, events=events))
+
+    assert metric(result, "render_start_response_latency")["availability"] == "not_observed"
+
+
+def test_input_stream_transport_cannot_author_response_boundary(valid_bundle) -> None:
+    operations = tuple(
+        operation.model_copy(
+            update={
+                "participant_id": "participant-user",
+                "stream_id": "stream-input",
+                "started_at": point(1_100_000_000),
+                "ended_at": point(1_200_000_000),
+            }
+        )
+        if operation.operation_name == "transport_send"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name
+        not in {
+            "earshot.response.first_audio_generated",
+            "earshot.audio.first_byte_sent",
+            "earshot.audio.first_packet_received",
+            "earshot.audio.render.started",
+        }
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "sent_response_latency")["availability"] == "not_observed"
+    assert metric(result, "response_latency")["basis"] != "transport_estimate"
+
+
+def test_input_stream_output_event_cannot_author_response_boundary(valid_bundle) -> None:
+    wrong_direction = next(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name == "earshot.audio.first_byte_sent"
+    ).model_copy(
+        update={
+            "operation_id": None,
+            "participant_id": "participant-user",
+            "stream_id": "stream-input",
+        }
+    )
+    events = tuple(
+        wrong_direction if event.event_id == wrong_direction.event_id else event
+        for event in valid_bundle.profile.events
+    )
+    operations = tuple(
+        operation.model_copy(update={"status": "failed"})
+        if operation.operation_name == "transport_send"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    bundle = replace_profile(valid_bundle, operations=operations, events=events)
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "sent_response_latency")["availability"] == "not_observed"
+
+
+def test_output_stream_speech_end_cannot_anchor_user_turn(valid_bundle) -> None:
+    speech_end = next(
+        event for event in valid_bundle.profile.events if event.event_name == "earshot.speech.ended"
+    ).model_copy(
+        update={
+            "operation_id": None,
+            "participant_id": "participant-agent",
+            "stream_id": "stream-output",
+        }
+    )
+    events = tuple(
+        speech_end if event.event_id == speech_end.event_id else event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.turn.committed"
+    )
+    operations = tuple(
+        operation.model_copy(update={"status": "failed"})
+        if operation.operation_name == "turn_detection"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    bundle = replace_profile(valid_bundle, operations=operations, events=events)
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
+def test_output_stream_turn_detection_cannot_anchor_user_turn(valid_bundle) -> None:
+    operations = tuple(
+        operation.model_copy(
+            update={
+                "participant_id": "participant-agent",
+                "stream_id": "stream-output",
+            }
+        )
+        if operation.operation_name == "turn_detection"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name not in {"earshot.turn.committed", "earshot.speech.ended"}
+    )
+    bundle = replace_profile(valid_bundle, operations=operations, events=events)
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
 @pytest.mark.parametrize(
     ("operation_name", "event_name", "metric_name"),
     (
