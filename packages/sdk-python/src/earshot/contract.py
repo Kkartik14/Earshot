@@ -513,7 +513,11 @@ class AnalysisMetric(AnalysisContractModel):
 
 class ToolAnalysis(AnalysisContractModel):
     operation_count: StrictInt = Field(ge=0)
+    timed_operation_count: StrictInt = Field(default=0, ge=0)
+    untimed_operation_count: StrictInt = Field(default=0, ge=0)
     total_work_ms: StrictFloat = Field(ge=0)
+    total_work_completeness: Literal["complete", "partial", "unavailable"] = "complete"
+    limitation: SemanticCode | None = None
     elapsed_ms_by_clock_domain: dict[str, StrictFloat] = Field(default_factory=dict)
     evidence_ids: tuple[OpaqueId, ...] = ()
 
@@ -523,10 +527,32 @@ class ToolAnalysis(AnalysisContractModel):
             raise ValueError("tool evidence IDs must be unique")
         if self.operation_count != len(self.evidence_ids):
             raise ValueError("tool operation_count must equal cited operation evidence")
+        duration_count = self.timed_operation_count + self.untimed_operation_count
+        if duration_count not in {0, self.operation_count}:
+            raise ValueError("tool duration counts must cover every cited operation")
         if self.operation_count == 0 and (
-            self.total_work_ms != 0 or self.elapsed_ms_by_clock_domain
+            self.total_work_ms != 0
+            or self.elapsed_ms_by_clock_domain
+            or self.timed_operation_count != 0
+            or self.untimed_operation_count != 0
         ):
             raise ValueError("empty tool analysis cannot assert elapsed work")
+        if self.total_work_completeness == "complete":
+            if self.untimed_operation_count or self.limitation is not None:
+                raise ValueError("complete tool work cannot carry missing intervals")
+        elif self.total_work_completeness == "partial":
+            if (
+                self.timed_operation_count == 0
+                or self.untimed_operation_count == 0
+                or self.limitation is None
+            ):
+                raise ValueError("partial tool work requires known and unknown intervals")
+        elif (
+            self.timed_operation_count != 0
+            or self.untimed_operation_count == 0
+            or self.limitation is None
+        ):
+            raise ValueError("unavailable tool work requires only unknown intervals")
         return self
 
 

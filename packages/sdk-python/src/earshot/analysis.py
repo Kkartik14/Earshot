@@ -549,7 +549,15 @@ def _interval_nanos(operation: Operation) -> int | None:
 def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
     tools = [item for item in operations if item.operation_name == "tool"]
     durations = [(item, _interval_nanos(item)) for item in tools]
+    timed_operation_count = sum(value is not None for _, value in durations)
+    untimed_operation_count = len(durations) - timed_operation_count
     total = sum(value for _, value in durations if value is not None)
+    if untimed_operation_count == 0:
+        total_work_completeness = "complete"
+    elif timed_operation_count:
+        total_work_completeness = "partial"
+    else:
+        total_work_completeness = "unavailable"
 
     # Calculate union wall time only within comparable clock domains. Intervals in
     # different domains remain separate rather than inventing a global critical path.
@@ -592,12 +600,18 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
         key = domain if basis_count[domain] == 1 else f"{domain}:{basis}"
         elapsed_by_domain[key] = sum(end - start for start, end in merged) / 1_000_000
 
-    return {
+    output: dict[str, object] = {
         "operation_count": len(tools),
+        "timed_operation_count": timed_operation_count,
+        "untimed_operation_count": untimed_operation_count,
         "total_work_ms": total / 1_000_000,
+        "total_work_completeness": total_work_completeness,
         "elapsed_ms_by_clock_domain": elapsed_by_domain,
         "evidence_ids": sorted(item.operation_id for item in tools),
     }
+    if untimed_operation_count:
+        output["limitation"] = "incomplete_tool_intervals"
+    return output
 
 
 def _provider_stage_latency_fallback(

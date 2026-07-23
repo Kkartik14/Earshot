@@ -2022,6 +2022,27 @@ def validate_derived_analysis(
                     )
                 )
 
+    def source_interval_nanos(operation: Operation) -> int | None:
+        if operation.ended_at is None or operation.started_at.clock_domain_id is None:
+            return None
+        if operation.ended_at.clock_domain_id != operation.started_at.clock_domain_id:
+            return None
+        if (
+            operation.started_at.monotonic_time_nano is not None
+            and operation.ended_at.monotonic_time_nano is not None
+        ):
+            start = int(operation.started_at.monotonic_time_nano)
+            end = int(operation.ended_at.monotonic_time_nano)
+        elif (
+            operation.started_at.source_time_unix_nano is not None
+            and operation.ended_at.source_time_unix_nano is not None
+        ):
+            start = int(operation.started_at.source_time_unix_nano)
+            end = int(operation.ended_at.source_time_unix_nano)
+        else:
+            return None
+        return end - start if end >= start else None
+
     projected_operations: set[str] = set()
     projected_events: set[str] = set()
     projected_turns: set[str] = set()
@@ -2104,12 +2125,56 @@ def validate_derived_analysis(
                 turn.turn_id,
                 turn_path + ("metrics", metric_name, "evidence_ids"),
             )
+        tool_analysis = turn.metrics.tools
+        source_tools = sorted(
+            (
+                operation
+                for operation in operations.values()
+                if operation.operation_name == "tool"
+                and operation_turns.get(operation.operation_id) == turn.turn_id
+            ),
+            key=lambda operation: operation.operation_id,
+        )
+        expected_tool_ids = tuple(operation.operation_id for operation in source_tools)
+        source_tool_durations = tuple(
+            source_interval_nanos(operation) for operation in source_tools
+        )
+        expected_timed_count = sum(value is not None for value in source_tool_durations)
+        expected_untimed_count = len(source_tools) - expected_timed_count
+        if expected_untimed_count == 0:
+            expected_completeness = "complete"
+            expected_limitation = None
+        elif expected_timed_count:
+            expected_completeness = "partial"
+            expected_limitation = "incomplete_tool_intervals"
+        else:
+            expected_completeness = "unavailable"
+            expected_limitation = "incomplete_tool_intervals"
+        expected_total_work_ms = (
+            sum(value for value in source_tool_durations if value is not None) / 1_000_000
+        )
+        if (
+            tuple(tool_analysis.evidence_ids) != expected_tool_ids
+            or tool_analysis.operation_count != len(source_tools)
+            or tool_analysis.timed_operation_count != expected_timed_count
+            or tool_analysis.untimed_operation_count != expected_untimed_count
+            or tool_analysis.total_work_ms != expected_total_work_ms
+            or tool_analysis.total_work_completeness != expected_completeness
+            or tool_analysis.limitation != expected_limitation
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_ANALYSIS_TOOL_MISMATCH",
+                    path=turn_path + ("metrics", "tools"),
+                    message="tool work projection differs from exact source intervals",
+                )
+            )
         check_refs(
-            turn.metrics.tools.evidence_ids,
+            tool_analysis.evidence_ids,
             operation_ids,
             turn_path + ("metrics", "tools", "evidence_ids"),
         )
-        for tool_index, operation_id in enumerate(turn.metrics.tools.evidence_ids):
+        for tool_index, operation_id in enumerate(tool_analysis.evidence_ids):
             operation = operations.get(operation_id)
             if operation is not None and (
                 operation.operation_name != "tool"

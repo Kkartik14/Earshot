@@ -1001,8 +1001,97 @@ def test_parallel_tool_work_and_elapsed_wall_time_are_separate(valid_bundle) -> 
     bundle = replace_profile(valid_bundle, operations=(*valid_bundle.profile.operations, *tools))
     tool_metrics = metric(analyze(bundle), "tools")
     assert tool_metrics["operation_count"] == 2
+    assert tool_metrics["timed_operation_count"] == 2
+    assert tool_metrics["untimed_operation_count"] == 0
+    assert tool_metrics["total_work_completeness"] == "complete"
+    assert "limitation" not in tool_metrics
     assert tool_metrics["total_work_ms"] == 400.0
     assert tool_metrics["elapsed_ms_by_clock_domain"] == {"server-clock": 300.0}
+
+
+def test_open_tool_duration_is_unavailable_not_observed_zero(valid_bundle) -> None:
+    open_tool = Operation(
+        operation_id="tool-open",
+        session_id="session-1",
+        operation_name="tool",
+        status="unset",
+        started_at=point(1_100_000_000),
+        turn_id="turn-1",
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(*valid_bundle.profile.operations, open_tool),
+    )
+
+    result = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1800000005000000000",
+    )
+    tools = metric(result, "tools")
+
+    assert tools == {
+        "operation_count": 1,
+        "timed_operation_count": 0,
+        "untimed_operation_count": 1,
+        "total_work_ms": 0.0,
+        "total_work_completeness": "unavailable",
+        "limitation": "incomplete_tool_intervals",
+        "elapsed_ms_by_clock_domain": {},
+        "evidence_ids": ["tool-open"],
+    }
+    assert validate_derived_analysis(bundle, result).ok
+
+    [projected_turn] = result.projections.turns
+    forged_tools = projected_turn.metrics.tools.model_copy(
+        update={
+            "timed_operation_count": 1,
+            "untimed_operation_count": 0,
+            "total_work_completeness": "complete",
+            "limitation": None,
+        }
+    )
+    forged_metrics = projected_turn.metrics.model_copy(update={"tools": forged_tools})
+    forged_turn = projected_turn.model_copy(update={"metrics": forged_metrics})
+    forged_projections = result.projections.model_copy(update={"turns": (forged_turn,)})
+    report = validate_derived_analysis(
+        bundle,
+        result.model_copy(update={"projections": forged_projections}),
+    )
+    assert "EARSHOT_ANALYSIS_TOOL_MISMATCH" in {issue.code for issue in report.errors}
+
+
+def test_mixed_tool_durations_report_only_known_work_as_partial(valid_bundle) -> None:
+    known = Operation(
+        operation_id="tool-known",
+        session_id="session-1",
+        operation_name="tool",
+        status="ok",
+        started_at=point(1_100_000_000),
+        ended_at=point(1_200_000_000),
+        turn_id="turn-1",
+    )
+    unknown = known.model_copy(
+        update={
+            "operation_id": "tool-unknown",
+            "status": "unset",
+            "started_at": point(1_300_000_000),
+            "ended_at": None,
+        }
+    )
+    result = analyze(
+        replace_profile(
+            valid_bundle,
+            operations=(*valid_bundle.profile.operations, known, unknown),
+        )
+    )
+    tools = metric(result, "tools")
+
+    assert tools["timed_operation_count"] == 1
+    assert tools["untimed_operation_count"] == 1
+    assert tools["total_work_ms"] == 100.0
+    assert tools["total_work_completeness"] == "partial"
+    assert tools["limitation"] == "incomplete_tool_intervals"
 
 
 def test_failed_retry_attempt_remains_evidence_linked(valid_bundle) -> None:
