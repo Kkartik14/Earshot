@@ -293,7 +293,7 @@ def _operation(
     limitation = "end_boundary_not_observed"
     if value.ended_at is not None:
         end_basis, end_domain, candidate = _coordinate(value.ended_at)
-        if (end_basis, end_domain) != (basis, domain):
+        if domain is None or (end_basis, end_domain) != (basis, domain):
             limitation = "end_boundary_not_comparable"
         elif int(candidate) < int(start):
             limitation = "invalid_negative_interval"

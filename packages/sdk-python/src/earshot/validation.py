@@ -2463,7 +2463,7 @@ def validate_explanation(
         limitation: str | None = "end_boundary_not_observed"
         if source.ended_at is not None:
             end_basis, end_domain, candidate = source_coordinate(source.ended_at)
-            if (end_basis, end_domain) != (basis, domain):
+            if domain is None or (end_basis, end_domain) != (basis, domain):
                 limitation = "end_boundary_not_comparable"
             elif int(candidate) < int(start):
                 limitation = "invalid_negative_interval"
@@ -2731,7 +2731,8 @@ def validate_explanation(
                 return
             end_basis, end_domain, end_value = _coordinate(source.ended_at)
             if (
-                (end_basis, end_domain) != (start_basis, start_domain)
+                start_domain is None
+                or (end_basis, end_domain) != (start_basis, start_domain)
                 or int(end_value) < int(start_value)
                 or operation.end_nano != end_value
                 or operation.duration_nano != str(int(end_value) - int(start_value))

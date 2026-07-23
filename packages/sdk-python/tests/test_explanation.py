@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import earshot
 import earshot.explanation as explanation_module
 from earshot.analysis import ANALYZER_VERSION, analyze_incident
@@ -11,8 +13,10 @@ from earshot.contract import (
     ErrorRecord,
     Event,
     Evidence,
+    Operation,
     QualityMeasurement,
     QualitySample,
+    TimePoint,
     TimeRange,
 )
 from earshot.explanation import ExplainedDiagnosis, ExplainedError, explain_incident
@@ -1203,4 +1207,64 @@ def test_validate_explanation_flags_manufactured_interval() -> None:
 
     report = validate_explanation(bundle, analysis, tampered)
     assert not report.ok
+    assert "EARSHOT_EXPLANATION_MANUFACTURED_INTERVAL" in {issue.code for issue in report.errors}
+
+
+@pytest.mark.parametrize(
+    "timestamp_field",
+    ("source_time_unix_nano", "observed_time_unix_nano"),
+)
+def test_explanation_refuses_domainless_wall_clock_interval(
+    valid_bundle,
+    monkeypatch,
+    timestamp_field: str,
+) -> None:
+    operation = Operation(
+        operation_id=f"op-domainless-{timestamp_field}",
+        session_id=valid_bundle.profile.session.session_id,
+        operation_name="llm",
+        status="ok",
+        started_at=TimePoint(**{timestamp_field: "1000"}),
+        ended_at=TimePoint(**{timestamp_field: "2000"}),
+        turn_id="turn-domainless",
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(operation,),
+        events=(),
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+    analysis = _analyze(bundle)
+    assert validate_derived_analysis(bundle, analysis).ok
+
+    explanation = explain_incident(bundle, analysis)
+
+    [turn] = explanation.turns
+    [explained_operation] = turn.operations
+    assert explained_operation.shape == "point"
+    assert explained_operation.end_nano is None
+    assert explained_operation.duration_nano is None
+    assert explained_operation.limitation == "end_boundary_not_comparable"
+    assert validate_explanation(bundle, analysis, explanation).ok
+
+    fabricated_operation = explained_operation.model_copy(
+        update={
+            "shape": "interval",
+            "end_nano": "2000",
+            "duration_nano": "1000",
+            "limitation": None,
+        }
+    )
+    fabricated = explanation.model_copy(
+        update={"turns": (turn.model_copy(update={"operations": (fabricated_operation,)}),)}
+    )
+    monkeypatch.setattr(
+        explanation_module,
+        "explain_incident",
+        lambda _bundle, _analysis: fabricated,
+    )
+
+    report = validate_explanation(bundle, analysis, fabricated)
+
     assert "EARSHOT_EXPLANATION_MANUFACTURED_INTERVAL" in {issue.code for issue in report.errors}
