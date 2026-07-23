@@ -637,12 +637,76 @@ class InterruptionProjection(AnalysisContractModel):
     evidence_ids: tuple[OpaqueId, ...] = Field(min_length=1)
 
 
+class InterruptionStage(AnalysisContractModel):
+    """One canonical stage of a barge-in teardown, observed or not.
+
+    An observed stage cites a real event/operation/sample and carries the exact
+    coordinate that evidence recorded (never a synthesized timestamp). A stage the
+    artifact does not contain is reported as ``observed=False`` with a
+    ``coverage_reason`` and no coordinate, so absence is coverage, not fabrication.
+    ``outcome`` carries the disposition of the ``tool_outcome`` stage (the tool's
+    ok/error/timeout/cancelled status) and stays ``None`` for every other stage.
+    """
+
+    stage: SemanticCode
+    observed: StrictBool
+    at_nano: DecimalNano | None = None
+    clock_domain_id: OpaqueId | None = None
+    time_basis: SemanticCode | None = None
+    evidence_id: OpaqueId | None = None
+    coverage_reason: SemanticCode | None = None
+    outcome: SemanticCode | None = None
+
+    @model_validator(mode="after")
+    def keeps_observation_coherent(self) -> InterruptionStage:
+        if self.observed:
+            if self.evidence_id is None:
+                raise ValueError("an observed interruption stage must cite evidence")
+            if self.coverage_reason is not None:
+                raise ValueError("an observed interruption stage cannot carry a coverage reason")
+        else:
+            if any(
+                value is not None
+                for value in (
+                    self.at_nano,
+                    self.clock_domain_id,
+                    self.time_basis,
+                    self.evidence_id,
+                    self.outcome,
+                )
+            ):
+                raise ValueError(
+                    "an unobserved interruption stage cannot assert a coordinate, "
+                    "evidence, or outcome"
+                )
+            if self.coverage_reason is None:
+                raise ValueError("an unobserved interruption stage requires a coverage reason")
+        return self
+
+
+class InterruptionChainProjection(AnalysisContractModel):
+    """The ordered causal chain a single turn's interruption produced.
+
+    Every stage in the canonical vocabulary is present exactly once, marked
+    observed or not. ``effectiveness`` is the barge-in latency from the observed
+    overlap to the observed render stop, computed only when both endpoints are
+    comparable (same clock, or a declared calibration aligns them); otherwise it
+    honestly asserts no value.
+    """
+
+    turn_id: OpaqueId
+    classification: Literal["accepted", "ignored", "false", "unknown"]
+    stages: tuple[InterruptionStage, ...] = Field(min_length=1)
+    effectiveness: AnalysisMetric
+
+
 class TurnProjection(AnalysisContractModel):
     turn_id: OpaqueId
     operation_ids: tuple[OpaqueId, ...] = ()
     event_ids: tuple[OpaqueId, ...] = ()
     metrics: TurnMetrics
     interruptions: tuple[InterruptionProjection, ...] = ()
+    interruption_chain: InterruptionChainProjection | None = None
 
 
 class AnalysisSummary(AnalysisContractModel):
