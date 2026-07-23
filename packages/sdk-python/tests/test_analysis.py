@@ -578,6 +578,61 @@ def test_input_owned_linked_operation_cannot_author_response_boundary(valid_bund
     assert metric(result, "sent_response_latency")["availability"] == "not_observed"
 
 
+def test_input_owned_first_token_cannot_author_response_boundary(valid_bundle) -> None:
+    input_token = next(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name == "earshot.response.first_token"
+    ).model_copy(
+        update={
+            "operation_id": None,
+            "participant_id": "participant-user",
+            "stream_id": "stream-input",
+        }
+    )
+    events = tuple(
+        input_token if event.event_id == input_token.event_id else event
+        for event in valid_bundle.profile.events
+    )
+    bundle = replace_profile(valid_bundle, events=events, quality_samples=())
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
+def test_input_owned_llm_duration_cannot_author_first_token(valid_bundle) -> None:
+    operations = tuple(
+        operation.model_copy(
+            update={
+                "participant_id": "participant-user",
+                "stream_id": "stream-input",
+                "attributes": {**operation.attributes, "metrics.ttfb": 0.1},
+            }
+        )
+        if operation.operation_name == "llm"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.response.first_token"
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
 def test_output_stream_speech_end_cannot_anchor_user_turn(valid_bundle) -> None:
     speech_end = next(
         event for event in valid_bundle.profile.events if event.event_name == "earshot.speech.ended"

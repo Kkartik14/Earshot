@@ -83,7 +83,13 @@ def _event(
     provenance: Evidence | None = None,
     domain: str = "server-clock",
 ) -> Event:
-    output_event = any(token in name for token in ("first_audio", "first_byte_sent", "render"))
+    output_event = any(
+        token in name for token in ("first_token", "first_audio", "first_byte_sent", "render")
+    )
+    audio_output_event = any(
+        token in name for token in ("first_audio", "first_byte_sent", "render")
+    )
+    stream_id = "stream-output" if audio_output_event else None if output_event else "stream-input"
     return Event(
         event_id=event_id,
         session_id="session-1",
@@ -91,7 +97,7 @@ def _event(
         time=point(nano, domain=domain),
         operation_id=operation_id,
         participant_id="participant-agent" if output_event else "participant-user",
-        stream_id="stream-output" if output_event else "stream-input",
+        stream_id=stream_id,
         turn_id=turn_id,
         evidence=provenance,
     )

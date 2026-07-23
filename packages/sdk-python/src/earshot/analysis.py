@@ -780,7 +780,7 @@ def _turn_projection(
         if turn_detection is not None:
             anchor = _operation_end_event(turn_detection, "earshot.turn.committed")
 
-    first_token = _earliest_event(events, {"earshot.response.first_token"})
+    first_token = _earliest_event(output_events, {"earshot.response.first_token"})
     generated = _earliest_event(output_events, {"earshot.response.first_audio_generated"})
     sent = _earliest_event(output_events, {"earshot.audio.first_byte_sent"})
     received = _earliest_event(output_events, {"earshot.audio.first_packet_received"})
@@ -792,7 +792,7 @@ def _turn_projection(
     first_token_is_provider_projection = False
     if first_token is None:
         first_token = _first_provider_latency_event(
-            operations,
+            tuple(operation for operation in operations if matches(operation, "output")),
             {"llm"},
             "earshot.response.first_token",
             ("lk.response.ttft", "metrics.ttfb"),
