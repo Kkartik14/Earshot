@@ -863,6 +863,62 @@ def test_turn_id_propagates_through_complete_otel_parent_graph() -> None:
     assert projection["operation_ids"] == ["parent-turn", "child-llm"]
 
 
+def test_external_parent_scope_blocks_turn_inheritance() -> None:
+    from earshot.contract import IncidentProfile
+    from incident_factory import make_valid_bundle
+
+    parent = Operation(
+        operation_id="parent-turn",
+        session_id="session-external-parent",
+        operation_name="turn_detection",
+        status="ok",
+        started_at=point(900_000_000),
+        ended_at=point(1_000_000_000),
+        turn_id="turn-from-parent",
+        trace_id="1" * 32,
+        span_id="3" * 16,
+        parent_scope="external",
+    )
+    external_child = Operation(
+        operation_id="external-child",
+        session_id="session-external-parent",
+        operation_name="llm",
+        status="ok",
+        started_at=point(1_100_000_000),
+        ended_at=point(1_200_000_000),
+        trace_id="1" * 32,
+        span_id="2" * 16,
+        parent_span_id=parent.span_id,
+        parent_scope="external",
+    )
+    descendant = Operation(
+        operation_id="external-descendant",
+        session_id="session-external-parent",
+        operation_name="tts",
+        status="ok",
+        started_at=point(1_300_000_000),
+        ended_at=point(1_400_000_000),
+        trace_id="1" * 32,
+        span_id="4" * 16,
+        parent_span_id=external_child.span_id,
+        parent_scope="internal",
+    )
+    bundle = make_valid_bundle(session_id="session-external-parent")
+    profile = bundle.profile.model_copy(
+        update={
+            "operations": (parent, external_child, descendant),
+            "events": (),
+            "quality_samples": (),
+        }
+    )
+    bundle = bundle.model_copy(update={"profile": IncidentProfile.model_validate(profile)})
+
+    [projection] = analyze(bundle).projections.turns
+
+    assert projection.turn_id == "turn-from-parent"
+    assert projection.operation_ids == ("parent-turn",)
+
+
 def test_combined_livekit_span_and_metric_uses_the_operation_with_provider_ttft(
     bundle_factory,
 ) -> None:

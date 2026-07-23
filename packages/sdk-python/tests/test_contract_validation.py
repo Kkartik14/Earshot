@@ -437,6 +437,17 @@ def test_missing_external_parent_is_preserved(valid_bundle: IncidentBundle) -> N
     assert "EARSHOT_INTERNAL_PARENT_MISSING" not in issue_codes(external_parent)
 
 
+def test_external_parent_scope_cannot_resolve_inside_bundle(
+    valid_bundle: IncidentBundle,
+) -> None:
+    operations = list(valid_bundle.profile.operations)
+    operations[1] = operations[1].model_copy(update={"parent_scope": "external"})
+
+    assert "EARSHOT_EXTERNAL_PARENT_RESOLVES_INTERNAL" in issue_codes(
+        replace_profile(valid_bundle, operations=tuple(operations))
+    )
+
+
 def test_dangling_internal_link_is_rejected(valid_bundle: IncidentBundle) -> None:
     operations = list(valid_bundle.profile.operations)
     operations[1] = operations[1].model_copy(

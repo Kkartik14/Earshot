@@ -1710,7 +1710,16 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
         if operation.parent_span_id is not None and operation.trace_id is not None:
             parent = otel_operations.get((operation.trace_id, operation.parent_span_id))
             if parent is not None:
-                graph[operation.operation_id].add(parent.operation_id)
+                if operation.parent_scope == "external":
+                    issues.append(
+                        ValidationIssue(
+                            code="EARSHOT_EXTERNAL_PARENT_RESOLVES_INTERNAL",
+                            path=base + ("parent_scope",),
+                            message="declared external parent resolves inside this bundle",
+                        )
+                    )
+                else:
+                    graph[operation.operation_id].add(parent.operation_id)
             elif operation.parent_scope == "internal":
                 issues.append(
                     ValidationIssue(
@@ -1941,6 +1950,8 @@ def validate_derived_analysis(
                 break
             if current.turn_id is not None:
                 turn_id = current.turn_id
+                break
+            if current.parent_scope == "external":
                 break
             if current.trace_id is None or current.parent_span_id is None:
                 break

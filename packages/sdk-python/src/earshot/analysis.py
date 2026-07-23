@@ -968,6 +968,8 @@ def _operation_turn_ids(operations: Sequence[Operation]) -> dict[str, str | None
             if current.turn_id is not None:
                 turn_id = current.turn_id
                 break
+            if current.parent_scope == "external":
+                break
             if current.trace_id is None or current.parent_span_id is None:
                 break
             current = by_otel.get((current.trace_id, current.parent_span_id))
