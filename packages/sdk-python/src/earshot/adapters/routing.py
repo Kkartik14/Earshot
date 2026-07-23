@@ -49,6 +49,7 @@ SpanPredicate = Callable[[Any], bool]
 SpanConsumer = Callable[[Any], None]
 LossConsumer = Callable[[str], None]
 SpanIdentity = tuple[int, int]
+_AMBIGUOUS_TRACE = object()
 
 
 def _span_ids(span: Any) -> tuple[int | None, int | None]:
@@ -102,8 +103,8 @@ class SpanSink:
     ) -> None:
         self.route_key = route_key
         self.session_key = session_key
-        self._consume = consume
-        self._on_loss = on_loss
+        self._consume: SpanConsumer | None = consume
+        self._on_loss: LossConsumer | None = on_loss
         self._closed = False
         self._quarantined_span_count = 0
         self._lock = threading.RLock()
@@ -114,7 +115,10 @@ class SpanSink:
         with self._lock:
             if self._closed:
                 return False
-            self._consume(span)
+            consume = self._consume
+            if consume is None:  # pragma: no cover - guarded by _closed
+                return False
+            consume(span)
             return True
 
     def record_loss(self, reason: str) -> None:
@@ -124,14 +128,29 @@ class SpanSink:
             self._quarantined_span_count += 1
             if self._closed:
                 return
+            on_loss = self._on_loss
+            if on_loss is None:  # pragma: no cover - guarded by _closed
+                return
             try:
-                self._on_loss(reason)
+                on_loss(reason)
             except Exception:  # pragma: no cover - adapter callbacks are also fail-open
                 return
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            # A retired route needs only its opaque key and loss counter. Bound
+            # callbacks retain the adapter/recorder (and incident content), so
+            # sever them before the router keeps this sink for late-span safety.
+            self._consume = None
+            self._on_loss = None
+            self.session_key = ""
+
+    def _reset_lock_after_fork(self) -> None:
+        """Make inherited status safe without touching a possibly held lock."""
+
+        self._lock = threading.RLock()
+        self.close()
 
     @property
     def status(self) -> RoutingStatus:
@@ -150,7 +169,8 @@ class SpanRouter:
         self._sinks: dict[str, SpanSink] = {}
         self._retired_sinks: dict[str, SpanSink] = {}
         self._span_to_session: OrderedDict[SpanIdentity, str] = OrderedDict()
-        self._trace_to_session: OrderedDict[int, str] = OrderedDict()
+        self._trace_to_session: OrderedDict[int, str | object] = OrderedDict()
+        self._allow_unscoped_fallback = True
         self._quarantined = 0
         self._stale = False
         self._lock = threading.RLock()
@@ -164,6 +184,10 @@ class SpanRouter:
         with self._lock:
             if self._sinks.get(sink.route_key) is not sink:
                 return
+            # Once registrations turn over, an unknown trace may be a late child
+            # of the retired session. It must never be assigned to a new sole
+            # sink merely because the provider currently has one registration.
+            self._allow_unscoped_fallback = False
             self._sinks.pop(sink.route_key, None)
             if self._route_has_inflight_span_locked(sink.route_key):
                 # Keep only content-free routing identity until every span that
@@ -194,12 +218,14 @@ class SpanRouter:
     def on_start(self, span: Any, parent_context: Any | None) -> None:
         if self._stale or not self._predicate(span):
             return
-        routing_hint = self._resolve_session(parent_context)
-        if routing_hint is None:
-            return
         trace_id, span_id = _span_ids(span)
+        routing_hint = self._resolve_session(parent_context)
         with self._lock:
-            route_key = self._route_key_for_hint_locked(routing_hint)
+            route_key = (
+                self._route_key_for_hint_locked(routing_hint)
+                if routing_hint is not None
+                else self._route_for_unscoped_start_locked(trace_id)
+            )
             if route_key is None:
                 return
             if trace_id is not None and span_id is not None:
@@ -210,8 +236,15 @@ class SpanRouter:
                     _, evicted_route = self._span_to_session.popitem(last=False)
                     if evicted_route not in self._sinks:
                         self._discard_retired_route_locked(evicted_route)
-            if trace_id is not None and trace_id not in self._trace_to_session:
-                self._trace_to_session[trace_id] = route_key
+            if trace_id is not None:
+                if trace_id not in self._trace_to_session:
+                    self._trace_to_session[trace_id] = route_key
+                elif self._trace_to_session[trace_id] != route_key:
+                    # A trace observed in more than one session is not safe for
+                    # hint-free child attribution. Exact span ownership still
+                    # routes correctly; any missing exact entry fails closed.
+                    self._trace_to_session[trace_id] = _AMBIGUOUS_TRACE
+                self._trace_to_session.move_to_end(trace_id)
                 while len(self._trace_to_session) > _MAX_TRACE_MAP:
                     self._trace_to_session.popitem(last=False)
 
@@ -224,10 +257,8 @@ class SpanRouter:
             if trace_id is not None and span_id is not None:
                 route_key = self._span_to_session.pop((trace_id, span_id), None)
             if route_key is None and trace_id is not None:
-                route_key = self._trace_to_session.get(trace_id)
-            if route_key is None and len(self._sinks) == 1:
-                # Unambiguous single session: no attribution needed.
-                route_key = next(iter(self._sinks))
+                learned_route = self._trace_to_session.get(trace_id)
+                route_key = learned_route if isinstance(learned_route, str) else None
             sink = self._sinks.get(route_key) if route_key is not None else None
             retired_sink = self._retired_sinks.get(route_key) if route_key is not None else None
             if sink is None:
@@ -284,6 +315,20 @@ class SpanRouter:
         ]
         return matches[0] if len(matches) == 1 else None
 
+    def _route_for_unscoped_start_locked(self, trace_id: int | None) -> str | None:
+        """Resolve ownership at span start; never infer it from end-time state."""
+
+        if trace_id is not None and trace_id in self._trace_to_session:
+            learned_route = self._trace_to_session[trace_id]
+            if isinstance(learned_route, str) and (
+                learned_route in self._sinks or learned_route in self._retired_sinks
+            ):
+                return learned_route
+            return None
+        if self._allow_unscoped_fallback and len(self._sinks) == 1:
+            return next(iter(self._sinks))
+        return None
+
     def _route_has_inflight_span_locked(self, route_key: str) -> bool:
         return any(key == route_key for key in self._span_to_session.values())
 
@@ -296,6 +341,8 @@ class SpanRouter:
         self._trace_to_session = OrderedDict(
             (trace, key) for trace, key in self._trace_to_session.items() if key != route_key
         )
+        if not self._sinks and not self._retired_sinks:
+            self._trace_to_session.clear()
 
     def _mark_stale(self) -> None:
         self._stale = True
@@ -306,6 +353,18 @@ class SpanRouter:
             self._retired_sinks.clear()
             self._span_to_session.clear()
             self._trace_to_session.clear()
+
+    def _mark_stale_after_fork(self) -> None:
+        """Reset inherited locks/state without acquiring a pre-fork lock."""
+
+        self._lock = threading.RLock()
+        self._stale = True
+        for sink in (*self._sinks.values(), *self._retired_sinks.values()):
+            sink._reset_lock_after_fork()
+        self._sinks.clear()
+        self._retired_sinks.clear()
+        self._span_to_session.clear()
+        self._trace_to_session.clear()
 
 
 # --- process-scoped registry ---------------------------------------------
@@ -354,11 +413,14 @@ def get_router(provider: Any, framework: str, predicate: SpanPredicate) -> SpanR
 
 
 def _reset_after_fork() -> None:
-    with _registry_lock:
-        for per_framework in list(_routers.values()):
-            for router in list(per_framework.values()):
-                router._mark_stale()
-        _routers.clear()
+    # A lock held by a vanished thread can never be acquired in the child.
+    # Replace every inherited lock before touching the associated state.
+    global _registry_lock
+    _registry_lock = threading.RLock()
+    for per_framework in list(_routers.values()):
+        for router in list(per_framework.values()):
+            router._mark_stale_after_fork()
+    _routers.clear()
 
 
 import os  # noqa: E402
@@ -374,15 +436,16 @@ class RoutingHandle:
     callers that treated the return value as a processor keep working.
     """
 
-    __slots__ = ("_router", "_sink")
+    __slots__ = ("_router", "_session_key", "_sink")
 
     def __init__(self, router: SpanRouter, sink: SpanSink) -> None:
         self._router = router
         self._sink = sink
+        self._session_key = sink.session_key
 
     @property
     def session_key(self) -> str:
-        return self._sink.session_key
+        return self._session_key
 
     def close(self) -> None:
         """Remove this session's routing state from the shared provider."""
@@ -400,8 +463,10 @@ class RoutingHandle:
     def session_scope(self):
         """Tag spans started in this scope so they route to this session.
 
-        Required only when multiple sessions share one provider concurrently;
-        a lone session routes without it.
+        Always use this scope when a provider can host concurrent or sequential
+        sessions. Only the provider's first, uninterrupted lone registration
+        can safely route unscoped spans; after registration turnover, unknown
+        traces are quarantined so late children cannot reach a new session.
         """
 
         if not _OTEL:

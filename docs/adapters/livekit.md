@@ -121,8 +121,10 @@ root, and does not replace existing processors or exporters. `session_scope()` u
 an opaque registration key, not the caller's `session_id`, so two active incidents
 may safely have the same external room/session name. Always use the scope: a lone
 session can be routed unambiguously without it, but an unscoped span is quarantined
-as soon as another session shares the provider. Close the handle only after the
-framework has ended its spans and the provider has flushed.
+as soon as another session shares or reuses the provider. After any registration
+turnover, unknown unscoped traces stay quarantined so a late child cannot reach a
+replacement session. Close the handle only after the framework has ended its spans
+and the provider has flushed.
 
 Quarantined spans are never copied into another incident. Each active handle exposes
 content-free health through `handle.status.quarantined_span_count`, and each affected

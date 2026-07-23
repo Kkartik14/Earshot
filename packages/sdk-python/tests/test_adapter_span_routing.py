@@ -9,9 +9,12 @@ forever.
 
 from __future__ import annotations
 
+import gc
 import os
 import select
+import signal
 import threading
+import weakref
 
 import pytest
 
@@ -20,6 +23,7 @@ pytest.importorskip("opentelemetry.sdk.trace")
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SpanProcessor
 from opentelemetry.sdk.trace.id_generator import IdGenerator
+from opentelemetry.trace import use_span
 
 from earshot.adapters import (
     LiveKitAdapter,
@@ -194,6 +198,125 @@ def test_span_ending_after_detach_is_not_delivered_to_the_next_session() -> None
     assert SECRET not in current_bundle.model_dump_json()
 
 
+def test_unscoped_span_ending_after_detach_is_not_delivered_to_next_session() -> None:
+    """Sole-sink fallback at start still records ownership across detach."""
+
+    provider = TracerProvider()
+    retired = LiveKitAdapter(_recorder())
+    retired_handle = retired.attach(provider)
+    late_span = provider.get_tracer("livekit-agents").start_span(
+        "llm_node",
+        attributes={"lk.response.text": SECRET, "lk.room": "retired-unscoped"},
+    )
+
+    retired.detach()
+    current = LiveKitAdapter(_recorder())
+    current.attach(provider)
+    late_span.end()
+
+    assert retired_handle.status.quarantined_span_count == 1
+    assert _span_ids(retired.recorder.close()) == set()
+    current_bundle = current.recorder.close()
+    assert _span_ids(current_bundle) == set()
+    assert SECRET not in current_bundle.model_dump_json()
+
+
+def test_evicted_span_ownership_never_falls_through_to_next_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Capacity pressure degrades to quarantine instead of cross-session delivery."""
+
+    from earshot.adapters import routing
+
+    monkeypatch.setattr(routing, "_MAX_SPAN_STASH", 2)
+    provider = TracerProvider()
+    retired = LiveKitAdapter(_recorder())
+    retired_handle = retired.attach(provider)
+    tracer = provider.get_tracer("livekit-agents")
+    with retired_handle.session_scope():
+        late_span = tracer.start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "retired-evicted"},
+        )
+
+    retired.detach()
+    current = LiveKitAdapter(_recorder())
+    current_handle = current.attach(provider)
+    with current_handle.session_scope():
+        current_spans = [
+            tracer.start_span("llm_node", attributes={"lk.room": f"current-{index}"})
+            for index in range(2)
+        ]
+
+    late_span.end()
+    for span in current_spans:
+        span.end()
+
+    assert _span_ids(retired.recorder.close()) == set()
+    current_bundle = current.recorder.close()
+    expected_current_ids = {
+        format(span.get_span_context().span_id, "016x") for span in current_spans
+    }
+    assert _span_ids(current_bundle) == expected_current_ids
+    assert SECRET not in current_bundle.model_dump_json()
+
+
+def test_unattributed_open_span_stays_quarantined_after_topology_changes() -> None:
+    """An ambiguous start cannot become attributable merely because a sink closes."""
+
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    second = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    second_handle = second.attach(provider)
+    late_span = provider.get_tracer("livekit-agents").start_span(
+        "llm_node",
+        attributes={"lk.response.text": SECRET, "lk.room": "ambiguous"},
+    )
+
+    second.detach()
+    late_span.end()
+
+    assert first_handle.status.quarantined_span_count == 1
+    assert second_handle.status.quarantined_span_count == 0
+    first_bundle = first.recorder.close()
+    assert _span_ids(first_bundle) == set()
+    assert SECRET not in first_bundle.model_dump_json()
+
+
+def test_conflicting_trace_ownership_remains_ambiguous() -> None:
+    """A/B/A observations never relearn a shared trace for hint-free routing."""
+
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    second = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    second_handle = second.attach(provider)
+    root = provider.get_tracer("test-harness").start_span("shared-root")
+    tracer = provider.get_tracer("livekit-agents")
+
+    with use_span(root, end_on_exit=False):
+        for handle, room in (
+            (first_handle, "first"),
+            (second_handle, "second"),
+            (first_handle, "first-again"),
+        ):
+            with handle.session_scope():
+                tracer.start_span("llm_node", attributes={"lk.room": room}).end()
+        tracer.start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "unscoped-child"},
+        ).end()
+    root.end()
+
+    assert first_handle.status.quarantined_span_count == 1
+    assert second_handle.status.quarantined_span_count == 1
+    for adapter in (first, second):
+        bundle = adapter.recorder.close()
+        assert len(bundle.profile.operations) == (2 if adapter is first else 1)
+        assert SECRET not in bundle.model_dump_json()
+
+
 def test_on_end_waiting_behind_detach_cannot_deliver_after_close_returns() -> None:
     """A concurrent OTel end observed after close is quarantined, never delivered."""
 
@@ -291,6 +414,85 @@ def test_fork_retires_inherited_routes_before_child_reattaches() -> None:
         os.close(read_fd)
         inherited.detach()
         inherited.recorder.close()
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "fork") or not hasattr(os, "register_at_fork"),
+    reason="requires POSIX fork hooks",
+)
+@pytest.mark.parametrize("held_lock", ["registry", "router", "sink"])
+def test_fork_reset_never_acquires_a_lock_held_by_a_vanished_thread(held_lock: str) -> None:
+    """The child replaces inherited locks before it touches routing state."""
+
+    from earshot.adapters import routing
+
+    provider = TracerProvider(shutdown_on_exit=False)
+    inherited = LiveKitAdapter(_recorder())
+    inherited_handle = inherited.attach(provider)
+    locks = {
+        "registry": routing._registry_lock,
+        "router": inherited_handle._router._lock,
+        "sink": inherited_handle._sink._lock,
+    }
+    acquired = threading.Event()
+    release = threading.Event()
+
+    def hold_lock() -> None:
+        with locks[held_lock]:
+            acquired.set()
+            assert release.wait(5)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert acquired.wait(5)
+    read_fd, write_fd = os.pipe()
+    child_pid = os.fork()
+    if child_pid == 0:  # pragma: no cover - assertions run in the parent
+        try:
+            os.close(read_fd)
+            os.write(write_fd, str(inherited_handle.status.active).encode())
+        finally:
+            os.close(write_fd)
+            os._exit(0)
+
+    os.close(write_fd)
+    child_reaped = False
+    try:
+        readable, _, _ = select.select([read_fd], [], [], 3)
+        if not readable:
+            os.kill(child_pid, signal.SIGKILL)
+        waited_pid, wait_status = os.waitpid(child_pid, 0)
+        child_reaped = True
+        assert readable, f"child deadlocked while {held_lock} lock was inherited"
+        assert waited_pid == child_pid
+        assert os.waitstatus_to_exitcode(wait_status) == 0
+        assert os.read(read_fd, 16) == b"False"
+    finally:
+        if not child_reaped:
+            os.kill(child_pid, signal.SIGKILL)
+            os.waitpid(child_pid, 0)
+        os.close(read_fd)
+        release.set()
+        holder.join(5)
+        inherited.detach()
+        inherited.recorder.close()
+
+
+def test_retired_route_does_not_retain_the_adapter() -> None:
+    """Late-span safety keeps only content-free routing state after detach."""
+
+    provider = TracerProvider()
+    adapter = LiveKitAdapter(_recorder())
+    adapter_ref = weakref.ref(adapter)
+    handle = adapter.attach(provider)
+    with handle.session_scope():
+        late_span = provider.get_tracer("livekit-agents").start_span("llm_node")
+
+    adapter.detach()
+    del adapter
+    gc.collect()
+    assert adapter_ref() is None
+    late_span.end()
 
 
 def test_overlapping_traces_with_the_same_span_id_do_not_collide() -> None:

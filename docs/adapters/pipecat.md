@@ -47,8 +47,9 @@ finally:
 
 The scope uses an opaque registration key, so duplicate caller-supplied session IDs
 remain independent. When an unscoped span cannot be assigned while sessions share a
-provider, Earshot quarantines it rather than broadcasting it. Content-free health is
-available as `handle.status.quarantined_span_count`; affected incidents record
+provider—or after the provider has changed registrations—Earshot quarantines it
+rather than assigning a possible late child to the current session. Content-free
+health is available as `handle.status.quarantined_span_count`; affected incidents record
 `pipecat.span.routing=partial` with reason `unattributed_span_quarantined` and never
 retain the dropped span's attributes. `create_span_processor()` now raises an
 explicit migration error because a recorder-bound processor bypasses session
