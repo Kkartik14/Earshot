@@ -337,8 +337,7 @@ def test_explanation_keeps_turn_only_measurement_off_unrelated_operations() -> N
         quality_kind="provider.metric",
         sample_window=TimeRange(
             start=bundle.profile.operations[0].started_at,
-            end=bundle.profile.operations[-1].ended_at
-            or bundle.profile.operations[-1].started_at,
+            end=bundle.profile.operations[-1].ended_at or bundle.profile.operations[-1].started_at,
         ),
         measurements=(
             QualityMeasurement(
@@ -358,9 +357,9 @@ def test_explanation_keeps_turn_only_measurement_off_unrelated_operations() -> N
     explanation = explain_incident(bundle, _analyze(bundle))
 
     [explained_turn] = explanation.turns
-    assert explained_turn.metrics.provider_measurements[
-        "provider.turn_latency"
-    ].evidence_ids == ("quality-turn-only",)
+    assert explained_turn.metrics.provider_measurements["provider.turn_latency"].evidence_ids == (
+        "quality-turn-only",
+    )
     assert all(
         "provider.turn_latency" not in {item.name for item in operation.measurements}
         for operation in explained_turn.operations
@@ -466,9 +465,7 @@ def test_validate_explanation_rejects_changed_operation_status() -> None:
 
     report = validate_explanation(bundle, analysis, tampered)
 
-    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
-        issue.code for issue in report.errors
-    }
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_validate_explanation_rejects_changed_operation_error() -> None:
@@ -500,9 +497,7 @@ def test_validate_explanation_rejects_changed_operation_error() -> None:
 
     report = validate_explanation(bundle, analysis, tampered)
 
-    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
-        issue.code for issue in report.errors
-    }
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_validate_explanation_rejects_changed_causal_link() -> None:
@@ -529,9 +524,7 @@ def test_validate_explanation_rejects_changed_causal_link() -> None:
 
     report = validate_explanation(bundle, analysis, tampered)
 
-    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
-        issue.code for issue in report.errors
-    }
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_validate_explanation_rejects_changed_operation_measurement() -> None:
@@ -564,9 +557,7 @@ def test_validate_explanation_rejects_changed_operation_measurement() -> None:
 
     report = validate_explanation(bundle, analysis, tampered)
 
-    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
-        issue.code for issue in report.errors
-    }
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_validate_explanation_rejects_changed_operation_source_fields() -> None:
@@ -598,9 +589,7 @@ def test_validate_explanation_rejects_changed_operation_source_fields() -> None:
 
     report = validate_explanation(bundle, analysis, tampered)
 
-    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
-        issue.code for issue in report.errors
-    }
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_validate_explanation_rejects_duplicate_operation() -> None:
@@ -608,9 +597,7 @@ def test_validate_explanation_rejects_duplicate_operation() -> None:
     analysis = _analyze(bundle)
     explanation = explain_incident(bundle, analysis)
     [turn] = explanation.turns
-    tampered_turn = turn.model_copy(
-        update={"operations": (*turn.operations, turn.operations[0])}
-    )
+    tampered_turn = turn.model_copy(update={"operations": (*turn.operations, turn.operations[0])})
     tampered = explanation.model_copy(update={"turns": (tampered_turn,)})
 
     report = validate_explanation(bundle, analysis, tampered)
@@ -688,9 +675,7 @@ def test_validate_explanation_rejects_duplicate_event(valid_bundle) -> None:
 
     report = validate_explanation(valid_bundle, analysis, tampered)
 
-    assert "EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH" in {
-        issue.code for issue in report.errors
-    }
+    assert "EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_validate_explanation_rejects_moved_dropped_or_invented_events(
@@ -776,9 +761,7 @@ def test_validate_explanation_rejects_unassigned_measurement_tampering() -> None
         }
     )
     duplicated = explanation.model_copy(
-        update={
-            "unassigned_measurements": (*explanation.unassigned_measurements, source)
-        }
+        update={"unassigned_measurements": (*explanation.unassigned_measurements, source)}
     )
     dropped = explanation.model_copy(
         update={"unassigned_measurements": explanation.unassigned_measurements[1:]}
@@ -812,9 +795,7 @@ def test_validate_explanation_rejects_changed_turn_measurements() -> None:
     [explained_turn] = explanation.turns
     provider_measurements = dict(explained_turn.metrics.provider_measurements)
     source_metric = provider_measurements["earshot.llm.ttft"]
-    provider_measurements["earshot.llm.ttft"] = source_metric.model_copy(
-        update={"value": 1}
-    )
+    provider_measurements["earshot.llm.ttft"] = source_metric.model_copy(update={"value": 1})
     changed_metrics = explained_turn.metrics.model_copy(
         update={"provider_measurements": provider_measurements}
     )
@@ -834,9 +815,7 @@ def test_validate_explanation_rejects_changed_session_source_fields(valid_bundle
 
     report = validate_explanation(valid_bundle, analysis, tampered)
 
-    assert "EARSHOT_EXPLANATION_SOURCE_MISMATCH" in {
-        issue.code for issue in report.errors
-    }
+    assert "EARSHOT_EXPLANATION_SOURCE_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_validate_explanation_flags_dangling_evidence() -> None:
