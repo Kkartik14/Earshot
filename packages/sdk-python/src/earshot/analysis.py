@@ -29,6 +29,13 @@ from .versions import ANALYZER_VERSION
 
 ANALYZER_NAME = "earshot.deterministic"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
+_NON_SUCCESS_BOUNDARY_STATUSES = frozenset({"cancelled", "error", "failed", "timeout"})
+_CONFIDENCE_RANK = {
+    "measured": 0,
+    "estimated": 1,
+    "inferred": 2,
+    "unavailable": 3,
+}
 _T = TypeVar("_T")
 _Coordinate = tuple[str, str, int]
 
@@ -248,8 +255,13 @@ def _provider_latency_event(
         if attribute_name not in operation.attributes:
             continue
         point = _shift_time_point(operation.started_at, operation.attributes[attribute_name])
-        if point is not None:
-            return _operation_point_event(operation, event_name, point)
+        if point is None:
+            continue
+        if operation.ended_at is not None:
+            end_delta = comparable_delta(point, operation.ended_at)
+            if end_delta.availability == "inconsistent":
+                continue
+        return _operation_point_event(operation, event_name, point)
     return None
 
 
@@ -263,6 +275,7 @@ def _first_provider_latency_event(
         event
         for operation in operations
         if operation.operation_name in operation_names
+        if operation.status not in _NON_SUCCESS_BOUNDARY_STATUSES
         if (event := _provider_latency_event(operation, event_name, attribute_names)) is not None
     ]
     return _earliest_event(candidates, {event_name})
@@ -446,7 +459,12 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
 
 
 def _first_operation(operations: Sequence[Operation], names: set[str]) -> Operation | None:
-    candidates = [operation for operation in operations if operation.operation_name in names]
+    candidates = [
+        operation
+        for operation in operations
+        if operation.operation_name in names
+        and operation.status not in _NON_SUCCESS_BOUNDARY_STATUSES
+    ]
     if not candidates:
         return None
     domains = {operation.started_at.clock_domain_id for operation in candidates}
@@ -488,12 +506,23 @@ def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> d
             "evidence_ids": [anchor.event_id],
         }
     output = comparable_delta(anchor.time, target.time).as_dict()
-    if target.attributes.get("earshot.analysis.synthetic_projection") or anchor.attributes.get(
-        "earshot.analysis.synthetic_projection"
-    ):
-        output["confidence"] = "estimated"
-    elif target.evidence and target.evidence.confidence in {"estimated", "inferred"}:
-        output["confidence"] = target.evidence.confidence
+    confidence_candidates = [str(output["confidence"])]
+    for boundary in (anchor, target):
+        if boundary.attributes.get("earshot.analysis.synthetic_projection"):
+            confidence_candidates.append("estimated")
+        if boundary.evidence is not None:
+            confidence_candidates.append(
+                boundary.evidence.confidence
+                if boundary.evidence.availability == "available"
+                else "unavailable"
+            )
+    output["confidence"] = max(
+        (
+            candidate if candidate in _CONFIDENCE_RANK else "unavailable"
+            for candidate in confidence_candidates
+        ),
+        key=lambda candidate: _CONFIDENCE_RANK[candidate],
+    )
     output["basis"] = basis
     output["evidence_ids"] = [anchor.event_id, target.event_id]
     return output
@@ -689,7 +718,7 @@ def _turn_projection(
         else:
             response_basis = "tts_estimate"
 
-    interruption_events = sorted(
+    interruption_events = _order_by_comparable_time(
         (
             event
             for event in events
@@ -700,7 +729,8 @@ def _turn_projection(
                 "earshot.interruption.ignored",
             }
         ),
-        key=lambda event: (event.event_name, event.event_id),
+        point=lambda event: event.time,
+        identity=lambda event: event.event_id,
     )
 
     provider_measurements = _quality_measurements(quality_samples)

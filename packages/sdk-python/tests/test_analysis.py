@@ -18,7 +18,7 @@ from earshot.contract import (
     TimeRange,
 )
 from earshot.explanation import explain_incident
-from earshot.validation import validate_derived_analysis
+from earshot.validation import validate_derived_analysis, validate_incident
 from incident_factory import point
 from test_contract_validation import replace_profile
 
@@ -315,6 +315,44 @@ def test_incomparable_turn_clock_groups_use_canonical_noncausal_order(valid_bund
     assert analyze(permuted) == result
 
 
+def test_interruption_projection_uses_comparable_time_order(valid_bundle) -> None:
+    template = valid_bundle.profile.events[0]
+    detected = template.model_copy(
+        update={
+            "event_id": "evt-interruption-detected",
+            "event_name": "earshot.interruption.detected",
+            "time": point(1_100_000_000),
+            "operation_id": None,
+            "turn_id": "turn-1",
+            "trace_id": None,
+            "span_id": None,
+        }
+    )
+    accepted = detected.model_copy(
+        update={
+            "event_id": "evt-interruption-accepted",
+            "event_name": "earshot.interruption.accepted",
+            "time": point(1_200_000_000),
+        }
+    )
+    base_events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if not event.event_name.startswith("earshot.interruption.")
+    )
+    bundle = replace_profile(valid_bundle, events=(*base_events, accepted, detected))
+
+    result = analyze(bundle)
+    projected = turn(result)["interruptions"]
+
+    assert [item["event_name"] for item in projected] == [
+        "earshot.interruption.detected",
+        "earshot.interruption.accepted",
+    ]
+    permuted = replace_profile(bundle, events=tuple(reversed(bundle.profile.events)))
+    assert analyze(permuted) == result
+
+
 def test_high_fidelity_events_win_over_coarse_operation_starts(valid_bundle) -> None:
     result = analyze(valid_bundle)
     assert metric(result, "first_token_latency")["value"] == 150.0
@@ -395,6 +433,178 @@ def test_provider_ttfb_and_turn_end_create_explicitly_estimated_projection(
     assert metric(result, "response_latency")["value"] == 510.0
     assert metric(result, "response_latency")["basis"] == "transport_estimate"
     assert metric(result, "response_latency")["confidence"] == "estimated"
+
+
+def test_failed_turn_detection_does_not_author_turn_anchor(valid_bundle) -> None:
+    operations = tuple(
+        operation.model_copy(update={"status": "failed"})
+        if operation.operation_name == "turn_detection"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name not in {"earshot.turn.committed", "earshot.speech.ended"}
+    )
+    bundle = replace_profile(valid_bundle, operations=operations, events=events)
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+    assert metric(result, "first_token_latency")["limitation"] == "turn_anchor_not_observed"
+
+
+@pytest.mark.parametrize(
+    ("operation_name", "event_name", "metric_name"),
+    (
+        ("transport_send", "earshot.audio.first_byte_sent", "sent_response_latency"),
+        (
+            "transport_receive",
+            "earshot.audio.first_packet_received",
+            "received_response_latency",
+        ),
+        ("render", "earshot.audio.render.started", "render_start_response_latency"),
+    ),
+)
+def test_failed_operation_does_not_author_output_boundary(
+    valid_bundle,
+    operation_name: str,
+    event_name: str,
+    metric_name: str,
+) -> None:
+    operations = tuple(
+        operation.model_copy(update={"status": "failed"})
+        if operation.operation_name == operation_name
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(event for event in valid_bundle.profile.events if event.event_name != event_name)
+    bundle = replace_profile(valid_bundle, operations=operations, events=events)
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, metric_name)["availability"] == "not_observed"
+
+
+@pytest.mark.parametrize(
+    ("operation_name", "event_name", "metric_name"),
+    (
+        ("llm", "earshot.response.first_token", "first_token_latency"),
+        (
+            "tts",
+            "earshot.response.first_audio_generated",
+            "generated_response_latency",
+        ),
+    ),
+)
+def test_failed_provider_stage_does_not_author_latency_point(
+    valid_bundle,
+    operation_name: str,
+    event_name: str,
+    metric_name: str,
+) -> None:
+    operations = tuple(
+        operation.model_copy(
+            update={
+                "status": "failed",
+                "attributes": {**operation.attributes, "metrics.ttfb": 0.1},
+            }
+        )
+        if operation.operation_name == operation_name
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(event for event in valid_bundle.profile.events if event.event_name != event_name)
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, metric_name)["availability"] == "not_observed"
+
+
+def test_provider_latency_point_cannot_exceed_operation_end(valid_bundle) -> None:
+    operations = tuple(
+        operation.model_copy(update={"attributes": {**operation.attributes, "metrics.ttfb": 1.0}})
+        if operation.operation_name == "llm"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.response.first_token"
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
+def test_latency_confidence_uses_weakest_boundary_evidence(valid_bundle) -> None:
+    anchor = next(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name == "earshot.turn.committed"
+    )
+    inferred_anchor = anchor.model_copy(
+        update={
+            "evidence": Evidence(
+                source="test",
+                observer="server",
+                method="event_callback",
+                confidence="inferred",
+                availability="available",
+            )
+        }
+    )
+    inferred_bundle = replace_profile(
+        valid_bundle,
+        events=tuple(
+            inferred_anchor if event.event_id == anchor.event_id else event
+            for event in valid_bundle.profile.events
+        ),
+    )
+    assert metric(analyze(inferred_bundle), "first_token_latency")["confidence"] == "inferred"
+
+    target = next(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name == "earshot.response.first_token"
+    )
+    unavailable_target = target.model_copy(
+        update={
+            "evidence": Evidence(
+                source="test",
+                observer="server",
+                method="event_callback",
+                confidence="unavailable",
+                availability="available",
+            )
+        }
+    )
+    unavailable_bundle = replace_profile(
+        valid_bundle,
+        events=tuple(
+            unavailable_target if event.event_id == target.event_id else event
+            for event in valid_bundle.profile.events
+        ),
+    )
+    assert metric(analyze(unavailable_bundle), "first_token_latency")["confidence"] == "unavailable"
 
 
 @pytest.mark.parametrize("raw_ttfb", [1e308, 10**1000])
