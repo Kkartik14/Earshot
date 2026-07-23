@@ -2565,6 +2565,16 @@ def validate_explanation(
             evidence_ids,
             ("explanation", "unassigned_measurements", measurement_index, "evidence_ids"),
         )
+    if explanation.unassigned_measurements != expected_explanation.unassigned_measurements:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_UNASSIGNED_MEASUREMENT_MISMATCH",
+                path=("explanation", "unassigned_measurements"),
+                message=(
+                    "unassigned measurements differ from the exact source projection"
+                ),
+            )
+        )
 
     # Diagnoses must mirror the analysis exactly: same identities and fields, with
     # no invented and no dropped findings.

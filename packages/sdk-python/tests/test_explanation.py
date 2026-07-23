@@ -762,6 +762,43 @@ def test_validate_explanation_rejects_moved_dropped_or_invented_events(
         }
 
 
+def test_validate_explanation_rejects_unassigned_measurement_tampering() -> None:
+    bundle = _fault("webrtc_degradation")
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    source = explanation.unassigned_measurements[0]
+    changed = explanation.model_copy(
+        update={
+            "unassigned_measurements": (
+                source.model_copy(update={"value": 0}),
+                *explanation.unassigned_measurements[1:],
+            )
+        }
+    )
+    duplicated = explanation.model_copy(
+        update={
+            "unassigned_measurements": (*explanation.unassigned_measurements, source)
+        }
+    )
+    dropped = explanation.model_copy(
+        update={"unassigned_measurements": explanation.unassigned_measurements[1:]}
+    )
+    invented = explanation.model_copy(
+        update={
+            "unassigned_measurements": (
+                *explanation.unassigned_measurements,
+                source.model_copy(update={"name": "invented.metric"}),
+            )
+        }
+    )
+
+    for tampered in (changed, duplicated, dropped, invented):
+        report = validate_explanation(bundle, analysis, tampered)
+        assert "EARSHOT_EXPLANATION_UNASSIGNED_MEASUREMENT_MISMATCH" in {
+            issue.code for issue in report.errors
+        }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
