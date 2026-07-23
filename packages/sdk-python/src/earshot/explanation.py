@@ -390,8 +390,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
         key=_operation_order,
     )
     unassigned_operations = tuple(
-        _operation(operation, samples)
-        for operation in unassigned_source_operations
+        _operation(operation, samples) for operation in unassigned_source_operations
     )
 
     # Provider scalars the analyzer could not bind to a turn. The analyzer is the

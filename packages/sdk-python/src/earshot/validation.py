@@ -2521,8 +2521,7 @@ def validate_explanation(
         for turn in expected_explanation.turns
     )
     explained_turn_event_layout = tuple(
-        (turn.turn_id, tuple(event.event_id for event in turn.events))
-        for turn in explanation.turns
+        (turn.turn_id, tuple(event.event_id for event in turn.events)) for turn in explanation.turns
     )
     if explained_turn_event_layout != expected_turn_event_layout:
         issues.append(
@@ -2588,9 +2587,7 @@ def validate_explanation(
             ValidationIssue(
                 code="EARSHOT_EXPLANATION_UNASSIGNED_MEASUREMENT_MISMATCH",
                 path=("explanation", "unassigned_measurements"),
-                message=(
-                    "unassigned measurements differ from the exact source projection"
-                ),
+                message=("unassigned measurements differ from the exact source projection"),
             )
         )
 

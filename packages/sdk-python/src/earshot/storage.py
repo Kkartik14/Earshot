@@ -2102,15 +2102,11 @@ class IncidentStore:
                 basis="speech_end_to_transcript_final",
             )
             if stt_finalization is None:
-                provider_stt = metrics.provider_measurements.get(
-                    "earshot.stt.finalization_latency"
-                )
+                provider_stt = metrics.provider_measurements.get("earshot.stt.finalization_latency")
                 provider_basis = "provider_finalization_latency"
                 provider_limitation = "final_transcript_boundary_not_observed"
                 if provider_stt is None:
-                    provider_stt = metrics.provider_measurements.get(
-                        "lk.eou.transcription_delay"
-                    )
+                    provider_stt = metrics.provider_measurements.get("lk.eou.transcription_delay")
                     provider_basis = "provider_transcription_delay"
                     provider_limitation = "provider_defined_transcription_boundary"
                 stt_finalization = (
