@@ -127,7 +127,7 @@
       },
       {
         "attributes": {
-          "earshot.duration.turn_callback_seconds": 2.708984538912773e-06
+          "earshot.duration.turn_callback_seconds": 2.708984538912773e-6
         },
         "capture_class": "metadata",
         "event_id": "captured-livekit-id-0006",
@@ -2380,7 +2380,7 @@
             "attributes": {},
             "name": "earshot.duration.turn_callback_seconds",
             "unit": "s",
-            "value": 2.708984538912773e-06
+            "value": 2.708984538912773e-6
           },
           {
             "aggregation": "instant",
@@ -2449,7 +2449,7 @@
             "attributes": {},
             "name": "livekit.on_user_turn_completed_delay",
             "unit": "s",
-            "value": 2.708984538912773e-06
+            "value": 2.708984538912773e-6
           }
         ],
         "quality_kind": "pipeline.latency",
