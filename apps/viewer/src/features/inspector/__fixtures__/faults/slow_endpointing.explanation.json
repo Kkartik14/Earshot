@@ -44,7 +44,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-vad"]
+          "evidence_ids": [
+            "op-vad"
+          ]
         },
         {
           "operation_id": "op-turn",
@@ -79,7 +81,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-turn"]
+          "evidence_ids": [
+            "op-turn"
+          ]
         }
       ],
       "events": [
@@ -103,7 +107,9 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-speech-ended"]
+          "evidence_ids": [
+            "event-speech-ended"
+          ]
         },
         {
           "event_id": "event-turn-committed",
@@ -125,9 +131,12 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-turn-committed"]
+          "evidence_ids": [
+            "event-turn-committed"
+          ]
         }
       ],
+      "measurements": [],
       "metrics": {
         "first_token_latency": {
           "availability": "not_observed",
@@ -136,7 +145,9 @@
           "value": null,
           "unit": null,
           "limitation": "target_signal_not_observed",
-          "evidence_ids": ["event-turn-committed"]
+          "evidence_ids": [
+            "event-turn-committed"
+          ]
         },
         "generated_response_latency": {
           "availability": "not_observed",
@@ -145,7 +156,9 @@
           "value": null,
           "unit": null,
           "limitation": "target_signal_not_observed",
-          "evidence_ids": ["event-turn-committed"]
+          "evidence_ids": [
+            "event-turn-committed"
+          ]
         },
         "sent_response_latency": {
           "availability": "not_observed",
@@ -154,7 +167,9 @@
           "value": null,
           "unit": null,
           "limitation": "target_signal_not_observed",
-          "evidence_ids": ["event-turn-committed"]
+          "evidence_ids": [
+            "event-turn-committed"
+          ]
         },
         "received_response_latency": {
           "availability": "not_observed",
@@ -163,7 +178,9 @@
           "value": null,
           "unit": null,
           "limitation": "target_signal_not_observed",
-          "evidence_ids": ["event-turn-committed"]
+          "evidence_ids": [
+            "event-turn-committed"
+          ]
         },
         "render_start_response_latency": {
           "availability": "not_observed",
@@ -172,7 +189,9 @@
           "value": null,
           "unit": null,
           "limitation": "target_signal_not_observed",
-          "evidence_ids": ["event-turn-committed"]
+          "evidence_ids": [
+            "event-turn-committed"
+          ]
         },
         "response_latency": {
           "availability": "not_observed",
@@ -181,7 +200,9 @@
           "value": null,
           "unit": null,
           "limitation": "target_signal_not_observed",
-          "evidence_ids": ["event-turn-committed"]
+          "evidence_ids": [
+            "event-turn-committed"
+          ]
         },
         "tools": {
           "operation_count": 0,
@@ -195,7 +216,9 @@
   ],
   "coverage": [],
   "omissions": [],
-  "limitations": ["render_evidence_not_observed"],
+  "limitations": [
+    "render_evidence_not_observed"
+  ],
   "diagnoses": [],
   "unassigned_operations": [],
   "unassigned_events": [],

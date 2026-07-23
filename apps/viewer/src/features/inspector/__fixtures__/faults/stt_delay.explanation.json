@@ -44,7 +44,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-stt"]
+          "evidence_ids": [
+            "op-stt"
+          ]
         },
         {
           "operation_id": "op-llm",
@@ -79,7 +81,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-llm"]
+          "evidence_ids": [
+            "op-llm"
+          ]
         },
         {
           "operation_id": "op-tts",
@@ -114,7 +118,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-tts"]
+          "evidence_ids": [
+            "op-tts"
+          ]
         },
         {
           "operation_id": "op-send",
@@ -149,7 +155,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-send"]
+          "evidence_ids": [
+            "op-send"
+          ]
         },
         {
           "operation_id": "op-receive",
@@ -184,7 +192,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-receive"]
+          "evidence_ids": [
+            "op-receive"
+          ]
         },
         {
           "operation_id": "op-render",
@@ -219,7 +229,9 @@
             "source_field": null
           },
           "measurements": [],
-          "evidence_ids": ["op-render"]
+          "evidence_ids": [
+            "op-render"
+          ]
         }
       ],
       "events": [
@@ -243,7 +255,9 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-first-token"]
+          "evidence_ids": [
+            "event-first-token"
+          ]
         },
         {
           "event_id": "event-first-audio",
@@ -265,7 +279,9 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-first-audio"]
+          "evidence_ids": [
+            "event-first-audio"
+          ]
         },
         {
           "event_id": "event-first-byte",
@@ -287,7 +303,9 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-first-byte"]
+          "evidence_ids": [
+            "event-first-byte"
+          ]
         },
         {
           "event_id": "event-first-packet",
@@ -309,7 +327,9 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-first-packet"]
+          "evidence_ids": [
+            "event-first-packet"
+          ]
         },
         {
           "event_id": "event-render-started",
@@ -331,9 +351,12 @@
             "method_version": "1",
             "source_field": null
           },
-          "evidence_ids": ["event-render-started"]
+          "evidence_ids": [
+            "event-render-started"
+          ]
         }
       ],
+      "measurements": [],
       "metrics": {
         "first_token_latency": {
           "availability": "not_observed",
