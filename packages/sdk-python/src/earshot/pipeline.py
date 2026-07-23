@@ -422,6 +422,21 @@ class TurnRecorder:
             reason=reason,
         )
 
+    def record_coverage(
+        self,
+        signal: str,
+        availability: str,
+        reason: str | None = None,
+    ) -> None:
+        """Ledger what a fact source could or could not observe (session scope).
+
+        A diagnostic engine that drops an interval -- a stat member absent from a
+        snapshot, a non-monotonic counter reset -- records the gap here as an
+        explicit *unknown* rather than fabricating a zero or a negative delta.
+        """
+
+        self._session.recorder.record_coverage(signal, availability, reason)
+
     # -- internals -----------------------------------------------------------
 
     def _operation(

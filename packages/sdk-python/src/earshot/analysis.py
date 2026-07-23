@@ -1489,9 +1489,14 @@ def _network_degraded_diagnoses(
                 (".packet_loss_ratio", "_packet_loss_ratio")
             )
             is_rtt = "round_trip" in name or "roundtrip" in name or name.endswith((".rtt", "_rtt"))
+            # Inter-arrival jitter is the transport signal here; a jitter *buffer*
+            # delay (the de-jitter buffer's own depth) is a distinct, healthy-by-
+            # default quantity that routinely exceeds the inter-arrival SLO, so it
+            # must not be read as excess jitter.
+            is_jitter = "jitter" in name and "buffer" not in name
             if is_packet_loss and value > slo.packet_loss_ratio:
                 breaches.add("packet_loss_ratio_exceeds_slo")
-            elif "jitter" in name and in_ms > slo.jitter_ms:
+            elif is_jitter and in_ms > slo.jitter_ms:
                 breaches.add("jitter_exceeds_slo")
             elif is_rtt and in_ms > slo.round_trip_time_ms:
                 breaches.add("round_trip_time_exceeds_slo")
