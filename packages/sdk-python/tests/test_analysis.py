@@ -662,6 +662,40 @@ def test_output_stream_speech_end_cannot_anchor_user_turn(valid_bundle) -> None:
     assert metric(result, "first_token_latency")["availability"] == "not_observed"
 
 
+def test_unresolved_participant_speech_end_cannot_anchor_user_turn(valid_bundle) -> None:
+    participants = tuple(
+        participant.model_copy(update={"role": "peer"})
+        if participant.participant_id == "participant-user"
+        else participant
+        for participant in valid_bundle.profile.participants
+    )
+    speech_end = next(
+        event for event in valid_bundle.profile.events if event.event_name == "earshot.speech.ended"
+    ).model_copy(update={"operation_id": None, "stream_id": None})
+    events = tuple(
+        speech_end if event.event_id == speech_end.event_id else event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.turn.committed"
+    )
+    operations = tuple(
+        operation.model_copy(update={"status": "failed"})
+        if operation.operation_name == "turn_detection"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        participants=participants,
+        operations=operations,
+        events=events,
+    )
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
 def test_output_stream_turn_detection_cannot_anchor_user_turn(valid_bundle) -> None:
     operations = tuple(
         operation.model_copy(
@@ -816,6 +850,11 @@ def test_latency_confidence_uses_weakest_boundary_evidence(valid_bundle) -> None
         for event in valid_bundle.profile.events
         if event.event_name == "earshot.turn.committed"
     )
+    target = next(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name == "earshot.response.first_token"
+    )
     inferred_anchor = anchor.model_copy(
         update={
             "evidence": Evidence(
@@ -827,20 +866,29 @@ def test_latency_confidence_uses_weakest_boundary_evidence(valid_bundle) -> None
             )
         }
     )
+    measured_target = target.model_copy(
+        update={
+            "evidence": Evidence(
+                source="test",
+                observer="server",
+                method="event_callback",
+                confidence="measured",
+                availability="available",
+            )
+        }
+    )
+    inferred_boundaries = {
+        anchor.event_id: inferred_anchor,
+        target.event_id: measured_target,
+    }
     inferred_bundle = replace_profile(
         valid_bundle,
         events=tuple(
-            inferred_anchor if event.event_id == anchor.event_id else event
-            for event in valid_bundle.profile.events
+            inferred_boundaries.get(event.event_id, event) for event in valid_bundle.profile.events
         ),
     )
     assert metric(analyze(inferred_bundle), "first_token_latency")["confidence"] == "inferred"
 
-    target = next(
-        event
-        for event in valid_bundle.profile.events
-        if event.event_name == "earshot.response.first_token"
-    )
     unavailable_target = target.model_copy(
         update={
             "evidence": Evidence(
@@ -852,14 +900,32 @@ def test_latency_confidence_uses_weakest_boundary_evidence(valid_bundle) -> None
             )
         }
     )
+    measured_anchor = anchor.model_copy(update={"evidence": measured_target.evidence})
+    unavailable_boundaries = {
+        anchor.event_id: measured_anchor,
+        target.event_id: unavailable_target,
+    }
     unavailable_bundle = replace_profile(
         valid_bundle,
         events=tuple(
-            unavailable_target if event.event_id == target.event_id else event
+            unavailable_boundaries.get(event.event_id, event)
             for event in valid_bundle.profile.events
         ),
     )
     assert metric(analyze(unavailable_bundle), "first_token_latency")["confidence"] == "unavailable"
+
+
+def test_latency_confidence_is_unavailable_without_boundary_evidence(valid_bundle) -> None:
+    events = tuple(
+        event.model_copy(update={"evidence": None})
+        if event.event_name == "earshot.turn.committed"
+        else event
+        for event in valid_bundle.profile.events
+    )
+    bundle = replace_profile(valid_bundle, events=events)
+    assert validate_incident(bundle).ok
+
+    assert metric(analyze(bundle), "first_token_latency")["confidence"] == "unavailable"
 
 
 @pytest.mark.parametrize("raw_ttfb", [1e308, 10**1000])
@@ -1120,7 +1186,11 @@ def test_provider_stage_fallback_uses_the_bounded_attribute_that_authored_target
     assert first_token["evidence_ids"] == ["op-llm"]
 
 
-def test_provider_stage_fallback_downgrades_unavailable_source_evidence(valid_bundle) -> None:
+@pytest.mark.parametrize("missing_evidence", [True, False], ids=("missing", "unavailable"))
+def test_provider_stage_fallback_downgrades_weak_source_evidence(
+    valid_bundle,
+    missing_evidence: bool,
+) -> None:
     events = tuple(
         event.model_copy(update={"time": point(1_200_000_000)})
         if event.event_name == "earshot.turn.committed"
@@ -1132,11 +1202,13 @@ def test_provider_stage_fallback_downgrades_unavailable_source_evidence(valid_bu
         operation.model_copy(
             update={
                 "attributes": {**operation.attributes, "metrics.ttfb": 0.1},
-                "evidence": operation.evidence.model_copy(
-                    update={"availability": "unavailable", "confidence": "measured"}
-                )
-                if operation.evidence is not None
-                else None,
+                "evidence": (
+                    None
+                    if missing_evidence or operation.evidence is None
+                    else operation.evidence.model_copy(
+                        update={"availability": "unavailable", "confidence": "measured"}
+                    )
+                ),
             }
         )
         if operation.operation_name == "llm"

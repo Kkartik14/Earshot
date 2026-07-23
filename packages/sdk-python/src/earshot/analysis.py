@@ -107,9 +107,10 @@ def _matches_stream_direction(
 ) -> bool:
     directions: set[str] = set()
     unresolved_stream = False
+    unresolved_participant = False
 
     def add_record_ownership(record: Operation | Event) -> None:
-        nonlocal unresolved_stream
+        nonlocal unresolved_participant, unresolved_stream
         if record.stream_id is not None:
             direction = stream_directions.get(record.stream_id)
             if direction is None:
@@ -118,7 +119,9 @@ def _matches_stream_direction(
                 directions.add(direction)
         if record.participant_id is not None and participant_directions is not None:
             direction = participant_directions.get(record.participant_id)
-            if direction is not None:
+            if direction is None:
+                unresolved_participant = True
+            else:
                 directions.add(direction)
 
     add_record_ownership(value)
@@ -138,7 +141,7 @@ def _matches_stream_direction(
         if linked_operation is not None:
             add_record_ownership(linked_operation)
 
-    if unresolved_stream:
+    if unresolved_stream or unresolved_participant:
         return False
     if directions:
         return directions == {expected_direction}
@@ -595,7 +598,9 @@ def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> d
     for boundary in (anchor, target):
         if boundary.attributes.get("earshot.analysis.synthetic_projection"):
             confidence_candidates.append("estimated")
-        if boundary.evidence is not None:
+        if boundary.evidence is None:
+            confidence_candidates.append("unavailable")
+        else:
             confidence_candidates.append(
                 boundary.evidence.confidence
                 if boundary.evidence.availability == "available"
@@ -736,7 +741,7 @@ def _provider_stage_latency_fallback(
         return current
     if operation.ended_at is not None and _point_exceeds_comparable_end(point, operation.ended_at):
         return current
-    confidence = "estimated"
+    confidence = "unavailable"
     if operation.evidence is not None:
         confidence = (
             operation.evidence.confidence
