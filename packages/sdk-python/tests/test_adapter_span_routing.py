@@ -391,7 +391,81 @@ def test_colliding_unattributed_trace_state_remains_bounded(
         router.on_start(span, None)
         router.on_start(span, None)
 
-    assert len(router._trace_to_session) == 1
+    assert router._trace_to_session == {}
+    assert not router._allow_learned_trace_routing
+    assert not router._allow_learned_end_fallback
+
+
+def test_evicted_trace_ownership_cannot_be_relearned_by_another_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Losing trace history degrades to quarantine instead of reassignment."""
+
+    from earshot.adapters import routing
+
+    monkeypatch.setattr(routing, "_MAX_TRACE_MAP", 1)
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    second = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    second_handle = second.attach(provider)
+    tracer = provider.get_tracer("livekit-agents")
+    shared_root = provider.get_tracer("test-harness").start_span("shared-root")
+
+    with use_span(shared_root, end_on_exit=False), first_handle.session_scope():
+        tracer.start_span("llm_node", attributes={"lk.room": "first"}).end()
+    with first_handle.session_scope():
+        tracer.start_span("llm_node", attributes={"lk.room": "evictor"}).end()
+    with use_span(shared_root, end_on_exit=False), second_handle.session_scope():
+        tracer.start_span("llm_node", attributes={"lk.room": "second"}).end()
+    with use_span(shared_root, end_on_exit=False):
+        tracer.start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "unscoped-late-child"},
+        ).end()
+    shared_root.end()
+
+    first_bundle = first.recorder.close()
+    second_bundle = second.recorder.close()
+    assert len(first_bundle.profile.operations) == 2
+    assert len(second_bundle.profile.operations) == 1
+    assert SECRET not in first_bundle.model_dump_json()
+    assert SECRET not in second_bundle.model_dump_json()
+    assert first_handle.status.quarantined_span_count == 1
+    assert second_handle.status.quarantined_span_count == 1
+
+
+def test_retired_trace_ownership_cannot_be_relearned_by_next_session() -> None:
+    """Discarding a retired route must preserve its trace ambiguity."""
+
+    provider = TracerProvider()
+    first = LiveKitAdapter(_recorder())
+    second = LiveKitAdapter(_recorder())
+    first_handle = first.attach(provider)
+    second_handle = second.attach(provider)
+    tracer = provider.get_tracer("livekit-agents")
+    shared_root = provider.get_tracer("test-harness").start_span("shared-root")
+
+    with use_span(shared_root, end_on_exit=False), first_handle.session_scope():
+        tracer.start_span("llm_node", attributes={"lk.room": "first"}).end()
+    first.detach()
+    with use_span(shared_root, end_on_exit=False), second_handle.session_scope():
+        tracer.start_span("llm_node", attributes={"lk.room": "second"}).end()
+    with use_span(shared_root, end_on_exit=False):
+        tracer.start_span(
+            "llm_node",
+            attributes={"lk.response.text": SECRET, "lk.room": "retired-late-child"},
+        ).end()
+    shared_root.end()
+
+    first_bundle = first.recorder.close()
+    second_bundle = second.recorder.close()
+    assert len(first_bundle.profile.operations) == 1
+    assert len(second_bundle.profile.operations) == 1
+    assert SECRET not in first_bundle.model_dump_json()
+    assert SECRET not in second_bundle.model_dump_json()
+    assert first_handle.status.quarantined_span_count == 0
+    assert second_handle.status.quarantined_span_count == 1
 
 
 def test_evicted_exact_decision_disables_later_trace_reassignment(

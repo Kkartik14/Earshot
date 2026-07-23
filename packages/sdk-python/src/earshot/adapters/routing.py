@@ -179,6 +179,7 @@ class SpanRouter:
         self._span_to_session: OrderedDict[SpanIdentity, _SpanDecision] = OrderedDict()
         self._trace_to_session: OrderedDict[int, str | object] = OrderedDict()
         self._allow_learned_end_fallback = True
+        self._allow_learned_trace_routing = True
         self._allow_unscoped_fallback = True
         self._quarantined = 0
         self._stale = False
@@ -246,9 +247,10 @@ class SpanRouter:
                     # safely and both callbacks must consume the same tombstone.
                     decision = _SpanDecision(None, existing.pending_ends + 1)
                     identity_collision = True
-                    self._trace_to_session[trace_id] = _AMBIGUOUS_TRACE
-                    self._trace_to_session.move_to_end(trace_id)
-                    self._trim_trace_map_locked()
+                    if self._allow_learned_trace_routing:
+                        self._trace_to_session[trace_id] = _AMBIGUOUS_TRACE
+                        self._trace_to_session.move_to_end(trace_id)
+                        self._trim_trace_map_locked()
                 self._span_to_session[span_identity] = decision
                 self._span_to_session.move_to_end(span_identity)
                 while len(self._span_to_session) > _MAX_SPAN_STASH:
@@ -262,7 +264,7 @@ class SpanRouter:
                         self._discard_retired_route_locked(evicted.route_key)
             if route_key is None or identity_collision:
                 return
-            if trace_id is not None:
+            if trace_id is not None and self._allow_learned_trace_routing:
                 if trace_id not in self._trace_to_session:
                     self._trace_to_session[trace_id] = route_key
                 elif self._trace_to_session[trace_id] != route_key:
@@ -365,7 +367,11 @@ class SpanRouter:
     def _route_for_unscoped_start_locked(self, trace_id: int | None) -> str | None:
         """Resolve ownership at span start; never infer it from end-time state."""
 
-        if trace_id is not None and trace_id in self._trace_to_session:
+        if (
+            self._allow_learned_trace_routing
+            and trace_id is not None
+            and trace_id in self._trace_to_session
+        ):
             learned_route = self._trace_to_session[trace_id]
             if isinstance(learned_route, str) and (
                 learned_route in self._sinks or learned_route in self._retired_sinks
@@ -380,8 +386,20 @@ class SpanRouter:
         return any(decision.route_key == route_key for decision in self._span_to_session.values())
 
     def _trim_trace_map_locked(self) -> None:
-        while len(self._trace_to_session) > _MAX_TRACE_MAP:
-            self._trace_to_session.popitem(last=False)
+        if len(self._trace_to_session) <= _MAX_TRACE_MAP:
+            return
+        # Once any trace decision is lost, an absent trace ID can no longer be
+        # distinguished from an evicted owner or ambiguity tombstone. Disable
+        # learned start/end attribution and relearning process-wide rather than
+        # allow a later session to claim that forgotten trace.
+        self._disable_learned_trace_routing_locked()
+
+    def _disable_learned_trace_routing_locked(self) -> None:
+        """Forget learned routes once their complete ownership history is lost."""
+
+        self._trace_to_session.clear()
+        self._allow_learned_trace_routing = False
+        self._allow_learned_end_fallback = False
 
     def _discard_retired_route_locked(self, route_key: str) -> None:
         """Release a retired sink only after no exact late span can reference it."""
@@ -389,11 +407,15 @@ class SpanRouter:
         if self._route_has_inflight_span_locked(route_key):
             return
         self._retired_sinks.pop(route_key, None)
-        self._trace_to_session = OrderedDict(
-            (trace, key) for trace, key in self._trace_to_session.items() if key != route_key
-        )
-        if not self._sinks and not self._retired_sinks:
-            self._trace_to_session.clear()
+        if any(key == route_key for key in self._trace_to_session.values()):
+            # Removing a retired owner creates the same uncertainty as capacity
+            # eviction: a stale child can reuse that trace after another session
+            # explicitly observes it. Never let the later session relearn it.
+            self._disable_learned_trace_routing_locked()
+        if not self._sinks and not self._retired_sinks and self._trace_to_session:
+            # Ambiguity tombstones are ownership decisions too. If the router
+            # outlives every registration, dropping them must remain fail-closed.
+            self._disable_learned_trace_routing_locked()
 
     def _mark_stale(self) -> None:
         self._stale = True
