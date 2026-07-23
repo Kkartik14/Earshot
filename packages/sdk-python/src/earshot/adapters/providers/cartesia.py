@@ -32,6 +32,11 @@ class CartesiaAdapter(ProviderAdapter):
         super().__init__("cartesia", identity_key=identity_key)
         self.model = sanitize_semantic_label(optional_string(model, "model"))
         self.voice = sanitize_semantic_label(optional_string(voice, "voice"))
+        self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
+        """Reset per-session audio-context tracking at a session boundary."""
+
         self._audio_contexts: set[str] = set()
 
     def adapt(
