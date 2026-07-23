@@ -138,7 +138,9 @@ class GeminiLiveAdapter(ProviderAdapter):
             )
         usage = _pluck(payload, "usageMetadata", "usage_metadata")
         if usage is not _MISSING:
-            return self._usage_metadata(payload, require_mapping(usage, "usageMetadata"), receipt_ms)
+            return self._usage_metadata(
+                payload, require_mapping(usage, "usageMetadata"), receipt_ms
+            )
         if _present(payload, "goAway", "go_away"):
             return self._go_away(payload, receipt_ms)
         if _present(payload, "sessionResumptionUpdate", "session_resumption_update"):
@@ -157,9 +159,7 @@ class GeminiLiveAdapter(ProviderAdapter):
 
     # -- server messages -----------------------------------------------------
 
-    def _setup_complete(
-        self, payload: Mapping[str, object], receipt_ms: float
-    ) -> AdapterUpdate:
+    def _setup_complete(self, payload: Mapping[str, object], receipt_ms: float) -> AdapterUpdate:
         event_type = "setupComplete"
 
         def create_update(update_id: str) -> AdapterUpdate:
