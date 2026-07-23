@@ -439,10 +439,16 @@ export interface EvidenceView {
   sourceField?: string;
 }
 export interface MeasurementView {
+  reactKey: string;
   name: string;
   value: boolean | number;
   unit: string;
   confidence: string;
+  aggregation: string;
+  basis: string;
+  limitation?: string;
+  evidenceIds: string[];
+  sourceField?: string;
 }
 export interface StageDetail {
   operationId: string;
@@ -499,6 +505,7 @@ export interface TurnDetail {
   /** Resolved parent/link edges between operations in this turn. */
   edges: EdgeView[];
   metrics: MetricRow[];
+  measurements: MeasurementView[];
   events: EventView[];
 }
 
@@ -513,21 +520,44 @@ const evidenceView = (e: Evidence | null | undefined): EvidenceView | undefined 
         sourceField: e.source_field ?? undefined,
       };
 
-const measurementViews = (measurements: ExplainedMeasurement[]): MeasurementView[] =>
-  // Every measurement is carried with its real unit; booleans and other
-  // non-duration domains are formatted by their unit at the view layer.
-  measurements
+const measurementViews = (measurements: ExplainedMeasurement[]): MeasurementView[] => {
+  const occurrences = new Map<string, number>();
+  // Every measurement is carried with its exact owner/provenance identity and
+  // real unit. Repeated snapshots remain distinct facts.
+  return measurements
     .filter(
       (measurement): measurement is ExplainedMeasurement =>
         typeof measurement.value === "number" || typeof measurement.value === "boolean",
     )
-    .map((measurement) => ({
-      name: measurement.name,
-      value: measurement.value,
-      unit: measurement.unit,
-      confidence:
-        measurement.confidence ?? measurement.evidence?.confidence ?? "unavailable",
-    }));
+    .map((measurement) => {
+      const evidenceIds = Array.isArray(measurement.evidence_ids)
+        ? measurement.evidence_ids
+        : [];
+      const identity = JSON.stringify([
+        evidenceIds,
+        measurement.name,
+        measurement.unit,
+        measurement.aggregation,
+        typeof measurement.value,
+        measurement.value,
+      ]);
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      return {
+        reactKey: `${identity}:${occurrence}`,
+        name: measurement.name,
+        value: measurement.value,
+        unit: measurement.unit,
+        confidence:
+          measurement.confidence ?? measurement.evidence?.confidence ?? "unavailable",
+        aggregation: measurement.aggregation ?? "unknown",
+        basis: measurement.basis ?? "provider_measurement",
+        limitation: measurement.limitation ?? undefined,
+        evidenceIds: [...evidenceIds],
+        sourceField: measurement.evidence?.source_field ?? undefined,
+      };
+    });
+};
 
 /** Resolve source-authored links and same-trace parent span identities against
  * operations actually present in this turn. External and unresolved targets stay
@@ -651,6 +681,7 @@ export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
           confidence: m?.confidence ?? "unavailable",
         };
       }),
+      measurements: measurementViews(t.measurements ?? []),
       events: t.events.map((event) => ({
         name: event.event_name,
         atMs: coordinateDeltaMs(
@@ -727,8 +758,8 @@ export interface UnassignedFacts {
   measurements: MeasurementView[];
 }
 
-/** Surface operations, events, and measurements that could not be scoped to a
- * turn so an incident with only session-level evidence is still visible. */
+/** Surface operations/events without a turn and measurements without either a
+ * turn or operation owner, so genuinely session-level evidence stays visible. */
 export function buildUnassigned(explanation: ExplanationLike): UnassignedFacts {
   const operations = (explanation.unassigned_operations ?? []).map((op, index) => {
     const duration = nano(op.duration_nano);

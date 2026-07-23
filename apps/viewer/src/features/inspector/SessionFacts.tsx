@@ -57,8 +57,8 @@ export function DiagnosesPanel({
   );
 }
 
-/** Operations, events, and measurements the analyzer could not scope to a turn.
- * Rendering them keeps session-level evidence visible instead of an empty inspector. */
+/** Operations/events without a turn and measurements without any authored owner.
+ * Rendering them keeps genuinely session-level evidence visible. */
 export function UnassignedPanel({ facts }: { facts: UnassignedFacts }) {
   if (
     facts.operations.length === 0 &&
@@ -70,7 +70,7 @@ export function UnassignedPanel({ facts }: { facts: UnassignedFacts }) {
     <section className={styles.panel} aria-label="Session-level facts">
       <div className={styles.panelHead}>
         <h2>Session-level facts</h2>
-        <span className={styles.note}>not scoped to a turn</span>
+        <span className={styles.note}>no authored turn or stage owner</span>
       </div>
 
       {facts.operations.length > 0 ? (
@@ -99,7 +99,7 @@ export function UnassignedPanel({ facts }: { facts: UnassignedFacts }) {
                 </span>
               </div>
               {op.measurements.map((m) => (
-                <div key={m.name} className={styles.measRow}>
+                <div key={m.reactKey} className={styles.measRow}>
                   <span className={styles.measName}>{m.name}</span>
                   <span className={styles.measVal}>
                     {formatMeasurement(m.value, m.unit)}
@@ -129,7 +129,7 @@ export function UnassignedPanel({ facts }: { facts: UnassignedFacts }) {
       {facts.measurements.length > 0 ? (
         <div className={styles.measBlock}>
           {facts.measurements.map((m) => (
-            <div key={m.name} className={styles.measRow}>
+            <div key={m.reactKey} className={styles.measRow}>
               <span className={styles.measName}>{m.name}</span>
               <span className={styles.measVal}>{formatMeasurement(m.value, m.unit)}</span>
               <span className={styles.measConf}>{m.confidence}</span>

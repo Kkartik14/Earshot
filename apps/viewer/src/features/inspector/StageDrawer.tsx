@@ -163,7 +163,7 @@ export function StageDrawer({
           <h2 className={styles.secLabel}>Provider measurement</h2>
           {stage.measurements.length > 0 ? (
             stage.measurements.map((m) => (
-              <div key={m.name} className={styles.mrow}>
+              <div key={m.reactKey} className={styles.mrow}>
                 <span className={styles.mn}>{m.name}</span>
                 <span className={styles.mv} style={{ color }}>
                   {formatMeasurement(m.value, m.unit)}

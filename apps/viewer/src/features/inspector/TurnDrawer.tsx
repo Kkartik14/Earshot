@@ -86,6 +86,25 @@ export function TurnDrawer({
           ))}
         </section>
 
+        {detail.measurements.length > 0 ? (
+          <section className={styles.sec}>
+            <h2 className={styles.secLabel}>Measurement facts</h2>
+            {detail.measurements.map((measurement) => (
+              <div key={measurement.reactKey} className={styles.metricLine}>
+                <span className={styles.mln}>{measurement.name}</span>
+                <span className={styles.mlv}>
+                  {formatMeasurement(measurement.value, measurement.unit)}
+                </span>
+                <span className={styles.mlb}>
+                  {[measurement.sourceField, ...measurement.evidenceIds]
+                    .filter((value) => value != null && value !== "")
+                    .join(" · ")}
+                </span>
+              </div>
+            ))}
+          </section>
+        ) : null}
+
         <section className={styles.sec}>
           <h2 className={styles.secLabel}>Events</h2>
           {detail.events.map((e, i) => (
