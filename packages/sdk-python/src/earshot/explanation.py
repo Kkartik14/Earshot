@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -138,6 +139,7 @@ class ExplainedTurn(ExplanationModel):
     turn_id: str
     operations: tuple[ExplainedOperation, ...]
     events: tuple[ExplainedEvent, ...]
+    measurements: tuple[ExplainedMeasurement, ...]
     metrics: TurnMetrics
 
 
@@ -268,6 +270,19 @@ def _measurement_sort_key(
     )
 
 
+def _measurements(samples: Iterable[QualitySample]) -> tuple[ExplainedMeasurement, ...]:
+    return tuple(
+        sorted(
+            (
+                _explained_measurement(sample, measurement)
+                for sample in samples
+                for measurement in sample.measurements
+            ),
+            key=_measurement_sort_key,
+        )
+    )
+
+
 def _operation(
     value: Operation,
     samples: tuple[QualitySample, ...],
@@ -289,16 +304,8 @@ def _operation(
     attributes = value.attributes
     provider = attributes.get("gen_ai.provider.name")
     model = attributes.get("gen_ai.request.model")
-    measurements = tuple(
-        sorted(
-            (
-                _explained_measurement(sample, measurement)
-                for sample in samples
-                if _sample_belongs_to_operation(sample, value)
-                for measurement in sample.measurements
-            ),
-            key=_measurement_sort_key,
-        )
+    measurements = _measurements(
+        sample for sample in samples if _sample_belongs_to_operation(sample, value)
     )
     return ExplainedOperation(
         operation_id=value.operation_id,
@@ -356,6 +363,23 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
     operations = {item.operation_id: item for item in profile.operations}
     events = {item.event_id: item for item in profile.events}
     samples = profile.quality_samples
+    analysis_turn_ids = {turn.turn_id for turn in analysis.projections.turns}
+    turn_measurement_samples: dict[str, list[QualitySample]] = {
+        turn_id: [] for turn_id in analysis_turn_ids
+    }
+    unassigned_measurement_samples: list[QualitySample] = []
+    for sample in samples:
+        operation_owner = sample.attributes.get("earshot.operation.id")
+        if isinstance(operation_owner, str) and operation_owner in operations:
+            continue
+        turn_owner = sample.attributes.get("earshot.turn.id")
+        if isinstance(turn_owner, (str, int)) and not isinstance(turn_owner, bool):
+            turn_id = str(turn_owner)
+            if turn_id in analysis_turn_ids:
+                turn_measurement_samples[turn_id].append(sample)
+                continue
+        unassigned_measurement_samples.append(sample)
+
     turns = tuple(
         ExplainedTurn(
             turn_id=turn.turn_id,
@@ -382,6 +406,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                     identity=lambda event: event.event_id,
                 )
             ),
+            measurements=_measurements(turn_measurement_samples[turn.turn_id]),
             metrics=turn.metrics,
         )
         for turn in analysis.projections.turns
@@ -421,23 +446,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
     # Every provider scalar without an explicit operation owner remains available
     # as an exact fact. Turn metrics may select or aggregate these samples for a
     # derived scalar, but that lossy read model cannot replace the source facts.
-    operation_owned_sample_ids = {
-        sample.sample_id
-        for sample in samples
-        if isinstance(sample.attributes.get("earshot.operation.id"), str)
-        and sample.attributes["earshot.operation.id"] in operations
-    }
-    unassigned_measurements = tuple(
-        sorted(
-            (
-                _explained_measurement(sample, measurement)
-                for sample in samples
-                if sample.sample_id not in operation_owned_sample_ids
-                for measurement in sample.measurements
-            ),
-            key=_measurement_sort_key,
-        )
-    )
+    unassigned_measurements = _measurements(unassigned_measurement_samples)
 
     return IncidentExplanation(
         bundle_id=profile.manifest.bundle_id,

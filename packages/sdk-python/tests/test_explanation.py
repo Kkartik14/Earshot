@@ -16,7 +16,7 @@ from earshot.contract import (
     TimeRange,
 )
 from earshot.explanation import ExplainedDiagnosis, ExplainedError, explain_incident
-from earshot.validation import validate_explanation, validate_incident
+from earshot.validation import validate_derived_analysis, validate_explanation, validate_incident
 from incident_factory import LLM_SPAN_ID, ROOT_SPAN_ID, TRACE_ID, point
 from test_contract_validation import replace_profile
 
@@ -378,7 +378,7 @@ def test_explanation_retains_non_prefixed_owned_measurement() -> None:
     assert retained["livekit.llm_node_ttft"].confidence == "unavailable"
 
 
-def test_explanation_keeps_every_turn_only_measurement_as_an_exact_unassigned_fact(
+def test_explanation_keeps_every_turn_only_measurement_as_an_exact_turn_fact(
     monkeypatch,
 ) -> None:
     session = earshot.pipeline(
@@ -441,7 +441,7 @@ def test_explanation_keeps_every_turn_only_measurement_as_an_exact_unassigned_fa
     )
     exact_facts = [
         measurement
-        for measurement in explanation.unassigned_measurements
+        for measurement in explained_turn.measurements
         if measurement.name == "provider.queue_depth"
     ]
     assert [(item.evidence_ids, item.value) for item in exact_facts] == [
@@ -452,6 +452,10 @@ def test_explanation_keeps_every_turn_only_measurement_as_an_exact_unassigned_fa
         "queue.depth.first",
         "queue.depth.second",
     ]
+    assert all(
+        measurement.name != "provider.queue_depth"
+        for measurement in explanation.unassigned_measurements
+    )
     assert validate_explanation(bundle, analysis, explanation).ok
 
     permuted = replace_profile(
@@ -465,6 +469,25 @@ def test_explanation_keeps_every_turn_only_measurement_as_an_exact_unassigned_fa
     )
     assert permuted_analysis == analysis
     assert explain_incident(permuted, permuted_analysis) == explanation
+
+    conflicting_sample = turn_only_samples[0].model_copy(
+        update={
+            "sample_id": "quality-conflicting-owners",
+            "attributes": {
+                "earshot.turn.id": "different-turn",
+                "earshot.operation.id": bundle.profile.operations[0].operation_id,
+            },
+        }
+    )
+    conflicting_bundle = replace_profile(
+        bundle,
+        quality_samples=(*bundle.profile.quality_samples, conflicting_sample),
+    )
+    conflicting_report = validate_derived_analysis(
+        conflicting_bundle,
+        _analyze(conflicting_bundle),
+    )
+    assert "EARSHOT_ANALYSIS_TURN_MISMATCH" in {issue.code for issue in conflicting_report.errors}
 
     project_evidence = explanation_module._evidence
 
@@ -482,12 +505,38 @@ def test_explanation_keeps_every_turn_only_measurement_as_an_exact_unassigned_fa
     }
     monkeypatch.setattr(explanation_module, "_evidence", project_evidence)
 
+    misplaced = explanation.model_copy(
+        update={
+            "turns": (explained_turn.model_copy(update={"measurements": ()}),),
+            "unassigned_measurements": (
+                *explanation.unassigned_measurements,
+                *exact_facts,
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        explanation_module,
+        "explain_incident",
+        lambda _bundle, _analysis: misplaced,
+    )
+    misplaced_report = validate_explanation(bundle, analysis, misplaced)
+    assert {
+        "EARSHOT_EXPLANATION_MEASUREMENT_DROPPED",
+        "EARSHOT_EXPLANATION_MEASUREMENT_INVENTED",
+    }.issubset({issue.code for issue in misplaced_report.errors})
+
     dropped = explanation.model_copy(
         update={
-            "unassigned_measurements": tuple(
-                item
-                for item in explanation.unassigned_measurements
-                if item.evidence_ids != ("quality-turn-only-2",)
+            "turns": (
+                explained_turn.model_copy(
+                    update={
+                        "measurements": tuple(
+                            item
+                            for item in explained_turn.measurements
+                            if item.evidence_ids != ("quality-turn-only-2",)
+                        )
+                    }
+                ),
             )
         }
     )
@@ -725,6 +774,45 @@ def test_validate_explanation_rejects_changed_operation_source_fields() -> None:
     report = validate_explanation(bundle, analysis, tampered)
 
     assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {issue.code for issue in report.errors}
+
+
+def test_validate_explanation_independently_rejects_operation_and_event_provenance_loss(
+    valid_bundle,
+    monkeypatch,
+) -> None:
+    analysis = _analyze(valid_bundle)
+    project_operation = explanation_module._operation
+
+    def operation_without_source(value, samples):
+        projected = project_operation(value, samples)
+        if projected.evidence is None:
+            return projected
+        return projected.model_copy(
+            update={"evidence": projected.evidence.model_copy(update={"source": "wrong-source"})}
+        )
+
+    monkeypatch.setattr(explanation_module, "_operation", operation_without_source)
+    operation_loss = explanation_module.explain_incident(valid_bundle, analysis)
+    operation_report = validate_explanation(valid_bundle, analysis, operation_loss)
+    assert "EARSHOT_EXPLANATION_OPERATION_MISMATCH" in {
+        issue.code for issue in operation_report.errors
+    }
+    monkeypatch.setattr(explanation_module, "_operation", project_operation)
+
+    project_event = explanation_module._event
+
+    def event_without_source(value):
+        projected = project_event(value)
+        if projected.evidence is None:
+            return projected
+        return projected.model_copy(
+            update={"evidence": projected.evidence.model_copy(update={"source": "wrong-source"})}
+        )
+
+    monkeypatch.setattr(explanation_module, "_event", event_without_source)
+    event_loss = explanation_module.explain_incident(valid_bundle, analysis)
+    event_report = validate_explanation(valid_bundle, analysis, event_loss)
+    assert "EARSHOT_EXPLANATION_EVENT_MISMATCH" in {issue.code for issue in event_report.errors}
 
 
 def test_validate_explanation_rejects_duplicate_operation() -> None:

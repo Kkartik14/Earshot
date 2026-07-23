@@ -1971,6 +1971,25 @@ def validate_derived_analysis(
             operation_value = sample.attributes.get("earshot.operation.id")
             if isinstance(operation_value, str):
                 owner = operation_turns.get(operation_value)
+        else:
+            operation_value = sample.attributes.get("earshot.operation.id")
+            operation_owner = (
+                operation_turns.get(operation_value) if isinstance(operation_value, str) else None
+            )
+            if operation_owner is not None and operation_owner != owner:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_ANALYSIS_TURN_MISMATCH",
+                        path=(
+                            "profile",
+                            "quality_samples",
+                            sample.sample_id,
+                            "attributes",
+                            "earshot.turn.id",
+                        ),
+                        message=("quality sample turn owner conflicts with its operation owner"),
+                    )
+                )
         quality_turns[sample.sample_id] = owner
 
     source_turn_ids = {
@@ -2298,6 +2317,20 @@ def validate_explanation(
     media_ids = {item.media_id for item in bundle.profile.media_refs}
     operation_ids = set(operations)
     evidence_ids = operation_ids | set(events) | set(quality_samples) | media_ids
+
+    def evidence_fact(value: Any) -> tuple[str | None, ...]:
+        if value is None:
+            return (None,) * 7
+        return (
+            value.source,
+            value.observer,
+            value.method,
+            value.confidence,
+            value.availability,
+            value.method_version,
+            value.source_field,
+        )
+
     expected_explanation = _project_explanation(bundle, analysis)
     if explanation != expected_explanation:
         issues.append(
@@ -2305,6 +2338,80 @@ def validate_explanation(
                 code="EARSHOT_EXPLANATION_SOURCE_MISMATCH",
                 path=("explanation",),
                 message="explanation differs from the exact source-derived read model",
+            )
+        )
+    source_header = (
+        bundle.profile.manifest.bundle_id,
+        bundle.profile.manifest.session_id,
+        bundle.profile.session.status,
+        bundle.profile.manifest.finality,
+        bundle.profile.manifest.completeness,
+        analysis.analyzer_name,
+        analysis.analyzer_version,
+        analysis.input_sha256,
+        tuple(analysis.projections.limitations),
+    )
+    explained_header = (
+        explanation.bundle_id,
+        explanation.session_id,
+        explanation.session_status,
+        explanation.finality,
+        explanation.completeness,
+        explanation.analyzer_name,
+        explanation.analyzer_version,
+        explanation.input_sha256,
+        tuple(explanation.limitations),
+    )
+    if explained_header != source_header:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_HEADER_MISMATCH",
+                path=("explanation",),
+                message="explanation header differs from source and analysis bindings",
+            )
+        )
+    source_coverage = tuple(
+        (item.signal, item.availability, item.reason, evidence_fact(item.evidence))
+        for item in bundle.profile.coverage
+    )
+    explained_coverage = tuple(
+        (item.signal, item.availability, item.reason, evidence_fact(item.evidence))
+        for item in explanation.coverage
+    )
+    if explained_coverage != source_coverage:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_COVERAGE_MISMATCH",
+                path=("explanation", "coverage"),
+                message="explanation coverage differs from source evidence",
+            )
+        )
+    source_omissions = tuple(
+        (
+            item.omission_id,
+            item.capture_class,
+            item.reason,
+            item.count,
+            tuple(item.source_refs),
+        )
+        for item in bundle.profile.privacy.omissions
+    )
+    explained_omissions = tuple(
+        (
+            item.omission_id,
+            item.capture_class,
+            item.reason,
+            item.count,
+            tuple(item.source_refs),
+        )
+        for item in explanation.omissions
+    )
+    if explained_omissions != source_omissions:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_OMISSION_MISMATCH",
+                path=("explanation", "omissions"),
+                message="explanation omissions differ from source privacy evidence",
             )
         )
     expected_operations = {
@@ -2321,6 +2428,9 @@ def validate_explanation(
     expected_events = {
         event.event_id: event for turn in expected_explanation.turns for event in turn.events
     }
+    expected_events.update(
+        {event.event_id: event for event in expected_explanation.unassigned_events}
+    )
     expected_turns = {turn.turn_id: turn for turn in expected_explanation.turns}
 
     def check_refs(
@@ -2337,6 +2447,159 @@ def validate_explanation(
                         message="explanation cites evidence absent from the input artifact",
                     )
                 )
+
+    def source_coordinate(value: TimePoint) -> tuple[str, str | None, str]:
+        if value.monotonic_time_nano is not None:
+            return "monotonic", value.clock_domain_id, value.monotonic_time_nano
+        if value.source_time_unix_nano is not None:
+            return "source_wall", value.clock_domain_id, value.source_time_unix_nano
+        assert value.observed_time_unix_nano is not None
+        return "observed_wall", value.clock_domain_id, value.observed_time_unix_nano
+
+    def source_operation_fact(source: Operation) -> tuple[Any, ...]:
+        basis, domain, start = source_coordinate(source.started_at)
+        end: str | None = None
+        duration: str | None = None
+        limitation: str | None = "end_boundary_not_observed"
+        if source.ended_at is not None:
+            end_basis, end_domain, candidate = source_coordinate(source.ended_at)
+            if (end_basis, end_domain) != (basis, domain):
+                limitation = "end_boundary_not_comparable"
+            elif int(candidate) < int(start):
+                limitation = "invalid_negative_interval"
+            else:
+                end = candidate
+                duration = str(int(candidate) - int(start))
+                limitation = None
+        provider = source.attributes.get("gen_ai.provider.name")
+        model = source.attributes.get("gen_ai.request.model")
+        error = (
+            None
+            if source.error is None
+            else (
+                source.error.code,
+                source.error.category,
+                source.error.capture_class,
+                None,
+            )
+        )
+        links = tuple(
+            (
+                link.relationship,
+                link.target_scope,
+                link.target_operation_id,
+                link.trace_id,
+                link.span_id,
+            )
+            for link in source.links
+        )
+        return (
+            source.operation_id,
+            source.operation_name,
+            source.status,
+            "interval" if end is not None else "point",
+            basis,
+            domain,
+            start,
+            end,
+            duration,
+            source.started_at.uncertainty_nano,
+            source.ended_at.uncertainty_nano if source.ended_at is not None else None,
+            limitation,
+            source.participant_id,
+            source.stream_id,
+            provider if isinstance(provider, str) else None,
+            model if isinstance(model, str) else None,
+            source.trace_id,
+            source.span_id,
+            source.parent_span_id,
+            source.parent_scope,
+            links,
+            error,
+            evidence_fact(source.evidence),
+            (source.operation_id,),
+        )
+
+    def explained_operation_fact(operation: Any) -> tuple[Any, ...]:
+        error = (
+            None
+            if operation.error is None
+            else (
+                operation.error.code,
+                operation.error.category,
+                operation.error.capture_class,
+                operation.error.message,
+            )
+        )
+        links = tuple(
+            (
+                link.relationship,
+                link.target_scope,
+                link.target_operation_id,
+                link.trace_id,
+                link.span_id,
+            )
+            for link in operation.links
+        )
+        return (
+            operation.operation_id,
+            operation.operation_name,
+            operation.status,
+            operation.shape,
+            operation.time_basis,
+            operation.clock_domain_id,
+            operation.start_nano,
+            operation.end_nano,
+            operation.duration_nano,
+            operation.start_uncertainty_nano,
+            operation.end_uncertainty_nano,
+            operation.limitation,
+            operation.participant_id,
+            operation.stream_id,
+            operation.provider,
+            operation.model,
+            operation.trace_id,
+            operation.span_id,
+            operation.parent_span_id,
+            operation.parent_scope,
+            links,
+            error,
+            evidence_fact(operation.evidence),
+            tuple(operation.evidence_ids),
+        )
+
+    def source_event_fact(source: Any) -> tuple[Any, ...]:
+        basis, domain, at = source_coordinate(source.time)
+        return (
+            source.event_id,
+            source.event_name,
+            basis,
+            domain,
+            at,
+            source.operation_id,
+            source.participant_id,
+            source.stream_id,
+            source.trace_id,
+            source.span_id,
+            evidence_fact(source.evidence),
+            (source.event_id,),
+        )
+
+    def explained_event_fact(event: Any) -> tuple[Any, ...]:
+        return (
+            event.event_id,
+            event.event_name,
+            event.time_basis,
+            event.clock_domain_id,
+            event.at_nano,
+            event.operation_id,
+            event.participant_id,
+            event.stream_id,
+            event.trace_id,
+            event.span_id,
+            evidence_fact(event.evidence),
+            tuple(event.evidence_ids),
+        )
 
     def check_operation(operation: Any, path: tuple[str | int, ...]) -> None:
         check_refs(operation.evidence_ids, evidence_ids, path + ("evidence_ids",))
@@ -2362,6 +2625,14 @@ def validate_explanation(
         source = operations.get(operation.operation_id)
         if source is None:
             return
+        if explained_operation_fact(operation) != source_operation_fact(source):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_OPERATION_MISMATCH",
+                    path=path,
+                    message="explained operation differs from exposed source evidence",
+                )
+            )
         expected_operation = expected_operations.get(operation.operation_id)
         if expected_operation is not None and operation != expected_operation:
             issues.append(
@@ -2503,11 +2774,101 @@ def validate_explanation(
                         message="explained event differs from its exact source projection",
                     )
                 )
+            source_event = events.get(event.event_id)
+            if source_event is not None and explained_event_fact(event) != source_event_fact(
+                source_event
+            ):
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_EXPLANATION_EVENT_MISMATCH",
+                        path=path,
+                        message="explained event differs from exposed source evidence",
+                    )
+                )
+        for measurement_index, measurement in enumerate(turn.measurements):
+            check_refs(
+                measurement.evidence_ids,
+                evidence_ids,
+                (
+                    "explanation",
+                    "turns",
+                    turn_index,
+                    "measurements",
+                    measurement_index,
+                    "evidence_ids",
+                ),
+            )
     for operation_index, operation in enumerate(explanation.unassigned_operations):
         projected_operation_ids.append(operation.operation_id)
         check_operation(
             operation,
             ("explanation", "unassigned_operations", operation_index),
+        )
+    for event_index, event in enumerate(explanation.unassigned_events):
+        projected_event_ids.append(event.event_id)
+        path = ("explanation", "unassigned_events", event_index)
+        check_refs(event.evidence_ids, evidence_ids, path + ("evidence_ids",))
+        if expected_events.get(event.event_id) != event:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_EVENT_MISMATCH",
+                    path=path,
+                    message="unassigned event differs from its exact source projection",
+                )
+            )
+        source_event = events.get(event.event_id)
+        if source_event is not None and explained_event_fact(event) != source_event_fact(
+            source_event
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_EVENT_MISMATCH",
+                    path=path,
+                    message="unassigned event differs from exposed source evidence",
+                )
+            )
+
+    source_operation_owners: dict[str, str | None] = dict.fromkeys(operation_ids)
+    source_event_owners: dict[str, str | None] = dict.fromkeys(events)
+    for turn in analysis.projections.turns:
+        for operation_id in turn.operation_ids:
+            source_operation_owners[operation_id] = turn.turn_id
+        for event_id in turn.event_ids:
+            source_event_owners[event_id] = turn.turn_id
+    expected_operation_placements = Counter(source_operation_owners.items())
+    actual_operation_placements = Counter(
+        (
+            operation.operation_id,
+            turn.turn_id,
+        )
+        for turn in explanation.turns
+        for operation in turn.operations
+    )
+    actual_operation_placements.update(
+        (operation.operation_id, None) for operation in explanation.unassigned_operations
+    )
+    if actual_operation_placements != expected_operation_placements:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_OPERATION_PLACEMENT_MISMATCH",
+                path=("explanation", "operations"),
+                message="explained operation ownership differs from exact analysis placement",
+            )
+        )
+    expected_event_placements = Counter(source_event_owners.items())
+    actual_event_placements = Counter(
+        (event.event_id, turn.turn_id) for turn in explanation.turns for event in turn.events
+    )
+    actual_event_placements.update(
+        (event.event_id, None) for event in explanation.unassigned_events
+    )
+    if actual_event_placements != expected_event_placements:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_EVENT_PLACEMENT_MISMATCH",
+                path=("explanation", "events"),
+                message="explained event ownership differs from exact analysis placement",
+            )
         )
 
     expected_turn_operation_layout = tuple(
@@ -2615,20 +2976,8 @@ def validate_explanation(
     # This prevents a lossy derivation bug from validating itself by recomputing the
     # same incomplete read model. Derived turn metrics are intentionally excluded;
     # exact facts live on their owned operation or in unassigned_measurements.
-    def evidence_fact(value: Any) -> tuple[str | None, ...]:
-        if value is None:
-            return (None,) * 7
-        return (
-            value.source,
-            value.observer,
-            value.method,
-            value.confidence,
-            value.availability,
-            value.method_version,
-            value.source_field,
-        )
-
     def measurement_fact(
+        placement: tuple[str, str],
         evidence_ids: tuple[str, ...],
         name: str,
         value: bool | int | float,
@@ -2640,6 +2989,7 @@ def validate_explanation(
         evidence: Any,
     ) -> tuple[Any, ...]:
         return (
+            placement,
             evidence_ids,
             name,
             type(value).__name__,
@@ -2652,8 +3002,22 @@ def validate_explanation(
             evidence_fact(evidence),
         )
 
+    analysis_turn_ids = {turn.turn_id for turn in analysis.projections.turns}
+
+    def source_measurement_placement(sample: Any) -> tuple[str, str]:
+        operation_owner = sample.attributes.get("earshot.operation.id")
+        if isinstance(operation_owner, str) and operation_owner in operations:
+            return "operation", operation_owner
+        turn_owner = sample.attributes.get("earshot.turn.id")
+        if isinstance(turn_owner, (str, int)) and not isinstance(turn_owner, bool):
+            turn_id = str(turn_owner)
+            if turn_id in analysis_turn_ids:
+                return "turn", turn_id
+        return "unassigned", ""
+
     source_measurement_facts = Counter(
         measurement_fact(
+            source_measurement_placement(sample),
             (sample.sample_id,),
             measurement.name,
             measurement.value,
@@ -2672,21 +3036,27 @@ def validate_explanation(
         for measurement in sample.measurements
     )
     explained_exact_measurements = (
-        measurement
+        (("operation", operation.operation_id), measurement)
         for operation in (operation for turn in explanation.turns for operation in turn.operations)
         for measurement in operation.measurements
     )
     explained_exact_measurements = (
         *explained_exact_measurements,
         *(
-            measurement
+            (("operation", operation.operation_id), measurement)
             for operation in explanation.unassigned_operations
             for measurement in operation.measurements
         ),
-        *explanation.unassigned_measurements,
+        *(
+            (("turn", turn.turn_id), measurement)
+            for turn in explanation.turns
+            for measurement in turn.measurements
+        ),
+        *((("unassigned", ""), measurement) for measurement in explanation.unassigned_measurements),
     )
     explained_measurement_facts = Counter(
         measurement_fact(
+            placement,
             measurement.evidence_ids,
             measurement.name,
             measurement.value,
@@ -2697,7 +3067,7 @@ def validate_explanation(
             measurement.limitation,
             measurement.evidence,
         )
-        for measurement in explained_exact_measurements
+        for placement, measurement in explained_exact_measurements
     )
     if source_measurement_facts - explained_measurement_facts:
         issues.append(
