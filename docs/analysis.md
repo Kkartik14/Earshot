@@ -129,17 +129,17 @@ The raw `operation.failed` fact is still emitted (measured) for any operation wh
 governed status is `error`, `timeout`, or `failed`. Boundary attribution layers richer,
 co-existing hypotheses on top of it:
 
-| Code | Boundary | Deciding signal | Default SLO | Confidence |
-| --- | --- | --- | --- | --- |
-| `network.degraded` | transport / network | QoS `packet_loss_ratio`, `jitter`, or `round_trip_time` on a governed quality sample | loss > 0.05, jitter > 30 ms, RTT > 150 ms | measured |
-| `render.delayed` | render | turn-commit → `earshot.audio.render.started` latency | > 1500 ms | inferred |
-| `interruption.false` | interruption | `earshot.interruption.detected` in a turn with no `interruption.accepted` | n/a | measured with an explicit `interruption.ignored`/false source, else inferred |
-| `audio.stale_playback` | decode / render | `earshot.audio.render.stale` event | n/a | measured |
-| `tool.retry` | tool | a `tool` op with a `retries` link to a failed/timed-out sibling `tool` op | n/a | measured |
-| `device.unavailable` | capture | `earshot.device.*` events | n/a | measured |
-| `transport.reconnect` | transport | `earshot.transport.reconnecting` (+ duplicate / out-of-order) events | n/a | measured |
-| `stage.slow` | stt / llm / tts | that stage operation's own duration | > 1500 ms | inferred |
-| `endpointing.slow` | turn detection | `turn_detection` (EOU) operation duration | > 1000 ms | inferred |
+| Code                   | Boundary            | Deciding signal                                                                      | Default SLO                               | Confidence                                                                   |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------- | ---------------------------------------------------------------------------- |
+| `network.degraded`     | transport / network | QoS `packet_loss_ratio`, `jitter`, or `round_trip_time` on a governed quality sample | loss > 0.05, jitter > 30 ms, RTT > 150 ms | measured                                                                     |
+| `render.delayed`       | render              | turn-commit → `earshot.audio.render.started` latency                                 | > 1500 ms                                 | inferred                                                                     |
+| `interruption.false`   | interruption        | `earshot.interruption.detected` in a turn with no `interruption.accepted`            | n/a                                       | measured with an explicit `interruption.ignored`/false source, else inferred |
+| `audio.stale_playback` | decode / render     | `earshot.audio.render.stale` event                                                   | n/a                                       | measured                                                                     |
+| `tool.retry`           | tool                | a `tool` op with a `retries` link to a failed/timed-out sibling `tool` op            | n/a                                       | measured                                                                     |
+| `device.unavailable`   | capture             | `earshot.device.*` events                                                            | n/a                                       | measured                                                                     |
+| `transport.reconnect`  | transport           | `earshot.transport.reconnecting` (+ duplicate / out-of-order) events                 | n/a                                       | measured                                                                     |
+| `stage.slow`           | stt / llm / tts     | that stage operation's own duration                                                  | > 1500 ms                                 | inferred                                                                     |
+| `endpointing.slow`     | turn detection      | `turn_detection` (EOU) operation duration                                            | > 1000 ms                                 | inferred                                                                     |
 
 Thresholds are a configurable `SloRecipe` passed to `analyze_incident(..., slo=...)`; the
 defaults above are conservative real-time-voice values. A cleanly handled barge-in
