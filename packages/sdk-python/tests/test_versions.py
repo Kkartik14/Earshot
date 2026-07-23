@@ -40,7 +40,7 @@ def test_pipeline_evidence_semantics_have_a_new_adapter_version() -> None:
 
 
 def test_analysis_truth_changes_have_a_new_cache_identity() -> None:
-    assert ANALYZER_VERSION == "0.3.1"
+    assert ANALYZER_VERSION == "0.3.2"
 
 
 def test_explanation_identity_contract_is_api_version_0_2() -> None:
