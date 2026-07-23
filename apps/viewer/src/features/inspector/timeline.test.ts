@@ -12,6 +12,8 @@ import fastEndpointing from "./__fixtures__/faults/fast_endpointing.explanation.
 import llmDelay from "./__fixtures__/faults/llm_delay.explanation.json";
 import slowEndpointing from "./__fixtures__/faults/slow_endpointing.explanation.json";
 import sttDelay from "./__fixtures__/faults/stt_delay.explanation.json";
+import privacyOptOut from "./__fixtures__/faults/privacy_opt_out.explanation.json";
+import ttsDelay from "./__fixtures__/faults/tts_delay.explanation.json";
 import {
   buildDiagnoses,
   buildSummary,
@@ -929,5 +931,47 @@ describe("remaining fault-family projections", () => {
       ["earshot.audio.render.started", "op-render"],
     ]);
     expect(detail.edges).toEqual([]);
+  });
+
+  it("keeps the observed TTS delay and all downstream response boundaries visible", () => {
+    const [detail] = buildTurnDetails(asExplanation(ttsDelay));
+
+    expect(detail.stages.map((stage) => stage.operationId)).toEqual([
+      "op-stt",
+      "op-llm",
+      "op-tts",
+      "op-send",
+      "op-receive",
+      "op-render",
+    ]);
+    expect(
+      detail.stages.find((stage) => stage.operationId === "op-tts"),
+    ).toMatchObject({ startMs: 600, endMs: 3100, timing: "interval" });
+    expect(
+      detail.events.map((event) => [event.name, event.attachedOperationId]),
+    ).toEqual([
+      ["earshot.response.first_token", "op-llm"],
+      ["earshot.response.first_audio_generated", "op-tts"],
+      ["earshot.audio.first_byte_sent", "op-send"],
+      ["earshot.audio.first_packet_received", "op-receive"],
+      ["earshot.audio.render.started", "op-render"],
+    ]);
+    expect(detail.edges).toEqual([]);
+  });
+
+  it("renders privacy opt-out as an omission beside the retained metadata operation", () => {
+    const explanation = asExplanation(privacyOptOut);
+    const [detail] = buildTurnDetails(explanation);
+
+    expect(detail.stages.map((stage) => stage.operationId)).toEqual([
+      "op-metadata-only",
+    ]);
+    expect(detail.events).toEqual([]);
+    expect(detail.edges).toEqual([]);
+    expect(getCoverage(explanation)).toContainEqual({
+      signal: "privacy.transcript",
+      availability: "omitted",
+      reason: "capture_class_disabled",
+    });
   });
 });
