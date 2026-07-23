@@ -1869,7 +1869,7 @@ class IncidentStore:
     ) -> None:
         """Replace the fleet read model from the same canonical Incident."""
 
-        from .analysis import analyze_incident, comparable_delta
+        from .analysis import _ClockAligner, analyze_incident, comparable_delta
         from .codec import analysis_input_sha256
 
         bundle_id = bundle.profile.manifest.bundle_id
@@ -1886,6 +1886,7 @@ class IncidentStore:
             input_sha256=analysis_input_sha256(bundle),
             generated_at_unix_nano="0",
         )
+        aligner = _ClockAligner(bundle.profile.clock_relations)
         operation_by_id = {
             operation.operation_id: operation for operation in bundle.profile.operations
         }
@@ -1960,7 +1961,7 @@ class IncidentStore:
             evidence: tuple[Any, ...],
             limitation: str | None = None,
         ) -> tuple[object, ...]:
-            delta = comparable_delta(start, end)
+            delta = comparable_delta(start, end, aligner)
             if delta.availability != "available" or delta.nanoseconds is None:
                 return (
                     None,

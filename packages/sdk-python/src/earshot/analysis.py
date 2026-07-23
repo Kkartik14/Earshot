@@ -16,6 +16,7 @@ from typing import TypeVar
 
 from .contract import (
     UINT64_MAX,
+    ClockRelation,
     DerivedAnalysis,
     Diagnosis,
     Event,
@@ -155,6 +156,7 @@ class Delta:
     basis: str
     confidence: str
     limitation: str | None = None
+    uncertainty: int | None = None
 
     def as_dict(self) -> dict[str, object]:
         output: dict[str, object] = {
@@ -187,53 +189,155 @@ def _shared_time_deltas(start: TimePoint, end: TimePoint) -> tuple[tuple[str, in
     )
 
 
-def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
-    """Subtract only evidence sharing an explicit clock domain.
+class _ClockAligner:
+    """Convert a wall timestamp between clock domains using declared calibrations.
 
-    Wall timestamps from different processes can look ordered while being skewed.
-    A declared clock mapping belongs in a future alignment layer; until then, an
-    exact cross-domain latency is unavailable rather than clamped to zero.
+    Only ``source_time_unix_nano`` is aligned: monotonic values are domain-local
+    and are never comparable across domains. Alignment succeeds only inside a
+    relation's declared validity window and always carries the calibration's own
+    uncertainty forward, so a cross-domain latency stays honestly estimated.
     """
 
-    if not start.clock_domain_id or start.clock_domain_id != end.clock_domain_id:
-        return Delta(
-            "unavailable",
-            None,
-            "clock_domain",
-            "unavailable",
-            "cross_clock_domain",
-        )
+    def __init__(self, relations: Sequence[ClockRelation] = ()) -> None:
+        self._by_pair: dict[tuple[str, str], list[ClockRelation]] = defaultdict(list)
+        for relation in sorted(relations, key=lambda item: item.relation_id):
+            key = (relation.from_clock_domain_id, relation.to_clock_domain_id)
+            self._by_pair[key].append(relation)
 
-    shared_deltas = _shared_time_deltas(start, end)
-    reversed_basis = next((basis for basis, value in shared_deltas if value < 0), None)
-    if reversed_basis is not None:
-        return Delta(
-            "inconsistent",
-            None,
-            reversed_basis,
-            "unavailable",
-            "same_domain_time_reversed",
-        )
+    def align(self, point: TimePoint, target_domain: str) -> tuple[int, int] | None:
+        """Return ``(aligned_unix_nano, added_uncertainty_nano)`` or ``None``.
 
-    deltas_by_basis = dict(shared_deltas)
-    if "monotonic" in deltas_by_basis:
-        value = deltas_by_basis["monotonic"]
-        basis = "monotonic"
-    elif "source_wall" in deltas_by_basis:
-        value = deltas_by_basis["source_wall"]
-        basis = "source_wall"
-    else:
-        return Delta(
-            "unavailable",
-            None,
-            "clock_domain",
-            "unavailable",
-            "timestamp_representation_unavailable",
-        )
+        A direct ``point.domain -> target`` relation is applied forward; failing
+        that, an inverse ``target -> point.domain`` relation is applied in reverse.
+        """
 
-    uncertainty = int(start.uncertainty_nano or "0") + int(end.uncertainty_nano or "0")
-    confidence = "estimated" if uncertainty else "measured"
-    return Delta("available", value, basis, confidence)
+        domain = point.clock_domain_id
+        if (
+            domain is None
+            or not target_domain
+            or domain == target_domain
+            or point.source_time_unix_nano is None
+        ):
+            return None
+        wall = int(point.source_time_unix_nano)
+        for relation in self._by_pair.get((domain, target_domain), ()):
+            aligned = self._apply(relation, wall, forward=True)
+            if aligned is not None:
+                return aligned
+        for relation in self._by_pair.get((target_domain, domain), ()):
+            aligned = self._apply(relation, wall, forward=False)
+            if aligned is not None:
+                return aligned
+        return None
+
+    @staticmethod
+    def _apply(relation: ClockRelation, wall: int, *, forward: bool) -> tuple[int, int] | None:
+        # The validity window bounds the point's own timestamp; outside it the
+        # calibration is not trusted and no alignment is offered.
+        if relation.valid_from_unix_nano is not None and wall < int(relation.valid_from_unix_nano):
+            return None
+        if relation.valid_to_unix_nano is not None and wall > int(relation.valid_to_unix_nano):
+            return None
+        reference = (
+            int(relation.reference_unix_nano) if relation.reference_unix_nano is not None else wall
+        )
+        correction = int(relation.offset_nano)
+        if relation.drift_ppm is not None:
+            correction += int(relation.drift_ppm * (wall - reference) / 1e6)
+        aligned = wall + correction if forward else wall - correction
+        added_uncertainty = int(relation.uncertainty_nano or "0")
+        return (aligned, added_uncertainty)
+
+
+def comparable_delta(
+    start: TimePoint,
+    end: TimePoint,
+    aligner: _ClockAligner | None = None,
+) -> Delta:
+    """Subtract evidence sharing a clock domain, or a declared calibration across them.
+
+    Within one clock domain an exact difference is taken across every shared basis,
+    failing closed if any basis is reversed. Across domains a value is produced only
+    when a declared, in-window ``ClockRelation`` aligns the endpoints; the
+    calibration's own uncertainty is propagated and the result is at most
+    ``estimated``. Absent such a relation the latency stays ``unavailable`` rather
+    than clamped to zero.
+    """
+
+    if start.clock_domain_id and start.clock_domain_id == end.clock_domain_id:
+        shared_deltas = _shared_time_deltas(start, end)
+        reversed_basis = next((basis for basis, value in shared_deltas if value < 0), None)
+        if reversed_basis is not None:
+            return Delta(
+                "inconsistent",
+                None,
+                reversed_basis,
+                "unavailable",
+                "same_domain_time_reversed",
+            )
+
+        deltas_by_basis = dict(shared_deltas)
+        if "monotonic" in deltas_by_basis:
+            value = deltas_by_basis["monotonic"]
+            basis = "monotonic"
+        elif "source_wall" in deltas_by_basis:
+            value = deltas_by_basis["source_wall"]
+            basis = "source_wall"
+        else:
+            return Delta(
+                "unavailable",
+                None,
+                "clock_domain",
+                "unavailable",
+                "timestamp_representation_unavailable",
+            )
+
+        uncertainty = int(start.uncertainty_nano or "0") + int(end.uncertainty_nano or "0")
+        confidence = "estimated" if uncertainty else "measured"
+        return Delta("available", value, basis, confidence, uncertainty=uncertainty)
+
+    # Different clock domains: only a declared, in-window calibration can relate
+    # wall timestamps. Monotonic values are domain-local and are never aligned.
+    if (
+        aligner is not None
+        and start.clock_domain_id
+        and end.clock_domain_id
+        and start.source_time_unix_nano is not None
+        and end.source_time_unix_nano is not None
+    ):
+        aligned = aligner.align(end, start.clock_domain_id)
+        if aligned is not None:
+            aligned_end, added_uncertainty = aligned
+            value = aligned_end - int(start.source_time_unix_nano)
+            if value < 0:
+                return Delta(
+                    "inconsistent",
+                    None,
+                    "cross_clock_calibrated",
+                    "unavailable",
+                    "calibrated_time_reversed",
+                )
+            uncertainty = (
+                int(start.uncertainty_nano or "0")
+                + int(end.uncertainty_nano or "0")
+                + added_uncertainty
+            )
+            # A calibrated cross-clock latency is at most estimated, never measured.
+            return Delta(
+                "available",
+                value,
+                "cross_clock_calibrated",
+                "estimated",
+                uncertainty=uncertainty,
+            )
+
+    return Delta(
+        "unavailable",
+        None,
+        "clock_domain",
+        "unavailable",
+        "cross_clock_domain",
+    )
 
 
 def _earliest_event(events: Iterable[Event], names: set[str]) -> Event | None:
@@ -585,7 +689,12 @@ def _first_operation(operations: Sequence[Operation], names: set[str]) -> Operat
     return None
 
 
-def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> dict[str, object]:
+def _latency_metric(
+    anchor: Event | None,
+    target: Event | None,
+    basis: str,
+    aligner: _ClockAligner | None = None,
+) -> dict[str, object]:
     if anchor is None:
         return {
             "availability": "not_observed",
@@ -602,7 +711,7 @@ def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> d
             "limitation": "target_signal_not_observed",
             "evidence_ids": [anchor.event_id],
         }
-    output = comparable_delta(anchor.time, target.time).as_dict()
+    output = comparable_delta(anchor.time, target.time, aligner).as_dict()
     confidence_candidates = [str(output["confidence"])]
     for boundary in (anchor, target):
         if boundary.attributes.get("earshot.analysis.synthetic_projection"):
@@ -627,16 +736,19 @@ def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> d
     return output
 
 
-def _interval_nanos(operation: Operation) -> int | None:
+def _interval_nanos(operation: Operation, aligner: _ClockAligner | None = None) -> int | None:
     if operation.ended_at is None:
         return None
-    delta = comparable_delta(operation.started_at, operation.ended_at)
+    delta = comparable_delta(operation.started_at, operation.ended_at, aligner)
     return delta.nanoseconds if delta.availability == "available" else None
 
 
-def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
+def _tool_metrics(
+    operations: Sequence[Operation],
+    aligner: _ClockAligner | None = None,
+) -> dict[str, object]:
     tools = [item for item in operations if item.operation_name == "tool"]
-    durations = [(item, _interval_nanos(item)) for item in tools]
+    durations = [(item, _interval_nanos(item, aligner)) for item in tools]
     timed_operation_count = sum(value is not None for _, value in durations)
     untimed_operation_count = len(durations) - timed_operation_count
     total = sum(value for _, value in durations if value is not None)
@@ -777,6 +889,7 @@ def _turn_projection(
     participant_directions: Mapping[str, str] | None = None,
     operations_by_id: Mapping[str, Operation] | None = None,
     operations_by_otel: Mapping[tuple[str, str], Operation] | None = None,
+    aligner: _ClockAligner | None = None,
 ) -> dict:
     directions = stream_directions or {}
 
@@ -901,7 +1014,7 @@ def _turn_projection(
 
     provider_measurements = _quality_measurements(quality_samples)
     first_token_latency = _provider_stage_latency_fallback(
-        _latency_metric(anchor, first_token, "first_token"),
+        _latency_metric(anchor, first_token, "first_token", aligner),
         provider_measurements,
         ("earshot.llm.ttft", "livekit.llm_node_ttft", "pipecat.llm.ttfb"),
         target=first_token,
@@ -910,7 +1023,7 @@ def _turn_projection(
         attribute_names=("lk.response.ttft", "metrics.ttfb"),
     )
     generated_response_latency = _provider_stage_latency_fallback(
-        _latency_metric(anchor, generated, "generated"),
+        _latency_metric(anchor, generated, "generated", aligner),
         provider_measurements,
         ("earshot.tts.ttfb", "livekit.tts_node_ttfb", "pipecat.tts.ttfb"),
         target=generated,
@@ -918,7 +1031,7 @@ def _turn_projection(
         operations=operations,
         attribute_names=("lk.response.ttfb", "metrics.ttfb"),
     )
-    response_latency = _latency_metric(anchor, response_target, response_basis)
+    response_latency = _latency_metric(anchor, response_target, response_basis, aligner)
     direct_e2e = provider_measurements.get("earshot.turn.response_latency")
     if direct_e2e is None:
         direct_e2e = provider_measurements.get("livekit.e2e_latency")
@@ -958,11 +1071,11 @@ def _turn_projection(
         "metrics": {
             "first_token_latency": first_token_latency,
             "generated_response_latency": generated_response_latency,
-            "sent_response_latency": _latency_metric(anchor, sent, "sent"),
-            "received_response_latency": _latency_metric(anchor, received, "received"),
-            "render_start_response_latency": _latency_metric(anchor, rendered, "render"),
+            "sent_response_latency": _latency_metric(anchor, sent, "sent", aligner),
+            "received_response_latency": _latency_metric(anchor, received, "received", aligner),
+            "render_start_response_latency": _latency_metric(anchor, rendered, "render", aligner),
             "response_latency": response_latency,
-            "tools": _tool_metrics(operations),
+            "tools": _tool_metrics(operations, aligner),
             "provider_measurements": provider_measurements,
         },
         "interruptions": [
@@ -1016,6 +1129,7 @@ def analyze_incident(
     """Return a stable projection for an exact immutable input digest."""
 
     profile = bundle.profile
+    aligner = _ClockAligner(profile.clock_relations)
     turn_operations: dict[str, list[Operation]] = defaultdict(list)
     turn_events: dict[str, list[Event]] = defaultdict(list)
     turn_quality: dict[str, list[QualitySample]] = defaultdict(list)
@@ -1092,6 +1206,7 @@ def analyze_incident(
             participant_directions,
             operations_by_id,
             operation_by_otel,
+            aligner,
         )
         for turn_id in ordered_turn_ids
     ]
