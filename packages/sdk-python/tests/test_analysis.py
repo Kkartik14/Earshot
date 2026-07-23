@@ -774,6 +774,42 @@ def test_provider_latency_point_cannot_exceed_operation_end(valid_bundle) -> Non
     assert metric(result, "first_token_latency")["availability"] == "not_observed"
 
 
+def test_provider_latency_point_must_fit_every_shared_operation_basis(valid_bundle) -> None:
+    operations = tuple(
+        operation.model_copy(
+            update={
+                "ended_at": TimePoint(
+                    monotonic_time_nano="1300000000",
+                    source_time_unix_nano=str(
+                        int(operation.started_at.source_time_unix_nano or "0") + 50_000_000
+                    ),
+                    clock_domain_id="server-clock",
+                ),
+                "attributes": {**operation.attributes, "metrics.ttfb": 0.1},
+            }
+        )
+        if operation.operation_name == "llm"
+        else operation
+        for operation in valid_bundle.profile.operations
+    )
+    events = tuple(
+        event
+        for event in valid_bundle.profile.events
+        if event.event_name != "earshot.response.first_token"
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=operations,
+        events=events,
+        quality_samples=(),
+    )
+    assert validate_incident(bundle).ok
+
+    result = analyze(bundle)
+
+    assert metric(result, "first_token_latency")["availability"] == "not_observed"
+
+
 def test_latency_confidence_uses_weakest_boundary_evidence(valid_bundle) -> None:
     anchor = next(
         event

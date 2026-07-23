@@ -210,35 +210,31 @@ def _check_time_range(
     path: tuple[str | int, ...],
     issues: list[ValidationIssue],
 ) -> None:
-    comparable: tuple[int, int] | None = None
     if (
-        value.start.monotonic_time_nano is not None
-        and value.end.monotonic_time_nano is not None
-        and value.start.clock_domain_id is not None
-        and value.start.clock_domain_id == value.end.clock_domain_id
+        value.start.clock_domain_id is None
+        or value.start.clock_domain_id != value.end.clock_domain_id
     ):
-        comparable = (
-            int(value.start.monotonic_time_nano),
-            int(value.end.monotonic_time_nano),
+        return
+    reversed_bases = [
+        basis
+        for basis, field_name in (
+            ("monotonic", "monotonic_time_nano"),
+            ("source_wall", "source_time_unix_nano"),
+            ("observed_wall", "observed_time_unix_nano"),
         )
-    elif (
-        value.start.source_time_unix_nano is not None
-        and value.end.source_time_unix_nano is not None
-        and value.start.clock_domain_id is not None
-        and value.start.clock_domain_id == value.end.clock_domain_id
-    ):
-        # Use a shared source representation even when one endpoint also has a
-        # monotonic value. Never compare values from different clock domains.
-        comparable = (
-            int(value.start.source_time_unix_nano),
-            int(value.end.source_time_unix_nano),
-        )
-    if comparable is not None and comparable[1] < comparable[0]:
+        if (start := getattr(value.start, field_name)) is not None
+        and (end := getattr(value.end, field_name)) is not None
+        and int(end) < int(start)
+    ]
+    if reversed_bases:
         issues.append(
             ValidationIssue(
                 code="EARSHOT_TIME_RANGE_REVERSED",
                 path=path,
-                message="end precedes start within the same clock domain",
+                message=(
+                    "end precedes start within the same clock domain for "
+                    + ", ".join(reversed_bases)
+                ),
             )
         )
 

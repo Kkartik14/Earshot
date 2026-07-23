@@ -300,6 +300,23 @@ def _shift_time_point(point: TimePoint, seconds: object) -> TimePoint | None:
     return point.model_copy(update=update)
 
 
+def _point_exceeds_comparable_end(point: TimePoint, end: TimePoint) -> bool:
+    """Return true when any shared authored clock basis places ``point`` after ``end``."""
+
+    if point.clock_domain_id is None or point.clock_domain_id != end.clock_domain_id:
+        return False
+    return any(
+        int(point_value) > int(end_value)
+        for field_name in (
+            "monotonic_time_nano",
+            "source_time_unix_nano",
+            "observed_time_unix_nano",
+        )
+        if (point_value := getattr(point, field_name)) is not None
+        and (end_value := getattr(end, field_name)) is not None
+    )
+
+
 def _provider_latency_event(
     operation: Operation,
     event_name: str,
@@ -313,10 +330,10 @@ def _provider_latency_event(
         point = _shift_time_point(operation.started_at, operation.attributes[attribute_name])
         if point is None:
             continue
-        if operation.ended_at is not None:
-            end_delta = comparable_delta(point, operation.ended_at)
-            if end_delta.availability == "inconsistent":
-                continue
+        if operation.ended_at is not None and _point_exceeds_comparable_end(
+            point, operation.ended_at
+        ):
+            continue
         projected = _operation_point_event(operation, event_name, point)
         return projected.model_copy(
             update={
@@ -717,10 +734,8 @@ def _provider_stage_latency_fallback(
     point = _shift_time_point(operation.started_at, raw)
     if point is None or point != target.time:
         return current
-    if operation.ended_at is not None:
-        end_delta = comparable_delta(point, operation.ended_at)
-        if end_delta.availability == "inconsistent":
-            return current
+    if operation.ended_at is not None and _point_exceeds_comparable_end(point, operation.ended_at):
+        return current
     confidence = "estimated"
     if operation.evidence is not None:
         confidence = (

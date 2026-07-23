@@ -384,6 +384,56 @@ def test_reversed_range_in_same_clock_domain_is_rejected(valid_bundle: IncidentB
     )
 
 
+def test_reversed_source_range_cannot_hide_behind_forward_monotonic_time(
+    valid_bundle: IncidentBundle,
+) -> None:
+    operations = list(valid_bundle.profile.operations)
+    operations[0] = operations[0].model_copy(
+        update={
+            "started_at": TimePoint(
+                monotonic_time_nano="100",
+                source_time_unix_nano="1000",
+                clock_domain_id="server-clock",
+            ),
+            "ended_at": TimePoint(
+                monotonic_time_nano="200",
+                source_time_unix_nano="999",
+                clock_domain_id="server-clock",
+            ),
+        }
+    )
+
+    assert "EARSHOT_TIME_RANGE_REVERSED" in issue_codes(
+        replace_profile(valid_bundle, operations=tuple(operations))
+    )
+
+
+def test_reversed_observed_range_cannot_hide_behind_other_forward_bases(
+    valid_bundle: IncidentBundle,
+) -> None:
+    operations = list(valid_bundle.profile.operations)
+    operations[0] = operations[0].model_copy(
+        update={
+            "started_at": TimePoint(
+                monotonic_time_nano="100",
+                source_time_unix_nano="1000",
+                observed_time_unix_nano="5000",
+                clock_domain_id="server-clock",
+            ),
+            "ended_at": TimePoint(
+                monotonic_time_nano="200",
+                source_time_unix_nano="2000",
+                observed_time_unix_nano="4999",
+                clock_domain_id="server-clock",
+            ),
+        }
+    )
+
+    assert "EARSHOT_TIME_RANGE_REVERSED" in issue_codes(
+        replace_profile(valid_bundle, operations=tuple(operations))
+    )
+
+
 def test_cross_domain_values_are_not_globally_ordered(valid_bundle: IncidentBundle) -> None:
     browser_clock = ClockDomain(clock_domain_id="browser-clock", kind="browser", observer="browser")
     operations = list(valid_bundle.profile.operations)
