@@ -41,8 +41,15 @@ def _write_archive(
     compresslevel: int = 9,
     directories: list[str] | None = None,
     links: list[tuple[str, str]] | None = None,
+    pax_headers: dict[str, str] | None = None,
 ) -> None:
-    with tarfile.open(path, mode="w:gz", compresslevel=compresslevel) as archive:
+    with tarfile.open(
+        path,
+        mode="w:gz",
+        compresslevel=compresslevel,
+        format=tarfile.PAX_FORMAT,
+        pax_headers=pax_headers,
+    ) as archive:
         for name in names:
             member = tarfile.TarInfo(name)
             member.size = payload_size
@@ -414,9 +421,9 @@ def test_sdist_checker_rejects_excessive_header_metadata(tmp_path: Path) -> None
         directories=[
             (
                 f"{root}/packages/sdk-python/src/earshot/generated/"
-                f"{'long-directory-name-' * 7}{index}"
+                f"{'long-directory-name-' * 100}{index}"
             )
-            for index in range(700)
+            for index in range(400)
         ],
     )
 
@@ -429,6 +436,29 @@ def test_sdist_checker_rejects_excessive_header_metadata(tmp_path: Path) -> None
 
     assert result.returncode != 0
     assert "header metadata is too large" in result.stderr
+
+
+def test_sdist_checker_rejects_global_pax_metadata_before_payload_parse(
+    tmp_path: Path,
+) -> None:
+    root = "earshot_observability-0.1.0"
+    archive = tmp_path / f"{root}.tar.gz"
+    _write_archive(
+        archive,
+        [f"{root}/{name}" for name in REQUIRED_NAMES],
+        pax_headers={"comment": "x" * (2 * 1024 * 1024)},
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "check_sdist.py"), str(archive)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert archive.stat().st_size < 8 * 1024 * 1024
+    assert result.returncode != 0
+    assert "global archive metadata" in result.stderr
 
 
 def test_sdist_checker_rejects_excessive_compressed_size_before_parsing(

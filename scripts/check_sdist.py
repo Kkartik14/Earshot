@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import gzip
 import pathlib
 import sys
 import tarfile
+from typing import BinaryIO
 
 FORBIDDEN_DIRECTORY_SEGMENTS = frozenset(
     {
@@ -57,6 +59,10 @@ MAX_FILE_COUNT = 512
 MAX_HEADER_BYTES = 1 * 1024 * 1024
 MAX_MEMBER_COUNT = 1_024
 MAX_UNPACKED_BYTES = 32 * 1024 * 1024
+TAR_BLOCK_BYTES = 512
+TAR_DIRECTORY_TYPE = b"5"
+TAR_LOCAL_PAX_TYPE = b"x"
+TAR_REGULAR_TYPES = frozenset({b"\0", b"0"})
 
 
 def _archive_path(name: str) -> tuple[str, str]:
@@ -107,6 +113,88 @@ def _path_is_forbidden(name: str) -> bool:
     )
 
 
+def _tar_size(header: bytes, path: pathlib.Path) -> int:
+    raw = header[124:136].strip(b" \0")
+    if not raw:
+        return 0
+    if raw[0] & 0x80 or any(byte not in b"01234567" for byte in raw):
+        raise SystemExit(f"{path}: unsupported source archive size encoding")
+    return int(raw, 8)
+
+
+def _discard(stream: BinaryIO, count: int, path: pathlib.Path) -> None:
+    remaining = count
+    while remaining:
+        chunk = stream.read(min(remaining, 64 * 1024))
+        if not chunk:
+            raise SystemExit(f"{path}: truncated source archive")
+        remaining -= len(chunk)
+
+
+def _prescan_tar_headers(path: pathlib.Path) -> None:
+    """Bound metadata before tarfile can materialize hidden extension records."""
+
+    member_count = 0
+    metadata_bytes = 0
+    unpacked_bytes = 0
+    try:
+        with gzip.open(path, mode="rb") as stream:
+            while True:
+                header = stream.read(TAR_BLOCK_BYTES)
+                if not header:
+                    raise SystemExit(f"{path}: source archive has no end marker")
+                if len(header) != TAR_BLOCK_BYTES:
+                    raise SystemExit(f"{path}: truncated source archive header")
+                if header == b"\0" * TAR_BLOCK_BYTES:
+                    return
+
+                member_count += 1
+                if member_count > MAX_MEMBER_COUNT:
+                    raise SystemExit(
+                        f"{path}: source archive contains too many archive members: "
+                        f"{member_count} exceeds {MAX_MEMBER_COUNT}"
+                    )
+                metadata_bytes += TAR_BLOCK_BYTES
+                if metadata_bytes > MAX_HEADER_BYTES:
+                    raise SystemExit(
+                        f"{path}: source archive header metadata is too large: "
+                        f"{metadata_bytes} bytes exceeds {MAX_HEADER_BYTES}"
+                    )
+
+                member_type = header[156:157]
+                if member_type == b"g":
+                    # tarfile consumes a global PAX payload before yielding the
+                    # first member, so reject it from the bounded raw stream.
+                    raise SystemExit(f"{path}: unsupported global archive metadata")
+                if member_type not in TAR_REGULAR_TYPES | {
+                    TAR_DIRECTORY_TYPE,
+                    TAR_LOCAL_PAX_TYPE,
+                }:
+                    raise SystemExit(f"{path}: unsupported archive member type: {member_type!r}")
+
+                size = _tar_size(header, path)
+                padded_size = ((size + TAR_BLOCK_BYTES - 1) // TAR_BLOCK_BYTES) * TAR_BLOCK_BYTES
+                if member_type == TAR_LOCAL_PAX_TYPE:
+                    metadata_bytes += padded_size
+                    if metadata_bytes > MAX_HEADER_BYTES:
+                        raise SystemExit(
+                            f"{path}: source archive header metadata is too large: "
+                            f"{metadata_bytes} bytes exceeds {MAX_HEADER_BYTES}"
+                        )
+                elif member_type in TAR_REGULAR_TYPES:
+                    unpacked_bytes += size
+                    if unpacked_bytes > MAX_UNPACKED_BYTES:
+                        raise SystemExit(
+                            f"{path}: source archive unpacked size is too large: "
+                            f"{unpacked_bytes} bytes exceeds {MAX_UNPACKED_BYTES}"
+                        )
+                elif size:
+                    raise SystemExit(f"{path}: source archive directory carries payload bytes")
+                _discard(stream, padded_size, path)
+    except (EOFError, OSError) as error:
+        raise SystemExit(f"{path}: unreadable compressed source archive") from error
+
+
 def check_sdist(path: pathlib.Path) -> None:
     compressed_bytes = path.stat().st_size
     if compressed_bytes > MAX_COMPRESSED_BYTES:
@@ -114,6 +202,7 @@ def check_sdist(path: pathlib.Path) -> None:
             f"{path}: source archive compressed size is too large: "
             f"{compressed_bytes} bytes exceeds {MAX_COMPRESSED_BYTES}"
         )
+    _prescan_tar_headers(path)
     archive_root: str | None = None
     relative_files: set[str] = set()
     seen_paths: set[str] = set()
