@@ -1,0 +1,73 @@
+{
+  "format_version": 1,
+  "policy_document": "docs/captured-fixtures.md",
+  "artifacts": [
+    {
+      "surface": "livekit",
+      "file": "livekit.incident.json",
+      "captured_on": "2026-07-17",
+      "source_kind": "retained_real_capture",
+      "source_version": "livekit-agents==1.6.5",
+      "migration": "contract_and_semantic_profile_labels_1.0.0_to_0.1.0",
+      "privacy_transform": "pseudonymized_identifiers_no_content_or_media"
+    },
+    {
+      "surface": "pipecat",
+      "file": "pipecat.incident.json",
+      "captured_on": "2026-07-17",
+      "source_kind": "retained_real_capture",
+      "source_version": "pipecat-ai==1.5.0",
+      "migration": "contract_and_semantic_profile_labels_1.0.0_to_0.1.0",
+      "privacy_transform": "pseudonymized_identifiers_no_content_or_media"
+    },
+    {
+      "surface": "deepgram",
+      "file": "deepgram.incident.json",
+      "captured_on": "2026-07-19",
+      "source_kind": "retained_real_capture",
+      "source_version": "provider_delivery_2026-07-19",
+      "migration": "contract_and_semantic_profile_labels_1.0.0_to_0.1.0",
+      "privacy_transform": "pseudonymized_identifiers_no_content_or_media"
+    },
+    {
+      "surface": "cartesia",
+      "file": "cartesia.incident.json",
+      "captured_on": "2026-07-19",
+      "source_kind": "retained_real_capture",
+      "source_version": "provider_delivery_2026-07-19",
+      "migration": "contract_and_semantic_profile_labels_1.0.0_to_0.1.0",
+      "privacy_transform": "pseudonymized_identifiers_no_content_or_media"
+    },
+    {
+      "surface": "sarvam",
+      "file": "sarvam.incident.json",
+      "captured_on": "2026-07-19",
+      "source_kind": "retained_real_capture",
+      "source_version": "provider_delivery_2026-07-19",
+      "migration": "contract_and_semantic_profile_labels_1.0.0_to_0.1.0",
+      "privacy_transform": "pseudonymized_identifiers_no_content_or_media"
+    }
+  ],
+  "unavailable_real_captures": [
+    {
+      "surface": "openai-realtime",
+      "reason": "no retained real provider capture; regeneration requires an external provider session"
+    },
+    {
+      "surface": "elevenlabs-finalized-delivery",
+      "reason": "no retained real signed provider delivery"
+    },
+    {
+      "surface": "vapi-finalized-delivery",
+      "reason": "no retained real signed provider delivery"
+    },
+    {
+      "surface": "retell-finalized-delivery",
+      "reason": "no retained real signed provider delivery"
+    },
+    {
+      "surface": "ringg-finalized-delivery",
+      "reason": "no retained real signed provider delivery"
+    }
+  ]
+}
