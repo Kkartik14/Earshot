@@ -170,6 +170,23 @@ class Delta:
         return output
 
 
+def _shared_time_deltas(start: TimePoint, end: TimePoint) -> tuple[tuple[str, int], ...]:
+    """Return every authored same-domain coordinate delta without choosing a clock."""
+
+    if not start.clock_domain_id or start.clock_domain_id != end.clock_domain_id:
+        return ()
+    return tuple(
+        (basis, int(end_value) - int(start_value))
+        for basis, field_name in (
+            ("monotonic", "monotonic_time_nano"),
+            ("source_wall", "source_time_unix_nano"),
+            ("observed_wall", "observed_time_unix_nano"),
+        )
+        if (start_value := getattr(start, field_name)) is not None
+        and (end_value := getattr(end, field_name)) is not None
+    )
+
+
 def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
     """Subtract only evidence sharing an explicit clock domain.
 
@@ -187,11 +204,23 @@ def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
             "cross_clock_domain",
         )
 
-    if start.monotonic_time_nano is not None and end.monotonic_time_nano is not None:
-        value = int(end.monotonic_time_nano) - int(start.monotonic_time_nano)
+    shared_deltas = _shared_time_deltas(start, end)
+    reversed_basis = next((basis for basis, value in shared_deltas if value < 0), None)
+    if reversed_basis is not None:
+        return Delta(
+            "inconsistent",
+            None,
+            reversed_basis,
+            "unavailable",
+            "same_domain_time_reversed",
+        )
+
+    deltas_by_basis = dict(shared_deltas)
+    if "monotonic" in deltas_by_basis:
+        value = deltas_by_basis["monotonic"]
         basis = "monotonic"
-    elif start.source_time_unix_nano is not None and end.source_time_unix_nano is not None:
-        value = int(end.source_time_unix_nano) - int(start.source_time_unix_nano)
+    elif "source_wall" in deltas_by_basis:
+        value = deltas_by_basis["source_wall"]
         basis = "source_wall"
     else:
         return Delta(
@@ -200,15 +229,6 @@ def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
             "clock_domain",
             "unavailable",
             "timestamp_representation_unavailable",
-        )
-
-    if value < 0:
-        return Delta(
-            "inconsistent",
-            None,
-            basis,
-            "unavailable",
-            "same_domain_time_reversed",
         )
 
     uncertainty = int(start.uncertainty_nano or "0") + int(end.uncertainty_nano or "0")
@@ -306,18 +326,7 @@ def _shift_time_point(point: TimePoint, seconds: object) -> TimePoint | None:
 def _point_exceeds_comparable_end(point: TimePoint, end: TimePoint) -> bool:
     """Return true when any shared authored clock basis places ``point`` after ``end``."""
 
-    if point.clock_domain_id is None or point.clock_domain_id != end.clock_domain_id:
-        return False
-    return any(
-        int(point_value) > int(end_value)
-        for field_name in (
-            "monotonic_time_nano",
-            "source_time_unix_nano",
-            "observed_time_unix_nano",
-        )
-        if (point_value := getattr(point, field_name)) is not None
-        and (end_value := getattr(end, field_name)) is not None
-    )
+    return any(delta < 0 for _, delta in _shared_time_deltas(point, end))
 
 
 def _provider_latency_event(

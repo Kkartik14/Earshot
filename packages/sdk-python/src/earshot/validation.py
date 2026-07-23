@@ -1868,6 +1868,7 @@ def validate_derived_analysis(
 
     expected_builtin_turns: dict[str, Any] = {}
     expected_builtin_unassigned: Any | None = None
+    expected_builtin: DerivedAnalysis | None = None
     if (
         expected_digest is not None
         and analysis.analyzer_name == BUILTIN_ANALYZER_NAME
@@ -1880,6 +1881,22 @@ def validate_derived_analysis(
         )
         expected_builtin_turns = {turn.turn_id: turn for turn in expected_builtin.projections.turns}
         expected_builtin_unassigned = expected_builtin.projections.unassigned_provider_measurements
+    if expected_builtin is not None and analysis.projections != expected_builtin.projections:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_ANALYSIS_PROJECTION_MISMATCH",
+                path=("analysis", "projections"),
+                message="current built-in projection differs from exact source-derived truth",
+            )
+        )
+    if expected_builtin is not None and analysis.diagnoses != expected_builtin.diagnoses:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_ANALYSIS_DIAGNOSIS_MISMATCH",
+                path=("analysis", "diagnoses"),
+                message="current built-in diagnoses differ from exact source-derived truth",
+            )
+        )
     projection_session = analysis.projections.session_id
     if projection_session is not None and projection_session != bundle.profile.manifest.session_id:
         issues.append(

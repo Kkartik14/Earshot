@@ -75,6 +75,25 @@ def test_negative_same_clock_delta_is_inconsistent_not_clamped() -> None:
     assert delta.nanoseconds is None
 
 
+def test_forward_monotonic_delta_cannot_hide_reversed_source_time() -> None:
+    start = TimePoint(
+        monotonic_time_nano="100",
+        source_time_unix_nano="1000",
+        clock_domain_id="server-clock",
+    )
+    end = TimePoint(
+        monotonic_time_nano="200",
+        source_time_unix_nano="999",
+        clock_domain_id="server-clock",
+    )
+
+    delta = comparable_delta(start, end)
+
+    assert delta.availability == "inconsistent"
+    assert delta.nanoseconds is None
+    assert delta.basis == "source_wall"
+
+
 def test_turns_use_evidence_time_before_lexical_identifier(valid_bundle) -> None:
     template = valid_bundle.profile.operations[0]
     early = template.model_copy(

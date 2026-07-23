@@ -5,6 +5,7 @@ import pytest
 from earshot.analysis import analyze_incident
 from earshot.codec import analysis_input_sha256
 from earshot.contract import (
+    Diagnosis,
     Evidence,
     IncidentProfile,
     QualityMeasurement,
@@ -138,6 +139,38 @@ def test_current_builtin_analysis_rejects_forged_unassigned_provider_value(
     assert "EARSHOT_ANALYSIS_PROVIDER_MEASUREMENT_MISMATCH" in {
         issue.code for issue in report.errors
     }
+
+
+def test_current_builtin_analysis_rejects_invented_diagnosis(valid_bundle) -> None:
+    analysis = _analyze(valid_bundle)
+    forged = Diagnosis(
+        diagnosis_id="forged_queue_overload",
+        code="queue.overload",
+        summary="queue_overload",
+        confidence="measured",
+        evidence_refs=("op-turn",),
+    )
+
+    report = validate_derived_analysis(
+        valid_bundle,
+        analysis.model_copy(update={"diagnoses": (*analysis.diagnoses, forged)}),
+    )
+
+    assert "EARSHOT_ANALYSIS_DIAGNOSIS_MISMATCH" in {issue.code for issue in report.errors}
+
+
+def test_current_builtin_analysis_rejects_invented_global_limitation(valid_bundle) -> None:
+    analysis = _analyze(valid_bundle)
+    projections = analysis.projections.model_copy(
+        update={"limitations": (*analysis.projections.limitations, "invented_limitation")}
+    )
+
+    report = validate_derived_analysis(
+        valid_bundle,
+        analysis.model_copy(update={"projections": projections}),
+    )
+
+    assert "EARSHOT_ANALYSIS_PROJECTION_MISMATCH" in {issue.code for issue in report.errors}
 
 
 def test_custom_analyzer_keeps_replaceable_metric_semantics(valid_bundle) -> None:
