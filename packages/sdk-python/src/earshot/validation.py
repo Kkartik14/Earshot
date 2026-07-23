@@ -2442,6 +2442,50 @@ def validate_derived_analysis(
                             ),
                         )
                     )
+        chain = turn.interruption_chain
+        if chain is not None:
+            chain_path = turn_path + ("interruption_chain",)
+            if chain.turn_id != turn.turn_id:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_ANALYSIS_INTERRUPTION_CHAIN_TURN_MISMATCH",
+                        path=chain_path + ("turn_id",),
+                        message="interruption chain names a different turn than its projection",
+                    )
+                )
+            for stage_index, stage in enumerate(chain.stages):
+                if stage.evidence_id is None:
+                    continue
+                stage_path = chain_path + ("stages", stage_index, "evidence_id")
+                if stage.evidence_id not in evidence_ids:
+                    issues.append(
+                        ValidationIssue(
+                            code="EARSHOT_ANALYSIS_INTERRUPTION_STAGE_EVIDENCE_INVALID",
+                            path=stage_path,
+                            message=(
+                                "an interruption stage cites evidence absent from the "
+                                "input artifact"
+                            ),
+                        )
+                    )
+                elif evidence_turn(stage.evidence_id) != turn.turn_id:
+                    issues.append(
+                        ValidationIssue(
+                            code="EARSHOT_ANALYSIS_INTERRUPTION_STAGE_EVIDENCE_INVALID",
+                            path=stage_path,
+                            message="an interruption stage cites evidence from a different turn",
+                        )
+                    )
+            check_metric(
+                chain.effectiveness,
+                chain_path + ("effectiveness",),
+                evidence_ids,
+            )
+            check_turn_evidence(
+                chain.effectiveness.evidence_ids,
+                turn.turn_id,
+                chain_path + ("effectiveness", "evidence_ids"),
+            )
 
     for _missing_turn_id in sorted(source_turn_ids - projected_turns):
         issues.append(
