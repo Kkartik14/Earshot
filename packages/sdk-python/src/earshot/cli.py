@@ -18,8 +18,9 @@ from .codec import (
     encode_incident_json,
     encode_incident_protobuf,
 )
-from .exporters import span_count, to_openinference, to_otlp
+from .exporters import span_count
 from .exporters.push import OtlpHttpExporter
+from .exporters.registry import export_incident, exporter_names
 from .privacy import ExportPolicyError, assert_export_allowed
 from .query import EvidenceQuery, compare_incidents
 from .storage import DEFAULT_PROJECT_ID, IncidentStore, StorageError
@@ -221,9 +222,10 @@ def _parse_headers(pairs: Sequence[str]) -> dict[str, str]:
 
 def _export_command(arguments: argparse.Namespace) -> int:
     bundle = _decode_file(Path(arguments.path))
-    # Respect any declared export restriction, exactly like ``show`` does.
-    assert_export_allowed(bundle, "otlp")
-    document = to_openinference(bundle) if arguments.format == "openinference" else to_otlp(bundle)
+    # Selecting by name is what makes a registered user exporter usable here
+    # without a CLI change; the registry enforces the declared export restriction
+    # against that exporter's destination, exactly as ``show`` does for its own.
+    document = export_incident(bundle, format=arguments.format)
 
     if arguments.out is not None:
         Path(arguments.out).write_text(
@@ -403,10 +405,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     export = commands.add_parser(
         "export",
-        help="project an incident into OTLP or OpenInference and optionally push it",
+        help="project an incident with a registered exporter and optionally push it",
     )
     export.add_argument("path")
-    export.add_argument("--format", choices=("otlp", "openinference"), required=True)
+    # Sourced from the registry so a process that registered its own exporter can
+    # drive it from the CLI; sorted names keep `--help` stable.
+    export.add_argument(
+        "--format",
+        choices=exporter_names(),
+        required=True,
+        help="registered exporter name (built in: otlp, openinference)",
+    )
     export.add_argument("--out", help="write the projected OTLP/JSON document to this file")
     export.add_argument(
         "--push-otlp",

@@ -84,16 +84,19 @@ from .privacy import (  # noqa: F401 - legacy direct attributes; import from ear
     assert_export_allowed,
 )
 from .recorder import IncidentRecorder, RecorderConfig, RecorderStatus  # noqa: F401
-from .sdk import (  # noqa: F401 - configure remains a compatibility attribute
+from .sdk import (  # noqa: F401 - configure and the export seam are direct attributes
     Client,
     ClientStatus,
     SamplingDecision,
     SdkConfig,
     configure,
     conversation,
+    export,
+    exporter_formats,
     flush,
     get_client,
     init,
+    register_exporter,
     session,
     shutdown,
     status,

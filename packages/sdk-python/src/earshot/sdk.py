@@ -10,9 +10,10 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from .clock import Clock
 from .context import _conversation_scope, is_instrumentation_suppressed
@@ -34,6 +35,10 @@ from .recorder import (
     RecorderStatus,
 )
 from .versions import PACKAGE_VERSION
+
+if TYPE_CHECKING:  # pragma: no cover - the projection seam stays a lazy import
+    from .contract import IncidentBundle
+    from .exporters.registry import IncidentExporter, RegisteredExporter
 
 
 @dataclass(frozen=True)
@@ -785,6 +790,45 @@ class Client:
             project_id=self.config.project_id,
         )
 
+    def export(self, bundle: IncidentBundle, *, format: str = "otlp") -> Mapping[str, Any]:
+        """Project a finished incident with a registered exporter, by name.
+
+        This is the seam that keeps a backend integration out of application code:
+        the caller names an exporter (``"otlp"``, ``"openinference"``, or one their
+        own process registered) and never imports a projection module. The named
+        export is policy-checked against the exporter's declared destination, so an
+        incident whose capture policy forbids it is refused before projection.
+
+        The projection is pure and needs none of the client's delivery runtime,
+        which is why it neither reserves a recorder nor cares whether the client is
+        configured with an endpoint or already shut down.
+        """
+
+        from .exporters.registry import default_registry
+
+        return default_registry().export(bundle, format=format)
+
+    def register_exporter(
+        self,
+        name: str,
+        exporter: IncidentExporter,
+        *,
+        destination: str | None = None,
+        replace: bool = False,
+    ) -> RegisteredExporter:
+        """Register a user exporter so :meth:`export` can select it by name."""
+
+        from .exporters.registry import default_registry
+
+        return default_registry().register(name, exporter, destination=destination, replace=replace)
+
+    def exporter_formats(self) -> tuple[str, ...]:
+        """Every exporter name :meth:`export` accepts, sorted."""
+
+        from .exporters.registry import default_registry
+
+        return default_registry().names()
+
     def flush(self, timeout: float | None = 5.0) -> bool:
         return self._router.flush(timeout)
 
@@ -1265,6 +1309,30 @@ def conversation(
     clock: Clock | None = None,
 ) -> _Conversation:
     return _client.conversation(session_id=session_id, bundle_id=bundle_id, clock=clock)
+
+
+def export(bundle: IncidentBundle, *, format: str = "otlp") -> Mapping[str, Any]:
+    """Project a finished incident with a registered exporter, by name."""
+
+    return _client.export(bundle, format=format)
+
+
+def register_exporter(
+    name: str,
+    exporter: IncidentExporter,
+    *,
+    destination: str | None = None,
+    replace: bool = False,
+) -> RegisteredExporter:
+    """Register a user exporter so :func:`export` can select it by name."""
+
+    return _client.register_exporter(name, exporter, destination=destination, replace=replace)
+
+
+def exporter_formats() -> tuple[str, ...]:
+    """Every exporter name :func:`export` accepts, sorted."""
+
+    return _client.exporter_formats()
 
 
 def flush(timeout: float | None = 5.0) -> bool:
