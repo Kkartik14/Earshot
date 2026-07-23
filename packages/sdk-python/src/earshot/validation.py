@@ -2165,6 +2165,25 @@ def validate_derived_analysis(
                         )
                     )
 
+    for operation_id, owner in operation_turns.items():
+        if owner is not None and operation_id not in projected_operations:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_ANALYSIS_OPERATION_DROPPED",
+                    path=("analysis", "projections", "turns"),
+                    message="turn-owned source operation is absent from the analysis",
+                )
+            )
+    for event_id, owner in event_turns.items():
+        if owner is not None and event_id not in projected_events:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_ANALYSIS_EVENT_DROPPED",
+                    path=("analysis", "projections", "turns"),
+                    message="turn-owned source event is absent from the analysis",
+                )
+            )
+
     for sample_id, measurements in analysis.projections.unassigned_provider_measurements.items():
         sample_path = (
             "analysis",

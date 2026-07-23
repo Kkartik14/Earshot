@@ -14,6 +14,7 @@ from earshot.contract import (
     ClockDomain,
     DerivedAnalysis,
     Diagnosis,
+    Event,
     Evidence,
     IncidentBundle,
     Operation,
@@ -647,6 +648,97 @@ def test_analysis_turn_must_exist_in_source_evidence(valid_bundle) -> None:
         analysis.model_copy(update={"projections": projections}),
     )
     assert "EARSHOT_ANALYSIS_TURN_UNBOUND" in {issue.code for issue in report.errors}
+
+
+def test_analysis_cannot_drop_a_turn_owned_operation(valid_bundle) -> None:
+    analysis = analyze_incident(
+        valid_bundle,
+        input_sha256=analysis_input_sha256(valid_bundle),
+        generated_at_unix_nano="1",
+    )
+    turn = analysis.projections.turns[0]
+    dropped_operation_id = turn.operation_ids[0]
+    tampered_turn = turn.model_copy(
+        update={
+            "operation_ids": tuple(
+                operation_id
+                for operation_id in turn.operation_ids
+                if operation_id != dropped_operation_id
+            )
+        }
+    )
+    projections = analysis.projections.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_derived_analysis(
+        valid_bundle,
+        analysis.model_copy(update={"projections": projections}),
+    )
+
+    assert "EARSHOT_ANALYSIS_OPERATION_DROPPED" in {issue.code for issue in report.errors}
+
+
+def test_analysis_cannot_drop_a_turn_owned_event(valid_bundle) -> None:
+    analysis = analyze_incident(
+        valid_bundle,
+        input_sha256=analysis_input_sha256(valid_bundle),
+        generated_at_unix_nano="1",
+    )
+    turn = analysis.projections.turns[0]
+    dropped_event_id = turn.event_ids[0]
+    tampered_turn = turn.model_copy(
+        update={
+            "event_ids": tuple(
+                event_id for event_id in turn.event_ids if event_id != dropped_event_id
+            )
+        }
+    )
+    projections = analysis.projections.model_copy(update={"turns": (tampered_turn,)})
+
+    report = validate_derived_analysis(
+        valid_bundle,
+        analysis.model_copy(update={"projections": projections}),
+    )
+
+    assert "EARSHOT_ANALYSIS_EVENT_DROPPED" in {issue.code for issue in report.errors}
+
+
+def test_analysis_allows_genuinely_ownerless_operations_and_events_outside_turns(
+    valid_bundle,
+) -> None:
+    session_operation = Operation(
+        operation_id="op-session-reconnect",
+        session_id="session-1",
+        operation_name="transport_reconnect",
+        status="ok",
+        started_at=point(500_000_000),
+        ended_at=point(600_000_000),
+    )
+    session_event = Event(
+        event_id="evt-session-reconnecting",
+        session_id="session-1",
+        event_name="earshot.transport.reconnecting",
+        time=point(550_000_000),
+    )
+    bundle = replace_profile(
+        valid_bundle,
+        operations=(*valid_bundle.profile.operations, session_operation),
+        events=(*valid_bundle.profile.events, session_event),
+    )
+    analysis = analyze_incident(
+        bundle,
+        input_sha256=analysis_input_sha256(bundle),
+        generated_at_unix_nano="1",
+    )
+
+    projected_operation_ids = {
+        operation_id for turn in analysis.projections.turns for operation_id in turn.operation_ids
+    }
+    projected_event_ids = {
+        event_id for turn in analysis.projections.turns for event_id in turn.event_ids
+    }
+    assert session_operation.operation_id not in projected_operation_ids
+    assert session_event.event_id not in projected_event_ids
+    assert validate_derived_analysis(bundle, analysis).ok
 
 
 def test_known_failed_operation_diagnosis_cannot_cite_a_success(valid_bundle) -> None:
