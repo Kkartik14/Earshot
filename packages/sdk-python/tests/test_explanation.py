@@ -620,6 +620,36 @@ def test_validate_explanation_rejects_duplicate_operation() -> None:
     }
 
 
+def test_validate_explanation_rejects_operation_moved_between_turns() -> None:
+    session = earshot.pipeline(
+        session_id="moved-operation-session",
+        started_at_unix_nano=1_752_800_000_000_000_000,
+    )
+    with session.turn(turn_id="turn-one") as turn:
+        turn.llm("openai", ttft_ms=120)
+    with session.turn(turn_id="turn-two") as turn:
+        turn.tts("cartesia", ttfb_ms=80)
+    bundle = session.close()
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    first, second = explanation.turns
+    [moved] = first.operations
+    tampered = explanation.model_copy(
+        update={
+            "turns": (
+                first.model_copy(update={"operations": ()}),
+                second.model_copy(update={"operations": (*second.operations, moved)}),
+            )
+        }
+    )
+
+    report = validate_explanation(bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_OPERATION_PLACEMENT_MISMATCH" in {
+        issue.code for issue in report.errors
+    }
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)

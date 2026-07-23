@@ -2456,6 +2456,32 @@ def validate_explanation(
             ("explanation", "unassigned_operations", operation_index),
         )
 
+    expected_turn_operation_layout = tuple(
+        (turn.turn_id, tuple(operation.operation_id for operation in turn.operations))
+        for turn in expected_explanation.turns
+    )
+    explained_turn_operation_layout = tuple(
+        (turn.turn_id, tuple(operation.operation_id for operation in turn.operations))
+        for turn in explanation.turns
+    )
+    expected_unassigned_operation_ids = tuple(
+        operation.operation_id for operation in expected_explanation.unassigned_operations
+    )
+    explained_unassigned_operation_ids = tuple(
+        operation.operation_id for operation in explanation.unassigned_operations
+    )
+    if (
+        explained_turn_operation_layout != expected_turn_operation_layout
+        or explained_unassigned_operation_ids != expected_unassigned_operation_ids
+    ):
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_EXPLANATION_OPERATION_PLACEMENT_MISMATCH",
+                path=("explanation", "operations"),
+                message="explained operations differ from exact source turn placement",
+            )
+        )
+
     # Completeness: the union of turn-owned and unassigned operations must be
     # exactly the source operation set. Nothing is silently dropped or invented.
     seen_operation_ids: set[str] = set()
