@@ -799,6 +799,34 @@ def test_validate_explanation_rejects_unassigned_measurement_tampering() -> None
         }
 
 
+def test_validate_explanation_rejects_changed_turn_measurements() -> None:
+    session = earshot.pipeline(
+        session_id="changed-turn-measurement-session",
+        started_at_unix_nano=1_752_800_000_000_000_000,
+    )
+    with session.turn(turn_id="turn-measurement") as turn:
+        turn.llm("openai", ttft_ms=250)
+    bundle = session.close()
+    analysis = _analyze(bundle)
+    explanation = explain_incident(bundle, analysis)
+    [explained_turn] = explanation.turns
+    provider_measurements = dict(explained_turn.metrics.provider_measurements)
+    source_metric = provider_measurements["earshot.llm.ttft"]
+    provider_measurements["earshot.llm.ttft"] = source_metric.model_copy(
+        update={"value": 1}
+    )
+    changed_metrics = explained_turn.metrics.model_copy(
+        update={"provider_measurements": provider_measurements}
+    )
+    tampered = explanation.model_copy(
+        update={"turns": (explained_turn.model_copy(update={"metrics": changed_metrics}),)}
+    )
+
+    report = validate_explanation(bundle, analysis, tampered)
+
+    assert "EARSHOT_EXPLANATION_TURN_MISMATCH" in {issue.code for issue in report.errors}
+
+
 def test_validate_explanation_flags_dangling_evidence() -> None:
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)

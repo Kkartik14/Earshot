@@ -2293,6 +2293,7 @@ def validate_explanation(
     expected_events = {
         event.event_id: event for turn in expected_explanation.turns for event in turn.events
     }
+    expected_turns = {turn.turn_id: turn for turn in expected_explanation.turns}
 
     def check_refs(
         references: tuple[str, ...],
@@ -2447,6 +2448,15 @@ def validate_explanation(
     projected_operation_ids: list[str] = []
     projected_event_ids: list[str] = []
     for turn_index, turn in enumerate(explanation.turns):
+        expected_turn = expected_turns.get(turn.turn_id)
+        if expected_turn is None or turn.metrics != expected_turn.metrics:
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_EXPLANATION_TURN_MISMATCH",
+                    path=("explanation", "turns", turn_index, "metrics"),
+                    message="explained turn measurements differ from exact analysis",
+                )
+            )
         for operation_index, operation in enumerate(turn.operations):
             projected_operation_ids.append(operation.operation_id)
             check_operation(
