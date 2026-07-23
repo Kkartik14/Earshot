@@ -88,7 +88,7 @@ def test_concurrent_sessions_do_not_cross_contaminate() -> None:
     """Concurrent sessions on one provider each keep only their own span."""
 
     provider = TracerProvider()
-    n = 24
+    n = 100
     adapters = [LiveKitAdapter(_recorder()) for _ in range(n)]
     handles = [a.attach_span_processor(provider) for a in adapters]
     span_ids: list[list[int]] = [[] for _ in range(n)]
@@ -195,7 +195,7 @@ def test_detach_releases_routing_state() -> None:
 
     provider = TracerProvider()
     router = None
-    for _ in range(200):
+    for _ in range(10_000):
         adapter = LiveKitAdapter(_recorder())
         handle = adapter.attach_span_processor(provider)
         router = handle._router
