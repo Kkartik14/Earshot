@@ -10,8 +10,9 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypeVar
 
 from .contract import (
     UINT64_MAX,
@@ -28,6 +29,123 @@ from .versions import ANALYZER_VERSION
 
 ANALYZER_NAME = "earshot.deterministic"
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
+_SUCCESS_BOUNDARY_STATUSES = frozenset({"completed", "ok", "unset"})
+_PROVIDER_DURATION_ATTRIBUTE = "earshot.analysis.provider_duration_attribute"
+_PARTICIPANT_ROLE_DIRECTION = {
+    "agent": "output",
+    "assistant": "output",
+    "user": "input",
+}
+_CONFIDENCE_RANK = {
+    "measured": 0,
+    "estimated": 1,
+    "inferred": 2,
+    "unavailable": 3,
+}
+_T = TypeVar("_T")
+_Coordinate = tuple[str, str, int]
+
+
+def _comparable_coordinate(point: TimePoint) -> _Coordinate | None:
+    domain = point.clock_domain_id
+    if domain is None:
+        return None
+    if point.monotonic_time_nano is not None:
+        return domain, "monotonic", int(point.monotonic_time_nano)
+    if point.source_time_unix_nano is not None:
+        return domain, "source_wall", int(point.source_time_unix_nano)
+    if point.observed_time_unix_nano is not None:
+        return domain, "observed_wall", int(point.observed_time_unix_nano)
+    return None
+
+
+def _order_by_comparable_coordinate(
+    items: Iterable[_T],
+    *,
+    coordinate: Callable[[_T], _Coordinate | None],
+    identity: Callable[[_T], str],
+) -> tuple[_T, ...]:
+    """Return a permutation-invariant presentation order.
+
+    Clock-domain and timestamp-basis labels canonically group comparable points;
+    only the numeric order inside one group has temporal meaning. Group and identity
+    ordering is a deterministic serialization rule, not cross-clock causality.
+    """
+
+    def presentation_key(item: _T) -> tuple[int, str, str, int, str]:
+        item_coordinate = coordinate(item)
+        if item_coordinate is None:
+            return 1, "", "", 0, identity(item)
+        domain, basis, value = item_coordinate
+        return 0, domain, basis, value, identity(item)
+
+    return tuple(sorted(items, key=presentation_key))
+
+
+def _order_by_comparable_time(
+    items: Iterable[_T],
+    *,
+    point: Callable[[_T], TimePoint],
+    identity: Callable[[_T], str],
+) -> tuple[_T, ...]:
+    return _order_by_comparable_coordinate(
+        items,
+        coordinate=lambda item: _comparable_coordinate(point(item)),
+        identity=identity,
+    )
+
+
+def _matches_stream_direction(
+    value: Operation | Event,
+    stream_directions: Mapping[str, str],
+    expected_direction: str,
+    *,
+    require_explicit: bool = False,
+    participant_directions: Mapping[str, str] | None = None,
+    operations_by_id: Mapping[str, Operation] | None = None,
+    operations_by_otel: Mapping[tuple[str, str], Operation] | None = None,
+) -> bool:
+    directions: set[str] = set()
+    unresolved_stream = False
+    unresolved_participant = False
+
+    def add_record_ownership(record: Operation | Event) -> None:
+        nonlocal unresolved_participant, unresolved_stream
+        if record.stream_id is not None:
+            direction = stream_directions.get(record.stream_id)
+            if direction is None:
+                unresolved_stream = True
+            else:
+                directions.add(direction)
+        if record.participant_id is not None and participant_directions is not None:
+            direction = participant_directions.get(record.participant_id)
+            if direction is None:
+                unresolved_participant = True
+            else:
+                directions.add(direction)
+
+    add_record_ownership(value)
+    if isinstance(value, Event):
+        linked_operation = (
+            operations_by_id.get(value.operation_id)
+            if operations_by_id is not None and value.operation_id is not None
+            else None
+        )
+        if (
+            linked_operation is None
+            and operations_by_otel is not None
+            and value.trace_id is not None
+            and value.span_id is not None
+        ):
+            linked_operation = operations_by_otel.get((value.trace_id, value.span_id))
+        if linked_operation is not None:
+            add_record_ownership(linked_operation)
+
+    if unresolved_stream or unresolved_participant:
+        return False
+    if directions:
+        return directions == {expected_direction}
+    return not require_explicit
 
 
 @dataclass(frozen=True)
@@ -52,6 +170,23 @@ class Delta:
         return output
 
 
+def _shared_time_deltas(start: TimePoint, end: TimePoint) -> tuple[tuple[str, int], ...]:
+    """Return every authored same-domain coordinate delta without choosing a clock."""
+
+    if not start.clock_domain_id or start.clock_domain_id != end.clock_domain_id:
+        return ()
+    return tuple(
+        (basis, int(end_value) - int(start_value))
+        for basis, field_name in (
+            ("monotonic", "monotonic_time_nano"),
+            ("source_wall", "source_time_unix_nano"),
+            ("observed_wall", "observed_time_unix_nano"),
+        )
+        if (start_value := getattr(start, field_name)) is not None
+        and (end_value := getattr(end, field_name)) is not None
+    )
+
+
 def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
     """Subtract only evidence sharing an explicit clock domain.
 
@@ -69,11 +204,23 @@ def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
             "cross_clock_domain",
         )
 
-    if start.monotonic_time_nano is not None and end.monotonic_time_nano is not None:
-        value = int(end.monotonic_time_nano) - int(start.monotonic_time_nano)
+    shared_deltas = _shared_time_deltas(start, end)
+    reversed_basis = next((basis for basis, value in shared_deltas if value < 0), None)
+    if reversed_basis is not None:
+        return Delta(
+            "inconsistent",
+            None,
+            reversed_basis,
+            "unavailable",
+            "same_domain_time_reversed",
+        )
+
+    deltas_by_basis = dict(shared_deltas)
+    if "monotonic" in deltas_by_basis:
+        value = deltas_by_basis["monotonic"]
         basis = "monotonic"
-    elif start.source_time_unix_nano is not None and end.source_time_unix_nano is not None:
-        value = int(end.source_time_unix_nano) - int(start.source_time_unix_nano)
+    elif "source_wall" in deltas_by_basis:
+        value = deltas_by_basis["source_wall"]
         basis = "source_wall"
     else:
         return Delta(
@@ -84,44 +231,9 @@ def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
             "timestamp_representation_unavailable",
         )
 
-    if value < 0:
-        return Delta(
-            "inconsistent",
-            None,
-            basis,
-            "unavailable",
-            "same_domain_time_reversed",
-        )
-
     uncertainty = int(start.uncertainty_nano or "0") + int(end.uncertainty_nano or "0")
     confidence = "estimated" if uncertainty else "measured"
     return Delta("available", value, basis, confidence)
-
-
-def _coordinate_sort_key(point: TimePoint) -> tuple[int, str, int, int]:
-    """Return a canonical coordinate-group key without cross-clock subtraction.
-
-    Clock domain and representation group incomparable evidence. Numeric ordering
-    therefore happens only after those fields match. The leading unavailable flag
-    keeps records without an orderable coordinate deterministic but last.
-    """
-
-    domain = point.clock_domain_id
-    if domain is not None and point.monotonic_time_nano is not None:
-        return (0, domain, 0, int(point.monotonic_time_nano))
-    if domain is not None and point.source_time_unix_nano is not None:
-        return (0, domain, 1, int(point.source_time_unix_nano))
-    if domain is not None and point.observed_time_unix_nano is not None:
-        return (0, domain, 2, int(point.observed_time_unix_nano))
-    return (1, domain or "", 3, 0)
-
-
-def _operation_sort_key(operation: Operation) -> tuple[int, str, int, int, str]:
-    return (*_coordinate_sort_key(operation.started_at), operation.operation_id)
-
-
-def _event_sort_key(event: Event) -> tuple[int, str, int, int, str]:
-    return (*_coordinate_sort_key(event.time), event.event_id)
 
 
 def _earliest_event(events: Iterable[Event], names: set[str]) -> Event | None:
@@ -211,6 +323,12 @@ def _shift_time_point(point: TimePoint, seconds: object) -> TimePoint | None:
     return point.model_copy(update=update)
 
 
+def _point_exceeds_comparable_end(point: TimePoint, end: TimePoint) -> bool:
+    """Return true when any shared authored clock basis places ``point`` after ``end``."""
+
+    return any(delta < 0 for _, delta in _shared_time_deltas(point, end))
+
+
 def _provider_latency_event(
     operation: Operation,
     event_name: str,
@@ -222,8 +340,21 @@ def _provider_latency_event(
         if attribute_name not in operation.attributes:
             continue
         point = _shift_time_point(operation.started_at, operation.attributes[attribute_name])
-        if point is not None:
-            return _operation_point_event(operation, event_name, point)
+        if point is None:
+            continue
+        if operation.ended_at is not None and _point_exceeds_comparable_end(
+            point, operation.ended_at
+        ):
+            continue
+        projected = _operation_point_event(operation, event_name, point)
+        return projected.model_copy(
+            update={
+                "attributes": {
+                    **projected.attributes,
+                    _PROVIDER_DURATION_ATTRIBUTE: attribute_name,
+                }
+            }
+        )
     return None
 
 
@@ -237,6 +368,7 @@ def _first_provider_latency_event(
         event
         for operation in operations
         if operation.operation_name in operation_names
+        if operation.status in _SUCCESS_BOUNDARY_STATUSES
         if (event := _provider_latency_event(operation, event_name, attribute_names)) is not None
     ]
     return _earliest_event(candidates, {event_name})
@@ -278,7 +410,12 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
                     value,
                     unit,
                     measurement.aggregation,
-                    (sample.evidence.confidence if sample.evidence is not None else "unavailable"),
+                    (
+                        sample.evidence.confidence
+                        if sample.evidence is not None
+                        and sample.evidence.availability == "available"
+                        else "unavailable"
+                    ),
                 )
             )
 
@@ -290,7 +427,17 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
         "unavailable": 3,
     }
     for name in sorted(set(grouped) | set(invalid)):
-        entries = grouped[name]
+        entries = sorted(
+            grouped[name],
+            key=lambda entry: (
+                entry[0],
+                entry[3],
+                entry[2],
+                type(entry[1]).__name__,
+                repr(entry[1]),
+                entry[4],
+            ),
+        )
         rejected = invalid.get(name, [])
         if rejected:
             limitations = sorted({limitation for _, limitation in rejected})
@@ -361,7 +508,7 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
                 "evidence_ids": evidence_ids,
             }
             continue
-        if "delta" in aggregations:
+        if len(aggregations) > 1:
             projected[name] = {
                 "availability": "unavailable",
                 "basis": "provider_measurement",
@@ -372,9 +519,23 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
             continue
 
         # Instant/cumulative observations are snapshots, not additive windows.
-        # Retain the existing deterministic first-sample projection until the
-        # contract defines a selection policy for those aggregation modes.
-        sample_id, value, unit, _aggregation, confidence = entries[0]
+        # Select the first sample deterministically, but refuse to choose between
+        # conflicting same-name snapshots authored inside that one evidence record.
+        sample_id = entries[0][0]
+        selected_entries = [entry for entry in entries if entry[0] == sample_id]
+        selected_shapes = {
+            (type(entry[1]).__name__, repr(entry[1]), *entry[2:]) for entry in selected_entries
+        }
+        if len(selected_shapes) > 1:
+            projected[name] = {
+                "availability": "unavailable",
+                "basis": "provider_measurement",
+                "confidence": "unavailable",
+                "limitation": "ambiguous_measurements_in_sample",
+                "evidence_ids": [sample_id],
+            }
+            continue
+        _sample_id, value, unit, _aggregation, confidence = selected_entries[0]
         if isinstance(value, int) and abs(value) > _IJSON_INTEGER_MAX:
             projected[name] = {
                 "availability": "unavailable",
@@ -396,7 +557,11 @@ def _quality_measurements(samples: Sequence[QualitySample]) -> dict[str, dict[st
 
 
 def _first_operation(operations: Sequence[Operation], names: set[str]) -> Operation | None:
-    candidates = [operation for operation in operations if operation.operation_name in names]
+    candidates = [
+        operation
+        for operation in operations
+        if operation.operation_name in names and operation.status in _SUCCESS_BOUNDARY_STATUSES
+    ]
     if not candidates:
         return None
     domains = {operation.started_at.clock_domain_id for operation in candidates}
@@ -438,12 +603,25 @@ def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> d
             "evidence_ids": [anchor.event_id],
         }
     output = comparable_delta(anchor.time, target.time).as_dict()
-    if target.attributes.get("earshot.analysis.synthetic_projection") or anchor.attributes.get(
-        "earshot.analysis.synthetic_projection"
-    ):
-        output["confidence"] = "estimated"
-    elif target.evidence and target.evidence.confidence in {"estimated", "inferred"}:
-        output["confidence"] = target.evidence.confidence
+    confidence_candidates = [str(output["confidence"])]
+    for boundary in (anchor, target):
+        if boundary.attributes.get("earshot.analysis.synthetic_projection"):
+            confidence_candidates.append("estimated")
+        if boundary.evidence is None:
+            confidence_candidates.append("unavailable")
+        else:
+            confidence_candidates.append(
+                boundary.evidence.confidence
+                if boundary.evidence.availability == "available"
+                else "unavailable"
+            )
+    output["confidence"] = max(
+        (
+            candidate if candidate in _CONFIDENCE_RANK else "unavailable"
+            for candidate in confidence_candidates
+        ),
+        key=lambda candidate: _CONFIDENCE_RANK[candidate],
+    )
     output["basis"] = basis
     output["evidence_ids"] = [anchor.event_id, target.event_id]
     return output
@@ -459,13 +637,21 @@ def _interval_nanos(operation: Operation) -> int | None:
 def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
     tools = [item for item in operations if item.operation_name == "tool"]
     durations = [(item, _interval_nanos(item)) for item in tools]
+    timed_operation_count = sum(value is not None for _, value in durations)
+    untimed_operation_count = len(durations) - timed_operation_count
     total = sum(value for _, value in durations if value is not None)
+    if untimed_operation_count == 0:
+        total_work_completeness = "complete"
+    elif timed_operation_count:
+        total_work_completeness = "partial"
+    else:
+        total_work_completeness = "unavailable"
 
     # Calculate union wall time only within comparable clock domains. Intervals in
     # different domains remain separate rather than inventing a global critical path.
     by_basis: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
-    for operation, _duration in durations:
-        if operation.ended_at is None or not operation.started_at.clock_domain_id:
+    for operation, duration in durations:
+        if duration is None or operation.ended_at is None:
             continue
         start: str | None
         end: str | None
@@ -488,10 +674,7 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
             continue
         by_basis[(operation.started_at.clock_domain_id, basis)].append((int(start), int(end)))
 
-    elapsed_by_domain: dict[str, float] = {}
-    basis_count: dict[str, int] = defaultdict(int)
-    for domain, _basis in by_basis:
-        basis_count[domain] += 1
+    elapsed_by_domain: dict[str, dict[str, float]] = {}
     for (domain, basis), intervals in sorted(by_basis.items()):
         merged: list[list[int]] = []
         for start, end in sorted(intervals):
@@ -499,15 +682,22 @@ def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
                 merged.append([start, end])
             else:
                 merged[-1][1] = max(merged[-1][1], end)
-        key = domain if basis_count[domain] == 1 else f"{domain}:{basis}"
-        elapsed_by_domain[key] = sum(end - start for start, end in merged) / 1_000_000
+        elapsed_by_domain.setdefault(domain, {})[basis] = (
+            sum(end - start for start, end in merged) / 1_000_000
+        )
 
-    return {
+    output: dict[str, object] = {
         "operation_count": len(tools),
+        "timed_operation_count": timed_operation_count,
+        "untimed_operation_count": untimed_operation_count,
         "total_work_ms": total / 1_000_000,
+        "total_work_completeness": total_work_completeness,
         "elapsed_ms_by_clock_domain": elapsed_by_domain,
         "evidence_ids": sorted(item.operation_id for item in tools),
     }
+    if untimed_operation_count:
+        output["limitation"] = "incomplete_tool_intervals"
+    return output
 
 
 def _provider_stage_latency_fallback(
@@ -551,20 +741,31 @@ def _provider_stage_latency_fallback(
     )
     if operation is None:
         return current
-    for attribute_name in attribute_names:
-        raw = operation.attributes.get(attribute_name)
-        if _shift_time_point(operation.started_at, raw) is None:
-            continue
-        return {
-            "availability": "available",
-            "basis": "provider_stage_direct",
-            "confidence": operation.evidence.confidence if operation.evidence else "estimated",
-            "value": float(raw) * 1_000,
-            "unit": "ms",
-            "limitation": "stage_local_excludes_turn_scheduling",
-            "evidence_ids": [operation.operation_id],
-        }
-    return current
+    attribute_name = target.attributes.get(_PROVIDER_DURATION_ATTRIBUTE)
+    if not isinstance(attribute_name, str) or attribute_name not in attribute_names:
+        return current
+    raw = operation.attributes.get(attribute_name)
+    point = _shift_time_point(operation.started_at, raw)
+    if point is None or point != target.time:
+        return current
+    if operation.ended_at is not None and _point_exceeds_comparable_end(point, operation.ended_at):
+        return current
+    confidence = "unavailable"
+    if operation.evidence is not None:
+        confidence = (
+            operation.evidence.confidence
+            if operation.evidence.availability == "available"
+            else "unavailable"
+        )
+    return {
+        "availability": "available",
+        "basis": "provider_stage_direct",
+        "confidence": confidence,
+        "value": float(raw) * 1_000,
+        "unit": "ms",
+        "limitation": "stage_local_excludes_turn_scheduling",
+        "evidence_ids": [operation.operation_id],
+    }
 
 
 def _turn_projection(
@@ -572,20 +773,47 @@ def _turn_projection(
     operations: Sequence[Operation],
     events: Sequence[Event],
     quality_samples: Sequence[QualitySample] = (),
+    stream_directions: Mapping[str, str] | None = None,
+    participant_directions: Mapping[str, str] | None = None,
+    operations_by_id: Mapping[str, Operation] | None = None,
+    operations_by_otel: Mapping[tuple[str, str], Operation] | None = None,
 ) -> dict:
-    committed = _earliest_event(events, {"earshot.turn.committed"})
-    speech_ended = _earliest_event(events, {"earshot.speech.ended"})
+    directions = stream_directions or {}
+
+    def matches(
+        value: Operation | Event,
+        expected_direction: str,
+        *,
+        require_explicit: bool = False,
+    ) -> bool:
+        return _matches_stream_direction(
+            value,
+            directions,
+            expected_direction,
+            require_explicit=require_explicit,
+            participant_directions=participant_directions,
+            operations_by_id=operations_by_id,
+            operations_by_otel=operations_by_otel,
+        )
+
+    input_events = tuple(event for event in events if matches(event, "input"))
+    output_events = tuple(event for event in events if matches(event, "output"))
+    committed = _earliest_event(input_events, {"earshot.turn.committed"})
+    speech_ended = _earliest_event(input_events, {"earshot.speech.ended"})
     anchor = committed or speech_ended
     if anchor is None:
-        turn_detection = _first_operation(operations, {"turn_detection"})
+        turn_detection = _first_operation(
+            tuple(operation for operation in operations if matches(operation, "input")),
+            {"turn_detection"},
+        )
         if turn_detection is not None:
             anchor = _operation_end_event(turn_detection, "earshot.turn.committed")
 
-    first_token = _earliest_event(events, {"earshot.response.first_token"})
-    generated = _earliest_event(events, {"earshot.response.first_audio_generated"})
-    sent = _earliest_event(events, {"earshot.audio.first_byte_sent"})
-    received = _earliest_event(events, {"earshot.audio.first_packet_received"})
-    rendered = _earliest_event(events, {"earshot.audio.render.started"})
+    first_token = _earliest_event(output_events, {"earshot.response.first_token"})
+    generated = _earliest_event(output_events, {"earshot.response.first_audio_generated"})
+    sent = _earliest_event(output_events, {"earshot.audio.first_byte_sent"})
+    received = _earliest_event(output_events, {"earshot.audio.first_packet_received"})
+    rendered = _earliest_event(output_events, {"earshot.audio.render.started"})
 
     # Explicit events are highest fidelity. A provider TTFT/TTFB duration can be
     # projected from operation start, but operation start alone is never treated
@@ -593,7 +821,7 @@ def _turn_projection(
     first_token_is_provider_projection = False
     if first_token is None:
         first_token = _first_provider_latency_event(
-            operations,
+            tuple(operation for operation in operations if matches(operation, "output")),
             {"llm"},
             "earshot.response.first_token",
             ("lk.response.ttft", "metrics.ttfb"),
@@ -602,28 +830,45 @@ def _turn_projection(
     generated_is_provider_projection = False
     if generated is None:
         generated = _first_provider_latency_event(
-            operations,
+            tuple(operation for operation in operations if matches(operation, "output")),
             {"tts"},
             "earshot.response.first_audio_generated",
             ("lk.response.ttfb", "metrics.ttfb"),
         )
         generated_is_provider_projection = generated is not None
     if sent is None:
-        transport = _first_operation(operations, {"transport_send"})
+        transport = _first_operation(
+            tuple(
+                operation
+                for operation in operations
+                if matches(operation, "output", require_explicit=True)
+            ),
+            {"transport_send"},
+        )
         sent = (
             _operation_start_event(transport, "earshot.audio.first_byte_sent")
             if transport
             else None
         )
     if received is None:
-        transport = _first_operation(operations, {"transport_receive"})
+        transport = _first_operation(
+            tuple(
+                operation
+                for operation in operations
+                if matches(operation, "output", require_explicit=True)
+            ),
+            {"transport_receive"},
+        )
         received = (
             _operation_start_event(transport, "earshot.audio.first_packet_received")
             if transport
             else None
         )
     if rendered is None:
-        render = _first_operation(operations, {"render"})
+        render = _first_operation(
+            tuple(operation for operation in operations if matches(operation, "output")),
+            {"render"},
+        )
         rendered = (
             _operation_start_event(render, "earshot.audio.render.started") if render else None
         )
@@ -639,7 +884,7 @@ def _turn_projection(
         else:
             response_basis = "tts_estimate"
 
-    interruption_events = sorted(
+    interruption_events = _order_by_comparable_time(
         (
             event
             for event in events
@@ -650,7 +895,8 @@ def _turn_projection(
                 "earshot.interruption.ignored",
             }
         ),
-        key=lambda event: (event.event_name, event.event_id),
+        point=lambda event: event.time,
+        identity=lambda event: event.event_id,
     )
 
     provider_measurements = _quality_measurements(quality_samples)
@@ -694,9 +940,21 @@ def _turn_projection(
     return {
         "turn_id": turn_id,
         "operation_ids": [
-            item.operation_id for item in sorted(operations, key=_operation_sort_key)
+            item.operation_id
+            for item in _order_by_comparable_time(
+                operations,
+                point=lambda operation: operation.started_at,
+                identity=lambda operation: operation.operation_id,
+            )
         ],
-        "event_ids": [item.event_id for item in sorted(events, key=_event_sort_key)],
+        "event_ids": [
+            item.event_id
+            for item in _order_by_comparable_time(
+                events,
+                point=lambda event: event.time,
+                identity=lambda event: event.event_id,
+            )
+        ],
         "metrics": {
             "first_token_latency": first_token_latency,
             "generated_response_latency": generated_response_latency,
@@ -739,6 +997,8 @@ def _operation_turn_ids(operations: Sequence[Operation]) -> dict[str, str | None
             if current.turn_id is not None:
                 turn_id = current.turn_id
                 break
+            if current.parent_scope == "external":
+                break
             if current.trace_id is None or current.parent_span_id is None:
                 break
             current = by_otel.get((current.trace_id, current.parent_span_id))
@@ -760,7 +1020,14 @@ def analyze_incident(
     turn_events: dict[str, list[Event]] = defaultdict(list)
     turn_quality: dict[str, list[QualitySample]] = defaultdict(list)
     unassigned_quality: list[QualitySample] = []
+    stream_directions = {stream.stream_id: stream.direction for stream in profile.audio_streams}
+    participant_directions = {
+        participant.participant_id: direction
+        for participant in profile.participants
+        if (direction := _PARTICIPANT_ROLE_DIRECTION.get(participant.role)) is not None
+    }
     operation_turns = _operation_turn_ids(profile.operations)
+    operations_by_id = {operation.operation_id: operation for operation in profile.operations}
     operation_by_otel = {
         (operation.trace_id, operation.span_id): operation
         for operation in profile.operations
@@ -792,26 +1059,39 @@ def analyze_incident(
         else:
             unassigned_quality.append(sample)
 
-    turn_ids = set(turn_operations) | set(turn_events) | set(turn_quality)
+    turn_ids = tuple(dict.fromkeys((*turn_operations, *turn_events, *turn_quality)))
 
-    def turn_sort_key(turn_id: str) -> tuple[int, str, int, int, str]:
+    def turn_coordinate(turn_id: str) -> tuple[str, str, int] | None:
         coordinates = [
-            _coordinate_sort_key(operation.started_at) for operation in turn_operations[turn_id]
+            _comparable_coordinate(operation.started_at) for operation in turn_operations[turn_id]
         ]
-        coordinates.extend(_coordinate_sort_key(event.time) for event in turn_events[turn_id])
+        coordinates.extend(_comparable_coordinate(event.time) for event in turn_events[turn_id])
         coordinates.extend(
-            _coordinate_sort_key(sample.sample_window.start) for sample in turn_quality[turn_id]
+            _comparable_coordinate(sample.sample_window.start) for sample in turn_quality[turn_id]
         )
-        coordinate = min(coordinates) if coordinates else (1, "", 3, 0)
-        return (*coordinate, turn_id)
+        if not coordinates or any(coordinate is None for coordinate in coordinates):
+            return None
+        comparable = [coordinate for coordinate in coordinates if coordinate is not None]
+        groups = {(domain, basis) for domain, basis, _value in comparable}
+        if len(groups) != 1:
+            return None
+        return min(comparable, key=lambda coordinate: coordinate[2])
 
-    ordered_turn_ids = sorted(turn_ids, key=turn_sort_key)
+    ordered_turn_ids = _order_by_comparable_coordinate(
+        turn_ids,
+        coordinate=turn_coordinate,
+        identity=lambda turn_id: turn_id,
+    )
     turns = [
         _turn_projection(
             turn_id,
             tuple(turn_operations[turn_id]),
             tuple(turn_events[turn_id]),
             tuple(turn_quality[turn_id]),
+            stream_directions,
+            participant_directions,
+            operations_by_id,
+            operation_by_otel,
         )
         for turn_id in ordered_turn_ids
     ]
@@ -832,20 +1112,43 @@ def analyze_incident(
                 )
             )
 
-    render_coverage = next(
-        (entry for entry in profile.coverage if entry.signal in {"render", "client.render"}),
-        None,
-    )
-    has_render = any(item.operation_name == "render" for item in profile.operations) or any(
-        item.event_name == "earshot.audio.render.started" for item in profile.events
+    render_availabilities = {
+        entry.availability
+        for entry in profile.coverage
+        if entry.signal in {"render", "client.render"}
+    }
+    has_render = any(
+        item.operation_name == "render"
+        and item.status in _SUCCESS_BOUNDARY_STATUSES
+        and _matches_stream_direction(
+            item,
+            stream_directions,
+            "output",
+            participant_directions=participant_directions,
+            operations_by_id=operations_by_id,
+            operations_by_otel=operation_by_otel,
+        )
+        for item in profile.operations
+    ) or any(
+        item.event_name == "earshot.audio.render.started"
+        and _matches_stream_direction(
+            item,
+            stream_directions,
+            "output",
+            participant_directions=participant_directions,
+            operations_by_id=operations_by_id,
+            operations_by_otel=operation_by_otel,
+        )
+        for item in profile.events
     )
     limitations: list[str] = []
     if not has_render:
-        limitation = (
-            f"render_evidence_{render_coverage.availability}"
-            if render_coverage
-            else "render_evidence_not_observed"
-        )
+        if not render_availabilities:
+            limitation = "render_evidence_not_observed"
+        elif len(render_availabilities) == 1:
+            limitation = f"render_evidence_{next(iter(render_availabilities))}"
+        else:
+            limitation = "render_evidence_conflicting_coverage"
         # Missing evidence is a limitation, not a diagnosed failure. Coverage has
         # no fact identity in v1alpha1, so inventing an evidence-free diagnosis would
         # violate the analysis contract.

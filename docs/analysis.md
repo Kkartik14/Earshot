@@ -18,25 +18,41 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
-The current deterministic analyzer identity is `earshot.deterministic@1.0.3`.
+The current deterministic analyzer identity is `earshot.deterministic@0.3.2`.
 Analyzer version is part of the storage cache key; behavior changes such as delta-window
 aggregation therefore cannot reuse a projection produced by an older analyzer.
 
 ## Turn projection
 
 Turns are a presentation projection, not graph containers. Ownership is resolved from
-an explicit `turn_id` and then inherited through native OTel parentage. ChatMessage item
-IDs are not treated as turns. Provider measurements without explicit or graph-derived
-ownership remain under `unassigned_provider_measurements` with their real quality
-sample ID.
+an explicit `turn_id` and then inherited through native OTel parentage. A record marked
+with `parent_scope=external` never inherits from a same-identity operation inside the
+bundle; validation rejects that contradictory identity. ChatMessage item IDs are not
+treated as turns. Provider measurements without explicit or graph-derived ownership
+remain under `unassigned_provider_measurements` with their real quality sample ID.
 
 Repeated measurements marked `delta` are summed only inside the same owned analysis
 group, cite every contributing sample, and become unavailable when units or
 aggregation modes conflict or the finite sum overflows. Integer counters are summed
 without float coercion; a total outside the interoperable I-JSON integer domain is
 unavailable instead of rounded. Instant and cumulative observations remain snapshots.
+If one quality sample contains conflicting same-name snapshots, the derived scalar is
+unavailable instead of selecting one by array position; the explanation still retains
+each exact fact. Conflicting `render` and `client.render` coverage declarations likewise
+produce one deterministic conflict limitation rather than depending on input order.
 Unassigned provider samples stay separate: analysis does not manufacture session or
 turn correlation merely to aggregate them.
+
+The explanation read model keeps derived metrics separate from exact measurement
+facts. A sample with an authored operation owner appears on that operation; an
+operation-less sample with an authored turn owner appears in that turn's
+`measurements`; only a genuinely ownerless sample appears in top-level
+`unassigned_measurements`. Repeated instant/cumulative observations are never replaced
+by the analyzer's selected scalar. Independent validation compares value type, value,
+unit, aggregation, owner, evidence ID, limitation, confidence, and every provenance
+field exposed by `ExplainedEvidence`. The immutable bundle remains authoritative for
+quality-sample windows/resources and evidence attributes that the presentation schema
+does not expose.
 
 The response anchor preference is:
 
@@ -60,6 +76,16 @@ Provider TTFT/TTFB can project a point only when its semantics are known. LiveKi
 RealtimeModelMetrics TTFT is first audio token, so it authors first-audio-generated and
 never a text-token fact. The response metric uses the strongest available boundary and
 labels a fallback `receive_estimate`, `transport_estimate`, or `tts_estimate`.
+Operation-derived boundaries fail closed to the known `ok`, `completed`, and OTel
+`unset` statuses; other status spellings never author synthetic endpointing,
+provider-output, transport, receive, or render boundaries. When stream ownership is
+present, user anchors require input ownership and text/audio response facts require
+output ownership. Ownership can come from the record's stream or participant, or from its
+linked operation; conflicting or opposite ownership fails closed. Generic transport
+fallbacks require explicit output ownership. A provider duration also cannot project
+beyond a comparable recorded operation end, and a stage fallback reuses only the exact
+bounded attribute that authored its synthetic point. Derived latency confidence is the
+weakest of clock certainty and both boundary evidence records.
 When a turn anchor is absent, or preemptive generation makes a same-clock point precede
 turn commitment, equivalent LiveKit/Pipecat LLM TTFT and TTS TTFB measurements feed the
 same derived first-token/first-audio projections. Their native measurement names remain
@@ -74,7 +100,19 @@ client render or human perception.
 Cross-clock subtraction requires the same explicit clock domain. Reversed comparable
 time is `inconsistent`; missing/incomparable time is unavailable, never clamped to
 zero. Parallel tool output reports total work plus union elapsed time separately for
-each source clock/basis.
+each source clock/basis. `elapsed_ms_by_clock_domain` is a nested map whose outer keys
+are exact clock-domain IDs and whose inner keys are `monotonic` or `source_wall`; IDs
+are never parsed or suffixed. Values are finite and nonnegative, and independent
+validation recomputes the complete map from source intervals. `total_work_ms` is
+explicitly the sum of known comparable tool intervals; timed/untimed counts and
+`total_work_completeness` distinguish a complete sum from a partial lower bound or
+wholly unavailable duration.
+
+Projection arrays use a permutation-invariant presentation order: comparable points
+are grouped canonically by clock domain and timestamp basis and sorted numerically only
+inside that group; equal or unlocated points use their stable identity. Array position
+between different groups is a serialization rule and does not assert temporal or
+causal order across clocks.
 
 ## Current diagnosis boundary
 

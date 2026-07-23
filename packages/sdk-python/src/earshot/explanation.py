@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from .analysis import _order_by_comparable_time
 from .contract import (
+    CausalLink,
     DerivedAnalysis,
+    Diagnosis,
+    ErrorRecord,
     Evidence,
     IncidentBundle,
+    Operation,
+    QualityMeasurement,
     QualitySample,
     TimePoint,
     TurnMetrics,
 )
+from .measurement_semantics import measurement_value_limitation
 
 
 class ExplanationModel(BaseModel):
@@ -30,11 +38,41 @@ class ExplainedEvidence(ExplanationModel):
     source_field: str | None = None
 
 
+class ExplainedLink(ExplanationModel):
+    relationship: str
+    target_scope: str = "unknown"
+    target_operation_id: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
+
+
+class ExplainedError(ExplanationModel):
+    code: str
+    category: str
+    capture_class: str
+    # ``diagnostic_payload`` is gated off in v1alpha1; the raw operator-authored
+    # message is never surfaced. The field exists so the shape is stable, but it
+    # is always omitted.
+    message: str | None = None
+
+
+class ExplainedDiagnosis(ExplanationModel):
+    diagnosis_id: str
+    code: str
+    summary: str
+    confidence: str
+    evidence_ids: tuple[str, ...] = Field(min_length=1)
+    limitations: tuple[str, ...] = ()
+
+
 class ExplainedMeasurement(ExplanationModel):
     name: str
     value: bool | int | float
     unit: str
     aggregation: str
+    basis: str = "provider_measurement"
+    confidence: str
+    limitation: str | None = None
     evidence: ExplainedEvidence | None = None
     evidence_ids: tuple[str, ...]
 
@@ -49,11 +87,19 @@ class ExplainedOperation(ExplanationModel):
     start_nano: str
     end_nano: str | None = None
     duration_nano: str | None = None
+    start_uncertainty_nano: str | None = None
+    end_uncertainty_nano: str | None = None
     limitation: str | None = None
     participant_id: str | None = None
     stream_id: str | None = None
     provider: str | None = None
     model: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
+    parent_span_id: str | None = None
+    parent_scope: str = "unknown"
+    links: tuple[ExplainedLink, ...] = ()
+    error: ExplainedError | None = None
     evidence: ExplainedEvidence | None = None
     measurements: tuple[ExplainedMeasurement, ...]
     evidence_ids: tuple[str, ...]
@@ -65,8 +111,11 @@ class ExplainedEvent(ExplanationModel):
     time_basis: Literal["monotonic", "source_wall", "observed_wall"]
     clock_domain_id: str | None = None
     at_nano: str
+    operation_id: str | None = None
     participant_id: str | None = None
     stream_id: str | None = None
+    trace_id: str | None = None
+    span_id: str | None = None
     evidence: ExplainedEvidence | None = None
     evidence_ids: tuple[str, ...]
 
@@ -90,6 +139,7 @@ class ExplainedTurn(ExplanationModel):
     turn_id: str
     operations: tuple[ExplainedOperation, ...]
     events: tuple[ExplainedEvent, ...]
+    measurements: tuple[ExplainedMeasurement, ...]
     metrics: TurnMetrics
 
 
@@ -106,6 +156,10 @@ class IncidentExplanation(ExplanationModel):
     coverage: tuple[ExplainedCoverage, ...]
     omissions: tuple[ExplainedOmission, ...]
     limitations: tuple[str, ...]
+    diagnoses: tuple[ExplainedDiagnosis, ...] = ()
+    unassigned_operations: tuple[ExplainedOperation, ...] = ()
+    unassigned_events: tuple[ExplainedEvent, ...] = ()
+    unassigned_measurements: tuple[ExplainedMeasurement, ...] = ()
 
 
 def _evidence(value: Evidence | None) -> ExplainedEvidence | None:
@@ -122,6 +176,39 @@ def _evidence(value: Evidence | None) -> ExplainedEvidence | None:
     )
 
 
+def _link(value: CausalLink) -> ExplainedLink:
+    return ExplainedLink(
+        relationship=value.relationship,
+        target_scope=value.target_scope,
+        target_operation_id=value.target_operation_id,
+        trace_id=value.trace_id,
+        span_id=value.span_id,
+    )
+
+
+def _error(value: ErrorRecord | None) -> ExplainedError | None:
+    if value is None:
+        return None
+    # Project only the governed, allowlisted metadata. The raw ``message`` is a
+    # diagnostic_payload channel that stays closed in v1alpha1.
+    return ExplainedError(
+        code=value.code,
+        category=value.category,
+        capture_class=value.capture_class,
+    )
+
+
+def _diagnosis(value: Diagnosis) -> ExplainedDiagnosis:
+    return ExplainedDiagnosis(
+        diagnosis_id=value.diagnosis_id,
+        code=value.code,
+        summary=value.summary,
+        confidence=value.confidence,
+        evidence_ids=value.evidence_refs,
+        limitations=value.limitations,
+    )
+
+
 def _coordinate(
     value: TimePoint,
 ) -> tuple[Literal["monotonic", "source_wall", "observed_wall"], str | None, str]:
@@ -133,61 +220,112 @@ def _coordinate(
     return "observed_wall", value.clock_domain_id, value.observed_time_unix_nano
 
 
+def _shared_coordinate(
+    start: TimePoint,
+    end: TimePoint,
+) -> tuple[Literal["monotonic", "source_wall", "observed_wall"], str, str, str] | None:
+    if start.clock_domain_id is None or start.clock_domain_id != end.clock_domain_id:
+        return None
+    for basis, field_name in (
+        ("monotonic", "monotonic_time_nano"),
+        ("source_wall", "source_time_unix_nano"),
+        ("observed_wall", "observed_time_unix_nano"),
+    ):
+        start_value = getattr(start, field_name)
+        end_value = getattr(end, field_name)
+        if start_value is not None and end_value is not None:
+            return basis, start.clock_domain_id, start_value, end_value
+    return None
+
+
 def _sample_belongs_to_operation(
     sample: QualitySample,
-    operation,
-    *,
-    matching_stage_count: int,
+    operation: Operation,
 ) -> bool:
     explicit_owner = sample.attributes.get("earshot.operation.id")
-    if explicit_owner is not None:
-        return isinstance(explicit_owner, str) and explicit_owner == operation.operation_id
+    return isinstance(explicit_owner, str) and explicit_owner == operation.operation_id
+
+
+def _explained_measurement(
+    sample: QualitySample,
+    measurement: QualityMeasurement,
+) -> ExplainedMeasurement:
+    """Project one owned provider scalar without aggregating or renaming it.
+
+    The value, unit, and aggregation are copied verbatim from the source
+    measurement. ``limitation`` routes through the same semantic boundary the
+    analyzer uses, and ``confidence`` is copied from the sample's evidence.
+    """
+
+    confidence = sample.evidence.confidence if sample.evidence is not None else "unavailable"
+    return ExplainedMeasurement(
+        name=measurement.name,
+        value=measurement.value,
+        unit=measurement.unit,
+        aggregation=measurement.aggregation,
+        basis="provider_measurement",
+        confidence=confidence,
+        limitation=measurement_value_limitation(
+            measurement.name,
+            measurement.value,
+            measurement.unit,
+        ),
+        evidence=_evidence(sample.evidence),
+        evidence_ids=(sample.sample_id,),
+    )
+
+
+def _measurement_sort_key(
+    value: ExplainedMeasurement,
+) -> tuple[tuple[str, ...], str, str, str, str, str]:
     return (
-        matching_stage_count == 1 and sample.attributes.get("earshot.turn.id") == operation.turn_id
+        value.evidence_ids,
+        value.name,
+        value.unit,
+        value.aggregation,
+        type(value.value).__name__,
+        repr(value.value),
+    )
+
+
+def _measurements(samples: Iterable[QualitySample]) -> tuple[ExplainedMeasurement, ...]:
+    return tuple(
+        sorted(
+            (
+                _explained_measurement(sample, measurement)
+                for sample in samples
+                for measurement in sample.measurements
+            ),
+            key=_measurement_sort_key,
+        )
     )
 
 
 def _operation(
-    value,
+    value: Operation,
     samples: tuple[QualitySample, ...],
-    *,
-    matching_stage_count: int,
 ) -> ExplainedOperation:
     basis, domain, start = _coordinate(value.started_at)
     end: str | None = None
     duration: str | None = None
     limitation = "end_boundary_not_observed"
     if value.ended_at is not None:
-        end_basis, end_domain, candidate = _coordinate(value.ended_at)
-        if (end_basis, end_domain) != (basis, domain):
+        shared = _shared_coordinate(value.started_at, value.ended_at)
+        if shared is None:
             limitation = "end_boundary_not_comparable"
-        elif int(candidate) < int(start):
-            limitation = "invalid_negative_interval"
         else:
-            end = candidate
-            duration = str(int(candidate) - int(start))
-            limitation = None
+            basis, domain, start, candidate = shared
+            if int(candidate) < int(start):
+                limitation = "invalid_negative_interval"
+            else:
+                end = candidate
+                duration = str(int(candidate) - int(start))
+                limitation = None
     attributes = value.attributes
     provider = attributes.get("gen_ai.provider.name")
     model = attributes.get("gen_ai.request.model")
-    measurement_prefix = f"earshot.{value.operation_name}."
-    measurements = tuple(
-        ExplainedMeasurement(
-            name=measurement.name,
-            value=measurement.value,
-            unit=measurement.unit,
-            aggregation=measurement.aggregation,
-            evidence=_evidence(sample.evidence),
-            evidence_ids=(sample.sample_id,),
-        )
-        for sample in samples
-        if _sample_belongs_to_operation(
-            sample,
-            value,
-            matching_stage_count=matching_stage_count,
-        )
-        for measurement in sample.measurements
-        if measurement.name.startswith(measurement_prefix)
+    measurements = _measurements(
+        sample for sample in samples if _sample_belongs_to_operation(sample, value)
     )
     return ExplainedOperation(
         operation_id=value.operation_id,
@@ -199,11 +337,21 @@ def _operation(
         start_nano=start,
         end_nano=end,
         duration_nano=duration,
+        start_uncertainty_nano=value.started_at.uncertainty_nano,
+        end_uncertainty_nano=(
+            value.ended_at.uncertainty_nano if value.ended_at is not None else None
+        ),
         limitation=limitation,
         participant_id=value.participant_id,
         stream_id=value.stream_id,
         provider=provider if isinstance(provider, str) else None,
         model=model if isinstance(model, str) else None,
+        trace_id=value.trace_id,
+        span_id=value.span_id,
+        parent_span_id=value.parent_span_id,
+        parent_scope=value.parent_scope,
+        links=tuple(_link(link) for link in value.links),
+        error=_error(value.error),
         evidence=_evidence(value.evidence),
         measurements=measurements,
         evidence_ids=(value.operation_id,),
@@ -218,30 +366,40 @@ def _event(value) -> ExplainedEvent:
         time_basis=basis,
         clock_domain_id=domain,
         at_nano=at,
+        operation_id=value.operation_id,
         participant_id=value.participant_id,
         stream_id=value.stream_id,
+        trace_id=value.trace_id,
+        span_id=value.span_id,
         evidence=_evidence(value.evidence),
         evidence_ids=(value.event_id,),
     )
 
 
-def _operation_order(value) -> tuple[int, str, str, int, str]:
-    basis, domain, coordinate = _coordinate(value.started_at)
-    return (domain is None, domain or "", basis, int(coordinate), value.operation_id)
-
-
-def _event_order(value) -> tuple[int, str, str, int, str]:
-    basis, domain, coordinate = _coordinate(value.time)
-    return (domain is None, domain or "", basis, int(coordinate), value.event_id)
-
-
 def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> IncidentExplanation:
-    """Project UI-ready facts without inventing intervals or cross-clock ordering."""
+    """Project UI-ready facts without inventing intervals or cross-clock causality."""
 
     profile = bundle.profile
     operations = {item.operation_id: item for item in profile.operations}
     events = {item.event_id: item for item in profile.events}
     samples = profile.quality_samples
+    analysis_turn_ids = {turn.turn_id for turn in analysis.projections.turns}
+    turn_measurement_samples: dict[str, list[QualitySample]] = {
+        turn_id: [] for turn_id in analysis_turn_ids
+    }
+    unassigned_measurement_samples: list[QualitySample] = []
+    for sample in samples:
+        operation_owner = sample.attributes.get("earshot.operation.id")
+        if isinstance(operation_owner, str) and operation_owner in operations:
+            continue
+        turn_owner = sample.attributes.get("earshot.turn.id")
+        if isinstance(turn_owner, (str, int)) and not isinstance(turn_owner, bool):
+            turn_id = str(turn_owner)
+            if turn_id in analysis_turn_ids:
+                turn_measurement_samples[turn_id].append(sample)
+                continue
+        unassigned_measurement_samples.append(sample)
+
     turns = tuple(
         ExplainedTurn(
             turn_id=turn.turn_id,
@@ -249,32 +407,67 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 _operation(
                     operation,
                     samples,
-                    matching_stage_count=sum(
-                        candidate.operation_name == operation.operation_name
-                        for identity in turn.operation_ids
-                        if (candidate := operations.get(identity)) is not None
-                    ),
                 )
-                for operation in sorted(
+                for operation in _order_by_comparable_time(
                     (
                         operations[identity]
                         for identity in turn.operation_ids
                         if identity in operations
                     ),
-                    key=_operation_order,
+                    point=lambda operation: operation.started_at,
+                    identity=lambda operation: operation.operation_id,
                 )
             ),
             events=tuple(
                 _event(event)
-                for event in sorted(
+                for event in _order_by_comparable_time(
                     (events[identity] for identity in turn.event_ids if identity in events),
-                    key=_event_order,
+                    point=lambda event: event.time,
+                    identity=lambda event: event.event_id,
                 )
             ),
+            measurements=_measurements(turn_measurement_samples[turn.turn_id]),
             metrics=turn.metrics,
         )
         for turn in analysis.projections.turns
     )
+
+    # Completeness: any source operation not claimed by a turn projection is
+    # surfaced verbatim rather than silently dropped. Ownership mirrors the
+    # analyzer, which is the sole authority on turn membership.
+    assigned_operation_ids = {
+        operation_id for turn in analysis.projections.turns for operation_id in turn.operation_ids
+    }
+    unassigned_source_operations = _order_by_comparable_time(
+        (
+            operation
+            for operation in profile.operations
+            if operation.operation_id not in assigned_operation_ids
+        ),
+        point=lambda operation: operation.started_at,
+        identity=lambda operation: operation.operation_id,
+    )
+    unassigned_operations = tuple(
+        _operation(operation, samples) for operation in unassigned_source_operations
+    )
+
+    assigned_event_ids = {
+        event_id for turn in analysis.projections.turns for event_id in turn.event_ids
+    }
+    unassigned_events = tuple(
+        _event(event)
+        for event in _order_by_comparable_time(
+            (event for event in profile.events if event.event_id not in assigned_event_ids),
+            point=lambda event: event.time,
+            identity=lambda event: event.event_id,
+        )
+    )
+
+    # Every provider scalar without an explicit operation owner remains available
+    # as an exact fact. Turn metrics may select or aggregate these samples for a
+    # derived scalar, but that lossy read model cannot replace the source facts.
+    unassigned_measurements = _measurements(unassigned_measurement_samples)
+
     return IncidentExplanation(
         bundle_id=profile.manifest.bundle_id,
         session_id=profile.manifest.session_id,
@@ -292,7 +485,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 reason=item.reason,
                 evidence=_evidence(item.evidence),
             )
-            for item in profile.coverage
+            for item in sorted(profile.coverage, key=lambda item: item.signal)
         ),
         omissions=tuple(
             ExplainedOmission(
@@ -300,9 +493,16 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
                 capture_class=item.capture_class,
                 reason=item.reason,
                 count=item.count,
-                source_refs=item.source_refs,
+                source_refs=tuple(sorted(item.source_refs)),
             )
-            for item in profile.privacy.omissions
+            for item in sorted(
+                profile.privacy.omissions,
+                key=lambda item: item.omission_id,
+            )
         ),
         limitations=analysis.projections.limitations,
+        diagnoses=tuple(_diagnosis(item) for item in analysis.diagnoses),
+        unassigned_operations=unassigned_operations,
+        unassigned_events=unassigned_events,
+        unassigned_measurements=unassigned_measurements,
     )

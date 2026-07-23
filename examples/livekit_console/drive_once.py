@@ -35,6 +35,7 @@ async def main() -> int:
     earshot.configure()
     recorder = earshot.session(session_id="headless-eval")
     provider: TracerProvider | None = None
+    routing_handle = None
     utterance = "What is the capital of France?"
     session: AgentSession | None = None
     sink = NullAudioOutput()
@@ -47,30 +48,33 @@ async def main() -> int:
         provider = TracerProvider()
         telemetry.set_tracer_provider(provider)
         adapter = LiveKitAdapter(recorder, framework_version=LIVEKIT_AGENTS_VERSION)
-        adapter.attach_span_processor(provider)
+        routing_handle = adapter.attach_span_processor(provider)
         session = AgentSession(
             llm=openai.LLM(model="gpt-4o-mini"),
             tts=openai.TTS(model="tts-1", voice="alloy"),
         )
         adapter.attach_session_listeners(session)
 
-        agent = Agent(instructions="You are a friendly assistant. Answer in one short sentence.")
-        await session.start(agent=agent)
-        # A roomless session only runs TTS when an audio output is attached.
-        # This sink discards samples but completes LiveKit's playout protocol.
-        session.output.audio = sink
-        result = await session.run(user_input=utterance, input_modality="text")
-        for event in reversed(result.events):
-            item = getattr(event, "item", None)
-            text_content = getattr(item, "text_content", None)
-            if text_content:
-                reply = text_content
-                break
-        if not reply:
-            raise RuntimeError("LiveKit completed the turn without an assistant reply")
-        if not sink.saw_audio:
-            raise RuntimeError("LiveKit completed the turn without sending TTS audio")
-        await asyncio.wait_for(session.wait_for_idle(), timeout=15)
+        with routing_handle.session_scope():
+            agent = Agent(
+                instructions="You are a friendly assistant. Answer in one short sentence."
+            )
+            await session.start(agent=agent)
+            # A roomless session only runs TTS when an audio output is attached.
+            # This sink discards samples but completes LiveKit's playout protocol.
+            session.output.audio = sink
+            result = await session.run(user_input=utterance, input_modality="text")
+            for event in reversed(result.events):
+                item = getattr(event, "item", None)
+                text_content = getattr(item, "text_content", None)
+                if text_content:
+                    reply = text_content
+                    break
+            if not reply:
+                raise RuntimeError("LiveKit completed the turn without an assistant reply")
+            if not sink.saw_audio:
+                raise RuntimeError("LiveKit completed the turn without sending TTS audio")
+            await asyncio.wait_for(session.wait_for_idle(), timeout=15)
         lifecycle_status = "completed"
     except TimeoutError as error:
         lifecycle_status = "timed_out"
@@ -96,6 +100,9 @@ async def main() -> int:
             if not flushed:
                 lifecycle_status = "failed"
                 print("[driver] trace-provider flush timed out", file=sys.stderr)
+
+        if routing_handle is not None:
+            routing_handle.close()
 
         try:
             bundle = recorder.close(lifecycle_status)

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatDuration, formatMs, formatRelativeTime } from "./format";
+import {
+  formatDuration,
+  formatMeasurement,
+  formatMs,
+  formatRelativeTime,
+} from "./format";
 
 describe("formatMs", () => {
   it("rounds and suffixes ms", () => {
@@ -19,6 +24,34 @@ describe("formatDuration", () => {
 
   it("renders unavailable duration as an em-dash", () => {
     expect(formatDuration(null)).toBe("—");
+  });
+});
+
+describe("formatMeasurement", () => {
+  it("renders duration units as compact time", () => {
+    expect(formatMeasurement(240.4, "ms")).toBe("240ms");
+    expect(formatMeasurement(1.5, "s")).toBe("1.5s");
+  });
+
+  it("renders booleans as yes/no", () => {
+    expect(formatMeasurement(true, "1")).toBe("yes");
+    expect(formatMeasurement(false, "1")).toBe("no");
+  });
+
+  it("keeps a dimensionless ratio (unit '1') as a bare number", () => {
+    expect(formatMeasurement(0.25, "1")).toBe("0.25");
+  });
+
+  it("pairs a real unit with its value instead of mislabelling it as ms", () => {
+    expect(formatMeasurement(-21.4, "dbfs")).toBe("-21.4 dbfs");
+    expect(formatMeasurement(5, "count")).toBe("5 count");
+    // OpenTelemetry annotation braces are stripped for display.
+    expect(formatMeasurement(42, "{character}")).toBe("42 character");
+  });
+
+  it("renders an em-dash for a null/undefined value", () => {
+    expect(formatMeasurement(null, "dbfs")).toBe("—");
+    expect(formatMeasurement(undefined, "ms")).toBe("—");
   });
 });
 

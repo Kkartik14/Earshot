@@ -3,18 +3,18 @@ import { useParams } from "react-router-dom";
 import { useExplanation, useIncident } from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
 import { SessionHeader } from "./SessionHeader";
+import { DiagnosesPanel, UnassignedPanel } from "./SessionFacts";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
 import { TurnTimeline, type Selection } from "./TurnTimeline";
 import styles from "./SessionInspector.module.css";
 import {
+  buildDiagnoses,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
+  buildUnassigned,
   getCoverage,
-  type ExplanationLike,
-  type IncidentLike,
-  type StageName,
 } from "./timeline";
 
 export function SessionInspector() {
@@ -25,32 +25,14 @@ export function SessionInspector() {
   const [selection, setSelection] = useState<Selection | null>(null);
   // The control that opened the detail dialog; focus returns here on close.
   const restoreFocus = useRef<HTMLElement | null>(null);
-  const initializedExplanationFor = useRef<string | undefined>(undefined);
 
   // A session change invalidates both the current detail and its invoking
   // control. A same-session data refresh must preserve them.
   useEffect(() => {
     setSelection(null);
     restoreFocus.current = null;
-    initializedExplanationFor.current = undefined;
     setOpenTurns(new Set());
   }, [bundleId]);
-
-  // Open the slow turn once when this session's explanation first arrives.
-  // Background refreshes update the open detail without closing it or
-  // disturbing the user's expansion state.
-  useEffect(() => {
-    if (explanation.data == null || initializedExplanationFor.current === bundleId) {
-      return;
-    }
-    initializedExplanationFor.current = bundleId;
-    const turns =
-      (explanation.data as unknown as ExplanationLike | undefined)?.turns ?? [];
-    const slow = turns.findIndex(
-      (t) => (t.metrics?.first_token_latency?.value ?? 0) > 500,
-    );
-    setOpenTurns(slow >= 0 ? new Set([slow]) : new Set());
-  }, [bundleId, explanation.data]);
 
   useEffect(() => {
     if (selection == null) {
@@ -77,14 +59,15 @@ export function SessionInspector() {
     );
   }
 
-  // The API responses are the source of truth; the transform reads only the
-  // fields it needs, so we narrow to the local shapes at this boundary.
-  const inc = incident.data as unknown as IncidentLike;
-  const explained = explanation.data as unknown as ExplanationLike;
+  // Both responses flow directly from the generated API contract.
+  const inc = incident.data;
+  const explained = explanation.data;
   const timeline = buildTimeline(explained);
   const summary = buildSummary(inc, explained, timeline);
   const details = buildTurnDetails(explained);
   const coverage = getCoverage(explained);
+  const diagnoses = buildDiagnoses(explained);
+  const unassigned = buildUnassigned(explained);
 
   const openTurn = (i: number) =>
     setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
@@ -101,12 +84,12 @@ export function SessionInspector() {
       next.has(i) ? next.delete(i) : next.add(i);
       return next;
     });
-    setSelection({ turn: i, stage: null });
+    setSelection({ turn: i, operationId: null });
   };
-  const selectStage = (i: number, stage: StageName) => {
+  const selectOperation = (i: number, operationId: string) => {
     rememberTrigger();
     openTurn(i);
-    setSelection({ turn: i, stage });
+    setSelection({ turn: i, operationId });
   };
 
   const sel = selection != null && details[selection.turn] != null ? selection : null;
@@ -120,24 +103,40 @@ export function SessionInspector() {
           openTurns={openTurns}
           selection={sel}
           onToggleTurn={toggleTurn}
-          onSelectStage={selectStage}
+          onSelectOperation={selectOperation}
         />
+        <DiagnosesPanel diagnoses={diagnoses} onSelectEvidence={selectOperation} />
+        <UnassignedPanel facts={unassigned} />
       </div>
       {sel ? (
         <div className={styles.drawerCol}>
-          {sel.stage == null ? (
+          {sel.operationId == null ? (
             <TurnDrawer
               detail={details[sel.turn]}
               coverage={coverage}
               onClose={() => setSelection(null)}
-              onPickStage={(stage) => selectStage(sel.turn, stage)}
+              onPickStage={(operationId) => selectOperation(sel.turn, operationId)}
             />
           ) : (
-            <StageDrawer
-              index={sel.turn}
-              stage={details[sel.turn].stages.find((s) => s.name === sel.stage)!}
-              onClose={() => setSelection(null)}
-            />
+            (() => {
+              const op = details[sel.turn].stages.find(
+                (s) => s.operationId === sel.operationId,
+              );
+              return op == null ? (
+                <TurnDrawer
+                  detail={details[sel.turn]}
+                  coverage={coverage}
+                  onClose={() => setSelection(null)}
+                  onPickStage={(operationId) => selectOperation(sel.turn, operationId)}
+                />
+              ) : (
+                <StageDrawer
+                  index={sel.turn}
+                  stage={op}
+                  onClose={() => setSelection(null)}
+                />
+              );
+            })()
           )}
         </div>
       ) : null}

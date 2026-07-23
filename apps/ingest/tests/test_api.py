@@ -357,6 +357,11 @@ def test_json_ingest_get_metadata_and_get_protobuf_roundtrip(tmp_path, valid_bun
     assert decode_incident_json(rendered.content).profile == valid_bundle.profile
     assert rendered.headers["etag"].startswith('"sha256:')
 
+    generic_json = client.get("/v1/incidents/bundle-1", headers={"Accept": "application/json"})
+    assert generic_json.status_code == 200
+    assert generic_json.headers["content-type"].startswith("application/json")
+    assert decode_incident_json(generic_json.content).profile == valid_bundle.profile
+
     binary = client.get("/v1/incidents/bundle-1", headers={"Accept": PROTOBUF_MEDIA_TYPE})
     assert binary.status_code == 200
     assert decode_incident_protobuf(binary.content).profile == valid_bundle.profile
@@ -785,6 +790,12 @@ def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp
     } <= set(content)
     assert "IncidentBundleJson" in schema["components"]["schemas"]
     assert "StoredAnalysisResponse" in schema["components"]["schemas"]
+    incident_response_content = schema["paths"]["/v1/incidents/{bundle_id}"]["get"]["responses"][
+        "200"
+    ]["content"]
+    incident_schema = {"$ref": "#/components/schemas/IncidentBundleJson"}
+    assert incident_response_content["application/json"]["schema"] == incident_schema
+    assert incident_response_content[JSON_MEDIA_TYPE]["schema"] == incident_schema
     content_encoding = next(
         parameter
         for parameter in schema["paths"]["/v1/incidents"]["post"]["parameters"]

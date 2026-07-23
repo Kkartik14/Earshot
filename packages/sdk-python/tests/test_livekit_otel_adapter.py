@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from earshot.adapters import LiveKitAdapter
+from earshot.adapters import LiveKitAdapter, routing
 from earshot.adapters.base import AdapterDependencyError
 from earshot.analysis import analyze_incident
 from earshot.privacy import CaptureClass, CapturePolicy
@@ -345,6 +345,136 @@ def test_livekit_span_callback_is_idempotent_and_conflicts_are_rejected() -> Non
         adapter.consume_span({**span, "end_time": 1_800_000_000_200_000_000})
 
     assert len(adapter.recorder.close().profile.operations) == 1
+
+
+def test_livekit_span_identity_tracking_has_a_configured_bound() -> None:
+    with pytest.raises(ValueError, match="max_tracking_entries"):
+        LiveKitAdapter(recorder(), max_tracking_entries=0)
+
+    adapter = LiveKitAdapter(recorder(), max_tracking_entries=2)
+    spans = [
+        {
+            "name": "llm_node",
+            "trace_id": f"{index + 1:032x}",
+            "span_id": f"{index + 1:016x}",
+            "status": "ok",
+            "start_time": 1_800_000_000_000_000_000 + index,
+            "end_time": 1_800_000_000_100_000_000 + index,
+        }
+        for index in range(3)
+    ]
+    for span in spans:
+        adapter.consume_span(span)
+
+    status = adapter.tracking_status()
+    assert status.limit_per_ledger == 2
+    assert dict(status.entries)["spans"] == 2
+    assert status.saturated_ledgers == ("spans",)
+    captured_before_replay = adapter.recorder.status().captured_records
+    adapter.consume_span(spans[0])
+    assert adapter.recorder.status().captured_records == captured_before_replay
+    assert dict(adapter.tracking_status().entries)["spans"] == 2
+    bundle = adapter.recorder.close()
+    assert len(bundle.profile.operations) == 2
+    assert (
+        "livekit.tracking.spans",
+        "partial",
+        "max_tracking_entries",
+    ) in {(item.signal, item.availability, item.reason) for item in bundle.profile.coverage}
+    assert validate_incident(bundle).ok
+
+
+def test_livekit_all_identity_ledgers_stay_bounded_under_high_volume() -> None:
+    source_recorder = IncidentRecorder(
+        config=RecorderConfig(
+            clock_domain_id="server-clock",
+            max_records=20_000,
+            max_capture_bytes=64 * 1024 * 1024,
+        )
+    )
+    adapter = LiveKitAdapter(source_recorder, max_tracking_entries=64)
+    event_span = {
+        "name": "llm_node",
+        "trace_id": f"{1:032x}",
+        "span_id": f"{1:016x}",
+        "participant_id": "participant-0",
+        "status": "ok",
+        "start_time": 1_800_000_000_000_000_000,
+        "end_time": 1_800_000_000_100_000_000,
+        "events": tuple(
+            {
+                "name": "provider.event",
+                "timestamp": 1_800_000_000_000_000_000 + index,
+                "attributes": {},
+            }
+            for index in range(1_000)
+        ),
+    }
+    adapter.consume_span(event_span)
+
+    first_metric = None
+    for index in range(1_000):
+        if index:
+            adapter.consume_span(
+                {
+                    "name": "llm_node",
+                    "trace_id": f"{index + 1:032x}",
+                    "span_id": f"{index + 1:016x}",
+                    "participant_id": f"participant-{index}",
+                    "status": "ok",
+                    "start_time": 1_800_000_000_000_000_000 + index,
+                    "end_time": 1_800_000_000_100_000_000 + index,
+                    "events": (),
+                }
+            )
+        metric = {
+            "type": "llm_metrics",
+            "request_id": f"request-{index}",
+            "speech_id": f"turn-{index}",
+            "duration": 0.01,
+            "ttft": 0.001,
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+        }
+        first_metric = first_metric or metric
+        adapter.consume_metric(metric, observed_at=point(200_000_000 + index))
+
+    # VAD bypasses the operation ledger and independently proves quality saturation.
+    adapter.consume_metric(
+        {
+            "type": "vad_metrics",
+            "timestamp": 1_800_000_100.0,
+            "inference_duration_total": 0.01,
+            "inference_count": 1,
+        },
+        observed_at=point(300_000_000),
+    )
+
+    status = adapter.tracking_status()
+    assert dict(status.entries) == {
+        "events": 64,
+        "operations": 64,
+        "participants": 64,
+        "quality": 64,
+        "spans": 64,
+    }
+    assert status.saturated_ledgers == (
+        "events",
+        "operations",
+        "participants",
+        "quality",
+        "spans",
+    )
+    assert source_recorder.status().captured_records <= 330
+
+    captured_before_replay = source_recorder.status().captured_records
+    adapter.consume_span(event_span)
+    assert first_metric is not None
+    adapter.consume_metric(first_metric, observed_at=point(200_000_000))
+    assert source_recorder.status().captured_records == captured_before_replay
+    bundle = source_recorder.close()
+    assert validate_incident(bundle).ok
 
 
 def test_livekit_native_span_event_is_correlated_and_drops_event_payload() -> None:
@@ -1045,19 +1175,15 @@ def test_livekit_zero_connection_acquisition_sentinel_is_omitted(
     assert measurement_name not in {item.name for item in sample.measurements}
 
 
-def test_real_connection_only_realtime_metric_survives_dual_surface_ownership(
-    monkeypatch,
-) -> None:
+def test_real_connection_only_realtime_metric_survives_dual_surface_ownership() -> None:
     pytest.importorskip("livekit.agents")
     from livekit.agents.metrics import RealtimeModelMetrics
 
     adapter = LiveKitAdapter(recorder(), framework_version="1.6.5")
-    sentinel_processor = object()
-    monkeypatch.setattr(adapter, "create_span_processor", lambda: sentinel_processor)
 
     class Provider:
         def add_span_processor(self, processor: object) -> None:
-            assert processor is sentinel_processor
+            del processor
 
     listeners: dict[str, object] = {}
 
@@ -1622,11 +1748,7 @@ def test_attach_session_listeners_supports_decorator_api() -> None:
     ]
 
 
-def test_span_processor_attach_is_additive_and_validates_provider(monkeypatch) -> None:
-    adapter = LiveKitAdapter(recorder())
-    sentinel = object()
-    monkeypatch.setattr(adapter, "create_span_processor", lambda: sentinel)
-
+def test_span_processor_attach_is_additive_and_validates_provider() -> None:
     class Provider:
         def __init__(self) -> None:
             self.processors: list[object] = []
@@ -1635,13 +1757,23 @@ def test_span_processor_attach_is_additive_and_validates_provider(monkeypatch) -
             self.processors.append(processor)
 
     provider = Provider()
-    assert adapter.attach_span_processor(provider) is sentinel
-    assert provider.processors == [sentinel]
+    handle = LiveKitAdapter(recorder()).attach_span_processor(provider)
+    assert isinstance(handle, routing.RoutingHandle)
+    # Additive: exactly one shared router processor is installed on the provider.
+    assert len(provider.processors) == 1
+    # A second concurrent session reuses the one processor, never adds another.
+    LiveKitAdapter(recorder()).attach_span_processor(provider)
+    assert len(provider.processors) == 1
     with pytest.raises(TypeError, match="does not support"):
-        adapter.attach_span_processor(object())
+        LiveKitAdapter(recorder()).attach_span_processor(object())
 
 
-def test_optional_livekit_span_processor_has_actionable_dependency_error(monkeypatch) -> None:
+def test_recorder_bound_livekit_span_processor_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="attach_span_processor"):
+        LiveKitAdapter(recorder()).create_span_processor()
+
+
+def test_optional_livekit_attach_has_actionable_dependency_error(monkeypatch) -> None:
     real_import = builtins.__import__
 
     def import_without_otel(name, *args, **kwargs):
@@ -1649,9 +1781,13 @@ def test_optional_livekit_span_processor_has_actionable_dependency_error(monkeyp
             raise ImportError("forced missing optional dependency")
         return real_import(name, *args, **kwargs)
 
+    class Provider:
+        def add_span_processor(self, processor) -> None:
+            del processor
+
     monkeypatch.setattr(builtins, "__import__", import_without_otel)
     with pytest.raises(AdapterDependencyError, match="opentelemetry-sdk"):
-        LiveKitAdapter(recorder()).create_span_processor()
+        LiveKitAdapter(recorder()).attach_span_processor(Provider())
 
 
 def test_span_processor_filter_accepts_only_livekit_scopes_or_attributes() -> None:

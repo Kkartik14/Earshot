@@ -14,8 +14,9 @@ from pathlib import Path
 import pytest
 
 import earshot.storage as storage_module
-from earshot.codec import encode_incident_protobuf
-from earshot.contract import AnalysisProjections, DerivedAnalysis, ExportPolicy, RetentionPolicy
+from earshot.analysis import analyze_incident
+from earshot.codec import decode_incident_protobuf, encode_incident_protobuf
+from earshot.contract import DerivedAnalysis, ExportPolicy, RetentionPolicy
 from earshot.storage import (
     ArtifactCorruptionError,
     IncidentConflictError,
@@ -40,12 +41,21 @@ def analysis_value(
     version: str,
     marker: str = "test_projection",
 ) -> DerivedAnalysis:
-    return DerivedAnalysis(
-        analyzer_name="test.analyzer",
-        analyzer_version=version,
-        input_sha256=store.get_record(bundle_id).digest,
+    record, payload = store.get_artifact(bundle_id)
+    analysis = analyze_incident(
+        decode_incident_protobuf(payload),
+        input_sha256=record.digest,
         generated_at_unix_nano="1800000000000000000",
-        projections=AnalysisProjections(limitations=(marker,)),
+    )
+    projections = analysis.projections.model_copy(
+        update={"limitations": (*analysis.projections.limitations, marker)}
+    )
+    return analysis.model_copy(
+        update={
+            "analyzer_name": "test.analyzer",
+            "analyzer_version": version,
+            "projections": projections,
+        }
     )
 
 

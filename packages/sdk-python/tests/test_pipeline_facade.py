@@ -8,6 +8,7 @@ import pytest
 
 import earshot
 from earshot.analysis import analyze_incident
+from earshot.clock import ManualClock
 from earshot.codec import analysis_input_sha256, encode_incident_protobuf
 from earshot.storage import IncidentStore
 from earshot.validation import validate_incident
@@ -45,15 +46,15 @@ def test_custom_pipeline_incident_is_contract_valid() -> None:
 def test_provider_reported_latencies_populate_turn_facts(tmp_path) -> None:
     bundle = _two_turn_session().close()
 
-    # Derived first-token/generated latency come straight from the facade's
-    # earshot.llm.ttft / earshot.tts.ttfb measurements.
+    # First-token comes from the provider TTFT scalar. The explicit first-audio
+    # boundary outranks the TTS TTFB scalar for generated-response latency.
     analysis = analyze_incident(
         bundle, input_sha256=analysis_input_sha256(bundle), generated_at_unix_nano=1
     )
     first_turn = analysis.projections.turns[0].metrics
     assert first_turn.first_token_latency.value == pytest.approx(350)
     assert first_turn.first_token_latency.confidence == "measured"
-    assert first_turn.generated_response_latency.value == pytest.approx(90)
+    assert first_turn.generated_response_latency.value == pytest.approx(140)
 
     store = IncidentStore(tmp_path)
     store.create_project("pipe", display_name="Pipe")
@@ -66,7 +67,7 @@ def test_provider_reported_latencies_populate_turn_facts(tmp_path) -> None:
     assert facts[0].model == "gpt-4o"
     assert facts[0].first_token_ms == pytest.approx(350)
     assert facts[0].first_token_confidence == "measured"
-    assert facts[0].generated_response_ms == pytest.approx(90)
+    assert facts[0].generated_response_ms == pytest.approx(140)
 
 
 def test_barge_in_authors_an_accepted_interruption(tmp_path) -> None:
@@ -118,13 +119,16 @@ def test_provider_scalar_does_not_fabricate_a_measured_stage_interval() -> None:
     bundle = sess.close()
 
     [operation] = bundle.profile.operations
-    [sample] = bundle.profile.quality_samples
     assert operation.ended_at is None
     assert operation.evidence is not None
     assert operation.evidence.source == "app"
     assert operation.evidence.confidence == "inferred"
-    assert sample.evidence.source == "provider"
-    assert sample.evidence.confidence == "measured"
+    # Both provider scalars become governed measurements, not a stage interval.
+    names = {m.name for sample in bundle.profile.quality_samples for m in sample.measurements}
+    assert names == {"earshot.llm.ttft", "earshot.llm.completion_latency"}
+    for sample in bundle.profile.quality_samples:
+        assert sample.evidence.source == "provider"
+        assert sample.evidence.confidence == "measured"
 
 
 def test_barge_in_offset_is_relative_to_the_turn() -> None:
@@ -170,30 +174,122 @@ def test_first_audio_boundary_is_preserved_without_provider_ttfb() -> None:
     assert analysis.projections.turns[0].metrics.generated_response_latency.value == 140
 
 
+def test_first_audio_boundary_is_preserved_alongside_provider_ttfb() -> None:
+    sess = earshot.pipeline(session_id="first-audio-and-ttfb", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.vad(speech_end_ms=0)
+        turn.tts("cartesia", ttfb_ms=90, first_audio_ms=140, confidence="measured")
+    bundle = sess.close()
+
+    assert any(
+        event.event_name == "earshot.response.first_audio_generated"
+        and int(event.time.monotonic_time_nano) == 140_000_000
+        for event in bundle.profile.events
+    )
+    assert any(
+        measurement.name == "earshot.tts.ttfb" and measurement.value == 90
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    )
+
+
 def test_final_transcript_is_attributed_to_the_user() -> None:
     sess = earshot.pipeline(session_id="speaker", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.vad(speech_end_ms=100)
+        turn.stt("deepgram", final_ms=420)
+    bundle = sess.close()
+
+    event = next(
+        event for event in bundle.profile.events if event.event_name == "earshot.transcript.final"
+    )
+    assert event.event_name == "earshot.transcript.final"
+    assert event.participant_id == "participant-user"
+
+
+def test_finalization_scalar_without_speech_end_does_not_invent_an_event() -> None:
+    sess = earshot.pipeline(session_id="finalization-scalar", started_at_unix_nano=START)
     with sess.turn() as turn:
         turn.stt("deepgram", final_ms=420)
     bundle = sess.close()
 
-    [event] = bundle.profile.events
-    assert event.event_name == "earshot.transcript.final"
-    assert event.participant_id == "participant-user"
+    assert not any(
+        event.event_name == "earshot.transcript.final" for event in bundle.profile.events
+    )
+    assert [
+        (measurement.name, measurement.value, measurement.unit)
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+    ] == [("earshot.stt.finalization_latency", 420.0, "ms")]
+
+
+def test_finalization_scalar_populates_turn_fact_without_invented_boundaries(tmp_path) -> None:
+    sess = earshot.pipeline(session_id="finalization-fact", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.stt("deepgram", final_ms=420)
+    bundle = sess.close()
+
+    store = IncidentStore(tmp_path)
+    store.create_project("pipe", display_name="Pipe")
+    store.ingest(bundle, project_id="pipe")
+    [fact] = store.list_turn_facts(project_id="pipe")
+
+    assert fact.stt_finalization_ms == 420
+    assert fact.stt_finalization_basis == "provider_finalization_latency"
+    assert fact.stt_finalization_confidence == "measured"
 
 
 def test_failed_turn_does_not_reuse_its_clock_origin() -> None:
     sess = earshot.pipeline(session_id="turn-failure", started_at_unix_nano=START)
     with pytest.raises(RuntimeError, match="application failure"), sess.turn("failed") as turn:
         turn.llm("openai", ttft_ms=100)
+        # An observed offset gives the failed turn a real extent, so the next
+        # turn starts after it rather than reusing the same origin.
+        turn.barge_in(at_ms=300)
         raise RuntimeError("application failure")
     with sess.turn("next") as turn:
         turn.llm("openai", ttft_ms=100)
     bundle = sess.close()
 
-    failed, following = bundle.profile.operations
+    failed = next(op for op in bundle.profile.operations if op.turn_id == "failed")
+    following = next(op for op in bundle.profile.operations if op.turn_id == "next")
     assert int(following.started_at.monotonic_time_nano) > int(
         failed.started_at.monotonic_time_nano
     )
+
+
+def test_session_duration_comes_from_its_lifecycle_clock_not_latency_scalars() -> None:
+    clock = ManualClock(wall=START, monotonic=8_000_000_000)
+    sess = earshot.pipeline(session_id="scalars-only", clock=clock)
+    for _ in range(2):
+        with sess.turn() as turn:
+            turn.stt("deepgram", ttfb_ms=180)
+            turn.llm("openai", ttft_ms=350, completion_ms=600)
+            turn.tts("cartesia", ttfb_ms=90)
+    clock.advance(275_000_000)
+    bundle = sess.close()
+
+    session = bundle.profile.session
+    # The lifecycle elapsed by 275 ms. Provider scalars neither inflate that to
+    # their sum (old behaviour: ~2740 ms) nor collapse it to zero.
+    assert int(session.ended_at.monotonic_time_nano) == 275_000_000
+    assert int(session.ended_at.source_time_unix_nano) == START + 275_000_000
+    coverage = {(item.signal, item.availability) for item in bundle.profile.coverage}
+    assert ("session.timeline", "not_observed") not in coverage
+
+
+def test_no_synthetic_inter_turn_gap() -> None:
+    sess = earshot.pipeline(session_id="no-gap", started_at_unix_nano=START)
+    with sess.turn() as turn:
+        turn.vad(speech_end_ms=0)
+        turn.barge_in(at_ms=400)  # the turn's only observed extent
+    with sess.turn() as turn:
+        turn.llm("openai", ttft_ms=100)
+    bundle = sess.close()
+
+    second_llm = next(op for op in bundle.profile.operations if op.operation_name == "llm")
+    # Turn 2 starts exactly at turn 1's observed extent (400 ms) with no 500 ms gap.
+    assert int(second_llm.started_at.monotonic_time_nano) == 400 * 1_000_000
 
 
 def test_custom_recorder_config_keeps_pipeline_adapter_identity() -> None:

@@ -166,6 +166,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.statusChip {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex: none;
+}
 
 .gantt {
   position: relative;
@@ -206,16 +216,8 @@
   inset: 0;
   background: color-mix(in oklab, var(--c) 24%, transparent);
 }
-.stt {
-  --c: var(--stt);
-}
-.llm {
-  --c: var(--llm);
-}
-.tts {
-  --c: var(--tts);
-}
-.turn.slow .llm {
+/* the slow turn's think stage is highlighted in place */
+.glow {
   box-shadow:
     inset 0 0 0 1px var(--crit),
     0 0 12px -3px color-mix(in oklab, var(--crit) 70%, transparent);

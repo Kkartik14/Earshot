@@ -87,6 +87,9 @@ class.
   immutable source counts.
 - Tool, interruption, provider-quality, and known failure-diagnosis evidence must be
   type-correct and owned by the projected turn it supports.
+- Exact measurement facts appear once in their authored operation, turn, or unassigned
+  lane; repeated same-name observations retain distinct values, evidence IDs, and exposed
+  provenance. Validation cannot rely only on recomputing the projector it checks.
 - Array permutation does not change semantic analysis.
 
 ## Persistence/API gates

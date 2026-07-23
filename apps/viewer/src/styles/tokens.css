@@ -20,6 +20,15 @@
   --llm: #b07510;
   --tts: #7a45d6;
 
+  /* operation roles beyond the cascade */
+  --tool: #c65f2e;
+  --transport: #5f739c;
+  --render: #b74a94;
+  --vad: #6f8f2a;
+  --detection: #2c9c86;
+  --agent: #4b57c4;
+  --op-other: var(--tx-mid);
+
   /* semantic (kept distinct from the accent) */
   --crit: #d6362b;
   --good: #12855c;
@@ -49,6 +58,13 @@
     --stt: #47c9e0;
     --llm: #edb350;
     --tts: #bb8dff;
+    --tool: #ec8a54;
+    --transport: #8ea3cc;
+    --render: #e07ac0;
+    --vad: #aec658;
+    --detection: #45d0b4;
+    --agent: #8b93f5;
+    --op-other: var(--tx-mid);
     --crit: #ff6e63;
     --good: #4fd2a1;
     --est: #edb350;
@@ -72,6 +88,13 @@
   --stt: #0c90ac;
   --llm: #b07510;
   --tts: #7a45d6;
+  --tool: #c65f2e;
+  --transport: #5f739c;
+  --render: #b74a94;
+  --vad: #6f8f2a;
+  --detection: #2c9c86;
+  --agent: #4b57c4;
+  --op-other: var(--tx-mid);
   --crit: #d6362b;
   --good: #12855c;
   --est: #b07510;
@@ -93,6 +116,13 @@
   --stt: #47c9e0;
   --llm: #edb350;
   --tts: #bb8dff;
+  --tool: #ec8a54;
+  --transport: #8ea3cc;
+  --render: #e07ac0;
+  --vad: #aec658;
+  --detection: #45d0b4;
+  --agent: #8b93f5;
+  --op-other: var(--tx-mid);
   --crit: #ff6e63;
   --good: #4fd2a1;
   --est: #edb350;

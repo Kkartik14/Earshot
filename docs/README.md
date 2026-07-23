@@ -3,6 +3,11 @@
 These documents are the public, reproducible source of truth. They are sufficient
 to implement another producer or consumer without access to `docs/private`.
 
+The current release is a pre-v1 alpha. Implemented server/runtime surfaces are listed
+in the repository [capability table](../README.md#earshot); browser/mobile capture,
+generic live OTLP receiving, media replay, and regression-fixture export are planned and
+are not shipped APIs.
+
 ## Start here
 
 - [Architecture](./architecture.md) — boundaries, trust model, and repository layout.
@@ -22,6 +27,8 @@ to implement another producer or consumer without access to `docs/private`.
 - [Storage and retention](./storage.md) — CAS/SQLite transaction ordering, graph
   projections, expiry, reconciliation, and erasure limits.
 - [Conformance](./conformance.md) — required fixtures and release gates.
+- [Retained real captures](./captured-fixtures.md) — captured-adapter provenance,
+  privacy scrubbing, validation, and unavailable real-evidence gaps.
 - [Development](./development.md) — setup, regeneration, tests, and local operation.
 - [Release packaging](./release.md) — distribution identity, build verification, and
   publication guardrails.
@@ -42,6 +49,8 @@ The machine-readable contract consists of:
 - shared valid/invalid fixtures under [`fixtures/`](../fixtures/)
 - deterministic fault and security-regression artifacts under
   [`fixtures/faults/`](../fixtures/faults/)
+- privacy-scrubbed real-capture artifacts and their inventory under
+  [`fixtures/captured/`](../fixtures/captured/)
 
 If prose conflicts with a machine-readable source plus a conformance fixture, the
 machine-readable contract wins. Bundle-wide semantic invariants are defined in the

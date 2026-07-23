@@ -1,0 +1,263 @@
+{
+  "bundle_id": "fault-telephony-handoff",
+  "session_id": "fixture-session",
+  "session_status": "completed",
+  "finality": "final",
+  "completeness": "complete",
+  "analyzer_name": "earshot.deterministic",
+  "analyzer_version": "0.3.2",
+  "input_sha256": "44c2c9794510becdceeed5af30cd1c05e13a9e5ccd5297f325c7ed68a88b835f",
+  "turns": [
+    {
+      "turn_id": "turn-1",
+      "operations": [
+        {
+          "operation_id": "op-inbound-leg",
+          "operation_name": "transport_receive",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "100000000",
+          "end_nano": "1800000000",
+          "duration_nano": "1700000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-caller",
+          "stream_id": "stream-caller-inbound",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "5555555555555555",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": [
+            "op-inbound-leg"
+          ]
+        },
+        {
+          "operation_id": "op-bot-leg",
+          "operation_name": "transport_send",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "300000000",
+          "end_nano": "900000000",
+          "duration_nano": "600000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-bot",
+          "stream_id": "stream-bot-outbound",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "6666666666666666",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": [
+            "op-bot-leg"
+          ]
+        },
+        {
+          "operation_id": "op-human-leg",
+          "operation_name": "transport_send",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "950000000",
+          "end_nano": "1800000000",
+          "duration_nano": "850000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": "participant-human",
+          "stream_id": "stream-human-outbound",
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "7777777777777777",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [
+            {
+              "relationship": "handoff",
+              "target_scope": "internal",
+              "target_operation_id": "op-bot-leg",
+              "trace_id": null,
+              "span_id": null
+            }
+          ],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": [
+            "op-human-leg"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "event_id": "event-dtmf",
+          "event_name": "earshot.telephony.dtmf.received",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "500000000",
+          "operation_id": "op-inbound-leg",
+          "participant_id": null,
+          "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
+          "evidence": {
+            "source": "carrier_gateway",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": [
+            "event-dtmf"
+          ]
+        },
+        {
+          "event_id": "event-voicemail",
+          "event_name": "earshot.telephony.voicemail.detected",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "700000000",
+          "operation_id": "op-bot-leg",
+          "participant_id": null,
+          "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
+          "evidence": {
+            "source": "carrier_gateway",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": [
+            "event-voicemail"
+          ]
+        }
+      ],
+      "measurements": [],
+      "metrics": {
+        "first_token_latency": {
+          "availability": "not_observed",
+          "basis": "first_token",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "generated_response_latency": {
+          "availability": "not_observed",
+          "basis": "generated",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "sent_response_latency": {
+          "availability": "not_observed",
+          "basis": "sent",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "received_response_latency": {
+          "availability": "not_observed",
+          "basis": "received",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "render_start_response_latency": {
+          "availability": "not_observed",
+          "basis": "render",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "response_latency": {
+          "availability": "not_observed",
+          "basis": "transport_estimate",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "tools": {
+          "operation_count": 0,
+          "timed_operation_count": 0,
+          "untimed_operation_count": 0,
+          "total_work_ms": 0.0,
+          "total_work_completeness": "complete",
+          "limitation": null,
+          "elapsed_ms_by_clock_domain": {},
+          "evidence_ids": []
+        },
+        "provider_measurements": {}
+      }
+    }
+  ],
+  "coverage": [],
+  "omissions": [],
+  "limitations": [
+    "render_evidence_not_observed"
+  ],
+  "diagnoses": [],
+  "unassigned_operations": [],
+  "unassigned_events": [],
+  "unassigned_measurements": []
+}

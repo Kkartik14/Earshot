@@ -140,6 +140,9 @@ jobs:
           python -m pip install 'build>=1.2,<2'
           pnpm install --frozen-lockfile
           pnpm --filter @earshot/viewer bundle
+          mkdir -p local/sdist-sentinel
+          printf '%s\n' 'CI adversarial sentinel: this file must not ship' \
+            > local/sdist-sentinel/SHOULD_NOT_SHIP.md
           python -m build --wheel --sdist --outdir dist
       - name: Inspect artifact contents and dependency metadata
         run: |

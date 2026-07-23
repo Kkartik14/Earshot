@@ -35,6 +35,18 @@ def test_unreleased_public_layers_are_centrally_versioned_and_pre_v1(tmp_path) -
     assert create_app(data_dir=tmp_path).version == API_VERSION
 
 
+def test_pipeline_evidence_semantics_have_a_new_adapter_version() -> None:
+    assert PIPELINE_ADAPTER_VERSION == "0.3.0"
+
+
+def test_analysis_truth_changes_have_a_new_cache_identity() -> None:
+    assert ANALYZER_VERSION == "0.3.2"
+
+
+def test_explanation_identity_contract_is_api_version_0_2() -> None:
+    assert API_VERSION == "0.2.0"
+
+
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:
     assert set(earshot.__all__) == {
         "CaptureClass",

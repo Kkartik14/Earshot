@@ -3,19 +3,29 @@
 **The open-source Voice Observability SDK.**
 
 Earshot is an open-source SDK, semantic profile, and local backend for recording what
-happened in a voice session—across Pipecat, LiveKit, browser/mobile, native
-speech-to-speech, raw pipelines, and optional telephony—and turning it into a safe,
+happened in a voice session—across Pipecat, LiveKit, native speech-to-speech event
+streams, raw provider pipelines, and optional telephony—and turning it into a safe,
 immutable artifact that can be validated, stored, shared, and projected into a
-deterministic latency/causality analysis.
+deterministic latency/causality analysis. Browser/mobile receive and render collection
+is not shipped yet.
 
 The core workflow:
 
 > This session failed. Here is the portable evidence artifact and the deterministic
 > projection needed to investigate it across runtimes.
 
-Status: pre-v1 alpha. Backend-authored incident explanations are implemented;
-cross-incident regression-fixture generation and a generic live OTLP receiver remain
-later product milestones.
+Status: pre-v1 alpha. Public compatibility is limited to the versions documented for
+each release; see the [alpha compatibility policy](docs/release.md#alpha-compatibility-policy).
+
+| Maturity                                      | Surfaces                                                                                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Implemented; retained real-capture fixture    | LiveKit 1.6, Pipecat 1.5, Deepgram, Cartesia, and Sarvam adapters                                                               |
+| Implemented; synthetic conformance only       | OpenAI Realtime event mapper and ElevenLabs, Vapi, Retell, and Ringg finalized-delivery Connectors                              |
+| Implemented core                              | Contract/codecs, recorder/export, privacy validation, local API/storage, deterministic analysis/explanation, and generic viewer |
+| Planned; not available in the current release | Browser/mobile capture and render collectors, generic live OTLP receiving, media upload/replay, and regression-fixture export   |
+
+The retained artifacts are metadata-only and privacy-scrubbed; their provenance and
+current gaps are recorded in [the capture inventory](docs/captured-fixtures.md).
 
 ## What is implemented
 

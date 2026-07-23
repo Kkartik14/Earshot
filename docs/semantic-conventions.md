@@ -129,6 +129,23 @@ V1 quality values are numeric or boolean and raw counters are numeric—never ar
 strings. Quality samples are incident-profile records; M1 deliberately does not define a second
 `earshot.*` OpenTelemetry metric instrument.
 
+### Raw-pipeline latency measurements
+
+The provider-neutral `earshot.pipeline()` facade retains provider latency scalars as
+quality measurements. These names describe scalars only; they do not prove operation
+intervals or point-event coordinates:
+
+| Measurement                        | Unit | Meaning                                                                                                                                         |
+| ---------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `earshot.stt.ttfb`                 | `ms` | Provider-reported STT time to first response.                                                                                                   |
+| `earshot.stt.finalization_latency` | `ms` | Provider-reported audio-stop to final-transcript latency. A final-transcript event is authored only when speech end was independently observed. |
+| `earshot.llm.ttft`                 | `ms` | Provider-reported model time to first token.                                                                                                    |
+| `earshot.llm.completion_latency`   | `ms` | Provider-reported model completion latency.                                                                                                     |
+| `earshot.tts.ttfb`                 | `ms` | Provider-reported TTS time to first response.                                                                                                   |
+
+An explicit `earshot.response.first_audio_generated` event remains independent of
+`earshot.tts.ttfb`; when a source provides both, Earshot preserves both facts.
+
 ## Output timeline
 
 Keep these facts distinct:

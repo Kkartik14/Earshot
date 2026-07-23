@@ -1,15 +1,18 @@
-import { formatMs } from "../../lib/format";
+import { formatMeasurement } from "../../lib/format";
+import { toneColorVar } from "../../lib/status";
 import styles from "./drawer.module.css";
-import type { StageDetail } from "./timeline";
+import {
+  roleColorVar,
+  roleLabel,
+  type OperationRole,
+  type StageDetail,
+} from "./timeline";
 import { useInitialFocus } from "./useInitialFocus";
 
-const STAGE_LABEL: Record<string, string> = {
-  stt: "listen",
-  llm: "think",
-  tts: "speak",
-};
-const LEAD_LABEL: Record<string, string> = {
-  stt: "finalization",
+// Cascade stages get a friendlier hero label; other roles fall back to a
+// generic observed-duration readout.
+const LEAD_LABEL: Partial<Record<OperationRole, string>> = {
+  stt: "time to first response",
   llm: "time to first token",
   tts: "time to first byte",
 };
@@ -17,6 +20,9 @@ const LEAD_LABEL: Record<string, string> = {
 function confClass(confidence: string): string {
   return styles[confidence] ?? styles.unavailable;
 }
+
+const relationshipLabel = (relationship: string): string =>
+  relationship.replace(/_/g, " ");
 
 export function StageDrawer({
   index,
@@ -27,12 +33,27 @@ export function StageDrawer({
   stage: StageDetail;
   onClose: () => void;
 }) {
-  const color = `var(--${stage.name})`;
+  const color = roleColorVar(stage.role);
   const ev = stage.evidence;
+  const status = stage.statusView;
+  const badgeColor = toneColorVar(status.tone);
 
-  // Focus the close control on open / stage change: keyboard and SR users land
-  // inside the labelled dialog on a visibly focusable element.
-  const closeButton = useInitialFocus<HTMLButtonElement>(`${index}:${stage.name}`);
+  const leadLabel = LEAD_LABEL[stage.role];
+  const observedDuration =
+    stage.timing === "interval" && stage.startMs != null && stage.endMs != null
+      ? stage.endMs - stage.startMs
+      : null;
+  const heroMs = stage.leadMs ?? observedDuration;
+  const heroLabel =
+    stage.leadMs != null && leadLabel != null
+      ? leadLabel
+      : observedDuration != null
+        ? "observed duration"
+        : roleLabel(stage.role);
+
+  // Focus the close control on open / operation change: keyboard and SR users
+  // land inside the labelled dialog on a visibly focusable element.
+  const closeButton = useInitialFocus<HTMLButtonElement>(`${index}:${stage.operationId}`);
 
   return (
     <aside
@@ -55,20 +76,27 @@ export function StageDrawer({
           <span className={styles.title} style={{ color }}>
             {stage.name}
           </span>
-          <span className={styles.kindTag}>{STAGE_LABEL[stage.name]}</span>
+          <span className={styles.kindTag}>{roleLabel(stage.role)}</span>
+          {status.abnormal ? (
+            <span
+              className={styles.statusBadge}
+              style={{ color: badgeColor, borderColor: badgeColor }}
+            >
+              {status.label}
+            </span>
+          ) : null}
         </div>
         <div className={styles.hero}>
           <span className={styles.big}>
-            {stage.leadMs == null ? "—" : Math.round(stage.leadMs)}
-            {stage.leadMs == null ? null : <small> ms</small>}
+            {heroMs == null ? "—" : formatMeasurement(heroMs, "ms")}
           </span>
-          <span className={styles.heroLbl}>{LEAD_LABEL[stage.name]}</span>
+          <span className={styles.heroLbl}>{heroLabel}</span>
         </div>
       </div>
 
       <div className={styles.body}>
         <section className={styles.sec}>
-          <h2 className={styles.secLabel}>Stage</h2>
+          <h2 className={styles.secLabel}>Operation</h2>
           <div className={styles.kv}>
             <span className={styles.kk}>provider</span>
             <span className={styles.vv}>{stage.provider ?? "unknown"}</span>
@@ -79,8 +107,21 @@ export function StageDrawer({
           </div>
           <div className={styles.kv}>
             <span className={styles.kk}>status</span>
-            <span className={styles.vv}>{stage.status}</span>
+            <span
+              className={styles.vv}
+              style={status.abnormal ? { color: badgeColor } : undefined}
+            >
+              {stage.status}
+            </span>
           </div>
+          {status.error ? (
+            <div className={styles.kv}>
+              <span className={styles.kk}>error</span>
+              <span className={styles.vv} style={{ color: badgeColor }}>
+                {status.error.code} · {status.error.category}
+              </span>
+            </div>
+          ) : null}
           <div className={styles.kv}>
             <span className={styles.kk}>timing</span>
             <span className={styles.vv}>
@@ -88,19 +129,44 @@ export function StageDrawer({
                 ? `observed interval +${Math.round(stage.startMs)} → +${Math.round(stage.endMs)} ms`
                 : stage.timing === "point" && stage.startMs != null
                   ? `observed point +${Math.round(stage.startMs)} ms; interval not observed`
-                  : "stage timing unavailable"}
+                  : "operation timing unavailable"}
+              {stage.startUncertaintyMs != null
+                ? ` (±${Math.round(stage.startUncertaintyMs)} ms)`
+                : ""}
             </span>
           </div>
+          {stage.interruptedByEvent ? (
+            <div className={styles.kv}>
+              <span className={styles.kk}>interrupted by</span>
+              <span className={styles.vv}>{stage.interruptedByEvent}</span>
+            </div>
+          ) : null}
         </section>
+
+        {stage.links.length > 0 ? (
+          <section className={styles.sec}>
+            <h2 className={styles.secLabel}>Causal links</h2>
+            {stage.links.map((link, i) => (
+              <div key={`${link.relationship}-${i}`} className={styles.kv}>
+                <span className={styles.kk}>{relationshipLabel(link.relationship)}</span>
+                <span className={styles.vv}>
+                  {link.resolved && link.targetOperationId != null
+                    ? link.targetOperationId
+                    : `${link.targetScope} target`}
+                </span>
+              </div>
+            ))}
+          </section>
+        ) : null}
 
         <section className={styles.sec}>
           <h2 className={styles.secLabel}>Provider measurement</h2>
           {stage.measurements.length > 0 ? (
             stage.measurements.map((m) => (
-              <div key={m.name} className={styles.mrow}>
+              <div key={m.reactKey} className={styles.mrow}>
                 <span className={styles.mn}>{m.name}</span>
                 <span className={styles.mv} style={{ color }}>
-                  {formatMs(m.value)}
+                  {formatMeasurement(m.value, m.unit)}
                 </span>
                 <span className={`${styles.conf} ${confClass(m.confidence)}`}>
                   {m.confidence}
@@ -108,7 +174,7 @@ export function StageDrawer({
               </div>
             ))
           ) : (
-            <div className={styles.note}>No provider measurement on this stage.</div>
+            <div className={styles.note}>No provider measurement on this operation.</div>
           )}
         </section>
 
@@ -129,8 +195,9 @@ export function StageDrawer({
               </div>
             ) : null}
             <div className={styles.note}>
-              A provider scalar describes the named <b>latency</b>. It does not create a
-              stage interval; intervals appear only when both boundaries were observed.
+              A provider scalar describes the named <b>measurement</b>. It does not create
+              an operation interval; intervals appear only when both boundaries were
+              observed.
             </div>
           </section>
         ) : null}

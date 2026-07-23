@@ -3,7 +3,9 @@ import type { paths } from "./schema";
 
 /** Typed client for the Earshot backend. Same-origin: proxied in dev, served by
  *  FastAPI in production. */
-export const api = createClient<paths>({ baseUrl: "/" });
+type JsonMediaType = "application/json" | "application/vnd.earshot.incident+json";
+
+export const api = createClient<paths, JsonMediaType>({ baseUrl: "/" });
 
 export class ApiError extends Error {
   constructor(

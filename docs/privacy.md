@@ -10,6 +10,12 @@ The default policy uses a strict safe-key allowlist. Unknown attributes are omit
 not retained optimistically. Filtering occurs before a value enters an exporter queue,
 log, protobuf payload, database, or derived analysis.
 
+The same boundary applies to public real-capture fixtures. Their
+[capture and scrubbing policy](./captured-fixtures.md) requires metadata-only source
+capture, identifier pseudonymization, no raw delivery/media/content retention, a secret
+scan, and acceptance by both the public CLI and `validate_incident()`. A synthetic
+fixture must never be labelled as a retained real capture.
+
 “Lossless” therefore means **lossless normalized graph and retained telemetry fields
 after capture-policy filtering**. M1 does not automatically intercept serialized OTLP.
 Exact raw OTLP is a separate explicit opt-in class supplied by a caller that owns the

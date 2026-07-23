@@ -1,6 +1,7 @@
+import { formatMeasurement } from "../../lib/format";
 import { CallGraph } from "./CallGraph";
 import styles from "./drawer.module.css";
-import type { CoverageRow, StageName, TurnDetail } from "./timeline";
+import type { CoverageRow, TurnDetail } from "./timeline";
 import { useInitialFocus } from "./useInitialFocus";
 
 const short = (name: string) => name.replace(/^earshot\./, "");
@@ -21,12 +22,9 @@ export function TurnDrawer({
   detail: TurnDetail;
   coverage: CoverageRow[];
   onClose: () => void;
-  onPickStage: (stage: StageName) => void;
+  onPickStage: (operationId: string) => void;
 }) {
   const ft = detail.firstTokenMs;
-  const slow = (ft ?? 0) > 500;
-  const budget =
-    ft == null ? "not observed" : slow ? "well over budget" : "within budget";
 
   // Move focus to the close control when the panel opens or its turn changes,
   // so keyboard and screen-reader users land inside the labelled dialog on a
@@ -57,14 +55,13 @@ export function TurnDrawer({
           {detail.interrupted ? (
             <span className={`${styles.chip} ${styles.barge}`}>barge-in</span>
           ) : null}
-          {slow ? <span className={`${styles.chip} ${styles.slow}`}>slow</span> : null}
         </div>
         <div className={styles.hero}>
-          <span className={`${styles.big} ${slow ? styles.critical : ""}`}>
+          <span className={styles.big}>
             {ft == null ? "—" : ft}
             {ft == null ? null : <small> ms</small>}
           </span>
-          <span className={styles.heroLbl}>first token · {budget}</span>
+          <span className={styles.heroLbl}>first token</span>
         </div>
       </div>
 
@@ -80,19 +77,45 @@ export function TurnDrawer({
             <div key={m.key} className={styles.metricLine}>
               <span className={styles.mln}>{m.key}</span>
               <span className={`${styles.mlv} ${m.value == null ? styles.na : ""}`}>
-                {m.value == null ? humanize(m.availability) : `${m.value}ms`}
+                {m.value == null
+                  ? humanize(m.availability)
+                  : formatMeasurement(m.value, "ms")}
               </span>
               <span className={styles.mlb}>{m.basis}</span>
             </div>
           ))}
         </section>
 
+        {detail.measurements.length > 0 ? (
+          <section className={styles.sec}>
+            <h2 className={styles.secLabel}>Measurement facts</h2>
+            {detail.measurements.map((measurement) => (
+              <div key={measurement.reactKey} className={styles.metricLine}>
+                <span className={styles.mln}>{measurement.name}</span>
+                <span className={styles.mlv}>
+                  {formatMeasurement(measurement.value, measurement.unit)}
+                </span>
+                <span className={styles.mlb}>
+                  {[measurement.sourceField, ...measurement.evidenceIds]
+                    .filter((value) => value != null && value !== "")
+                    .join(" · ")}
+                </span>
+              </div>
+            ))}
+          </section>
+        ) : null}
+
         <section className={styles.sec}>
           <h2 className={styles.secLabel}>Events</h2>
           {detail.events.map((e, i) => (
             <div key={`${e.name}-${i}`} className={styles.evrow}>
               <span className={styles.glyph} style={{ background: glyphColor(e.name) }} />
-              <span className={styles.en}>{short(e.name)}</span>
+              <span className={styles.en}>
+                {short(e.name)}
+                {e.attachedOperationId != null ? (
+                  <span className={styles.evAttach}> → {e.attachedOperationId}</span>
+                ) : null}
+              </span>
               <span className={styles.et}>
                 {e.atMs == null ? "offset unavailable" : `+${Math.round(e.atMs)}ms`} ·{" "}
                 {e.confidence}

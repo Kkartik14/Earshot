@@ -1,0 +1,84 @@
+{
+  "bundle_id": "fault-webrtc-degradation",
+  "session_id": "fixture-session",
+  "session_status": "completed",
+  "finality": "final",
+  "completeness": "complete",
+  "analyzer_name": "earshot.deterministic",
+  "analyzer_version": "0.3.2",
+  "input_sha256": "6c9811d63f0adede82a049ba07e597f7a524aa3e742359b421cf814b6ea6ce1b",
+  "turns": [],
+  "coverage": [],
+  "omissions": [],
+  "limitations": [
+    "render_evidence_not_observed"
+  ],
+  "diagnoses": [],
+  "unassigned_operations": [],
+  "unassigned_events": [],
+  "unassigned_measurements": [
+    {
+      "name": "jitter",
+      "value": 42,
+      "unit": "ms",
+      "aggregation": "instant",
+      "basis": "provider_measurement",
+      "confidence": "measured",
+      "limitation": null,
+      "evidence": {
+        "source": "webrtc_stats",
+        "observer": "test_harness",
+        "method": "RTCPeerConnection.getStats",
+        "confidence": "measured",
+        "availability": "available",
+        "method_version": "1",
+        "source_field": null
+      },
+      "evidence_ids": [
+        "quality-webrtc"
+      ]
+    },
+    {
+      "name": "packet_loss_ratio",
+      "value": 0.18,
+      "unit": "1",
+      "aggregation": "delta",
+      "basis": "provider_measurement",
+      "confidence": "measured",
+      "limitation": null,
+      "evidence": {
+        "source": "webrtc_stats",
+        "observer": "test_harness",
+        "method": "RTCPeerConnection.getStats",
+        "confidence": "measured",
+        "availability": "available",
+        "method_version": "1",
+        "source_field": null
+      },
+      "evidence_ids": [
+        "quality-webrtc"
+      ]
+    },
+    {
+      "name": "round_trip_time",
+      "value": 180,
+      "unit": "ms",
+      "aggregation": "instant",
+      "basis": "provider_measurement",
+      "confidence": "measured",
+      "limitation": null,
+      "evidence": {
+        "source": "webrtc_stats",
+        "observer": "test_harness",
+        "method": "RTCPeerConnection.getStats",
+        "confidence": "measured",
+        "availability": "available",
+        "method_version": "1",
+        "source_field": null
+      },
+      "evidence_ids": [
+        "quality-webrtc"
+      ]
+    }
+  ]
+}

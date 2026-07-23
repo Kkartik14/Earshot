@@ -1,0 +1,2814 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "697547952516666",
+        "observer": "earshot.sdk",
+        "synchronization_method": "same_process_sample",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1784817899640095000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "server_cannot_observe_client_render",
+        "signal": "client.render"
+      }
+    ],
+    "events": [
+      {
+        "attributes": {
+          "earshot.source.event.name": "sha256:b54d649c5709dad1d9289c20f195aa4b2d7117832ca8002f5dcfc747628af0f4"
+        },
+        "capture_class": "metadata",
+        "event_id": "captured-livekit-event-1",
+        "event_name": "otel.span_event",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_span_event",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:b54d649c5709dad1d9289c20f195aa4b2d7117832ca8002f5dcfc747628af0f4"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "operation_id": "captured-livekit-operation-1",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
+        "time": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491619000"
+        },
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.source.event.name": "sha256:4a687b8c7b4f343d4ed125e82ec8fdd8f2626bdf8db7e1eea930899886659e14"
+        },
+        "capture_class": "metadata",
+        "event_id": "captured-livekit-event-2",
+        "event_name": "otel.span_event",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_span_event",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:4a687b8c7b4f343d4ed125e82ec8fdd8f2626bdf8db7e1eea930899886659e14"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "operation_id": "captured-livekit-operation-1",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
+        "time": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491623000"
+        },
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.source.event.name": "sha256:7e0310f5a19c3764614eb0e1e7de9e9bc4f8c08fb64d72ef4106d0fac7ce4a71"
+        },
+        "capture_class": "metadata",
+        "event_id": "captured-livekit-event-3",
+        "event_name": "otel.span_event",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_span_event",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:7e0310f5a19c3764614eb0e1e7de9e9bc4f8c08fb64d72ef4106d0fac7ce4a71"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "operation_id": "captured-livekit-operation-1",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
+        "time": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906597429000"
+        },
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.duration.turn_callback_seconds": 1.1249212548136711e-06
+        },
+        "capture_class": "metadata",
+        "event_id": "captured-livekit-event-4",
+        "event_name": "earshot.turn.committed",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "estimated",
+          "method": "provider_timestamp_minus_callback_duration",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "eou_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "resource": {},
+        "session_id": "captured-livekit-session-1",
+        "time": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907913059995"
+        },
+        "turn_id": "captured-livekit-turn-1"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "livekit",
+          "framework_version": "1.6.5",
+          "name": "earshot.livekit",
+          "version": "0.1.0"
+        }
+      ],
+      "attributes": {},
+      "bundle_id": "captured-livekit-bundle-1",
+      "completeness": "complete",
+      "created_at_unix_nano": "1784817899640095000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot",
+        "sdk_version": "0.1.0",
+        "version": "0.1.0"
+      },
+      "schema_version": "0.1.0",
+      "semantic_profile_version": "0.1.0",
+      "session_id": "captured-livekit-session-1"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "sha256:fd490b9b3250ec825332972a446712ac0928f068bd8d1a8fed5d2602129eaa54"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901490782000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:fd490b9b3250ec825332972a446712ac0928f068bd8d1a8fed5d2602129eaa54"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-2",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "9bac4bcd7690456f",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "b46393fd872440df",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901415963000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "sha256:6b200886f01c68ca0e7019d6ee3a4c5dcaad7305be9257a820ad00a16982de1d"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901492406000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:6b200886f01c68ca0e7019d6ee3a4c5dcaad7305be9257a820ad00a16982de1d"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-3",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "b46393fd872440df",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "ee1019aeb159be19",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901492388000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "sha256:fc862e460712efebe84ddf5a10c34e507d2e27cab834a590ec7c83448aac0ed3"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817905409260032"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:fc862e460712efebe84ddf5a10c34e507d2e27cab834a590ec7c83448aac0ed3"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-4",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "30454e43a6df392a",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "858b27edcf313af7",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817902230810880"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:f5aa55533e92e0d627d7a53b85d194c6be8ee5fdf4d9486e89d43a1e95cb47e9",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "earshot.metric.connection.reused": false,
+          "earshot.metric.request.streamed": false,
+          "gen_ai.provider.name": "api.groq.com",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906485912064"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "estimated",
+          "method": "provider_end_minus_duration",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "sample_window": {
+            "end": {
+              "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+              "source_time_unix_nano": "1784817906485912064"
+            },
+            "start": {
+              "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+              "source_time_unix_nano": "1784817905985797898"
+            }
+          },
+          "source": "livekit",
+          "source_field": "stt_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "captured-livekit-operation-5",
+        "operation_name": "stt",
+        "parent_scope": "unknown",
+        "resource": {},
+        "session_id": "captured-livekit-session-1",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817905985797898"
+        },
+        "status": "ok"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "eou_detection",
+          "lk.eou.endpointing_delay": 2.5
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906492879000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "eou_detection"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-6",
+        "operation_name": "turn_detection",
+        "parent_scope": "unknown",
+        "parent_span_id": "30454e43a6df392a",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "2f34cccaea80a45b",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491280000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "llm_request_run"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906595729000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "llm_request_run"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-7",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "parent_span_id": "f5d39204a148726a",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "d5d4d2008c015248",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491638000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:5ec5051ee998381a84e9adbba03548c9caf2c9769129a92f685dc18afa405eef",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.operation.name": "llm_request",
+          "earshot.metric.model.total_tokens": 56,
+          "earshot.metric.request.cancelled": false,
+          "earshot.request.id": "captured-livekit-correlation-1",
+          "gen_ai.operation.name": "chat",
+          "gen_ai.provider.name": "api.groq.com",
+          "gen_ai.request.model": "llama-3.1-8b-instant",
+          "gen_ai.usage.input_cached_tokens": 0,
+          "gen_ai.usage.input_tokens": 53,
+          "gen_ai.usage.output_tokens": 3,
+          "lk.response.ttft": 0.10406312497798353
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906597752000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "llm_request"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-1",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "parent_span_id": "f714e6a092010712",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f5d39204a148726a",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491597000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "llm_node",
+          "gen_ai.provider.name": "api.groq.com",
+          "gen_ai.request.model": "llama-3.1-8b-instant",
+          "lk.response.ttft": 0.10413950006477535
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906600505000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "llm_node"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-8",
+        "operation_name": "llm",
+        "parent_scope": "unknown",
+        "parent_span_id": "bba464a4016ebcca",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "f714e6a092010712",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906491375000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "user_turn",
+          "gen_ai.provider.name": "api.groq.com",
+          "gen_ai.request.model": "whisper-large-v3-turbo",
+          "lk.end_of_turn_delay": 2.501241683959961,
+          "lk.transcript_confidence": 0.0,
+          "lk.transcription_delay": 1.0781886577606201
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907911085000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "user_turn"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-9",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "9bac4bcd7690456f",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "30454e43a6df392a",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817902230810880"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "tts_request_run"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909208489000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "tts_request_run"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-10",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "parent_span_id": "88f19ff0a963465f",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "37362e9687c1f60e",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907922524000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:b121d7a9482ac64740b3f6d7fe6dea84bf136518c989819b4633cde6f9b2afda",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.operation.name": "tts_request",
+          "earshot.metric.connection.reused": false,
+          "earshot.metric.request.cancelled": false,
+          "earshot.metric.request.streamed": false,
+          "earshot.request.id": "captured-livekit-correlation-2",
+          "gen_ai.provider.name": "Groq",
+          "gen_ai.request.model": "canopylabs/orpheus-v1-english",
+          "lk.response.ttfb": 0.962240333086811
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909211921000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "tts_request"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-11",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "parent_span_id": "d72f00b665dd26fa",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "88f19ff0a963465f",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907922457000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "tts_request_run"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909214757000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "tts_request_run"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-12",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "parent_span_id": "b7a41cf05702bc56",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "d72f00b665dd26fa",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907918502000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "sha256:25aca791342db93c0f4adefea78d54582dba3ba503764f79d191a43a6f5166fd"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909215575000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:25aca791342db93c0f4adefea78d54582dba3ba503764f79d191a43a6f5166fd"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-13",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "parent_span_id": "355412b03e26b007",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "b7a41cf05702bc56",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907918446000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "tts_node",
+          "gen_ai.provider.name": "Groq",
+          "gen_ai.request.model": "canopylabs/orpheus-v1-english",
+          "lk.response.ttfb": 0.9628199590370059
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909216449000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "tts_node"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-14",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "parent_span_id": "bba464a4016ebcca",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "355412b03e26b007",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817907917634000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "sha256:ba6d28a6e3b3f386e165962fac9cac97e1901000bb8023a17e1425a45db5cd07"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909219336000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:ba6d28a6e3b3f386e165962fac9cac97e1901000bb8023a17e1425a45db5cd07"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-15",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "bba464a4016ebcca",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "b3f09550bd54c8d2",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817908885326080"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "agent_turn",
+          "lk.e2e_latency": 3.4756789207458496,
+          "lk.generation_id": "captured-livekit-generation-1",
+          "lk.interrupted": false,
+          "lk.speech_id": "captured-livekit-turn-1"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909219916000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "agent_turn"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-16",
+        "operation_name": "agent",
+        "parent_scope": "unknown",
+        "parent_span_id": "9bac4bcd7690456f",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "bba464a4016ebcca",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817906488147000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806",
+        "turn_id": "captured-livekit-turn-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "sha256:59cfe62834a202b3bf4a646da526aeff2322aa7ffa3c92d48344a6468b737143"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909221687000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:59cfe62834a202b3bf4a646da526aeff2322aa7ffa3c92d48344a6468b737143"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-17",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "02023ccf719134d4",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "30a5de064021efe3",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909221673000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "sha256:7365241c1452120088fe6d259532cdd75c79a3a3cf0a861f5dac5efd8210fa58"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909222410000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:7365241c1452120088fe6d259532cdd75c79a3a3cf0a861f5dac5efd8210fa58"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-18",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "parent_span_id": "9bac4bcd7690456f",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "02023ccf719134d4",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909221544000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      },
+      {
+        "attributes": {
+          "earshot.framework.operation.name": "agent_session"
+        },
+        "capture_class": "metadata",
+        "ended_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817909224167000"
+        },
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "agent_session"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "links": [],
+        "operation_id": "captured-livekit-operation-19",
+        "operation_name": "framework_operation",
+        "parent_scope": "unknown",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "session_id": "captured-livekit-session-1",
+        "span_id": "9bac4bcd7690456f",
+        "started_at": {
+          "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+          "source_time_unix_nano": "1784817901415259000"
+        },
+        "status": "unset",
+        "trace_id": "7f78033f007720c588cf8963481cf806"
+      }
+    ],
+    "participants": [],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [
+        {
+          "attributes": {
+            "field_key_sha256": "8d91892130239c9afce0f262dd164dd7030ae90e8446de2bb65ca372733b7a9e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-1",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "8d91892130239c9afce0f262dd164dd7030ae90e8446de2bb65ca372733b7a9e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-2",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "97ee93439c97fa15ac1878fece7523464b5f227e9c07bac40ba97e4b6e5f1545"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-3",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "db55e0a26424a27b3cfc48dc719299243297c4e1fd6680d2ac83a879c3623b0f"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-4",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "173526e350afa5671e56f053ea45206045c5827cfacab8b650be5ea42596d4b8"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-5",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "d6b255a08d11898225f2a36b2ca5ec27bf46dcf0d09ba3c0621d8ac3473e7756"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-6",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "d3bf30ec3f88ad3ddd13875a688a015cfcea15fb40b624776de3c36ea10c4903"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-7",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "4f83462835128567a6a3db809b325996de989023236280e3b27cbc4fc8076185"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-8",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "e813641f8201af58227036a7cb9d1ebfa0f5040fe0fbd8924e7966f2f603ff82"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-9",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "18938ab4bf735543e5f0ad276d33f2a4df4de8091b0a012a8a9a6aa06158a87d"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-10",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "7aee1875b5b52bddb04b19d87f5b32abbf5228c898bb8a77ae8ab67c509007c8"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-11",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "e2430ef1f146fe3d4aa9448e9c5b299c3d17eece768e071fee7fe2745b660654"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-12",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "95c654ba34c9b824b6f64bee24e1d9142e034db05f4b9f8f5bc45fb94a20ead3"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-13",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cddcaa72ac6853869a111abc0368832ba35379b5d547ce33b4ea5c9912673cd9"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-14",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-15",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-16",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "4b168d88dc872a7753c2bc35b36a2d4249487af55baf78f247f38cae2fe962da"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-17",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-18",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "bec70dcf2a270617c3c802f6571aa92059be91c245543eb956f58b1f6c4700fa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-19",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "7aee1875b5b52bddb04b19d87f5b32abbf5228c898bb8a77ae8ab67c509007c8"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-20",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "7efcb29cffdc2de8b79e11dfc7efd12edb778cc97a117c3f4ff7dc3fa1ba20ab"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-21",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "d3b558967f99dea40e9013b951a01195cdccf92e0731083d859d558663ecf234"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-22",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "c40b8f0dc30bbb0c4673d2b054f8743e16f70f87828a2db247067cf735d71211"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-23",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "d868e734a6f574f23b48b5fbfecf5dd9c42a888f9142ac6f3268e4171bc862f5"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-24",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ec3a1da19c9e1c15dfd6adf52f665c8af45ee4efccc59642d654e4c2f177906e"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-25",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "e2430ef1f146fe3d4aa9448e9c5b299c3d17eece768e071fee7fe2745b660654"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-26",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "54c3f971f33f646f734e13746eb1ac160e0789ad6acd9bca538c83d952a8952c"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-27",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "d1fa6581f16d15739b547c090f80444a260218a314a8314c5010d079ef2b8415"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-28",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ec3a1da19c9e1c15dfd6adf52f665c8af45ee4efccc59642d654e4c2f177906e"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-29",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "be0898eb6737428fc13e65302087acc347fc9f27c2ff155fae1b9d6435efdb72"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-30",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "a283cd7bf7dfdeb31eff76a2b287aee8be8d0eac3f3601ebae7e175cc0350d95"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-31",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "fbb14fc7f02aea7a1b2a010f58942af9c398d5bd39275197c3697a1e165e8b58"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-32",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "069a275d648111e9f25628b1998787b056a842a10b6a084e869ba776600f8590"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-33",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "e2430ef1f146fe3d4aa9448e9c5b299c3d17eece768e071fee7fe2745b660654"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-34",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "95c654ba34c9b824b6f64bee24e1d9142e034db05f4b9f8f5bc45fb94a20ead3"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-35",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "54c3f971f33f646f734e13746eb1ac160e0789ad6acd9bca538c83d952a8952c"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-36",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "d1fa6581f16d15739b547c090f80444a260218a314a8314c5010d079ef2b8415"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-37",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ec3a1da19c9e1c15dfd6adf52f665c8af45ee4efccc59642d654e4c2f177906e"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-38",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "c40b8f0dc30bbb0c4673d2b054f8743e16f70f87828a2db247067cf735d71211"
+          },
+          "capture_class": "model_payload",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-39",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "ec3a1da19c9e1c15dfd6adf52f665c8af45ee4efccc59642d654e4c2f177906e"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-40",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "8d91892130239c9afce0f262dd164dd7030ae90e8446de2bb65ca372733b7a9e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-41",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "8d91892130239c9afce0f262dd164dd7030ae90e8446de2bb65ca372733b7a9e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-42",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "8d91892130239c9afce0f262dd164dd7030ae90e8446de2bb65ca372733b7a9e"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-livekit-omission-43",
+          "reason": "capture_class_disabled",
+          "source_refs": []
+        }
+      ],
+      "policy_id": "earshot.metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.018441332620568573
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 0.34686825005337596
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-1",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902641900032"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902641900032"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.020951205515302718
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 0.3527914580190554
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-2",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902647801088"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902647801088"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.021806459175422788
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 1.3861468329560012
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-3",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903681160960"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903681160960"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.0199881240259856
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 1.3877762920456007
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-4",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903682812928"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817903682812928"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.0201688758097589
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 2.425582625088282
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-5",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904720624896"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904720624896"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.023796709720045328
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 2.427433417062275
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-6",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904722454016"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817904722454016"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.015563083114102483
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 3.4872438750462607
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-7",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905782269952"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905782269952"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.014734417898580432
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 3.488032125052996
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-8",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905783079936"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905783079936"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:f5aa55533e92e0d627d7a53b85d194c6be8ee5fdf4d9486e89d43a1e95cb47e9",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "earshot.operation.id": "captured-livekit-operation-5",
+          "gen_ai.provider.name": "api.groq.com",
+          "gen_ai.request.model": "whisper-large-v3-turbo"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "stt_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.metric.connection.reused",
+            "unit": "1",
+            "value": false
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.metric.request.streamed",
+            "unit": "1",
+            "value": false
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "livekit.stt.audio_duration",
+            "unit": "s",
+            "value": 4.244
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "livekit.stt.input_tokens",
+            "unit": "count",
+            "value": 0
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "livekit.stt.output_tokens",
+            "unit": "count",
+            "value": 0
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-9",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906485912064"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906485912064"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:5ec5051ee998381a84e9adbba03548c9caf2c9769129a92f685dc18afa405eef",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "earshot.operation.id": "captured-livekit-operation-1",
+          "earshot.request.id": "captured-livekit-correlation-1",
+          "gen_ai.provider.name": "api.groq.com",
+          "gen_ai.request.model": "llama-3.1-8b-instant"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "llm_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.model.total_tokens",
+            "unit": "count",
+            "value": 56
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.metric.request.cancelled",
+            "unit": "1",
+            "value": false
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "gen_ai.usage.input_cached_tokens",
+            "unit": "count",
+            "value": 0
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "gen_ai.usage.input_tokens",
+            "unit": "count",
+            "value": 53
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "gen_ai.usage.output_tokens",
+            "unit": "count",
+            "value": 3
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "lk.response.ttft",
+            "unit": "s",
+            "value": 0.10406312497798353
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-livekit-sample-10",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906597125120"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906597125120"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.017500293208286166
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 0.9152842910261825
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-11",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906900992000"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906900992000"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.01731895678676665
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 0.9170704591087997
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-12",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906902799104"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817906902799104"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "earshot.turn.id": "captured-livekit-turn-1",
+          "gen_ai.provider.name": "livekit",
+          "gen_ai.request.model": "turn-detector-v1-mini"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "eou_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.turn_callback_seconds",
+            "unit": "s",
+            "value": 1.1249212548136711e-06
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "lk.eou.endpointing_delay",
+            "unit": "s",
+            "value": 2.501241683959961
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "lk.eou.transcription_delay",
+            "unit": "s",
+            "value": 1.0781886577606201
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-13",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907913061120"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907913061120"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.conversation.item.id": "captured-livekit-conversation_item-1",
+          "earshot.conversation.role": "user"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "ChatMessage.metrics",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "conversation_item_added.item.metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.transcription_delay",
+            "unit": "s",
+            "value": 1.0781886577606201
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.end_of_turn_delay",
+            "unit": "s",
+            "value": 2.501241683959961
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.on_user_turn_completed_delay",
+            "unit": "s",
+            "value": 1.1249212548136711e-06
+          }
+        ],
+        "quality_kind": "pipeline.latency",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-14",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817905409647104"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817902230810880"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.022017872892320156
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 1.9393687500851229
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-15",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907925103104"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907925103104"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.02815516502596438
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 1.9420931250788271
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-16",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907927805952"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817907927805952"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.019620832754299045
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 2.9428531660232693
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-17",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908928570880"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908928570880"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:d3c1e42838fce5ec076331a75f977dc2c343d70a6cc47c51719f469de6c29476",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "gen_ai.provider.name": "ONNX",
+          "gen_ai.request.model": "silero"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "metrics_listener",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "vad_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.duration.inference_seconds",
+            "unit": "s",
+            "value": 0.02014691475778818
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.duration.vad.idle_seconds",
+            "unit": "s",
+            "value": 2.9450100420508534
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "earshot.metric.inference.count",
+            "unit": "count",
+            "value": 32
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-18",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908930748928"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908930748928"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.framework.metric.name": "sha256:b121d7a9482ac64740b3f6d7fe6dea84bf136518c989819b4633cde6f9b2afda",
+          "earshot.framework.name": "livekit",
+          "earshot.framework.version": "1.6.5",
+          "earshot.operation.id": "captured-livekit-operation-11",
+          "earshot.request.id": "captured-livekit-correlation-2",
+          "gen_ai.provider.name": "Groq",
+          "gen_ai.request.model": "canopylabs/orpheus-v1-english"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "tts_metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.metric.connection.reused",
+            "unit": "1",
+            "value": false
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.metric.request.cancelled",
+            "unit": "1",
+            "value": false
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.metric.request.streamed",
+            "unit": "1",
+            "value": false
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "livekit.tts.audio_duration",
+            "unit": "s",
+            "value": 2.719833333333333
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "livekit.tts.character_count",
+            "unit": "count",
+            "value": 6
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "livekit.tts.input_tokens",
+            "unit": "count",
+            "value": 0
+          },
+          {
+            "aggregation": "delta",
+            "attributes": {},
+            "name": "livekit.tts.output_tokens",
+            "unit": "count",
+            "value": 0
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "lk.response.ttfb",
+            "unit": "s",
+            "value": 0.962240333086811
+          }
+        ],
+        "quality_kind": "pipeline.metric",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-livekit-sample-19",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909210717952"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909210717952"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.conversation.item.id": "captured-livekit-conversation_item-2",
+          "earshot.conversation.role": "assistant"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "ChatMessage.metrics",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "conversation_item_added.item.metrics"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.llm_node_ttft",
+            "unit": "s",
+            "value": 0.10413950006477535
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.tts_node_ttfb",
+            "unit": "s",
+            "value": 0.9628199590370059
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.playback_latency",
+            "unit": "s",
+            "value": 0.00034308433532714844
+          },
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.e2e_latency",
+            "unit": "s",
+            "value": 3.4756789207458496
+          }
+        ],
+        "quality_kind": "pipeline.latency",
+        "resource": {},
+        "sample_id": "captured-livekit-sample-20",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909217597952"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817908885326080"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.operation.id": "captured-livekit-operation-16",
+          "earshot.turn.id": "captured-livekit-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "native_otel_attribute",
+          "method_version": "1.6.5",
+          "observer": "server",
+          "source": "livekit",
+          "source_field": "sha256:5fd893f8ef0801aa1db6ccc5f5c9c26f62803c4a2ce62c5c21d437a36b8ad786"
+        },
+        "instrumentation_scope_attributes": {},
+        "instrumentation_scope_name": "livekit-agents",
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "livekit.e2e_latency",
+            "unit": "s",
+            "value": 3.4756789207458496
+          }
+        ],
+        "quality_kind": "pipeline.latency",
+        "resource": {
+          "service.name": "captured-livekit-service-1",
+          "telemetry.sdk.language": "python",
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.version": "1.39.1"
+        },
+        "sample_id": "captured-livekit-sample-21",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909219916000"
+          },
+          "start": {
+            "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+            "source_time_unix_nano": "1784817909219916000"
+          }
+        },
+        "session_id": "captured-livekit-session-1"
+      }
+    ],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+        "monotonic_time_nano": "9584674250",
+        "source_time_unix_nano": "1784817909224817000"
+      },
+      "session_id": "captured-livekit-session-1",
+      "started_at": {
+        "clock_domain_id": "process-d766191f0bc541518474b7a2a1644e39",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1784817899640095000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}

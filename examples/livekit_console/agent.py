@@ -150,8 +150,10 @@ async def entrypoint(ctx: JobContext) -> None:
     session_id = getattr(getattr(ctx, "room", None), "name", None) or "console-session"
     recorder = earshot.session(session_id=session_id)
     adapter = LiveKitAdapter(recorder, framework_version=LIVEKIT_AGENTS_VERSION)
-    # Additive: attach to the existing provider + session; do not replace anything.
-    adapter.attach_span_processor(_provider)
+    # Additive: register this session as a sink on the one shared, process-scoped
+    # router installed on ``_provider``. The scope gives every task spawned for
+    # this room an opaque routing key; the shutdown callback closes the handle.
+    handle = adapter.attach_span_processor(_provider)
 
     turn_detection = _TURN_DETECTOR() if _TURN_DETECTOR is not None else None
     session = AgentSession(
@@ -177,20 +179,24 @@ async def entrypoint(ctx: JobContext) -> None:
     async def finalize(reason: str) -> None:
         if reason == "job crashed":
             lifecycle.status = "failed"
-        await _finalize_incident(session, recorder, lifecycle)
+        try:
+            await _finalize_incident(session, recorder, lifecycle)
+        finally:
+            handle.close()  # release this session's routing state from the provider
 
     ctx.add_shutdown_callback(finalize)
 
-    await session.start(
-        agent=Agent(
-            instructions=(
-                "You are a friendly voice assistant demoing Earshot. "
-                "Keep answers to one or two short sentences."
-            )
-        ),
-        room=ctx.room,
-    )
-    await session.generate_reply(instructions="Greet the user in one short sentence.")
+    with handle.session_scope():
+        await session.start(
+            agent=Agent(
+                instructions=(
+                    "You are a friendly voice assistant demoing Earshot. "
+                    "Keep answers to one or two short sentences."
+                )
+            ),
+            room=ctx.room,
+        )
+        await session.generate_reply(instructions="Greet the user in one short sentence.")
     if lifecycle.status != "failed":
         lifecycle.status = "completed"
 

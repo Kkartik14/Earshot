@@ -16,8 +16,14 @@ their import namespaces collide.
 
 The release publishes both a wheel and source distribution. Both artifacts carry the
 same compiled viewer produced immediately before the Python build. Hatch has explicit
-wheel and sdist artifact rules, and CI rejects either archive when the viewer, generated
-protobuf module, package entry point, or required source files are absent.
+wheel rules and an sdist source allowlist. The sdist checker streams the archive and
+independently rejects paths outside that manifest; forbidden development/private path
+segments at any depth; anything under `earshot/web` except `index.html` and direct
+compiled `.js`/`.css` assets; more than 8 MiB compressed content, 1,024 total members,
+1 MiB of tar header metadata, 512 files, or 32 MiB unpacked content; and archives missing
+the viewer, generated protobuf module, package entry point, or required source files. CI
+adds a forbidden dirty-tree sentinel before building, so an accidental return to
+VCS-wide sdist discovery fails the artifact lane.
 
 The base install is the SDK and evidence core only:
 
@@ -126,6 +132,30 @@ The first GHCR package may require one visibility check in the package settings.
 be linked to this public repository and public before documenting anonymous `docker pull`
 support. Released PyPI files are immutable; never delete and recreate a version. Fix the
 problem, increment the package version, and publish a new release.
+
+## Alpha compatibility policy
+
+`0.1.x` is a pre-v1 line, not a stable `1.x` contract. Compatibility is scoped to the
+documented package, contract, semantic-profile, API, analyzer, adapter, Python, and
+framework versions; one version number must not be used as a proxy for another.
+
+- A patch release in the `0.1.x` line may add optional evidence or vocabulary but must
+  continue accepting public inputs documented for earlier `0.1.x` patches.
+- Removing or repurposing a public import, accepted adapter input, persisted field,
+  semantic code, or privacy default requires a declared deprecation or a new minor
+  release with release notes and an explicit migration path.
+- The `0.1.0` reader accepts contract and semantic-profile label `0.1.0` exactly. It does
+  not claim general support for artifacts labelled `1.0.0` or for future versions.
+- Runtime compatibility is only the tested range below. Duck-typed unit fixtures do not
+  extend a framework version claim.
+- Browser/mobile collectors, generic live OTLP receiving, media upload/replay, and other
+  planned surfaces are outside the current compatibility contract.
+
+The retained real-capture fixtures were regenerated on the current contract, semantic
+profile, and adapter versions; they are not relabelled historical artifacts. Their
+manifest pins the ignored source, checked-in driver, redactor, and public-artifact
+digests. Stored user evidence must never be rewritten to simulate compatibility. Future
+format support requires an explicit versioned decoder or normalizer.
 
 ## Supported versions and deprecation policy
 

@@ -25,13 +25,14 @@ from __future__ import annotations
 
 import contextlib
 import math
+import time
 import uuid
 import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 from typing import Any
 
-from .clock import ManualClock
+from .clock import Clock
 from .contract import (
     Adapter,
     Evidence,
@@ -48,9 +49,31 @@ from .sdk import _runtime_snapshot
 from .versions import PIPELINE_ADAPTER_VERSION
 
 _MS_TO_NANO = 1_000_000
-_DEFAULT_TURN_GAP_MS = 500.0
 _USER = "participant-user"
 _AGENT = "participant-agent"
+
+
+class _LifecycleClock:
+    """Real elapsed clock whose wall origin may be supplied by the caller."""
+
+    def __init__(self, wall_origin_nano: int) -> None:
+        self._wall_origin_nano = wall_origin_nano
+        self._monotonic_origin_nano: int | None = None
+
+    def _elapsed_nano(self) -> int:
+        now = time.monotonic_ns()
+        if self._monotonic_origin_nano is None:
+            self._monotonic_origin_nano = now
+            return 0
+        return now - self._monotonic_origin_nano
+
+    def unix_nano(self) -> int:
+        return self._wall_origin_nano + self._elapsed_nano()
+
+    def monotonic_nano(self) -> int:
+        if self._monotonic_origin_nano is None:
+            self._monotonic_origin_nano = time.monotonic_ns()
+        return time.monotonic_ns()
 
 
 def _confidence_source(confidence: str) -> str:
@@ -74,6 +97,7 @@ class TurnRecorder:
         self._cursor_ms = 0.0
         self._max_ms = 0.0
         self._sequence = 0
+        self._speech_end_ms: float | None = None
 
     @property
     def turn_id(self) -> str:
@@ -97,7 +121,6 @@ class TurnRecorder:
         confidence = self._confidence(confidence)
         ttfb_ms = self._optional_ms(ttfb_ms, "earshot.stt.ttfb")
         final_ms = self._optional_ms(final_ms, "stt final")
-        duration = self._duration(final_ms, ttfb_ms)
         operation_id = self._operation(
             "stt",
             provider,
@@ -108,9 +131,23 @@ class TurnRecorder:
             self._measurement(
                 "earshot.stt.ttfb", ttfb_ms, operation_id, confidence, "pipeline.stt.ttfb"
             )
-        if final_ms is not None and transcript_final:
-            self._event("earshot.transcript.final", self._cursor_ms + final_ms, _USER, confidence)
-        self._advance(duration)
+        if final_ms is not None:
+            self._measurement(
+                "earshot.stt.finalization_latency",
+                final_ms,
+                operation_id,
+                confidence,
+                "pipeline.stt.finalization_latency",
+            )
+        # ``final_ms`` is a scalar from audio-stop to final transcript. It proves
+        # the final event coordinate only when this turn observed speech end.
+        if final_ms is not None and transcript_final and self._speech_end_ms is not None:
+            self._event(
+                "earshot.transcript.final",
+                self._speech_end_ms + final_ms,
+                _USER,
+                confidence,
+            )
         return self
 
     def llm(
@@ -130,7 +167,6 @@ class TurnRecorder:
         confidence = self._confidence(confidence)
         ttft_ms = self._optional_ms(ttft_ms, "earshot.llm.ttft")
         completion_ms = self._optional_ms(completion_ms, "llm completion")
-        duration = self._duration(completion_ms, ttft_ms)
         operation_id = self._operation(
             "llm",
             provider,
@@ -141,7 +177,16 @@ class TurnRecorder:
             self._measurement(
                 "earshot.llm.ttft", ttft_ms, operation_id, confidence, "pipeline.llm.ttft"
             )
-        self._advance(duration)
+        # Retain the completion latency as a governed measurement rather than
+        # letting it silently inflate a fabricated stage cursor.
+        if completion_ms is not None:
+            self._measurement(
+                "earshot.llm.completion_latency",
+                completion_ms,
+                operation_id,
+                confidence,
+                "pipeline.llm.completion",
+            )
         return self
 
     def tts(
@@ -166,7 +211,6 @@ class TurnRecorder:
         stage_attributes = dict(attributes or {})
         if voice is not None:
             stage_attributes["earshot.tts.voice"] = voice
-        duration = self._duration(first_audio_ms, ttfb_ms)
         operation_id = self._operation(
             "tts",
             provider,
@@ -177,14 +221,16 @@ class TurnRecorder:
             self._measurement(
                 "earshot.tts.ttfb", ttfb_ms, operation_id, confidence, "pipeline.tts.ttfb"
             )
-        if first_audio_ms is not None and ttfb_ms is None:
+        # ``first_audio_ms`` is a turn-relative observed boundary, while TTFB is a
+        # provider scalar. They are distinct evidence and neither suppresses the
+        # other.
+        if first_audio_ms is not None:
             self._event(
                 "earshot.response.first_audio_generated",
                 self._cursor_ms + first_audio_ms,
                 _AGENT,
                 confidence,
             )
-        self._advance(duration)
         return self
 
     def vad(
@@ -203,6 +249,7 @@ class TurnRecorder:
             self._event("earshot.speech.started", speech_start_ms, _USER, confidence)
         if speech_end_ms is not None:
             self._event("earshot.speech.ended", speech_end_ms, _USER, confidence)
+            self._speech_end_ms = speech_end_ms
             self._cursor_ms = max(self._cursor_ms, speech_end_ms)
         return self
 
@@ -462,13 +509,6 @@ class TurnRecorder:
         )
 
     @staticmethod
-    def _duration(primary_ms: float | None, secondary_ms: float | None) -> float:
-        for candidate in (primary_ms, secondary_ms):
-            if candidate is not None:
-                return candidate
-        return 0.0
-
-    @staticmethod
     def _optional_ms(value: float | None, label: str) -> float | None:
         if value is None:
             return None
@@ -520,10 +560,6 @@ class TurnRecorder:
             raise ValueError("confidence must be measured, estimated, or inferred")
         return value
 
-    def _advance(self, span_ms: float) -> None:
-        self._cursor_ms += span_ms
-        self._max_ms = max(self._max_ms, self._cursor_ms)
-
 
 class PipelineSession:
     """A provider-neutral capture session for one voice conversation."""
@@ -537,13 +573,18 @@ class PipelineSession:
         started_at_unix_nano: int | None = None,
         producer_name: str = "earshot.pipeline",
         config: RecorderConfig | None = None,
+        clock: Clock | None = None,
     ) -> None:
-        import time as _time
-
-        self.start_wall_nano = (
-            started_at_unix_nano if started_at_unix_nano is not None else _time.time_ns()
-        )
-        self._clock = ManualClock(wall=self.start_wall_nano, monotonic=0)
+        if clock is not None and started_at_unix_nano is not None:
+            raise ValueError("clock and started_at_unix_nano are mutually exclusive")
+        if clock is None:
+            self.start_wall_nano = (
+                started_at_unix_nano if started_at_unix_nano is not None else time.time_ns()
+            )
+            self._clock: Clock = _LifecycleClock(self.start_wall_nano)
+        else:
+            self._clock = clock
+            self.start_wall_nano = clock.unix_nano()
         resolved_session_id = session_id or f"session-{uuid.uuid4().hex}"
         (
             runtime_config,
@@ -615,18 +656,17 @@ class PipelineSession:
         return self._turn_origins_nano[turn_index]
 
     @contextlib.contextmanager
-    def turn(
-        self,
-        turn_id: str | None = None,
-        *,
-        gap_ms: float = _DEFAULT_TURN_GAP_MS,
-    ) -> Iterator[TurnRecorder]:
-        """Open a conversational turn; stages recorded on it share one turn id."""
+    def turn(self, turn_id: str | None = None) -> Iterator[TurnRecorder]:
+        """Open a conversational turn; stages recorded on it share one turn id.
+
+        Turns are placed contiguously by their observed extent (the latest
+        observed offset within the turn). No inter-turn gap is fabricated: when a
+        turn observed no timing, its extent is zero and it does not manufacture
+        wall time it never saw.
+        """
 
         if self._closed:
             raise RuntimeError("pipeline session is closed")
-        normalized_gap = TurnRecorder._optional_ms(gap_ms, "turn gap")
-        assert normalized_gap is not None
         turn_index = len(self._turn_origins_nano)
         resolved_turn_id = turn_id or f"turn-{turn_index}"
         resolved_turn_id = TurnRecorder._label(resolved_turn_id, "turn id")
@@ -638,14 +678,17 @@ class PipelineSession:
         try:
             yield recorder
         finally:
-            turn_span_nano = int(recorder._max_ms * _MS_TO_NANO) + int(normalized_gap * _MS_TO_NANO)
-            self._cursor_nano += turn_span_nano
+            # Advance only by the turn's observed extent, never a synthetic gap.
+            self._cursor_nano += int(recorder._max_ms * _MS_TO_NANO)
 
     def close(self, status: str = "completed") -> IncidentBundle:
-        """Finalize and return the immutable incident for ingestion or analysis."""
+        """Finalize and return the immutable incident for ingestion or analysis.
+
+        Session duration comes from the lifecycle clock. Turn-relative offsets and
+        provider latency scalars never advance that clock or determine session end.
+        """
 
         if not self._closed:
-            self._clock.advance(self._cursor_nano)
             self._closed = True
         return self.recorder.close(status=status)
 
@@ -658,6 +701,7 @@ def pipeline(
     started_at_unix_nano: int | None = None,
     producer_name: str = "earshot.pipeline",
     config: RecorderConfig | None = None,
+    clock: Clock | None = None,
 ) -> PipelineSession:
     """Start a provider-neutral pipeline capture session.
 
@@ -673,4 +717,5 @@ def pipeline(
         started_at_unix_nano=started_at_unix_nano,
         producer_name=producer_name,
         config=config,
+        clock=clock,
     )

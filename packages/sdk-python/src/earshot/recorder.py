@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from .clock import Clock, SystemClock
 from .codec import MAX_PROFILE_DEPTH
-from .context import _operation_scope
+from .context import _operation_scope, current_context
 from .contract import (
     Adapter,
     AudioStream,
@@ -939,11 +939,21 @@ class IncidentRecorder:
         identity = operation_id or f"operation-{uuid.uuid4().hex}"
         trace_id = self._manual_trace_id
         span_id = secrets.token_hex(8)
+        # Adopt an enclosing manual operation as the parent span, but only within
+        # this recorder's trace so a nested op from another recorder cannot forge
+        # a parent across traces.
+        parent = current_context()
+        parent_span_id = (
+            parent.operation_span_id
+            if parent is not None and parent.operation_trace_id == trace_id
+            else None
+        )
+        parent_scope = "internal" if parent_span_id is not None else "unknown"
         started_at = self._time()
         status = "ok"
         error: ErrorRecord | None = None
         application_error = False
-        operation_scope = _operation_scope(identity)
+        operation_scope = _operation_scope(identity, span_id=span_id, trace_id=trace_id)
         operation_scope.__enter__()
         try:
             yield {"operation_id": identity, "trace_id": trace_id, "span_id": span_id}
@@ -972,6 +982,8 @@ class IncidentRecorder:
                         turn_id=turn_id,
                         trace_id=trace_id,
                         span_id=span_id,
+                        parent_span_id=parent_span_id,
+                        parent_scope=parent_scope,
                         attributes=attributes,
                         error=error,
                         capture_class=capture_class,

@@ -1,0 +1,170 @@
+{
+  "bundle_id": "fault-native-s2s-interruption",
+  "session_id": "fixture-session",
+  "session_status": "completed",
+  "finality": "final",
+  "completeness": "complete",
+  "analyzer_name": "earshot.deterministic",
+  "analyzer_version": "0.3.2",
+  "input_sha256": "f0b981b0655a9138ac256ec7c1c800fbf16c14538b229ce55f90dea56e078fce",
+  "turns": [
+    {
+      "turn_id": "turn-1",
+      "operations": [
+        {
+          "operation_id": "op-native-agent",
+          "operation_name": "agent",
+          "status": "ok",
+          "shape": "interval",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "start_nano": "500000000",
+          "end_nano": "2000000000",
+          "duration_nano": "1500000000",
+          "start_uncertainty_nano": null,
+          "end_uncertainty_nano": null,
+          "limitation": null,
+          "participant_id": null,
+          "stream_id": null,
+          "provider": null,
+          "model": null,
+          "trace_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "span_id": "1111111111111111",
+          "parent_span_id": null,
+          "parent_scope": "external",
+          "links": [],
+          "error": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "measurements": [],
+          "evidence_ids": [
+            "op-native-agent"
+          ]
+        }
+      ],
+      "events": [
+        {
+          "event_id": "event-native-interruption",
+          "event_name": "earshot.interruption.accepted",
+          "time_basis": "monotonic",
+          "clock_domain_id": "fault-fixture-clock",
+          "at_nano": "1100000000",
+          "operation_id": null,
+          "participant_id": null,
+          "stream_id": null,
+          "trace_id": null,
+          "span_id": null,
+          "evidence": {
+            "source": "fixture_runtime",
+            "observer": "test_harness",
+            "method": "deterministic_fault_injection",
+            "confidence": "measured",
+            "availability": "available",
+            "method_version": "1",
+            "source_field": null
+          },
+          "evidence_ids": [
+            "event-native-interruption"
+          ]
+        }
+      ],
+      "measurements": [],
+      "metrics": {
+        "first_token_latency": {
+          "availability": "not_observed",
+          "basis": "first_token",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "generated_response_latency": {
+          "availability": "not_observed",
+          "basis": "generated",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "sent_response_latency": {
+          "availability": "not_observed",
+          "basis": "sent",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "received_response_latency": {
+          "availability": "not_observed",
+          "basis": "received",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "render_start_response_latency": {
+          "availability": "not_observed",
+          "basis": "render",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "response_latency": {
+          "availability": "not_observed",
+          "basis": "tts_estimate",
+          "confidence": "unavailable",
+          "value": null,
+          "unit": null,
+          "limitation": "turn_anchor_not_observed",
+          "evidence_ids": []
+        },
+        "tools": {
+          "operation_count": 0,
+          "timed_operation_count": 0,
+          "untimed_operation_count": 0,
+          "total_work_ms": 0.0,
+          "total_work_completeness": "complete",
+          "limitation": null,
+          "elapsed_ms_by_clock_domain": {},
+          "evidence_ids": []
+        },
+        "provider_measurements": {}
+      }
+    }
+  ],
+  "coverage": [
+    {
+      "signal": "render",
+      "availability": "not_observed",
+      "reason": "server_native_s2s_no_client_render_observer",
+      "evidence": null
+    },
+    {
+      "signal": "stt.llm.tts",
+      "availability": "not_applicable",
+      "reason": "native_s2s_no_cascaded_stages",
+      "evidence": null
+    }
+  ],
+  "omissions": [],
+  "limitations": [
+    "render_evidence_not_observed"
+  ],
+  "diagnoses": [],
+  "unassigned_operations": [],
+  "unassigned_events": [],
+  "unassigned_measurements": []
+}

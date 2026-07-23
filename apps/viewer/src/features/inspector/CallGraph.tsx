@@ -1,77 +1,120 @@
 import { useId, type CSSProperties } from "react";
+import { toneColorVar } from "../../lib/status";
 import styles from "./CallGraph.module.css";
-import type { StageName, TurnDetail } from "./timeline";
-
-const REL: Record<StageName, string> = {
-  stt: "transcribes",
-  llm: "produces",
-  tts: "emits",
-};
-const shortModel = (m?: string) =>
-  m == null
-    ? "?"
-    : m.includes("whisper")
-      ? "whisper"
-      : m.includes("llama")
-        ? "llama-3.1"
-        : m;
+import { roleColorVar, roleLabel, type StageDetail, type TurnDetail } from "./timeline";
 
 const X = 12;
 const NW = 214;
-const NH = 42;
-const PIT = 62;
-const CX = X + NW / 2;
+const NH = 46;
+const PIT = 66;
+const TOP = 10;
 
-type Row =
-  | { term: false; name: StageName; lat: string; sub: string; slow: boolean; nc: string }
-  | { term: true; name: string; lat: string; sub: string };
+/** A verb phrase for a causal relationship, used in the accessible description
+ * and as the edge label. Unknown relationships fall back to the raw token. */
+function relationshipVerb(relationship: string): string {
+  switch (relationship) {
+    case "retries":
+      return "retries";
+    case "supersedes":
+      return "supersedes";
+    case "consumes":
+      return "consumes";
+    case "produced_by":
+      return "produced by";
+    case "handoff":
+      return "hands off to";
+    case "duplicates":
+      return "duplicates";
+    case "interrupts":
+      return "interrupts";
+    case "parent":
+      return "parents";
+    default:
+      return relationship.replace(/_/g, " ");
+  }
+}
 
+function subtitle(op: StageDetail): string {
+  if (op.provider != null || op.model != null) {
+    return `${op.provider ?? "?"} · ${op.model ?? "?"}`;
+  }
+  return roleLabel(op.role);
+}
+
+/** Faithful timing readout: lead when known, else the observed interval, else
+ * the bare shape. Never a fabricated duration. A start uncertainty, when the
+ * analyzer supplied one, is shown as a ± annotation rather than dropped. */
+function readout(op: StageDetail): string {
+  let base: string;
+  if (op.leadMs != null) base = `${Math.round(op.leadMs)}ms`;
+  else if (op.timing === "interval" && op.startMs != null && op.endMs != null)
+    base = `${Math.round(op.endMs - op.startMs)}ms`;
+  else if (op.timing === "point") base = "point";
+  else base = "not observed";
+  return op.startUncertaintyMs != null
+    ? `${base} ±${Math.round(op.startUncertaintyMs)}ms`
+    : base;
+}
+
+/** Renders the operations present as a vertical flow, overlaid with source-authored
+ * parent/link edges. There is no invented cascade or arrival-order connector: an
+ * operation with no observed graph relationship simply has no drawn edge. */
 export function CallGraph({
   detail,
   onPick,
 }: {
   detail: TurnDetail;
-  onPick: (stage: StageName) => void;
+  onPick: (operationId: string) => void;
 }) {
   const descriptionId = useId();
-  const slowTurn = (detail.firstTokenMs ?? 0) > 500;
-  const rows: Row[] = [
-    ...detail.stages.map((s) => ({
-      term: false as const,
-      name: s.name,
-      lat: s.leadMs == null ? "not observed" : `${Math.round(s.leadMs)}ms`,
-      sub: `${s.provider ?? "?"} · ${shortModel(s.model)}`,
-      slow: s.name === "llm" && slowTurn,
-      nc: `var(--${s.name})`,
-    })),
-    { term: true as const, name: "playout", lat: "not observed", sub: "client render" },
-  ];
+  const arrowId = useId().replace(/:/g, "");
+  const ops = detail.stages;
+  const indexById = new Map(ops.map((op, i) => [op.operationId, i]));
 
-  const H = 8 + (rows.length - 1) * PIT + NH + 8;
-  const W = detail.interrupted ? 348 : NW + X * 2;
-  const description = [
-    "Stage flow: STT transcribes to LLM; LLM produces TTS; TTS emits playout.",
-    "Playout at the client render boundary is not observed.",
-    detail.interrupted ? "A barge-in interrupts TTS." : null,
-  ]
-    .filter((part) => part != null)
-    .join(" ");
+  // Only edges whose both endpoints are nodes in this turn are drawable.
+  const edges = detail.edges.filter(
+    (e) => indexById.has(e.fromOperationId) && indexById.has(e.toOperationId),
+  );
+  const hasEdges = edges.length > 0;
+  const gutter = hasEdges ? 66 : 14;
+
+  const nodeY = (i: number) => TOP + i * PIT;
+  const rightEdge = X + NW;
+
+  const H = TOP * 2 + Math.max(0, ops.length - 1) * PIT + NH;
+  const W = X + NW + gutter;
+
+  const edgeSentences = edges.map((e) => {
+    const from = ops[indexById.get(e.fromOperationId) as number];
+    const to = ops[indexById.get(e.toOperationId) as number];
+    return `${from.name} ${relationshipVerb(e.relationship)} ${to.name}`;
+  });
+  const edgeLabel = edges.some((edge) => edge.relationship === "parent")
+    ? "Graph relationships"
+    : "Causal links";
+  const description =
+    ops.length === 0
+      ? "No operations were observed for this turn."
+      : (hasEdges
+          ? `${edgeLabel}: ${edgeSentences.join("; ")}.`
+          : "No causal links were recorded between these operations.") +
+        (detail.interrupted ? " An interruption was accepted during this turn." : "");
 
   return (
     <div className={styles.graph}>
       <svg
-        viewBox={`0 0 ${W} ${H}`}
+        viewBox={`0 0 ${W} ${Math.max(H, NH + TOP * 2)}`}
         width={W}
-        height={H}
+        height={Math.max(H, NH + TOP * 2)}
         xmlns="http://www.w3.org/2000/svg"
         role="group"
-        aria-label="Turn call graph; select a stage to inspect it"
+        aria-label="Turn call graph; select an operation to inspect it"
         aria-describedby={descriptionId}
       >
         <desc id={descriptionId}>{description}</desc>
         <defs>
           <marker
-            id="cg-arrow"
+            id={arrowId}
             markerWidth="7"
             markerHeight="7"
             refX="6"
@@ -80,74 +123,51 @@ export function CallGraph({
           >
             <path d="M0 0L7 3.5L0 7Z" fill="var(--tx-low)" />
           </marker>
-          <marker
-            id="cg-arrow-t"
-            markerWidth="7"
-            markerHeight="7"
-            refX="6"
-            refY="3.5"
-            orient="auto"
-          >
-            <path d="M0 0L7 3.5L0 7Z" fill="var(--tts)" />
-          </marker>
         </defs>
 
-        {rows.map((row, i) => {
-          const y = 8 + i * PIT;
-          const next = rows[i + 1];
-          const edge =
-            next != null && !row.term ? (
-              <g key={`e${i}`} aria-hidden="true">
-                <path
-                  className={styles.edge}
-                  d={`M${CX} ${y + NH}L${CX} ${y + PIT}`}
-                  markerEnd="url(#cg-arrow)"
-                />
-                <text
-                  className={styles.elab}
-                  x={CX + 13}
-                  y={(y + NH + (y + PIT)) / 2 + 3.5}
-                >
-                  {REL[row.name]}
-                </text>
-              </g>
-            ) : null;
-          return edge;
+        {/* Real causal edges, routed in the right gutter. Each is an arc from
+            the linking operation to the operation it references. */}
+        {edges.map((e, k) => {
+          const fromI = indexById.get(e.fromOperationId) as number;
+          const toI = indexById.get(e.toOperationId) as number;
+          const y0 = nodeY(fromI) + NH / 2;
+          const y1 = nodeY(toI) + NH / 2;
+          const bulge = 20 + (k % 3) * 14;
+          const cx = rightEdge + bulge;
+          const midY = (y0 + y1) / 2;
+          return (
+            <g key={`edge-${k}`} aria-hidden="true">
+              <path
+                className={styles.edge}
+                d={`M${rightEdge} ${y0} Q${cx} ${midY} ${rightEdge} ${y1}`}
+                markerEnd={`url(#${arrowId})`}
+              />
+              <text className={styles.edgeLabel} x={cx} y={midY} dy="0.32em">
+                {e.relationship}
+              </text>
+            </g>
+          );
         })}
 
-        {rows.map((row, i) => {
-          const y = 8 + i * PIT;
-          if (row.term) {
-            return (
-              <g
-                key={`n${i}`}
-                className={`${styles.gn} ${styles.term}`}
-                aria-hidden="true"
-              >
-                <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
-                <text className={styles.nm} x={X + 16} y={y + 19}>
-                  {row.name}
-                </text>
-                <text
-                  className={styles.termLat}
-                  x={X + NW - 13}
-                  y={y + 19}
-                  textAnchor="end"
-                >
-                  {row.lat}
-                </text>
-                <text className={styles.sub} x={X + 16} y={y + 34}>
-                  {row.sub}
-                </text>
-              </g>
-            );
-          }
-          const activate = () => onPick(row.name);
+        {ops.map((op, i) => {
+          const y = nodeY(i);
+          const color = roleColorVar(op.role);
+          const sub = subtitle(op);
+          const lat = readout(op);
+          const badge = op.statusView.abnormal ? op.statusView.label : null;
+          const badgeColor = toneColorVar(op.statusView.tone);
+          const externalLinks = op.links.filter((l) => !l.resolved);
+          const activate = () => onPick(op.operationId);
+          const ariaBits = [`${op.name} operation`, sub, lat];
+          if (badge) ariaBits.push(`status ${badge}`);
+          if (op.interruptedByEvent) ariaBits.push("interrupted");
+          for (const l of externalLinks)
+            ariaBits.push(`${relationshipVerb(l.relationship)} ${l.targetScope}`);
           return (
             <g
-              key={`n${i}`}
-              className={`${styles.gn} ${row.slow ? styles.slow : ""}`}
-              style={{ "--nc": row.nc } as CSSProperties}
+              key={op.operationId}
+              className={styles.gn}
+              style={{ "--nc": color } as CSSProperties}
               onClick={activate}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -157,70 +177,53 @@ export function CallGraph({
               }}
               role="button"
               tabIndex={0}
-              aria-label={`${row.name} stage, ${row.sub}, ${row.lat}. Open stage detail.`}
+              aria-label={`${ariaBits.join(", ")}. Open operation detail.`}
             >
               <rect className={styles.box} x={X} y={y} width={NW} height={NH} rx={9} />
-              <rect x={X} y={y + 9} width={3.5} height={NH - 18} rx={2} fill={row.nc} />
+              <rect
+                x={X}
+                y={y + 10}
+                width={3.5}
+                height={NH - 20}
+                rx={2}
+                style={{ fill: color }}
+              />
               <text className={styles.nm} x={X + 16} y={y + 19}>
-                {row.name}
+                {op.name}
               </text>
-              <text
-                className={`${styles.lat} ${row.slow ? styles.slowLat : ""}`}
-                x={X + NW - 13}
-                y={y + 19}
-                textAnchor="end"
-              >
-                {row.lat}
+              <text className={styles.lat} x={X + NW - 13} y={y + 19} textAnchor="end">
+                {lat}
               </text>
-              <text className={styles.sub} x={X + 16} y={y + 34}>
-                {row.sub}
+              <text className={styles.sub} x={X + 16} y={y + 35}>
+                {sub}
+                {op.interruptedByEvent ? "  · interrupted" : ""}
+                {externalLinks.length > 0
+                  ? `  · ↗ ${externalLinks.map((l) => l.relationship).join(", ")}`
+                  : ""}
               </text>
+              {badge ? (
+                <g style={{ "--bc": badgeColor } as CSSProperties}>
+                  <rect
+                    className={styles.badge}
+                    x={X + NW - 13 - (badge.length * 6.1 + 12)}
+                    y={y + NH - 17}
+                    width={badge.length * 6.1 + 12}
+                    height={14}
+                    rx={4}
+                  />
+                  <text
+                    className={styles.badgeText}
+                    x={X + NW - 13 - (badge.length * 6.1 + 12) / 2}
+                    y={y + NH - 7}
+                    textAnchor="middle"
+                  >
+                    {badge}
+                  </text>
+                </g>
+              ) : null}
             </g>
           );
         })}
-
-        {detail.interrupted
-          ? (() => {
-              const ttsY = 8 + 2 * PIT;
-              const ty = ttsY + NH / 2;
-              const bx = X + NW + 18;
-              const bw = 98;
-              const by = ty - 16;
-              return (
-                <g aria-hidden="true">
-                  <path
-                    className={`${styles.edge} ${styles.intr}`}
-                    d={`M${bx} ${ty}L${X + NW} ${ty}`}
-                    markerEnd="url(#cg-arrow-t)"
-                  />
-                  <text
-                    className={styles.ilab}
-                    x={bx + bw / 2}
-                    y={by - 6}
-                    textAnchor="middle"
-                  >
-                    interrupts
-                  </text>
-                  <rect
-                    className={styles.bargeBox}
-                    x={bx}
-                    y={by}
-                    width={bw}
-                    height={32}
-                    rx={8}
-                  />
-                  <text
-                    className={styles.bargeTx}
-                    x={bx + bw / 2}
-                    y={by + 20}
-                    textAnchor="middle"
-                  >
-                    ⚡ barge-in
-                  </text>
-                </g>
-              );
-            })()
-          : null}
       </svg>
     </div>
   );

@@ -1,0 +1,2936 @@
+{
+  "profile": {
+    "attributes": {},
+    "audio_streams": [],
+    "clock_domains": [
+      {
+        "attributes": {},
+        "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+        "kind": "process_monotonic",
+        "monotonic_origin_nano": "697444712027708",
+        "observer": "earshot.sdk",
+        "synchronization_method": "same_process_sample",
+        "uncertainty_nano": "0",
+        "wall_origin_unix_nano": "1784817796397384000"
+      }
+    ],
+    "coverage": [
+      {
+        "attributes": {},
+        "availability": "not_observed",
+        "reason": "server_cannot_observe_client_render",
+        "signal": "client.render"
+      }
+    ],
+    "events": [
+      {
+        "attributes": {
+          "earshot.correlation": "captured-cartesia-correlation-1",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1"
+        },
+        "capture_class": "metadata",
+        "event_id": "captured-cartesia-event-1",
+        "event_name": "earshot.audio.first_packet_received",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "estimated",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "cartesia.chunk.receipt"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "captured-cartesia-participant-1",
+        "resource": {},
+        "session_id": "captured-cartesia-session-1",
+        "time": {
+          "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+          "monotonic_time_nano": "593083041",
+          "source_time_unix_nano": "1784817796990467041",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "captured-cartesia-turn-1"
+      },
+      {
+        "attributes": {
+          "earshot.correlation": "captured-cartesia-correlation-1",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "done"
+        },
+        "capture_class": "metadata",
+        "event_id": "captured-cartesia-event-2",
+        "event_name": "cartesia.tts.done",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "estimated",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "cartesia.done.receipt"
+        },
+        "instrumentation_scope_attributes": {},
+        "participant_id": "captured-cartesia-participant-1",
+        "resource": {},
+        "session_id": "captured-cartesia-session-1",
+        "time": {
+          "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+          "monotonic_time_nano": "1046442207",
+          "source_time_unix_nano": "1784817797443826207",
+          "uncertainty_nano": "1000000"
+        },
+        "turn_id": "captured-cartesia-turn-1"
+      }
+    ],
+    "manifest": {
+      "adapters": [
+        {
+          "framework": "custom_pipeline",
+          "name": "earshot.pipeline",
+          "version": "0.3.0"
+        }
+      ],
+      "attributes": {},
+      "bundle_id": "captured-cartesia-bundle-1",
+      "completeness": "complete",
+      "created_at_unix_nano": "1784817796397384000",
+      "finality": "final",
+      "producer": {
+        "language": "python",
+        "name": "earshot.pipeline",
+        "sdk_version": "0.3.0",
+        "version": "0.3.0"
+      },
+      "schema_version": "0.1.0",
+      "semantic_profile_version": "0.1.0",
+      "session_id": "captured-cartesia-session-1"
+    },
+    "media_refs": [],
+    "operations": [
+      {
+        "attributes": {
+          "earshot.correlation": "captured-cartesia-correlation-1",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "gen_ai.provider.name": "cartesia",
+          "gen_ai.request.model": "sonic-2"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "inferred",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "cartesia.request.sent"
+        },
+        "instrumentation_scope_attributes": {},
+        "links": [],
+        "operation_id": "captured-cartesia-operation-1",
+        "operation_name": "tts",
+        "parent_scope": "unknown",
+        "participant_id": "captured-cartesia-participant-1",
+        "resource": {},
+        "session_id": "captured-cartesia-session-1",
+        "started_at": {
+          "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+          "monotonic_time_nano": "474354624",
+          "source_time_unix_nano": "1784817796871738624",
+          "uncertainty_nano": "1000000"
+        },
+        "status": "ok",
+        "turn_id": "captured-cartesia-turn-1"
+      }
+    ],
+    "participants": [
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "app",
+        "participant_id": "captured-cartesia-participant-2",
+        "role": "user",
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {},
+        "capture_class": "metadata",
+        "endpoint_kind": "app",
+        "participant_id": "captured-cartesia-participant-1",
+        "role": "agent",
+        "session_id": "captured-cartesia-session-1"
+      }
+    ],
+    "privacy": {
+      "attributes": {},
+      "capture_classes": [
+        {
+          "attributes": {},
+          "capture_class": "metadata",
+          "captured": true,
+          "decision": "allow"
+        },
+        {
+          "attributes": {},
+          "capture_class": "extension_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "transcript",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "audio",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "tool_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "model_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "diagnostic_payload",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "identity",
+          "captured": false,
+          "decision": "deny"
+        },
+        {
+          "attributes": {},
+          "capture_class": "raw_otlp",
+          "captured": false,
+          "decision": "deny"
+        }
+      ],
+      "default_capture_class": "metadata",
+      "omissions": [
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-1",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-2",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-3",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-4",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-5",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-6",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-7",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-8",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-9",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-10",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-11",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-12",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-13",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-14",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-15",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-16",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-17",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-18",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-19",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-20",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-21",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-22",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-23",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-24",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-25",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-26",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-27",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-28",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-29",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-30",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-31",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-32",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-33",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-34",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-35",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-36",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-37",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-38",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-39",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-40",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-41",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-42",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-43",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-44",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-45",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "476c74478bc610572da069a4da823457caaf29667db6f82738548e25700aac07"
+          },
+          "capture_class": "transcript",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-46",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-47",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-48",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "cd0636dba1e2ffca2cf8804b6f110a496cbe76da6a87a86ee18cbda9e6de93aa"
+          },
+          "capture_class": "metadata",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-49",
+          "reason": "unsafe_attribute_key_or_value",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-50",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        },
+        {
+          "attributes": {
+            "field_key_sha256": "200ff6b365875a9b93b7be33a58caae3d8c2fefdaea97115bdb16107b587f372"
+          },
+          "capture_class": "audio",
+          "count": 1,
+          "omission_id": "captured-cartesia-omission-51",
+          "reason": "adapter_payload_omitted",
+          "source_refs": []
+        }
+      ],
+      "policy_id": "earshot.metadata-only",
+      "policy_version": "1"
+    },
+    "quality_samples": [
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-1",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "590603041",
+            "source_time_unix_nano": "1784817796987987041",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "590603041",
+            "source_time_unix_nano": "1784817796987987041",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.09287981
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-2",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "590603041",
+            "source_time_unix_nano": "1784817796987987041",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "590603041",
+            "source_time_unix_nano": "1784817796987987041",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-3",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "590603041",
+            "source_time_unix_nano": "1784817796987987041",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "590603041",
+            "source_time_unix_nano": "1784817796987987041",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.operation.id": "captured-cartesia-operation-1",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 93.4076
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-4",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "593083041",
+            "source_time_unix_nano": "1784817796990467041",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "593083041",
+            "source_time_unix_nano": "1784817796990467041",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "request_send_to_first_audio_chunk_receipt",
+          "earshot.operation.id": "captured-cartesia-operation-1",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "estimated",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "app",
+          "source_field": "cartesia.chunk.receipt"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "earshot.tts.ttfb",
+            "unit": "ms",
+            "value": 118.72841697186232
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_latency",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-5",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "593083041",
+            "source_time_unix_nano": "1784817796990467041",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "593083041",
+            "source_time_unix_nano": "1784817796990467041",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 54.276707
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-6",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "647685457",
+            "source_time_unix_nano": "1784817797045069457",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "647685457",
+            "source_time_unix_nano": "1784817797045069457",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-7",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648130082",
+            "source_time_unix_nano": "1784817797045514082",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648130082",
+            "source_time_unix_nano": "1784817797045514082",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.20897959000000002
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-8",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648130082",
+            "source_time_unix_nano": "1784817797045514082",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648130082",
+            "source_time_unix_nano": "1784817797045514082",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-9",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648130082",
+            "source_time_unix_nano": "1784817797045514082",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648130082",
+            "source_time_unix_nano": "1784817797045514082",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-10",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648507457",
+            "source_time_unix_nano": "1784817797045891457",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "648507457",
+            "source_time_unix_nano": "1784817797045891457",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 157.2335
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-11",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "803904499",
+            "source_time_unix_nano": "1784817797201288499",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "803904499",
+            "source_time_unix_nano": "1784817797201288499",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-12",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804065832",
+            "source_time_unix_nano": "1784817797201449832",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804065832",
+            "source_time_unix_nano": "1784817797201449832",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.27863942999999997
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-13",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804065832",
+            "source_time_unix_nano": "1784817797201449832",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804065832",
+            "source_time_unix_nano": "1784817797201449832",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-14",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804065832",
+            "source_time_unix_nano": "1784817797201449832",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804065832",
+            "source_time_unix_nano": "1784817797201449832",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-15",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804978917",
+            "source_time_unix_nano": "1784817797202362917",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "804978917",
+            "source_time_unix_nano": "1784817797202362917",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-16",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807151999",
+            "source_time_unix_nano": "1784817797204535999",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807151999",
+            "source_time_unix_nano": "1784817797204535999",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-17",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807542499",
+            "source_time_unix_nano": "1784817797204926499",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807542499",
+            "source_time_unix_nano": "1784817797204926499",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.3715193000000001
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-18",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807542499",
+            "source_time_unix_nano": "1784817797204926499",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807542499",
+            "source_time_unix_nano": "1784817797204926499",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-19",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807542499",
+            "source_time_unix_nano": "1784817797204926499",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "807542499",
+            "source_time_unix_nano": "1784817797204926499",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-20",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809340999",
+            "source_time_unix_nano": "1784817797206724999",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809340999",
+            "source_time_unix_nano": "1784817797206724999",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-21",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809463957",
+            "source_time_unix_nano": "1784817797206847957",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809463957",
+            "source_time_unix_nano": "1784817797206847957",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.27863939999999987
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-22",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809463957",
+            "source_time_unix_nano": "1784817797206847957",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809463957",
+            "source_time_unix_nano": "1784817797206847957",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-23",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809463957",
+            "source_time_unix_nano": "1784817797206847957",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "809463957",
+            "source_time_unix_nano": "1784817797206847957",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-24",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "812605625",
+            "source_time_unix_nano": "1784817797209989625",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "812605625",
+            "source_time_unix_nano": "1784817797209989625",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-25",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "907976916",
+            "source_time_unix_nano": "1784817797305360916",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "907976916",
+            "source_time_unix_nano": "1784817797305360916",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.18575969999999997
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-26",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "907976916",
+            "source_time_unix_nano": "1784817797305360916",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "907976916",
+            "source_time_unix_nano": "1784817797305360916",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-27",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "907976916",
+            "source_time_unix_nano": "1784817797305360916",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "907976916",
+            "source_time_unix_nano": "1784817797305360916",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 103.54594
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-28",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908157916",
+            "source_time_unix_nano": "1784817797305541916",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908157916",
+            "source_time_unix_nano": "1784817797305541916",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-29",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908322291",
+            "source_time_unix_nano": "1784817797305706291",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908322291",
+            "source_time_unix_nano": "1784817797305706291",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.13931970000000016
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-30",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908322291",
+            "source_time_unix_nano": "1784817797305706291",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908322291",
+            "source_time_unix_nano": "1784817797305706291",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-31",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908322291",
+            "source_time_unix_nano": "1784817797305706291",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908322291",
+            "source_time_unix_nano": "1784817797305706291",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-32",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908426499",
+            "source_time_unix_nano": "1784817797305810499",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908426499",
+            "source_time_unix_nano": "1784817797305810499",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-33",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908539582",
+            "source_time_unix_nano": "1784817797305923582",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908539582",
+            "source_time_unix_nano": "1784817797305923582",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.3018593999999999
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-34",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908539582",
+            "source_time_unix_nano": "1784817797305923582",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908539582",
+            "source_time_unix_nano": "1784817797305923582",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-35",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908539582",
+            "source_time_unix_nano": "1784817797305923582",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908539582",
+            "source_time_unix_nano": "1784817797305923582",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-36",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908661957",
+            "source_time_unix_nano": "1784817797306045957",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "908661957",
+            "source_time_unix_nano": "1784817797306045957",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 103.52459
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-37",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010232666",
+            "source_time_unix_nano": "1784817797407616666",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010232666",
+            "source_time_unix_nano": "1784817797407616666",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-38",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010398541",
+            "source_time_unix_nano": "1784817797407782541",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010398541",
+            "source_time_unix_nano": "1784817797407782541",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:0f4e538b261631e4cc3e3430509145f3454f060b59f14d0e1458b1afdea31768"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timestamp_count",
+            "unit": "1",
+            "value": 1.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-39",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010503583",
+            "source_time_unix_nano": "1784817797407887583",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010503583",
+            "source_time_unix_nano": "1784817797407887583",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "provider_timestamp_frame",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "sha256:b38c0bfd5586d42727197b10acb721180bba75873c40fdfe4ea387cc869663c0"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.words_timeline_duration",
+            "unit": "s",
+            "value": 0.34829940000000015
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-40",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010503583",
+            "source_time_unix_nano": "1784817797407887583",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010503583",
+            "source_time_unix_nano": "1784817797407887583",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 206.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-41",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010503583",
+            "source_time_unix_nano": "1784817797407887583",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1010503583",
+            "source_time_unix_nano": "1784817797407887583",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 0.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-42",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1013277541",
+            "source_time_unix_nano": "1784817797410661541",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1013277541",
+            "source_time_unix_nano": "1784817797410661541",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.metric.basis": "per_chunk_server_processing",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "chunk",
+          "earshot.tts.voice": "captured-cartesia-voice-1",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "step_time"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.step_time",
+            "unit": "ms",
+            "value": 32.900887
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-43",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1044318832",
+            "source_time_unix_nano": "1784817797441702832",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1044318832",
+            "source_time_unix_nano": "1784817797441702832",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      },
+      {
+        "attributes": {
+          "earshot.chronology": "not_exposed",
+          "earshot.correlation": "captured-cartesia-correlation-3",
+          "earshot.request.id": "captured-cartesia-correlation-2",
+          "earshot.source.event.name": "done",
+          "earshot.turn.id": "captured-cartesia-turn-1"
+        },
+        "capture_class": "metadata",
+        "evidence": {
+          "attributes": {},
+          "availability": "available",
+          "confidence": "measured",
+          "method": "pipeline_capture",
+          "method_version": "0.3.0",
+          "observer": "server",
+          "source": "provider",
+          "source_field": "status_code"
+        },
+        "instrumentation_scope_attributes": {},
+        "measurements": [
+          {
+            "aggregation": "instant",
+            "attributes": {},
+            "name": "cartesia.tts.status_code",
+            "unit": "1",
+            "value": 200.0
+          }
+        ],
+        "participant_id": "captured-cartesia-participant-1",
+        "quality_kind": "provider_metric",
+        "resource": {},
+        "sample_id": "captured-cartesia-sample-44",
+        "sample_window": {
+          "end": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1046442207",
+            "source_time_unix_nano": "1784817797443826207",
+            "uncertainty_nano": "1000000"
+          },
+          "start": {
+            "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+            "monotonic_time_nano": "1046442207",
+            "source_time_unix_nano": "1784817797443826207",
+            "uncertainty_nano": "1000000"
+          }
+        },
+        "session_id": "captured-cartesia-session-1"
+      }
+    ],
+    "session": {
+      "attributes": {},
+      "ended_at": {
+        "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+        "monotonic_time_nano": "17612333",
+        "source_time_unix_nano": "1784817796414996209"
+      },
+      "session_id": "captured-cartesia-session-1",
+      "started_at": {
+        "clock_domain_id": "process-a5365e9e5e4a4c15a676c31ecbdce1eb",
+        "monotonic_time_nano": "0",
+        "source_time_unix_nano": "1784817796397384000"
+      },
+      "status": "completed"
+    }
+  },
+  "raw_otlp_chunks": []
+}

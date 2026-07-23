@@ -35,7 +35,7 @@ def _session(name: str):
     return earshot.pipeline(
         session_id=f"conformance-{name}",
         bundle_id=f"conformance-{name}-bundle",
-        started_at_unix_nano=START,
+        clock=ManualClock(wall=START, monotonic=0),
         config=RecorderConfig(clock_domain_id="conformance-clock"),
     )
 
