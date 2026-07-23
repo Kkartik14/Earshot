@@ -279,15 +279,50 @@
           "title": "Evidence Ids",
           "type": "array"
         },
+        "limitation": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limitation"
+        },
         "operation_count": {
           "minimum": 0,
           "title": "Operation Count",
           "type": "integer"
         },
+        "timed_operation_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Timed Operation Count",
+          "type": "integer"
+        },
+        "total_work_completeness": {
+          "default": "complete",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable"
+          ],
+          "title": "Total Work Completeness",
+          "type": "string"
+        },
         "total_work_ms": {
           "minimum": 0,
           "title": "Total Work Ms",
           "type": "number"
+        },
+        "untimed_operation_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Untimed Operation Count",
+          "type": "integer"
         }
       },
       "required": [

@@ -96,7 +96,9 @@ client render or human perception.
 Cross-clock subtraction requires the same explicit clock domain. Reversed comparable
 time is `inconsistent`; missing/incomparable time is unavailable, never clamped to
 zero. Parallel tool output reports total work plus union elapsed time separately for
-each source clock/basis.
+each source clock/basis. `total_work_ms` is explicitly the sum of known comparable tool
+intervals; timed/untimed counts and `total_work_completeness` distinguish a complete
+sum from a partial lower bound or wholly unavailable duration.
 
 Projection arrays use a permutation-invariant presentation order: comparable points
 are grouped canonically by clock domain and timestamp basis and sorted numerically only
