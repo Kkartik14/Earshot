@@ -80,7 +80,22 @@ packages = ["packages/sdk-python/src/earshot"]
 artifacts = ["packages/sdk-python/src/earshot/web/**"]
 
 [tool.hatch.build.targets.sdist]
-artifacts = ["packages/sdk-python/src/earshot/web/**"]
+only-include = [
+  "LICENSE",
+  "README.md",
+  "pyproject.toml",
+  "packages/sdk-python/src/earshot",
+]
+exclude = [
+  "/**/.DS_Store",
+  "/**/__pycache__",
+  "/**/*.pyc",
+  "/**/*.pyo",
+]
+artifacts = [
+  "packages/sdk-python/src/earshot/web/**",
+  "!packages/sdk-python/src/earshot/web/**/*.map",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers --strict-config"
