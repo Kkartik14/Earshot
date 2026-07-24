@@ -138,6 +138,38 @@ const recoveredFixture = {
   },
 };
 
+/** The same session as a browser capture batch: a partial observation of a call
+ * still in progress. It declares recovery with `close_observed=false` and no
+ * journal — the browser never ran a checkpoint journal — so the strip must not
+ * claim a journal or that the process crashed. */
+const captureFixture = {
+  ...incidentFixture,
+  profile: {
+    ...incidentFixture.profile,
+    manifest: {
+      ...incidentFixture.profile.manifest,
+      finality: "provisional",
+      completeness: "incomplete",
+      recovery: {
+        method: "browser_capture_batch",
+        reason: "capture_batch_flushed_before_close",
+        close_observed: false,
+        journal_id: null,
+        last_sequence: null,
+        torn_tail_bytes: 0,
+        discarded_records: 0,
+        journal_complete: true,
+        recoverer: {
+          name: "earshot.capture_api",
+          version: "0.1.0",
+          sdk_version: "0.1.0",
+        },
+        attributes: {},
+      },
+    },
+  },
+};
+
 /** The same session, plus a reference to a recording a provider holds. Earshot
  * stores the reference; the bytes stay with the custodian. */
 const custodyFixture = {
@@ -286,6 +318,27 @@ describe("SessionInspector focus management", () => {
     expect(strip.compareDocumentPosition(screen.getByRole("heading", { level: 1 }))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+  });
+
+  it("marks a browser capture batch as partial without inventing a journal", () => {
+    renderInspector({ incident: captureFixture });
+
+    const strip = screen.getByRole("region", { name: /recovered artifact/i });
+    // Named for what it is -- a partial capture -- not a crash recovery, and it
+    // never claims a checkpoint journal the browser never ran.
+    expect(
+      within(strip).getByText(/PARTIAL CAPTURE — NOT A CLEAN CLOSE/),
+    ).toBeInTheDocument();
+    expect(within(strip).getByRole("status")).toHaveTextContent(
+      /session still in progress; the browser drained telemetry mid-call/i,
+    );
+    expect(within(strip).getByRole("status")).not.toHaveTextContent(
+      /checkpoint journal/i,
+    );
+    expect(within(strip).getByRole("status")).not.toHaveTextContent(/the process ended/i);
+    // The close was still not observed, but there is no journal line to render.
+    expect(within(strip).getByText(/close observed:/i)).toHaveTextContent("no");
+    expect(within(strip).queryByText(/^journal /i)).toBeNull();
   });
 
   it("shows no custody panel for a session that references no media", () => {

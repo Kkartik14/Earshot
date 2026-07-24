@@ -2348,16 +2348,24 @@ export interface components {
          * RecoveryRecord
          * @description How this artifact was reconstructed, and what that costs its completeness.
          *
-         *     A recovered incident has to be structurally unable to pass as a cleanly
-         *     closed one, so the declaration is a typed manifest member rather than an
-         *     attribute. Attribute bags are a weak channel: their keys need a privacy
-         *     allowlist, and validation cannot cross-check an open bag against
-         *     ``finality``, ``completeness``, ``session.status``, and coverage — which is
-         *     exactly what makes the declaration enforceable here.
+         *     An artifact that was not produced by a live ``close()`` has to be
+         *     structurally unable to pass as a cleanly closed one, so the declaration is a
+         *     typed manifest member rather than an attribute. Attribute bags are a weak
+         *     channel: their keys need a privacy allowlist, and validation cannot
+         *     cross-check an open bag against ``finality``, ``completeness``,
+         *     ``session.status``, and coverage — which is exactly what makes the
+         *     declaration enforceable here.
          *
-         *     There is deliberately no "recovered at" timestamp. Two recoveries of the
-         *     same journal must produce the same bytes under the same ``bundle_id``, or
-         *     content-addressed ingest would reject the second as a conflict. When
+         *     The commonest source is a checkpoint-journal replay, but not the only one: a
+         *     browser capture batch is a partial observation of a session still in
+         *     progress, so it declares recovery with ``close_observed=False`` too. The
+         *     ``method`` names the reconstruction source (``checkpoint_journal``,
+         *     ``browser_capture_batch``); the journal coordinates below are present only
+         *     when there actually was a journal.
+         *
+         *     There is deliberately no "recovered at" timestamp. Two reconstructions of
+         *     the same evidence must produce the same bytes under the same ``bundle_id``,
+         *     or content-addressed ingest would reject the second as a conflict. When
          *     recovery ran is an operational fact for the CLI and the diagnostic channel,
          *     not evidence.
          */
@@ -2378,12 +2386,18 @@ export interface components {
              * @default true
              */
             journal_complete: boolean;
-            /** Journal Id */
-            journal_id: string;
+            /**
+             * Journal Id
+             * @default null
+             */
+            journal_id: string | null;
             /** @default null */
             last_observation: components["schemas"]["TimePoint"] | null;
-            /** Last Sequence */
-            last_sequence: number;
+            /**
+             * Last Sequence
+             * @default null
+             */
+            last_sequence: number | null;
             /** Method */
             method: string;
             /** Reason */

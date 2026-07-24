@@ -2695,7 +2695,7 @@
     },
     "RecoveryRecord": {
       "additionalProperties": true,
-      "description": "How this artifact was reconstructed, and what that costs its completeness.\n\nA recovered incident has to be structurally unable to pass as a cleanly\nclosed one, so the declaration is a typed manifest member rather than an\nattribute. Attribute bags are a weak channel: their keys need a privacy\nallowlist, and validation cannot cross-check an open bag against\n``finality``, ``completeness``, ``session.status``, and coverage \u2014 which is\nexactly what makes the declaration enforceable here.\n\nThere is deliberately no \"recovered at\" timestamp. Two recoveries of the\nsame journal must produce the same bytes under the same ``bundle_id``, or\ncontent-addressed ingest would reject the second as a conflict. When\nrecovery ran is an operational fact for the CLI and the diagnostic channel,\nnot evidence.",
+      "description": "How this artifact was reconstructed, and what that costs its completeness.\n\nAn artifact that was not produced by a live ``close()`` has to be\nstructurally unable to pass as a cleanly closed one, so the declaration is a\ntyped manifest member rather than an attribute. Attribute bags are a weak\nchannel: their keys need a privacy allowlist, and validation cannot\ncross-check an open bag against ``finality``, ``completeness``,\n``session.status``, and coverage \u2014 which is exactly what makes the\ndeclaration enforceable here.\n\nThe commonest source is a checkpoint-journal replay, but not the only one: a\nbrowser capture batch is a partial observation of a session still in\nprogress, so it declares recovery with ``close_observed=False`` too. The\n``method`` names the reconstruction source (``checkpoint_journal``,\n``browser_capture_batch``); the journal coordinates below are present only\nwhen there actually was a journal.\n\nThere is deliberately no \"recovered at\" timestamp. Two reconstructions of\nthe same evidence must produce the same bytes under the same ``bundle_id``,\nor content-addressed ingest would reject the second as a conflict. When\nrecovery ran is an operational fact for the CLI and the diagnostic channel,\nnot evidence.",
       "properties": {
         "attributes": {
           "additionalProperties": true,
@@ -2718,10 +2718,18 @@
           "type": "boolean"
         },
         "journal_id": {
-          "maxLength": 256,
-          "minLength": 1,
-          "title": "Journal Id",
-          "type": "string"
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journal Id"
         },
         "last_observation": {
           "anyOf": [
@@ -2735,9 +2743,17 @@
           "default": null
         },
         "last_sequence": {
-          "minimum": 0,
-          "title": "Last Sequence",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Sequence"
         },
         "method": {
           "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
@@ -2763,8 +2779,6 @@
         "method",
         "reason",
         "close_observed",
-        "journal_id",
-        "last_sequence",
         "recoverer"
       ],
       "title": "RecoveryRecord",
