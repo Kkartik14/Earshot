@@ -1,0 +1,58 @@
+.banner {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--r);
+  background: var(--panel);
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.headline {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+.explain {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--tx-mid);
+  flex: 1 1 320px;
+}
+
+.asOf {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx-low);
+  line-height: 1.5;
+}
+
+.live {
+  border-left-color: var(--acc);
+  color: var(--acc);
+}
+.warn {
+  border-left-color: var(--est);
+  color: var(--est);
+}
+.crit {
+  border-left-color: var(--crit);
+  color: var(--crit);
+}

@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "8b36d221fee3b22bfc78a55d9d41ff4c76f934f69dadae8c33680fc0a46954bd",
+  "analyzer_version": "0.5.0",
+  "input_sha256": "99e1644ecb66f604f387fd90621836713165c51246b2cfb04f42e5683fb9d635",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -117,7 +117,8 @@
           "evidence_ids": []
         },
         "provider_measurements": {}
-      }
+      },
+      "interruption_chains": []
     }
   ],
   "coverage": [],

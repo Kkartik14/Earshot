@@ -94,12 +94,118 @@ const explanation = {
   })),
 };
 
-function renderInspector() {
+// A backend contradiction report citing an operation this session really owns.
+const contradictionReport = {
+  bundle_id: "fixture-bundle",
+  analyzer_version: "fixture",
+  input_digest: "a".repeat(64),
+  contradictions: [
+    {
+      kind: "render_claim_conflict",
+      summary: "render_observed_while_coverage_not_observed",
+      evidence_ids: ["operation-llm-0-5"],
+      boundary: "render",
+      turn_id: "turn-0",
+      subject: "turn-0",
+    },
+  ],
+};
+
+/** The same session, but reconstructed from a checkpoint journal after the
+ * process died before close. Validation forces the typed declaration, so a
+ * viewer that renders the incident at all has the facts to render this. */
+const recoveredFixture = {
+  ...incidentFixture,
+  profile: {
+    ...incidentFixture.profile,
+    manifest: {
+      ...incidentFixture.profile.manifest,
+      finality: "provisional",
+      completeness: "incomplete",
+      recovery: {
+        method: "checkpoint_journal",
+        reason: "process_terminated_before_close",
+        close_observed: false,
+        journal_id: "6c64ca59b0544136bc4371db66600b11",
+        last_sequence: 41,
+        torn_tail_bytes: 37,
+        discarded_records: 0,
+        journal_complete: true,
+        recoverer: { name: "earshot", version: "0.1.0", sdk_version: "0.1.0" },
+        attributes: {},
+      },
+    },
+  },
+};
+
+/** The same session as a browser capture batch: a partial observation of a call
+ * still in progress. It declares recovery with `close_observed=false` and no
+ * journal — the browser never ran a checkpoint journal — so the strip must not
+ * claim a journal or that the process crashed. */
+const captureFixture = {
+  ...incidentFixture,
+  profile: {
+    ...incidentFixture.profile,
+    manifest: {
+      ...incidentFixture.profile.manifest,
+      finality: "provisional",
+      completeness: "incomplete",
+      recovery: {
+        method: "browser_capture_batch",
+        reason: "capture_batch_flushed_before_close",
+        close_observed: false,
+        journal_id: null,
+        last_sequence: null,
+        torn_tail_bytes: 0,
+        discarded_records: 0,
+        journal_complete: true,
+        recoverer: {
+          name: "earshot.capture_api",
+          version: "0.1.0",
+          sdk_version: "0.1.0",
+        },
+        attributes: {},
+      },
+    },
+  },
+};
+
+/** The same session, plus a reference to a recording a provider holds. Earshot
+ * stores the reference; the bytes stay with the custodian. */
+const custodyFixture = {
+  ...incidentFixture,
+  profile: {
+    ...incidentFixture.profile,
+    media_refs: [
+      {
+        media_id: "media-1",
+        session_id: incidentFixture.profile.session.session_id,
+        stream_id: "stream-out",
+        media_kind: "audio",
+        content_type: "audio/wav",
+        integrity: "opaque_handle",
+        custodian: "provider.vapi",
+        clock_domain_id: "media-1",
+        capture_class: "audio",
+        locator: { uri: "https://media.example.com/1.wav", access: "governed" },
+        attributes: {},
+      },
+    ],
+  },
+};
+
+function renderInspector({
+  contradictions,
+  incident: incidentOverride,
+}: { contradictions?: unknown; incident?: unknown } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } },
   });
-  client.setQueryData(["incident", "fix"], incidentFixture);
+  client.setQueryData(["incident", "fix"], incidentOverride ?? incidentFixture);
   client.setQueryData(["explanation", "fix"], explanation);
+  if (contradictions !== undefined) {
+    client.setQueryData(["contradictions", "fix"], contradictions);
+  }
   const rendered = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/sessions/fix"]}>
@@ -166,6 +272,19 @@ describe("SessionInspector focus management", () => {
     expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
   });
 
+  it("surfaces backend contradictions and selects the conflicting operation", () => {
+    renderInspector({ contradictions: contradictionReport });
+
+    const panel = within(screen.getByRole("region", { name: /contradictions/i }));
+    expect(panel.getByText("render claim conflict")).toBeInTheDocument();
+    expect(
+      panel.getByText("render observed while coverage not observed"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(panel.getByRole("button", { name: "operation-llm-0-5" }));
+    expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
+  });
+
   it("renders unassigned session-level measurements with their units", () => {
     renderInspector();
     expect(
@@ -173,6 +292,73 @@ describe("SessionInspector focus management", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("round_trip_time")).toBeInTheDocument();
     expect(screen.getByText("180ms")).toBeInTheDocument();
+  });
+
+  it("does not claim recovery for an artifact its producer cleanly closed", () => {
+    renderInspector();
+    expect(screen.queryByRole("region", { name: /recovered artifact/i })).toBeNull();
+  });
+
+  it("renders a persistent recovered strip carrying the reason and the loss", () => {
+    renderInspector({ incident: recoveredFixture });
+
+    const strip = screen.getByRole("region", { name: /recovered artifact/i });
+    // Announced once, and stated as the opposite of a clean close.
+    expect(within(strip).getByRole("status")).toHaveTextContent(
+      /process terminated before close/i,
+    );
+    expect(within(strip).getByText(/RECOVERED — NOT A CLEAN CLOSE/)).toBeInTheDocument();
+    expect(within(strip).getByText(/close observed:/i)).toHaveTextContent("no");
+    expect(
+      within(strip).getByText(
+        /evidence was lost at the end of the journal \(37 bytes\)/i,
+      ),
+    ).toBeInTheDocument();
+    // It sits above the session, so it cannot be scrolled past unnoticed.
+    expect(strip.compareDocumentPosition(screen.getByRole("heading", { level: 1 }))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("marks a browser capture batch as partial without inventing a journal", () => {
+    renderInspector({ incident: captureFixture });
+
+    const strip = screen.getByRole("region", { name: /recovered artifact/i });
+    // Named for what it is -- a partial capture -- not a crash recovery, and it
+    // never claims a checkpoint journal the browser never ran.
+    expect(
+      within(strip).getByText(/PARTIAL CAPTURE — NOT A CLEAN CLOSE/),
+    ).toBeInTheDocument();
+    expect(within(strip).getByRole("status")).toHaveTextContent(
+      /session still in progress; the browser drained telemetry mid-call/i,
+    );
+    expect(within(strip).getByRole("status")).not.toHaveTextContent(
+      /checkpoint journal/i,
+    );
+    expect(within(strip).getByRole("status")).not.toHaveTextContent(/the process ended/i);
+    // The close was still not observed, but there is no journal line to render.
+    expect(within(strip).getByText(/close observed:/i)).toHaveTextContent("no");
+    expect(within(strip).queryByText(/^journal /i)).toBeNull();
+  });
+
+  it("shows no custody panel for a session that references no media", () => {
+    renderInspector();
+    expect(screen.queryByRole("region", { name: /media custody/i })).toBeNull();
+  });
+
+  it("renders media custody without loading a single byte of the media", () => {
+    const { container } = renderInspector({ incident: custodyFixture });
+
+    const panel = within(screen.getByRole("region", { name: /media custody/i }));
+    expect(panel.getByText("provider.vapi")).toBeInTheDocument();
+    expect(panel.getByText("cannot align")).toBeInTheDocument();
+    // The whole rendered session, not just the panel: nothing anywhere asks the
+    // browser to fetch media on render.
+    expect(container.querySelectorAll("audio, video, source, [src]")).toHaveLength(0);
+    expect(screen.getByRole("link", { name: /open at the custodian/i })).toHaveAttribute(
+      "href",
+      "https://media.example.com/1.wav",
+    );
   });
 
   it("preserves the open dialog and restore target across a data refresh", () => {

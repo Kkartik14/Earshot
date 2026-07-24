@@ -20,16 +20,19 @@ if TYPE_CHECKING:
     from .explanation import IncidentExplanation
 
 from .contract import (
-    SCHEMA_VERSION,
-    SEMANTIC_PROFILE_VERSION,
     CausalLink,
+    ClockRelation,
     ContractModel,
     DerivedAnalysis,
     Evidence,
     IncidentBundle,
+    IncidentProfile,
+    MediaRef,
     Operation,
     TimePoint,
     TimeRange,
+    media_custody_incoherence,
+    media_declares_custody_extensions,
 )
 from .measurement_semantics import measurement_value_limitation
 from .privacy import (
@@ -51,6 +54,24 @@ from .privacy import (
     metadata_value_allowed,
     sanitize_source_label,
 )
+from .versions import (
+    MEDIA_CUSTODY_MIN_CONTRACT_VERSION,
+    RECOVERY_MIN_CONTRACT_VERSION,
+    SUPPORTED_CONTRACT_VERSIONS,
+    SUPPORTED_SEMANTIC_PROFILE_VERSIONS,
+)
+
+
+def _version_below(candidate: str, floor: str) -> bool:
+    """Compare dotted numeric versions, treating anything unparseable as older."""
+
+    def parts(value: str) -> tuple[int, ...]:
+        try:
+            return tuple(int(part) for part in value.split("."))
+        except ValueError:
+            return ()
+
+    return parts(candidate) < parts(floor)
 
 
 def _check_schema_url_policy(
@@ -473,6 +494,110 @@ def _check_media_locator(
         )
 
 
+def _observation_clock_domains(profile: IncidentProfile) -> frozenset[str]:
+    """Return the clock domains the session's own observations are recorded in.
+
+    This is the target set media has to reach to be overlayable: aligning a media
+    file to a domain nothing in the incident uses would be arithmetic without a
+    reader.
+    """
+
+    domains: set[str] = set()
+    for operation in profile.operations:
+        for point in (operation.started_at, operation.ended_at):
+            if point is not None and point.clock_domain_id is not None:
+                domains.add(point.clock_domain_id)
+    for event in profile.events:
+        if event.time.clock_domain_id is not None:
+            domains.add(event.time.clock_domain_id)
+    return frozenset(domains)
+
+
+def _media_is_alignable(
+    media_domain: str,
+    observation_domains: frozenset[str],
+    relations: Iterable[ClockRelation],
+) -> bool:
+    """Report whether a declared calibration can place this media on the timeline.
+
+    Alignment reuses ``ClockRelation`` — a media file's timeline is just another
+    clock domain — so this asks exactly what the analyzer's aligner can answer:
+    is the media domain one the session already records in, or does a single
+    declared relation join it to one? Direction does not matter, because a
+    calibration is an invertible affine map and the aligner applies relations in
+    reverse. Multi-hop chains are deliberately *not* counted as alignable: the
+    aligner composes neither relations nor their uncertainties, so treating a
+    chain as aligned would promise an overlay nothing can actually compute.
+    """
+
+    if media_domain in observation_domains:
+        return True
+    return any(
+        (
+            relation.from_clock_domain_id == media_domain
+            and relation.to_clock_domain_id in observation_domains
+        )
+        or (
+            relation.to_clock_domain_id == media_domain
+            and relation.from_clock_domain_id in observation_domains
+        )
+        for relation in relations
+    )
+
+
+def _check_media_custody(
+    media: MediaRef,
+    observation_domains: frozenset[str],
+    relations: tuple[ClockRelation, ...],
+    clock_domains: Mapping[str, Any],
+    base: tuple[str | int, ...],
+    issues: list[ValidationIssue],
+) -> None:
+    """Refuse a custody claim that asserts more than its holder can back.
+
+    Earshot never reads the referenced bytes, so the only integrity it can
+    honestly publish is the one the reference itself declares. A
+    ``content_digest`` reference without a digest, or an ``opaque_handle``
+    reference that smuggles one in anyway, is a claim of verification nobody
+    performed — the same class of error as a recovered bundle claiming a clean
+    close, and refused the same structural way.
+    """
+
+    incoherence = media_custody_incoherence(media)
+    if incoherence is not None:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_MEDIA_CUSTODY_INCOHERENT",
+                path=base + ("integrity",),
+                message=incoherence,
+            )
+        )
+    if media.clock_domain_id is None:
+        return
+    if media.clock_domain_id not in clock_domains:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_MEDIA_CLOCK_UNKNOWN",
+                path=base + ("clock_domain_id",),
+                message=f"unknown media clock domain {media.clock_domain_id!r}",
+            )
+        )
+        return
+    if not _media_is_alignable(media.clock_domain_id, observation_domains, relations):
+        # A warning, not an error: media nobody can line up with the session is
+        # still legitimate custody. It simply cannot be overlaid, and saying so
+        # is the honest outcome — the same one an uncalibrated cross-clock
+        # latency gets.
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_MEDIA_UNALIGNED",
+                path=base + ("clock_domain_id",),
+                message="no declared clock relation aligns this media with the timeline",
+                severity="warning",
+            )
+        )
+
+
 def _capture_allowed(policy: Any | None) -> bool:
     if policy is None or not policy.captured:
         return False
@@ -756,6 +881,77 @@ def _find_cycle(edges: Mapping[str, set[str]]) -> tuple[str, ...] | None:
     return None
 
 
+def _check_recovery_declaration(
+    profile: IncidentProfile,
+    coverage_availability: Mapping[str, str],
+    issues: list[ValidationIssue],
+) -> None:
+    """Refuse any artifact whose recovery declaration is missing or incoherent.
+
+    This is the mechanism, not a convention: a bundle reconstructed from a
+    checkpoint journal cannot claim a clean close, because a claim of a clean
+    close alongside ``close_observed=False`` is a validation error here — and
+    therefore an error in ``close()``, the CLI, ``POST /v1/incidents``, and every
+    codec path. The first rule keys on ``finality`` rather than
+    ``completeness`` on purpose: a truncated-but-cleanly-closed bundle is
+    ``final``/``incomplete`` and must keep validating unchanged.
+    """
+
+    manifest = profile.manifest
+    recovery = manifest.recovery
+    if manifest.finality != "final" and recovery is None:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_RECOVERY_DECLARATION_REQUIRED",
+                path=("profile", "manifest", "recovery"),
+                message="a non-final artifact must declare how it was reconstructed",
+            )
+        )
+    if recovery is None:
+        return
+    if not recovery.close_observed:
+        if (
+            manifest.finality == "final"
+            or manifest.completeness == "complete"
+            or profile.session.status == "completed"
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY",
+                    path=("profile", "manifest", "recovery"),
+                    message="an unclosed recovery cannot claim a clean, complete close",
+                )
+            )
+        if profile.session.ended_at is not None:
+            # The last checkpoint is not the end of the session; the session may
+            # have run on for a long time after it. Carrying that coordinate as
+            # an end time would be a fabricated measurement.
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_RECOVERY_SESSION_END_FABRICATED",
+                    path=("profile", "session", "ended_at"),
+                    message="a session whose close was never observed has no end time",
+                )
+            )
+    elif recovery.torn_tail_bytes > 0 or not recovery.journal_complete:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY",
+                path=("profile", "manifest", "recovery"),
+                message="a damaged or truncated journal cannot have observed a close",
+            )
+        )
+    expected_close = "available" if recovery.close_observed else "unavailable"
+    if coverage_availability.get("recorder.session_close") != expected_close:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_RECOVERY_DECLARATION_REQUIRED",
+                path=("profile", "coverage"),
+                message="a recovered artifact must report recorder.session_close coverage",
+            )
+        )
+
+
 def validate_incident(bundle: IncidentBundle) -> ValidationReport:
     """Validate all cross-record invariants without mutating ``bundle``."""
 
@@ -776,15 +972,47 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
     manifest = profile.manifest
     session_id = profile.session.session_id
 
-    if manifest.schema_version != SCHEMA_VERSION:
+    # Membership, not equality: a reader that rejected every artifact produced
+    # before its own release would make each contract bump a break instead of a
+    # migration. Anything outside the supported set is still refused loudly.
+    if manifest.schema_version not in SUPPORTED_CONTRACT_VERSIONS:
         issues.append(
             ValidationIssue(
                 code="EARSHOT_SCHEMA_VERSION_UNSUPPORTED",
                 path=("profile", "manifest", "schema_version"),
-                message=f"expected {SCHEMA_VERSION!r}, got {manifest.schema_version!r}",
+                message=f"expected one of {SUPPORTED_CONTRACT_VERSIONS!r}",
             )
         )
-    if manifest.semantic_profile_version != SEMANTIC_PROFILE_VERSION:
+    elif manifest.recovery is not None and _version_below(
+        manifest.schema_version, RECOVERY_MIN_CONTRACT_VERSION
+    ):
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_SCHEMA_VERSION_UNSUPPORTED",
+                path=("profile", "manifest", "recovery"),
+                message=(
+                    f"a recovery declaration requires contract version "
+                    f"{RECOVERY_MIN_CONTRACT_VERSION} or newer"
+                ),
+            )
+        )
+    elif _version_below(manifest.schema_version, MEDIA_CUSTODY_MIN_CONTRACT_VERSION):
+        # A digest-and-size reference is exactly what 0.1.0 could express, so the
+        # existing corpus keeps validating; anything using the custody members is
+        # claiming a contract that version does not have.
+        for index, media in enumerate(profile.media_refs):
+            if media_declares_custody_extensions(media):
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_SCHEMA_VERSION_UNSUPPORTED",
+                        path=("profile", "media_refs", index, "integrity"),
+                        message=(
+                            f"media custody requires contract version "
+                            f"{MEDIA_CUSTODY_MIN_CONTRACT_VERSION} or newer"
+                        ),
+                    )
+                )
+    if manifest.semantic_profile_version not in SUPPORTED_SEMANTIC_PROFILE_VERSIONS:
         issues.append(
             ValidationIssue(
                 code="EARSHOT_SEMANTIC_PROFILE_VERSION_UNSUPPORTED",
@@ -877,7 +1105,9 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                 global_ids[value] = namespace
 
     coverage_signals: set[str] = set()
+    coverage_availability: dict[str, str] = {}
     for index, coverage in enumerate(profile.coverage):
+        coverage_availability.setdefault(coverage.signal, coverage.availability.lower())
         for field_name in ("signal", "availability", "reason"):
             field_value = getattr(coverage, field_name)
             if field_value is not None and not is_safe_semantic_label(field_value):
@@ -915,6 +1145,41 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
             coverage.evidence,
             CaptureClass.METADATA.value,
             ("profile", "coverage", index, "evidence"),
+            issues,
+        )
+
+    _check_recovery_declaration(profile, coverage_availability, issues)
+
+    # A declared clock calibration may only relate domains this bundle defines.
+    # Same-record shape (from != to, window ordering) is enforced by the model.
+    _id_index(
+        profile.clock_relations,
+        "relation_id",
+        ("profile", "clock_relations"),
+        issues,
+    )
+    for index, relation in enumerate(profile.clock_relations):
+        base = ("profile", "clock_relations", index)
+        for field_name in ("from_clock_domain_id", "to_clock_domain_id"):
+            domain_id = getattr(relation, field_name)
+            if domain_id not in clock_domains:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_UNKNOWN_CLOCK_DOMAIN",
+                        path=base + (field_name,),
+                        message=f"unknown clock domain {domain_id!r}",
+                    )
+                )
+        _check_evidence_clock_refs(
+            relation.evidence,
+            clock_domains,
+            base + ("evidence",),
+            issues,
+        )
+        _check_evidence_source_label(
+            relation.evidence,
+            CaptureClass.METADATA.value,
+            base + ("evidence",),
             issues,
         )
 
@@ -1561,6 +1826,9 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                 )
             )
 
+    # Computed once, and only when there is media to align, so an incident
+    # without custody pays nothing for the custody rules.
+    observation_domains = _observation_clock_domains(profile) if profile.media_refs else frozenset()
     for index, media in enumerate(profile.media_refs):
         base = ("profile", "media_refs", index)
         _session_match(media.session_id, session_id, base + ("session_id",), issues)
@@ -1576,8 +1844,20 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
         _check_capture_class(
             media.capture_class, privacy_policies, base + ("capture_class",), issues
         )
-        if media.byte_range is not None and (
-            media.byte_range.offset + media.byte_range.length > media.size_bytes
+        _check_media_custody(
+            media,
+            observation_domains,
+            profile.clock_relations,
+            clock_domains,
+            base,
+            issues,
+        )
+        # A range is only checkable against a measured size. An opaque handle
+        # carrying one is already refused above as an incoherent custody claim.
+        if (
+            media.byte_range is not None
+            and media.size_bytes is not None
+            and media.byte_range.offset + media.byte_range.length > media.size_bytes
         ):
             issues.append(
                 ValidationIssue(
@@ -1812,6 +2092,58 @@ def assert_valid_incident(bundle: IncidentBundle) -> None:
     report = validate_incident(bundle)
     if not report.ok:
         raise IncidentValidationError(report)
+
+
+_BOUNDARY_FAILED_STATUSES = {"error", "timeout", "failed"}
+
+
+def _boundary_diagnosis_evidence_ok(
+    code: str,
+    evidence_refs: tuple[str, ...],
+    operations: Mapping[str, Any],
+    events: Mapping[str, Any],
+    quality_samples: Mapping[str, Any],
+) -> bool:
+    """Return whether a governed boundary diagnosis cites its attributed evidence kind.
+
+    Evidence resolution is enforced elsewhere. This adds the ``no invented
+    diagnosis`` guarantee for the deterministic boundary-attribution codes: each
+    must cite at least one record of the kind it blames, so a hypothesis cannot
+    be attached to an unrelated operation, event, or sample. Unknown codes are
+    accepted once their evidence resolves, preserving analyzer extensibility.
+    """
+
+    cited_operations = [operations[ref] for ref in evidence_refs if ref in operations]
+    cited_events = [events[ref] for ref in evidence_refs if ref in events]
+    if code == "network.degraded":
+        return bool(evidence_refs) and all(ref in quality_samples for ref in evidence_refs)
+    if code == "tool.retry":
+        return (
+            bool(cited_operations)
+            and all(operation.operation_name == "tool" for operation in cited_operations)
+            and any(operation.status in _BOUNDARY_FAILED_STATUSES for operation in cited_operations)
+        )
+    if code == "device.unavailable":
+        return any(event.event_name.startswith("earshot.device.") for event in cited_events)
+    if code == "transport.reconnect":
+        return any(event.event_name.startswith("earshot.transport.") for event in cited_events)
+    if code == "interruption.false":
+        return any(
+            event.event_name == "earshot.interruption.detected" for event in cited_events
+        ) and not any(event.event_name == "earshot.interruption.accepted" for event in cited_events)
+    if code == "audio.stale_playback":
+        return any(event.event_name.startswith("earshot.audio.render.") for event in cited_events)
+    if code == "render.delayed":
+        return any(
+            event.event_name.startswith("earshot.audio.render.") for event in cited_events
+        ) or any(operation.operation_name == "render" for operation in cited_operations)
+    if code == "stage.slow":
+        return any(
+            operation.operation_name in {"stt", "llm", "tts"} for operation in cited_operations
+        )
+    if code == "endpointing.slow":
+        return any(operation.operation_name == "turn_detection" for operation in cited_operations)
+    return True
 
 
 def validate_derived_analysis(
@@ -2357,6 +2689,49 @@ def validate_derived_analysis(
                             ),
                         )
                     )
+        for chain_index, chain in enumerate(turn.interruption_chains):
+            chain_path = turn_path + ("interruption_chains", chain_index)
+            if chain.turn_id != turn.turn_id:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_ANALYSIS_INTERRUPTION_CHAIN_TURN_MISMATCH",
+                        path=chain_path + ("turn_id",),
+                        message="interruption chain names a different turn than its projection",
+                    )
+                )
+            for stage_index, stage in enumerate(chain.stages):
+                if stage.evidence_id is None:
+                    continue
+                stage_path = chain_path + ("stages", stage_index, "evidence_id")
+                if stage.evidence_id not in evidence_ids:
+                    issues.append(
+                        ValidationIssue(
+                            code="EARSHOT_ANALYSIS_INTERRUPTION_STAGE_EVIDENCE_INVALID",
+                            path=stage_path,
+                            message=(
+                                "an interruption stage cites evidence absent from the "
+                                "input artifact"
+                            ),
+                        )
+                    )
+                elif evidence_turn(stage.evidence_id) != turn.turn_id:
+                    issues.append(
+                        ValidationIssue(
+                            code="EARSHOT_ANALYSIS_INTERRUPTION_STAGE_EVIDENCE_INVALID",
+                            path=stage_path,
+                            message="an interruption stage cites evidence from a different turn",
+                        )
+                    )
+            check_metric(
+                chain.effectiveness,
+                chain_path + ("effectiveness",),
+                evidence_ids,
+            )
+            check_turn_evidence(
+                chain.effectiveness.evidence_ids,
+                turn.turn_id,
+                chain_path + ("effectiveness", "evidence_ids"),
+            )
 
     for _missing_turn_id in sorted(source_turn_ids - projected_turns):
         issues.append(
@@ -2485,6 +2860,20 @@ def validate_derived_analysis(
                         ),
                     )
                 )
+        elif not _boundary_diagnosis_evidence_ok(
+            diagnosis.code,
+            diagnosis.evidence_refs,
+            operations,
+            events,
+            quality_samples,
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_ANALYSIS_DIAGNOSIS_EVIDENCE_INVALID",
+                    path=("analysis", "diagnoses", diagnosis_index, "evidence_refs"),
+                    message="boundary diagnosis does not cite evidence of its attributed kind",
+                )
+            )
     return ValidationReport(issues=tuple(issues))
 
 

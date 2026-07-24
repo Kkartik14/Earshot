@@ -389,14 +389,25 @@
         "producer": {
           "$ref": "#/$defs/Producer"
         },
+        "recovery": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecoveryRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "schema_version": {
-          "default": "0.1.0",
+          "default": "0.2.0",
           "minLength": 1,
           "title": "Schema Version",
           "type": "string"
         },
         "semantic_profile_version": {
-          "default": "0.1.0",
+          "default": "0.2.0",
           "minLength": 1,
           "title": "Semantic Profile Version",
           "type": "string"
@@ -692,6 +703,134 @@
         "observer"
       ],
       "title": "ClockDomain",
+      "type": "object"
+    },
+    "ClockRelation": {
+      "additionalProperties": true,
+      "description": "A declared calibration mapping between two clock domains.\n\n``offset_nano`` converts a ``from``-domain wall timestamp into the ``to``\ndomain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``\nis an optional linear parts-per-million rate anchored at ``reference_unix_nano``,\nso the total correction at wall time ``t`` is\n``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds.\n``uncertainty_nano`` is the calibration's own error bound and is propagated into\nany cross-domain latency derived through this relation. ``valid_from_unix_nano``\nand ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)\nwhere the calibration is trustworthy; timestamps outside it are not aligned.",
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "drift_ppm": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Drift Ppm"
+        },
+        "evidence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Evidence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "from_clock_domain_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "From Clock Domain Id",
+          "type": "string"
+        },
+        "method": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Method",
+          "type": "string"
+        },
+        "offset_nano": {
+          "maxLength": 21,
+          "pattern": "^-?(0|[1-9][0-9]*)$",
+          "title": "Offset Nano",
+          "type": "string"
+        },
+        "reference_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Unix Nano"
+        },
+        "relation_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Relation Id",
+          "type": "string"
+        },
+        "to_clock_domain_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "To Clock Domain Id",
+          "type": "string"
+        },
+        "uncertainty_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uncertainty Nano"
+        },
+        "valid_from_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid From Unix Nano"
+        },
+        "valid_to_unix_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid To Unix Nano"
+        }
+      },
+      "required": [
+        "relation_id",
+        "from_clock_domain_id",
+        "to_clock_domain_id",
+        "offset_nano",
+        "method"
+      ],
+      "title": "ClockRelation",
       "type": "object"
     },
     "ConsentRecord": {
@@ -1317,6 +1456,14 @@
           "title": "Clock Domains",
           "type": "array"
         },
+        "clock_relations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ClockRelation"
+          },
+          "title": "Clock Relations",
+          "type": "array"
+        },
         "coverage": {
           "default": [],
           "items": {
@@ -1383,6 +1530,47 @@
       "title": "IncidentProfile",
       "type": "object"
     },
+    "InterruptionChainProjection": {
+      "additionalProperties": false,
+      "description": "The ordered causal chain a single turn's interruption produced.\n\nEvery stage in the canonical vocabulary is present exactly once, marked\nobserved or not. ``effectiveness`` is the barge-in latency from the observed\noverlap to the observed render stop, computed only when both endpoints are\ncomparable (same clock, or a declared calibration aligns them); otherwise it\nhonestly asserts no value.",
+      "properties": {
+        "classification": {
+          "enum": [
+            "accepted",
+            "ignored",
+            "false",
+            "unknown"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "effectiveness": {
+          "$ref": "#/$defs/AnalysisMetric"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/InterruptionStage"
+          },
+          "minItems": 1,
+          "title": "Stages",
+          "type": "array"
+        },
+        "turn_id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Turn Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id",
+        "classification",
+        "stages",
+        "effectiveness"
+      ],
+      "title": "InterruptionChainProjection",
+      "type": "object"
+    },
     "InterruptionProjection": {
       "additionalProperties": false,
       "properties": {
@@ -1407,6 +1595,108 @@
         "evidence_ids"
       ],
       "title": "InterruptionProjection",
+      "type": "object"
+    },
+    "InterruptionStage": {
+      "additionalProperties": false,
+      "description": "One canonical stage of a barge-in teardown, observed or not.\n\nAn observed stage cites a real event/operation/sample and carries the exact\ncoordinate that evidence recorded (never a synthesized timestamp). A stage the\nartifact does not contain is reported as ``observed=False`` with a\n``coverage_reason`` and no coordinate, so absence is coverage, not fabrication.\n``outcome`` carries the disposition of the ``tool_outcome`` stage (the tool's\nok/error/timeout/cancelled status) and stays ``None`` for every other stage.",
+      "properties": {
+        "at_nano": {
+          "anyOf": [
+            {
+              "maxLength": 20,
+              "pattern": "^(0|[1-9][0-9]*)$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At Nano"
+        },
+        "clock_domain_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clock Domain Id"
+        },
+        "coverage_reason": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Coverage Reason"
+        },
+        "evidence_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Id"
+        },
+        "observed": {
+          "title": "Observed",
+          "type": "boolean"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcome"
+        },
+        "stage": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Stage",
+          "type": "string"
+        },
+        "time_basis": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time Basis"
+        }
+      },
+      "required": [
+        "stage",
+        "observed"
+      ],
+      "title": "InterruptionStage",
       "type": "object"
     },
     "JsonRawOtlpChunk": {
@@ -1498,6 +1788,7 @@
     },
     "MediaRef": {
       "additionalProperties": true,
+      "description": "A reference to media somebody else holds \u2014 never the media itself.\n\nEarshot stores custody, not content: who holds the bytes, what they are,\nwhich window of the session they cover, under what consent and retention,\nand which clock domain their own timeline runs on. It never ingests,\nfetches, caches, or proxies them.\n\n``integrity`` is the honesty discriminator that makes that distinction\nlegible instead of overloading a null:\n\n``content_digest``\n    Somebody measured these bytes and declared a ``sha256`` and\n    ``size_bytes`` for them. The digest is a *declaration carried by the\n    artifact*, not an earshot verification \u2014 earshot still never read the\n    bytes \u2014 but it is a checkable commitment a holder can be held to.\n``opaque_handle``\n    Nobody measured the bytes on this path, so the reference carries no\n    digest and no size and names the ``custodian`` who does hold them.\n    ``byte_range`` is meaningless here: you cannot range into bytes whose\n    length was never observed.\n\nMaking ``sha256``/``size_bytes`` optional is what the real custody case\nrequires. The alternative \u2014 keeping them required and letting a producer\nfill them with something it did not compute \u2014 is exactly the dishonesty\nthis contract exists to prevent. The coherence rule is enforced by\n:func:`media_custody_incoherence` at every boundary, not by convention.",
       "properties": {
         "attributes": {
           "additionalProperties": true,
@@ -1530,9 +1821,56 @@
           "title": "Capture Class",
           "type": "string"
         },
+        "clock_domain_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clock Domain Id"
+        },
+        "consent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsentRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "content_type": {
           "minLength": 1,
           "title": "Content Type",
+          "type": "string"
+        },
+        "custodian": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Custodian"
+        },
+        "integrity": {
+          "default": "content_digest",
+          "enum": [
+            "content_digest",
+            "opaque_handle"
+          ],
+          "title": "Integrity",
           "type": "string"
         },
         "locator": {
@@ -1557,6 +1895,17 @@
           "title": "Media Kind",
           "type": "string"
         },
+        "retention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetentionPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "session_id": {
           "maxLength": 256,
           "minLength": 1,
@@ -1564,14 +1913,30 @@
           "type": "string"
         },
         "sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Sha256",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
         },
         "size_bytes": {
-          "minimum": 0,
-          "title": "Size Bytes",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
         },
         "stream_id": {
           "maxLength": 256,
@@ -1596,9 +1961,7 @@
         "session_id",
         "stream_id",
         "media_kind",
-        "content_type",
-        "sha256",
-        "size_bytes"
+        "content_type"
       ],
       "title": "MediaRef",
       "type": "object"
@@ -2330,6 +2693,97 @@
       "title": "QualitySample",
       "type": "object"
     },
+    "RecoveryRecord": {
+      "additionalProperties": true,
+      "description": "How this artifact was reconstructed, and what that costs its completeness.\n\nAn artifact that was not produced by a live ``close()`` has to be\nstructurally unable to pass as a cleanly closed one, so the declaration is a\ntyped manifest member rather than an attribute. Attribute bags are a weak\nchannel: their keys need a privacy allowlist, and validation cannot\ncross-check an open bag against ``finality``, ``completeness``,\n``session.status``, and coverage \u2014 which is exactly what makes the\ndeclaration enforceable here.\n\nThe commonest source is a checkpoint-journal replay, but not the only one: a\nbrowser capture batch is a partial observation of a session still in\nprogress, so it declares recovery with ``close_observed=False`` too. The\n``method`` names the reconstruction source (``checkpoint_journal``,\n``browser_capture_batch``); the journal coordinates below are present only\nwhen there actually was a journal.\n\nThere is deliberately no \"recovered at\" timestamp. Two reconstructions of\nthe same evidence must produce the same bytes under the same ``bundle_id``,\nor content-addressed ingest would reject the second as a conflict. When\nrecovery ran is an operational fact for the CLI and the diagnostic channel,\nnot evidence.",
+      "properties": {
+        "attributes": {
+          "additionalProperties": true,
+          "title": "Attributes",
+          "type": "object"
+        },
+        "close_observed": {
+          "title": "Close Observed",
+          "type": "boolean"
+        },
+        "discarded_records": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Discarded Records",
+          "type": "integer"
+        },
+        "journal_complete": {
+          "default": true,
+          "title": "Journal Complete",
+          "type": "boolean"
+        },
+        "journal_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Journal Id"
+        },
+        "last_observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimePoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "last_sequence": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Sequence"
+        },
+        "method": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Method",
+          "type": "string"
+        },
+        "reason": {
+          "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+          "title": "Reason",
+          "type": "string"
+        },
+        "recoverer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "torn_tail_bytes": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Torn Tail Bytes",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "method",
+        "reason",
+        "close_observed",
+        "recoverer"
+      ],
+      "title": "RecoveryRecord",
+      "type": "object"
+    },
     "RedactionRecord": {
       "additionalProperties": true,
       "properties": {
@@ -2724,6 +3178,14 @@
             "type": "string"
           },
           "title": "Event Ids",
+          "type": "array"
+        },
+        "interruption_chains": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/InterruptionChainProjection"
+          },
+          "title": "Interruption Chains",
           "type": "array"
         },
         "interruptions": {

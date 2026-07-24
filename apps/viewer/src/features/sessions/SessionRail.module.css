@@ -122,6 +122,24 @@
   background: var(--tx-low);
 }
 
+/* A badge, never a colour alone: "this artifact is not the producer's last
+   word" has to survive a monochrome screen and a screen reader alike. */
+.badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  color: var(--llm);
+  flex: none;
+}
+
+.liveBadge {
+  color: var(--acc);
+}
+
 .foot {
   margin-top: auto;
   padding: 10px 8px 2px;

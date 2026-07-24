@@ -100,8 +100,14 @@ observable through `status()`.
 - `record_quality_sample()` accepts a structured metric sample and recursively filters
   sample, evidence, resource, and measurement attributes. Measurement values may be
   numeric or boolean; raw counters are numeric only in v1alpha1.
-- `add_media_ref()` attaches external audio metadata only when the `audio` class is
-  enabled. It never embeds media bytes and removes credential-bearing locators.
+- `add_media_ref()` attaches custody metadata for externally held audio, only when the
+  `audio` class is enabled. It never embeds, fetches, caches, or proxies media bytes and
+  removes credential-bearing locators. `integrity` must match what the reference can
+  back: `content_digest` requires `sha256` and `size_bytes`; `opaque_handle` requires a
+  `custodian` and no digest, size, or byte range. An incoherent claim is refused at
+  admission. To make media overlayable, declare its timeline with
+  `register_clock_domain()` and calibrate it with `register_clock_relation()` — media
+  alignment is the ordinary cross-clock question, not a separate mechanism.
 - `add_raw_otlp_chunk()` retains exact bytes only when the `raw_otlp` class is
   enabled. This is an explicit caller-supplied path, not automatic OTLP interception.
   Callers cannot downgrade opaque OTLP bytes to metadata.
@@ -150,9 +156,10 @@ At close, truncation sets manifest `completeness="incomplete"` and emits one agg
 the one-shot `recorder.capture_truncated` diagnostic contains no captured value and runs
 outside recorder locks with callback exceptions contained.
 
-These caps bound open-recorder memory only. They are not crash recovery: even in durable
-delivery mode, persistence still begins after final close, so a process crash before
-close loses the unfinished conversation.
+These caps bound open-recorder memory only; they are not crash recovery. With
+checkpointing disabled — the default — persistence begins after final close even in
+durable delivery mode, so a process crash before close loses the unfinished
+conversation. Setting `checkpoint_dir` changes that: see [Crash recovery](#crash-recovery).
 
 ## Capture policy
 
@@ -220,6 +227,13 @@ The SDK exporter uses the destination name `sdk_http`. A captured class whose ex
 policy denies that destination is rejected before serialization enters the outbound
 queue; `export_accepted` becomes `False`, and no network transport sees the artifact.
 
+The named destinations are `sdk_http` (the SDK exporter), `otlp` (the OTLP and
+OpenInference projections, which share one destination because they ship one document to
+one collector), `local_api` and `local_cli` (the backend's reads and the CLI's output),
+and `live_tail` (the backend's live SSE tail). A destination allowlist that omits a name
+denies it: `ExportConfig(allowed=True, destinations=("otlp",))` keeps a class out of the
+live tail as firmly as `allowed=False` does.
+
 ## Delivery modes and loss visibility
 
 The default `delivery_mode="async"` is the normal long-running-process mode.
@@ -233,9 +247,14 @@ acknowledgement at the close boundary matters more than callback latency.
 
 `delivery_mode="durable"` requires an explicit `spool_dir`. It persists the already
 privacy-filtered whole incident before delivery and replays retained incidents after a
-restart. The spool is plaintext operational evidence: put it on a private, encrypted
-volume and treat directory access as sensitive. The explicit directory is the plaintext
-storage opt-in, must be owner-private, and contains atomic, fsynced `0600` records.
+restart. The spool is plaintext operational evidence by default: put it on a private,
+encrypted volume and treat directory access as sensitive. Optionally, each record's
+payload can be envelope-encrypted at rest with AES-256-GCM by configuring a 32-byte
+spool key (`spool_key`, `EARSHOT_SPOOL_KEY`, or `EARSHOT_SPOOL_KEY_FILE`) with the
+optional `earshot-observability[spool-encryption]` extra (the `cryptography` dependency)
+installed; with no key configured the spool stays plaintext and behavior is unchanged.
+The explicit directory is the plaintext storage opt-in, must be owner-private, and
+contains atomic, fsynced `0600` records.
 Corrupt or crash-interrupted records are quarantined and surfaced as abandoned. Item
 and byte limits are mandatory; retryable failures remain replayable, while permanent
 rejections are retained by default or deleted only with an explicit `delete` policy.
@@ -250,10 +269,7 @@ and appear as abandoned pressure; recover them by reopening the same private dir
 with their original endpoint and project identity.
 
 Durability begins only after a recorder closes and its canonical incident is atomically
-committed to the spool. An open conversation still lives in process memory; a crash,
-forced termination, or out-of-memory failure before close loses that unfinished
-evidence. Durable incremental recorder journaling/checkpoint recovery is not implemented
-in this alpha.
+committed to the spool, unless checkpointing is enabled; see [Crash recovery](#crash-recovery).
 
 `status()` reports lifecycle state, accepted/sent/dropped/failed/rejected/retried and
 overflow counts, pending count, queued and in-flight bytes, byte high-water mark, oldest
@@ -287,6 +303,135 @@ flush explicitly.
   selected by the credential so configuration cannot silently route to another tenant;
 - retries 408, 429, and 5xx responses with bounded jitter and `Retry-After`; and
 - classifies other 4xx responses as permanent.
+
+## Crash recovery
+
+Durability begins as soon as a fact is admitted, when checkpointing is enabled. Setting
+`checkpoint_dir` (or `EARSHOT_CHECKPOINT_DIR`) opens one append-only, owner-private
+journal per conversation and writes every admitted, already-privacy-filtered record to it
+in admission order. Each record is a self-delimiting, CRC-protected frame, optionally
+envelope-encrypted with AES-256-GCM under the same key precedence as the spool
+(`checkpoint_key`, `EARSHOT_CHECKPOINT_KEY`, `EARSHOT_CHECKPOINT_KEY_FILE`, then the
+spool key). Because each append reaches the kernel before the call returns, **a process
+crash, forced termination, or out-of-memory kill loses no admitted evidence**; only a
+host-level failure (kernel panic or power loss) can lose work, bounded by the fsync
+window (`checkpoint_fsync_mode`, `interval` at 250 ms by default; `always` and `never`
+are the other modes). The journal is bounded and never rotates: on reaching its cap
+(`checkpoint_max_bytes`) it records the reason and stops rather than silently dropping
+facts.
+
+`earshot recover --checkpoint-dir DIR` reconstructs an incident from a journal, and
+`earshot checkpoints list DIR` identifies the journals a directory holds. If the journal
+contains the recorder's finalize record, the reconstructed artifact is byte-identical to
+the one `close()` produced, so re-ingesting it deduplicates instead of conflicting. If it
+does not, the artifact is explicitly **provisional**: `manifest.finality` is
+`provisional`, `manifest.completeness` is `incomplete`, `session.status` is `interrupted`,
+`session.ended_at` is absent because the real end was never observed, `manifest.recovery`
+records the method, reason, journal identity, last durable observation, and any torn
+trailing bytes, and coverage records `recorder.session_close` as unavailable. Validation
+enforces this: a recovered incident that claims a clean close is rejected, so a
+provisional artifact can never be mistaken for a final one. Operations that started but
+were never observed to finish appear with no end time and status `unknown`, and the
+analyzer reports their durations as unavailable rather than as zero.
+
+Checkpointing is off by default. The explicit directory is the storage opt-in, must be
+owner-private, and holds only the same capture classes the configured policy already
+admits — enabling checkpointing never widens what earshot retains. One checkpoint
+directory belongs to one client process, exactly like the spool. On a clean close the
+journal is removed once the incident reaches a durable successor; a journal left behind
+by a crash between finalize and cleanup recovers to a byte-identical duplicate, which
+content-addressed ingest deduplicates.
+
+## Watching an open conversation
+
+The same journal that makes a crash recoverable makes an open session watchable, with no
+new capture surface and nothing extra retained. `earshot serve --checkpoint-dir DIR`
+follows the journals in a directory the backend process can read and exposes them under
+`/v1/live` as a server-sent event stream; see
+[Backend API](backend-api.md#live-sessions). Following a directory is an explicit
+opt-in, the same storage decision as writing one.
+
+For a producer whose backend is elsewhere, `earshot.checkpoint.CheckpointUploader` tails
+its own journal file from a dedicated daemon thread and forwards whole frames to
+`POST /v1/live/sessions/{session_id}/checkpoints`. It only ever forwards bytes the
+journal already holds, so a slow or unreachable backend cannot add latency to a voice
+callback; batching is bounded by time and by size, a batch is always cut at a frame
+boundary, and any failure stops the uploader permanently and degrades to local journal
+only. An encrypted journal cannot be uploaded — the backend holds no key — so remote
+tailing is an explicit decision to let it read those frames.
+
+Every size bound on that path is declared once, in `earshot.checkpoint.limits`, and read
+from there by the uploader, the server's frame scan and the ingest endpoint alike. The
+journal frames records up to 32 MiB; one upload carries at most 1 MiB, which is one
+whole frame and one whole batch; the default 512 KiB batching bound decides how much
+travels per request and never how much a request may be, so a frame above it is sent
+alone rather than stranded. A frame above the 1 MiB wire bound cannot be delivered at
+all — it cannot be skipped either, because the server refuses a batch that skips a
+sequence — so the uploader states which sequence it is (`status().state ==
+"undeliverable_frame"`, with `undeliverable_sequence` and `undeliverable_bytes`), emits
+the `checkpoint.frame_undeliverable` diagnostic, and stops. It never retries what cannot
+work and never stalls without saying so. Nothing is lost: the local journal still holds
+every record and the artifact still travels through `POST /v1/incidents` or a seal.
+
+A live view is never an artifact. The stream carries only admitted journal records, and
+no analysis, diagnosis, or turn metric is derived from it: derived analysis binds to the
+digest of a finished artifact, and an open session has none. Everything unknowable
+before close — session status and end, turn membership, interruption classification, the
+privacy manifest — is enumerated on the wire rather than left absent, and an operation
+that started without being observed to end travels as its own event kind with no end and
+no duration.
+
+## Capture seam: `ObservationSink`
+
+A capture source authors governed facts through `earshot.observation.ObservationSink`
+and depends on nothing else in the recorder. The protocol is exactly five verbs --
+`record_measurement`, `record_event`, `record_coverage`, `record_omission`,
+`register_clock_domain` -- and `TurnRecorder` satisfies it structurally, so no capture
+source is required to own a pipeline session.
+
+That is what makes the WebRTC and audio-graph engines runnable anywhere: `apply_*`
+takes a sink, not a turn.
+
+```python
+from earshot.engines.webrtc import apply_webrtc_stats
+
+class CollectorSink:  # a browser/native/backend collector's own sink
+    def record_measurement(self, name, value, **fact): ...
+    def record_event(self, name, **fact): ...
+    def record_coverage(self, signal, availability, reason=None): ...
+    def record_omission(self, field_name, *, capture_class, reason="adapter_payload_omitted"): ...
+    def register_clock_domain(self, domain): ...
+
+apply_webrtc_stats(CollectorSink(), snapshots)
+```
+
+Stage/operation authoring (`record_stage`) is intentionally not part of the protocol:
+it mints an operation id and advances the pipeline's turn cursor, which is turn
+bookkeeping rather than an observation.
+
+## Export seam: named exporters
+
+A finished incident leaves through a _named_ exporter. `otlp` and `openinference` are
+registered built-ins; a user registers their own beside them and selects it the same
+way, from the client or the CLI, without importing a projection module.
+
+```python
+import earshot
+
+document = earshot.export(bundle, format="otlp")
+
+earshot.register_exporter("acme", lambda bundle: {"acme": ...})
+earshot.export(bundle, format="acme")
+earshot.exporter_formats()  # ('acme', 'openinference', 'otlp')
+```
+
+`register_exporter(name, exporter, *, destination=None, replace=False)` defaults the
+export destination to the exporter's own name, so a new exporter never inherits a
+permission written for another backend; both built-ins declare `otlp`. A named export
+is checked with `assert_export_allowed` against that destination before the projection
+runs, and a duplicate name is an error unless `replace=True`. Registration performs no
+I/O. `earshot.exporters.to_otlp` / `to_openinference` remain importable and unchanged;
+the caller who imports them directly is then the one holding the export policy.
 
 ## Framework adapters
 

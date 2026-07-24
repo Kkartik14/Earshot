@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "cb1a3b6521314bce4e1f5858d321f66743c9ed9ecf0d7c3b9f2d782a319d8d1d",
+  "analyzer_version": "0.5.0",
+  "input_sha256": "bdf3e1a07a47550185b237f04d536e38e325b1cd1c61e3d69b6f5611e35a807d",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -128,7 +128,8 @@
           "evidence_ids": []
         },
         "provider_measurements": {}
-      }
+      },
+      "interruption_chains": []
     }
   ],
   "coverage": [
@@ -155,7 +156,19 @@
   "limitations": [
     "render_evidence_not_observed"
   ],
-  "diagnoses": [],
+  "diagnoses": [
+    {
+      "diagnosis_id": "device_unavailable.4c5ac65bfcbc005d6ac1e560267def42ecde6b118c2c7935a93bfba526459a01",
+      "code": "device.unavailable",
+      "summary": "device_unavailable",
+      "confidence": "measured",
+      "evidence_ids": [
+        "event-audio-context-suspended",
+        "event-permission-denied"
+      ],
+      "limitations": []
+    }
+  ],
   "unassigned_operations": [],
   "unassigned_events": [],
   "unassigned_measurements": []

@@ -1,0 +1,40 @@
+"""Deterministic, server-side diagnostic engines over raw browser telemetry.
+
+These engines are the server-side consumer of what a browser collector emits.
+Each turns raw, standard telemetry into governed earshot facts through the single
+capture seam -- :class:`~earshot.observation.ObservationSink` -- so the existing
+boundary-attribution analyzer diagnoses the result without any browser in the
+loop:
+
+* :func:`~earshot.engines.webrtc.analyze_webrtc_stats` -- a W3C ``getStats``
+  delta engine (packet loss, jitter, RTT, jitter-buffer growth, concealment,
+  reconnect, route change).
+* :func:`~earshot.engines.device.analyze_audio_graph` -- Web Audio / device
+  lifecycle diagnostics (permission, context suspension, sink change, sample-rate
+  mismatch, under-run, ``baseLatency`` / ``outputLatency``).
+
+Each ``analyze_*`` is a pure function returning an immutable facts value; the
+paired ``apply_*`` derives and records onto any
+:class:`~earshot.observation.ObservationSink`. The server pipeline's
+:class:`~earshot.pipeline.TurnRecorder` is one such sink; a browser, native, or
+backend collector supplies its own without changing an engine.
+"""
+
+from __future__ import annotations
+
+from .base import BrowserClockDomain, EngineCoverage, EngineEvent, EngineMeasurement
+from .device import DeviceFacts, analyze_audio_graph, apply_audio_graph
+from .webrtc import WebRtcFacts, analyze_webrtc_stats, apply_webrtc_stats
+
+__all__ = [
+    "BrowserClockDomain",
+    "DeviceFacts",
+    "EngineCoverage",
+    "EngineEvent",
+    "EngineMeasurement",
+    "WebRtcFacts",
+    "analyze_audio_graph",
+    "analyze_webrtc_stats",
+    "apply_audio_graph",
+    "apply_webrtc_stats",
+]

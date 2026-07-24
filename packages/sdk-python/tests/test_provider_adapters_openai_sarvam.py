@@ -469,3 +469,32 @@ def test_sarvam_repeated_vad_cycles_remain_distinct_updates() -> None:
         "earshot.speech.started",
         "earshot.speech.ended",
     ]
+
+
+def test_openai_realtime_close_isolates_response_state_across_sessions() -> None:
+    adapter = OpenAIRealtimeAdapter(model="gpt-realtime", identity_key=IDENTITY_KEY)
+    for index in range(4):
+        session = earshot.pipeline(session_id=f"iso-{index}", started_at_unix_nano=START)
+        with session.turn() as turn:
+            adapter.adapt(
+                {"type": "input_audio_buffer.speech_stopped", "audio_end_ms": 850},
+                received_at_ms=1_000,
+            ).apply(turn)
+            adapter.adapt(
+                {"type": "response.created", "response": {"id": f"response-{index}"}},
+                received_at_ms=1_020,
+            ).apply(turn)
+            # The response is abandoned mid-flight: no response.done ever arrives.
+        session.close()
+        adapter.close()
+
+        # close() clears every per-session response/correlation map, so a long-lived
+        # adapter reused across sessions cannot accumulate them without bound.
+        assert adapter._response_started_ms == {}
+        assert adapter._response_speech_stopped_ms == {}
+        assert adapter._active_responses == set()
+        assert adapter._first_audio_responses == set()
+        assert adapter._response_interruption_gestures == {}
+        assert adapter._accepted_interruption_gestures == set()
+        assert adapter._next_interruption_gesture == 0
+        assert adapter._speech_stopped_receipt_ms is None

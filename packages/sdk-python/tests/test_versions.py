@@ -40,11 +40,33 @@ def test_pipeline_evidence_semantics_have_a_new_adapter_version() -> None:
 
 
 def test_analysis_truth_changes_have_a_new_cache_identity() -> None:
-    assert ANALYZER_VERSION == "0.3.2"
+    assert ANALYZER_VERSION == "0.5.0"
 
 
-def test_explanation_identity_contract_is_api_version_0_2() -> None:
-    assert API_VERSION == "0.2.0"
+def test_a_live_session_belongs_to_one_project_in_api_version_0_8() -> None:
+    # 0.8.0 gives a live session a per-project identity: it is named by
+    # (project, session id) rather than by session id alone, so two projects can
+    # use the same session id and neither can squat the other's. Checkpoint
+    # ingestion gained the two refusals that keep an uploaded journal honest —
+    # EARSHOT_CHECKPOINT_JOURNAL_FINALIZED for a frame after finalize and
+    # EARSHOT_CHECKPOINT_DIVERGED for a retry that rewrites an accepted
+    # sequence — and GET /v1/live/sessions declares the frame size remote
+    # checkpoint upload covers.
+    # 0.7.0 makes the live tail enforce its own export destination,
+    # ``live_tail``: the ``open`` event declares that name and the capture
+    # classes forbidden to it, and a record the policy will not let leave the
+    # process arrives as a new ``withheld`` event at its own sequence instead of
+    # as its content or as a silent gap. 0.6.0 makes ``GET /v1/metrics/turns``
+    # state the population behind its numbers: only final incidents are
+    # aggregated, and the provisional ones the aggregate refused are counted on
+    # the response (``incident_count``, ``withheld_incident_count``,
+    # ``withheld_turn_count``, ``limitations``) rather than dropped silently.
+    # 0.5.0 added the ``/v1/live`` namespace: the server-sent-event tail of an
+    # open conversation, remote checkpoint ingestion, and the explicit operator
+    # seal. 0.4.0 added the authenticated browser capture endpoint
+    # (``POST /v1/capture``); 0.3.0 added the contradiction, comparison, and
+    # export read endpoints.
+    assert API_VERSION == "0.8.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:

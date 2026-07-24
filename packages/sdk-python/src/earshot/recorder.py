@@ -17,10 +17,11 @@ import uuid
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, TypeVar, overload
+from typing import TYPE_CHECKING, Any, TypeVar, overload
 
 from pydantic import BaseModel
 
+from .checkpoint.writer import CheckpointStatus, NullCheckpointWriter, RecordMutation
 from .clock import Clock, SystemClock
 from .codec import MAX_PROFILE_DEPTH
 from .context import _operation_scope, current_context
@@ -31,6 +32,7 @@ from .contract import (
     CaptureClassPolicy,
     CausalLink,
     ClockDomain,
+    ClockRelation,
     ConsentRecord,
     Coverage,
     ErrorRecord,
@@ -46,10 +48,12 @@ from .contract import (
     Producer,
     QualitySample,
     RawOtlpChunk,
+    RecoveryRecord,
     RedactionRecord,
     RetentionPolicy,
     Session,
     TimePoint,
+    media_custody_incoherence,
 )
 from .contract import (
     Omission as ContractOmission,
@@ -78,12 +82,23 @@ from .privacy import (
 )
 from .versions import PACKAGE_VERSION
 
+if TYPE_CHECKING:
+    from .checkpoint.writer import CheckpointWriter
+
+    CheckpointWriterLike = CheckpointWriter | NullCheckpointWriter
+else:  # pragma: no cover - the alias exists only for annotations
+    CheckpointWriterLike = object
+
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 DEFAULT_MAX_RECORDS = 10_000
 DEFAULT_MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_RAW_OTLP_BYTES = 8 * 1024 * 1024
 DEFAULT_MAX_VALUE_BYTES = 64 * 1024
+# Defensive bounds on declared clock metadata (one browser domain + a handful of
+# calibrations per session is normal; these only guard against pathological input).
+_MAX_EXTRA_CLOCK_DOMAINS = 16
+_MAX_CLOCK_RELATIONS = 64
 _MAX_COUNTER = 9_223_372_036_854_775_807
 _RECORD_KINDS = (
     "adapter",
@@ -216,6 +231,279 @@ class RecorderStatus:
     omitted_records_by_capture_class: tuple[tuple[str, int], ...]
 
 
+@dataclass(frozen=True)
+class RecorderSnapshot:
+    """Everything an incident profile is built from, detached from a recorder.
+
+    ``close()`` fills this in from live recorder state; the checkpoint assembler
+    fills the same shape in by replaying a journal. One shape and one builder is
+    the whole reason a recovered artifact cannot drift from a closed one.
+    """
+
+    producer_name: str
+    producer_version: str
+    bundle_id: str
+    session_id: str
+    clock_domain_id: str
+    started_wall: int
+    started_mono: int
+    capture_policy: CapturePolicy
+    adapters: tuple[Adapter, ...]
+    status: str
+    status_attributes: dict[str, str]
+    ended_at: TimePoint | None
+    participants: tuple[Participant, ...] = ()
+    audio_streams: tuple[AudioStream, ...] = ()
+    extra_clock_domains: tuple[ClockDomain, ...] = ()
+    clock_relations: tuple[ClockRelation, ...] = ()
+    coverage: tuple[Coverage, ...] = ()
+    operations: tuple[Operation, ...] = ()
+    events: tuple[Event, ...] = ()
+    quality_samples: tuple[QualitySample, ...] = ()
+    media_refs: tuple[MediaRef, ...] = ()
+    omissions: tuple[Omission, ...] = ()
+    retained_classes: frozenset[CaptureClass] = frozenset({CaptureClass.METADATA})
+    first_limit_reason: str | None = None
+    omitted_records_by_class: tuple[tuple[str, int], ...] = ()
+    # Operations whose start was durably observed and whose end never was. Only
+    # a recovery can produce these, and only a recovery reports the coverage.
+    unfinished_operations: int = 0
+
+
+# Coverage signals a recovered artifact is authoritative about. They are
+# superseded rather than merged so a caller-recorded signal of the same name
+# cannot contradict what the journal actually shows.
+RECOVERY_COVERAGE_SIGNALS = (
+    "recorder.session_close",
+    "recorder.checkpoint_journal",
+    "recorder.operation_completion",
+)
+
+
+def build_incident_profile(
+    state: RecorderSnapshot,
+    *,
+    recovery: RecoveryRecord | None = None,
+) -> IncidentProfile:
+    """Project recorder state into an incident profile.
+
+    ``recovery`` is present only when this artifact was reconstructed from a
+    checkpoint journal rather than produced by a live ``close()``. When it says
+    the close was never observed, the artifact declares itself provisional and
+    incomplete here, and validation refuses any bundle whose manifest, session,
+    and coverage disagree with that declaration.
+    """
+
+    provisional = recovery is not None and not recovery.close_observed
+    omissions: list[ContractOmission] = [
+        ContractOmission(
+            omission_id=f"omission-{index}",
+            capture_class=item.capture_class.value,
+            reason=item.reason,
+            count=1,
+            attributes={"field_key_sha256": item.field_key_sha256},
+        )
+        for index, item in enumerate(state.omissions)
+    ]
+    for capture_class, count in state.omitted_records_by_class:
+        if not count:
+            continue
+        omissions.append(
+            ContractOmission(
+                omission_id=f"omission-{len(omissions)}",
+                capture_class=capture_class,
+                reason="recorder_capture_truncated",
+                count=count,
+            )
+        )
+    if recovery is not None and recovery.journal_id is not None:
+        # Absence is coverage: evidence lost at the end of a torn journal, or
+        # past its cap, is ledgered rather than silently missing. Only a journal
+        # replay can suffer these; a journal-less reconstruction never does.
+        if recovery.torn_tail_bytes > 0:
+            omissions.append(
+                ContractOmission(
+                    omission_id=f"omission-{len(omissions)}",
+                    capture_class=CaptureClass.METADATA.value,
+                    reason="checkpoint_torn_tail",
+                    count=1,
+                )
+            )
+        if not recovery.journal_complete:
+            omissions.append(
+                ContractOmission(
+                    omission_id=f"omission-{len(omissions)}",
+                    capture_class=CaptureClass.METADATA.value,
+                    reason="checkpoint_journal_full",
+                    count=1,
+                )
+            )
+
+    capture_classes = tuple(
+        CaptureClassPolicy(
+            capture_class=capture_class.value,
+            decision=("allow" if state.capture_policy.allows(capture_class) else "deny"),
+            captured=capture_class in state.retained_classes,
+            consent=(
+                ConsentRecord(
+                    status=governance.consent.status,
+                    legal_basis=governance.consent.legal_basis,
+                    recorded_at_unix_nano=governance.consent.recorded_at_unix_nano,
+                    authority=governance.consent.authority,
+                )
+                if governance is not None and governance.consent is not None
+                else None
+            ),
+            redaction=(
+                RedactionRecord(
+                    policy_id=governance.redaction.policy_id,
+                    policy_version=governance.redaction.policy_version,
+                    status=governance.redaction.status,
+                    findings_count=governance.redaction.findings_count,
+                    redacted_count=governance.redaction.redacted_count,
+                    executed_at_unix_nano=governance.redaction.executed_at_unix_nano,
+                )
+                if governance is not None and governance.redaction is not None
+                else None
+            ),
+            retention=(
+                RetentionPolicy(
+                    expires_at_unix_nano=governance.retention.expires_at_unix_nano,
+                    ttl_nano=governance.retention.ttl_nano,
+                    policy_id=governance.retention.policy_id,
+                )
+                if governance is not None and governance.retention is not None
+                else None
+            ),
+            export=(
+                ExportPolicy(
+                    allowed=governance.export.allowed,
+                    destinations=governance.export.destinations,
+                    policy_id=governance.export.policy_id,
+                )
+                if governance is not None and governance.export is not None
+                else None
+            ),
+        )
+        for capture_class in CaptureClass
+        for governance in (state.capture_policy.governance.get(capture_class),)
+    )
+
+    # A recovered artifact is authoritative about these signals, so it supersedes
+    # anything the recorder was told about them; a clean close leaves them alone.
+    reserved_signals = {"recorder.capture"}
+    if recovery is not None:
+        reserved_signals.update(RECOVERY_COVERAGE_SIGNALS)
+    profile_coverage = tuple(item for item in state.coverage if item.signal not in reserved_signals)
+    if state.first_limit_reason is not None:
+        profile_coverage += (
+            Coverage(
+                signal="recorder.capture",
+                availability="partial",
+                reason=state.first_limit_reason,
+            ),
+        )
+    if recovery is not None:
+        # Whether the close was observed is universal to every reconstruction, so
+        # this signal is always emitted; it is the coverage the validator keys on.
+        profile_coverage += (
+            Coverage(
+                signal="recorder.session_close",
+                availability="available" if recovery.close_observed else "unavailable",
+                reason=None if recovery.close_observed else recovery.reason,
+            ),
+        )
+        # The journal's own health is only meaningful when a journal existed. A
+        # journal-less reconstruction (e.g. a browser capture batch) omits it
+        # rather than claiming an "available" journal it never had.
+        if recovery.journal_id is not None:
+            profile_coverage += (
+                Coverage(
+                    signal="recorder.checkpoint_journal",
+                    availability=(
+                        "partial"
+                        if recovery.torn_tail_bytes > 0 or not recovery.journal_complete
+                        else "available"
+                    ),
+                    reason=(
+                        "torn_tail"
+                        if recovery.torn_tail_bytes > 0
+                        else "journal_full"
+                        if not recovery.journal_complete
+                        else None
+                    ),
+                ),
+            )
+        if state.unfinished_operations:
+            profile_coverage += (
+                Coverage(
+                    signal="recorder.operation_completion",
+                    availability="partial",
+                    reason="process_terminated_mid_operation",
+                ),
+            )
+
+    return IncidentProfile(
+        manifest=BundleManifest(
+            bundle_id=state.bundle_id,
+            session_id=state.session_id,
+            created_at_unix_nano=str(state.started_wall),
+            producer=Producer(
+                name=state.producer_name,
+                version=state.producer_version,
+                sdk_version=state.producer_version,
+            ),
+            adapters=state.adapters,
+            finality="provisional" if provisional else "final",
+            completeness=(
+                "complete"
+                if not provisional
+                and state.status == "completed"
+                and state.first_limit_reason is None
+                else "incomplete"
+            ),
+            recovery=recovery,
+        ),
+        session=Session(
+            session_id=state.session_id,
+            status=state.status,
+            started_at=TimePoint(
+                source_time_unix_nano=str(state.started_wall),
+                monotonic_time_nano="0",
+                clock_domain_id=state.clock_domain_id,
+            ),
+            ended_at=state.ended_at,
+            attributes=state.status_attributes,
+        ),
+        privacy=PrivacyManifest(
+            policy_id=state.capture_policy.policy_id,
+            policy_version=state.capture_policy.policy_version,
+            capture_classes=capture_classes,
+            omissions=tuple(omissions),
+        ),
+        participants=state.participants,
+        audio_streams=state.audio_streams,
+        clock_domains=(
+            ClockDomain(
+                clock_domain_id=state.clock_domain_id,
+                kind="process_monotonic",
+                observer="earshot.sdk",
+                monotonic_origin_nano=str(state.started_mono),
+                wall_origin_unix_nano=str(state.started_wall),
+                uncertainty_nano="0",
+                synchronization_method="same_process_sample",
+            ),
+            *state.extra_clock_domains,
+        ),
+        clock_relations=state.clock_relations,
+        coverage=profile_coverage,
+        operations=state.operations,
+        events=state.events,
+        quality_samples=state.quality_samples,
+        media_refs=state.media_refs,
+    )
+
+
 class IncidentRecorder:
     def __init__(
         self,
@@ -228,6 +516,7 @@ class IncidentRecorder:
         on_close: Callable[[], None] | None = None,
         on_status: Callable[[RecorderStatus], None] | None = None,
         diagnostic: Callable[[Any], None] | None = None,
+        checkpoint: CheckpointWriterLike | None = None,
     ) -> None:
         source_config = config or RecorderConfig()
         source_policy = source_config.capture_policy
@@ -259,6 +548,12 @@ class IncidentRecorder:
         self._on_close = on_close
         self._on_status = on_status
         self._diagnostic = diagnostic
+        # ``NullCheckpointWriter`` keeps every admission path branch-free when
+        # checkpointing is not configured, which is the default.
+        self._journal = checkpoint if checkpoint is not None else NullCheckpointWriter()
+        self._journaled_omissions = 0
+        # Metadata is retained by construction, so it is never worth a frame.
+        self._journaled_classes: set[CaptureClass] = {CaptureClass.METADATA}
         self._close_notified = False
         self._started_wall = self.clock.unix_nano()
         self._started_mono = self.clock.monotonic_nano()
@@ -272,6 +567,11 @@ class IncidentRecorder:
         self._adapters: list[Adapter] = []
         self._raw_otlp_chunks: list[RawOtlpChunk] = []
         self._omissions: list[Omission] = []
+        # Additional clock domains (e.g. a browser's monotonic clock) and any
+        # declared calibrations relating them to the server clock. These are
+        # small governed metadata; deduped by id and bounded below.
+        self._extra_clock_domains: list[ClockDomain] = []
+        self._clock_relations: list[ClockRelation] = []
         self._retained_classes: set[CaptureClass] = {CaptureClass.METADATA}
         self._status = "running"
         self._closed = False
@@ -293,6 +593,23 @@ class IncidentRecorder:
         )
         self._pending_truncation_diagnostic = False
         self._truncation_diagnostic_emitted = False
+        # Open the journal before the first admission so constructor adapters and
+        # any limit they trip are journaled like every other fact.
+        self._journal.open_journal(
+            producer_name=self.config.producer_name,
+            producer_version=self.config.producer_version,
+            bundle_id=self.bundle_id,
+            session_id=self.session_id,
+            clock_domain_id=self.clock_domain_id,
+            started_wall=self._started_wall,
+            started_mono=self._started_mono,
+            manual_trace_id=self._manual_trace_id,
+            capture_policy=self.config.capture_policy,
+            max_records=self.config.max_records,
+            max_capture_bytes=self.config.max_capture_bytes,
+            max_raw_otlp_bytes=self.config.max_raw_otlp_bytes,
+            max_value_bytes=self.config.max_value_bytes,
+        )
         initial_adapter_extensions: list[bool] = []
         for configured_adapter in self.config.adapters:
             adapter, has_extensions = self._prepare_model(configured_adapter, kind="adapter")
@@ -301,10 +618,13 @@ class IncidentRecorder:
             with self._lock:
                 if not self._try_admit_locked("adapter", CaptureClass.METADATA, estimated):
                     break
-            self._adapters.append(adapter)
+                self._adapters.append(adapter)
+                self._journal_locked("adapter", adapter)
             initial_adapter_extensions.append(has_extensions)
         if any(initial_adapter_extensions):
-            self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+            with self._lock:
+                self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+                self._journal_locked("policy")
         self.config = RecorderConfig(
             producer_name=self.config.producer_name,
             producer_version=self.config.producer_version,
@@ -392,6 +712,17 @@ class IncidentRecorder:
         self._estimated_omitted_bytes = self._saturating_add(
             self._estimated_omitted_bytes, estimated_bytes
         )
+        if self._journal.enabled:
+            # Journal the mutation, not the aggregate: replaying these calls
+            # re-derives every omission counter without a second implementation.
+            self._journal.append_limit(
+                reason=reason,
+                kind=kind,
+                capture_class=capture_class,
+                estimated_bytes=estimated_bytes,
+                whole_record=whole_record,
+                freeze=freeze,
+            )
 
     def _try_admit_locked(
         self,
@@ -555,6 +886,7 @@ class IncidentRecorder:
                     self._omissions.extend(omitted)
                     self._track_retained_classes(safe)
                     self._retained_classes.add(CaptureClass(record_class))
+                    self._journal_locked("participant", participant)
         self._emit_pending_truncation_diagnostic()
         return result
 
@@ -600,8 +932,52 @@ class IncidentRecorder:
                     self._omissions.extend(omitted)
                     self._track_retained_classes(safe)
                     self._retained_classes.add(CaptureClass(record_class))
+                    self._journal_locked("stream", stream)
         self._emit_pending_truncation_diagnostic()
         return result
+
+    def register_clock_domain(self, domain: ClockDomain) -> None:
+        """Declare an additional clock domain (e.g. a browser's monotonic clock).
+
+        Idempotent by ``clock_domain_id``: registering the same id twice is a
+        no-op, and a re-registration with a conflicting definition is rejected so
+        a domain's identity cannot silently change mid-session. The process clock
+        domain is implicit and never re-declared here.
+        """
+
+        with self._lock:
+            self._require_open()
+            if domain.clock_domain_id == self.clock_domain_id:
+                return
+            for existing in self._extra_clock_domains:
+                if existing.clock_domain_id == domain.clock_domain_id:
+                    if existing != domain:
+                        raise ValueError("conflicting duplicate clock domain identity")
+                    return
+            if len(self._extra_clock_domains) >= _MAX_EXTRA_CLOCK_DOMAINS:
+                return  # defensive bound; extra domains beyond the cap are ignored
+            self._extra_clock_domains.append(domain.model_copy(deep=True))
+            self._journal_locked("clock_domain", domain)
+
+    def register_clock_relation(self, relation: ClockRelation) -> None:
+        """Declare a calibration relating two clock domains.
+
+        The relation is what lets the analyzer align cross-clock timestamps into
+        an honestly *estimated* latency; without one, cross-clock latency stays
+        unavailable. Idempotent by ``relation_id`` with the same conflict guard.
+        """
+
+        with self._lock:
+            self._require_open()
+            for existing in self._clock_relations:
+                if existing.relation_id == relation.relation_id:
+                    if existing != relation:
+                        raise ValueError("conflicting duplicate clock relation identity")
+                    return
+            if len(self._clock_relations) >= _MAX_CLOCK_RELATIONS:
+                return
+            self._clock_relations.append(relation.model_copy(deep=True))
+            self._journal_locked("clock_relation", relation)
 
     def record_coverage(self, signal: str, availability: str, reason: str | None = None) -> None:
         safe_signal = sanitize_semantic_label(signal) or "unknown"
@@ -646,9 +1022,14 @@ class IncidentRecorder:
                     else:
                         self._coverage[index] = coverage
                         self._captured_bytes += delta
+                        # Coverage supersedes in place. Journaling the index the
+                        # recorder replaced keeps replay from guessing at
+                        # last-write-wins.
+                        self._journal_locked("coverage", coverage, replaces_index=index)
                 break
             if not handled and self._try_admit_locked("coverage", CaptureClass.METADATA, estimated):
                 self._coverage.append(coverage)
+                self._journal_locked("coverage", coverage)
         self._emit_pending_truncation_diagnostic()
 
     def record_omission(
@@ -680,6 +1061,7 @@ class IncidentRecorder:
             estimated, _ = _structural_size_up_to(omission.as_dict(), self.config.max_capture_bytes)
             if self._try_admit_locked("omission", normalized_class, estimated):
                 self._omissions.append(omission)
+                self._journal_locked("omission")
         self._emit_pending_truncation_diagnostic()
 
     def register_adapter(self, adapter: Adapter) -> None:
@@ -688,12 +1070,15 @@ class IncidentRecorder:
         estimated, _ = _structural_size_up_to(adapter, self.config.max_capture_bytes)
         with self._lock:
             self._require_open()
+            admitted = False
             if adapter not in self._adapters and self._try_admit_locked(
                 "adapter", CaptureClass.METADATA, estimated
             ):
                 self._adapters.append(adapter)
+                admitted = True
             if adapter in self._adapters and has_model_extensions:
                 self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+            self._journal_locked("adapter" if admitted else "policy", adapter if admitted else None)
         self._emit_pending_truncation_diagnostic()
 
     def add_raw_otlp_chunk(
@@ -720,6 +1105,7 @@ class IncidentRecorder:
                 )
                 if self._try_admit_locked("omission", CaptureClass.RAW_OTLP, estimated):
                     self._omissions.append(omission)
+                    self._journal_locked("omission")
                 return False
             # Check the raw-byte cap before hashing or constructing/copying payload data.
             estimated = min(self.config.max_capture_bytes + 1, payload_size + 256)
@@ -733,17 +1119,20 @@ class IncidentRecorder:
             else:
                 admitted = True
             if admitted:
-                self._raw_otlp_chunks.append(
-                    RawOtlpChunk(
-                        chunk_id=chunk_id,
-                        signal=signal,
-                        content_type=content_type,
-                        compression=compression,
-                        payload=payload,
-                        sha256=hashlib.sha256(payload).hexdigest(),
-                    )
+                chunk = RawOtlpChunk(
+                    chunk_id=chunk_id,
+                    signal=signal,
+                    content_type=content_type,
+                    compression=compression,
+                    payload=payload,
+                    sha256=hashlib.sha256(payload).hexdigest(),
                 )
+                self._raw_otlp_chunks.append(chunk)
                 self._retained_classes.add(CaptureClass.RAW_OTLP)
+                # The journal carries only classes the policy already admitted;
+                # these bytes were admitted, so a replay that dropped them would
+                # not reproduce the artifact this session is going to produce.
+                self._journal_locked("raw_otlp", chunk, raw_payload=payload)
         self._emit_pending_truncation_diagnostic()
         return admitted
 
@@ -919,6 +1308,7 @@ class IncidentRecorder:
                     self._track_retained_classes(safe_error.attributes)
                 if has_model_extensions:
                     self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+                self._journal_locked("operation", operation)
         self._emit_pending_truncation_diagnostic()
         return operation
 
@@ -950,6 +1340,26 @@ class IncidentRecorder:
         )
         parent_scope = "internal" if parent_span_id is not None else "unknown"
         started_at = self._time()
+        if self._journal.enabled:
+            # The completed ``Operation`` is only recorded in the ``finally``
+            # block below, so without this frame an operation that hung and took
+            # the process down would be invisible to recovery. Only the governed
+            # name is journaled; caller attributes have not been through the
+            # capture policy at this point and never enter the journal.
+            journal_name, journal_name_digest = normalize_operation_name(operation_name)
+            self._journal.append_operation_open(
+                operation_id=identity,
+                operation_name=journal_name,
+                operation_name_sha256=journal_name_digest,
+                started_at=started_at,
+                participant_id=participant_id,
+                stream_id=stream_id,
+                turn_id=turn_id,
+                trace_id=trace_id,
+                span_id=span_id,
+                parent_span_id=parent_span_id,
+                parent_scope=parent_scope,
+            )
         status = "ok"
         error: ErrorRecord | None = None
         application_error = False
@@ -1112,6 +1522,7 @@ class IncidentRecorder:
                     self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
                 if has_model_extensions:
                     self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+                self._journal_locked("event", event)
         self._emit_pending_truncation_diagnostic()
         return event
 
@@ -1265,11 +1676,20 @@ class IncidentRecorder:
                     self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
                 if has_model_extensions:
                     self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+                self._journal_locked("quality_sample", sanitized)
         self._emit_pending_truncation_diagnostic()
         return sanitized
 
     def add_media_ref(self, media: MediaRef) -> bool:
-        """Attach governed media metadata; media bytes are never embedded."""
+        """Attach custody metadata for media somebody else holds.
+
+        Media bytes are never embedded, fetched, cached, or proxied: the record
+        says where the media lives, what it covers, and whether anyone measured
+        it. A credential-bearing or non-portable locator is stripped and recorded
+        as an omission rather than retained, and an integrity claim the reference
+        cannot back is refused outright at admission instead of surviving until
+        ``close()``.
+        """
 
         from .privacy import media_locator_safety
 
@@ -1295,6 +1715,9 @@ class IncidentRecorder:
             raise ValueError("media reference belongs to a different session")
         if media.capture_class != CaptureClass.AUDIO.value:
             raise ValueError("media references require the audio capture class")
+        incoherence = media_custody_incoherence(media)
+        if incoherence is not None:
+            raise ValueError(incoherence)
         if not self.config.capture_policy.allows(CaptureClass.AUDIO):
             with self._lock:
                 self._require_open()
@@ -1307,6 +1730,7 @@ class IncidentRecorder:
                 )
                 if self._try_admit_locked("omission", CaptureClass.AUDIO, estimated):
                     self._omissions.append(omission)
+                    self._journal_locked("omission")
             return False
         safe, omitted = sanitize_attributes(media.attributes, self.config.capture_policy)
         locator = media.locator
@@ -1338,6 +1762,7 @@ class IncidentRecorder:
                 self._track_retained_classes(safe)
                 if has_model_extensions:
                     self._retained_classes.add(CaptureClass.EXTENSION_PAYLOAD)
+                self._journal_locked("media", sanitized)
         self._emit_pending_truncation_diagnostic()
         return admitted
 
@@ -1358,142 +1783,23 @@ class IncidentRecorder:
                 )
                 safe_status = "unknown"
             ended = self._time()
-            privacy_omissions_list = [
-                ContractOmission(
-                    omission_id=f"omission-{index}",
-                    capture_class=item.capture_class.value,
-                    reason=item.reason,
-                    count=1,
-                    attributes={"field_key_sha256": item.field_key_sha256},
-                )
-                for index, item in enumerate(self._omissions)
-            ]
-            for capture_class, count in self._omitted_records_by_class.items():
-                if not count:
-                    continue
-                privacy_omissions_list.append(
-                    ContractOmission(
-                        omission_id=f"omission-{len(privacy_omissions_list)}",
-                        capture_class=capture_class,
-                        reason="recorder_capture_truncated",
-                        count=count,
-                    )
-                )
-            privacy_omissions = tuple(privacy_omissions_list)
-            capture_classes = tuple(
-                CaptureClassPolicy(
-                    capture_class=capture_class.value,
-                    decision=(
-                        "allow" if self.config.capture_policy.allows(capture_class) else "deny"
-                    ),
-                    captured=capture_class in self._retained_classes,
-                    consent=(
-                        ConsentRecord(
-                            status=governance.consent.status,
-                            legal_basis=governance.consent.legal_basis,
-                            recorded_at_unix_nano=governance.consent.recorded_at_unix_nano,
-                            authority=governance.consent.authority,
-                        )
-                        if governance is not None and governance.consent is not None
-                        else None
-                    ),
-                    redaction=(
-                        RedactionRecord(
-                            policy_id=governance.redaction.policy_id,
-                            policy_version=governance.redaction.policy_version,
-                            status=governance.redaction.status,
-                            findings_count=governance.redaction.findings_count,
-                            redacted_count=governance.redaction.redacted_count,
-                            executed_at_unix_nano=governance.redaction.executed_at_unix_nano,
-                        )
-                        if governance is not None and governance.redaction is not None
-                        else None
-                    ),
-                    retention=(
-                        RetentionPolicy(
-                            expires_at_unix_nano=governance.retention.expires_at_unix_nano,
-                            ttl_nano=governance.retention.ttl_nano,
-                            policy_id=governance.retention.policy_id,
-                        )
-                        if governance is not None and governance.retention is not None
-                        else None
-                    ),
-                    export=(
-                        ExportPolicy(
-                            allowed=governance.export.allowed,
-                            destinations=governance.export.destinations,
-                            policy_id=governance.export.policy_id,
-                        )
-                        if governance is not None and governance.export is not None
-                        else None
-                    ),
-                )
-                for capture_class in CaptureClass
-                for governance in (self.config.capture_policy.governance.get(capture_class),)
+            # The finalize frame is written before validation and before export
+            # so a crash between close and delivery still recovers the exact
+            # artifact this call is about to produce.
+            self._journal.finalize(
+                status=safe_status,
+                status_attributes=status_attributes,
+                ended=ended,
+                first_limit_reason=self._first_limit_reason,
+                truncated_records=self._truncated_records,
+                estimated_omitted_bytes=self._estimated_omitted_bytes,
+                omitted_records_by_kind=tuple(self._omitted_records_by_kind.items()),
+                omitted_records_by_capture_class=tuple(self._omitted_records_by_class.items()),
+                retained_classes=tuple(self._retained_classes),
+                record_counts=self._record_counts_locked(),
             )
-            profile_coverage = tuple(
-                item for item in self._coverage if item.signal != "recorder.capture"
-            )
-            if self._first_limit_reason is not None:
-                profile_coverage += (
-                    Coverage(
-                        signal="recorder.capture",
-                        availability="partial",
-                        reason=self._first_limit_reason,
-                    ),
-                )
-            profile = IncidentProfile(
-                manifest=BundleManifest(
-                    bundle_id=self.bundle_id,
-                    session_id=self.session_id,
-                    created_at_unix_nano=str(self._started_wall),
-                    producer=Producer(
-                        name=self.config.producer_name,
-                        version=self.config.producer_version,
-                        sdk_version=self.config.producer_version,
-                    ),
-                    adapters=tuple(self._adapters),
-                    completeness=(
-                        "complete"
-                        if safe_status == "completed" and self._first_limit_reason is None
-                        else "incomplete"
-                    ),
-                ),
-                session=Session(
-                    session_id=self.session_id,
-                    status=safe_status,
-                    started_at=TimePoint(
-                        source_time_unix_nano=str(self._started_wall),
-                        monotonic_time_nano="0",
-                        clock_domain_id=self.clock_domain_id,
-                    ),
-                    ended_at=ended,
-                    attributes=status_attributes,
-                ),
-                privacy=PrivacyManifest(
-                    policy_id=self.config.capture_policy.policy_id,
-                    policy_version=self.config.capture_policy.policy_version,
-                    capture_classes=capture_classes,
-                    omissions=privacy_omissions,
-                ),
-                participants=tuple(self._participants),
-                audio_streams=tuple(self._streams),
-                clock_domains=(
-                    ClockDomain(
-                        clock_domain_id=self.clock_domain_id,
-                        kind="process_monotonic",
-                        observer="earshot.sdk",
-                        monotonic_origin_nano=str(self._started_mono),
-                        wall_origin_unix_nano=str(self._started_wall),
-                        uncertainty_nano="0",
-                        synchronization_method="same_process_sample",
-                    ),
-                ),
-                coverage=profile_coverage,
-                operations=tuple(self._operations),
-                events=tuple(self._events),
-                quality_samples=tuple(self._quality_samples),
-                media_refs=tuple(self._media_refs),
+            profile = build_incident_profile(
+                self._snapshot_locked(safe_status, status_attributes, ended)
             )
             bundle = IncidentBundle(
                 profile=profile,
@@ -1524,6 +1830,9 @@ class IncidentRecorder:
                 export_bundle = self._bundle
 
         if validation_error is not None:
+            # Keep the journal: an artifact that failed validation is exactly the
+            # case an operator wants to inspect the raw evidence for.
+            self._journal.release(delivered=False)
             if terminal_failure:
                 self._notify_close_once()
             raise validation_error
@@ -1548,8 +1857,141 @@ class IncidentRecorder:
                         self.export_accepted = False
                     self.last_export_error = error
         finally:
+            # The journal is only discarded once the incident has a successor:
+            # a closed bundle the caller now holds, and an exporter that did not
+            # refuse it. Anything else keeps the evidence on disk.
+            self._journal.release(delivered=self.export_accepted is not False)
             self._notify_close_once()
         return export_bundle.model_copy(deep=True)
+
+    def close_partial(self, recovery: RecoveryRecord, *, status: str) -> IncidentBundle:
+        """Close a session whose end the observer never saw, as a provisional incident.
+
+        A partial observation — a browser capture batch flushed while the call is
+        still ongoing, for instance — is not a finished call. Its close was never
+        observed, so no finalize frame is written (nothing observed a finalize),
+        ``session.ended_at`` stays absent (the last snapshot is not the end of the
+        call), and the artifact carries ``recovery`` with ``close_observed=False``.
+        ``build_incident_profile`` then marks it provisional/incomplete and the
+        validator refuses any manifest, session, or coverage that would let it pass
+        as a clean, complete close.
+        """
+
+        if recovery.close_observed:
+            raise ValueError("close_partial requires a recovery whose close was not observed")
+        with self._lock:
+            if self._close_error is not None:
+                raise self._close_error
+            if self._bundle is not None:
+                return self._bundle.model_copy(deep=True)
+            safe_status = sanitize_semantic_label(status) or "unknown"
+            if safe_status == "completed":
+                raise ValueError("a partial observation cannot present as a completed session")
+            # No ``ended_at``: the real end was genuinely not observed. No journal
+            # finalize either — a finalize frame means an observed close, and this
+            # close was not observed; the journal stays as the partial evidence.
+            snapshot = self._snapshot_locked(safe_status, {}, None)
+            profile = build_incident_profile(snapshot, recovery=recovery)
+            bundle = IncidentBundle(profile=profile, raw_otlp_chunks=tuple(self._raw_otlp_chunks))
+            from .validation import assert_valid_incident  # imported lazily
+
+            assert_valid_incident(bundle)
+            self._status = safe_status
+            self._closed = True
+            self._bundle = bundle.model_copy(deep=True)
+        return self._bundle.model_copy(deep=True)
+
+    def checkpoint_status(self) -> CheckpointStatus:
+        """Report the crash journal's state, including any degradation."""
+
+        return self._journal.status()
+
+    def _record_counts_locked(self) -> dict[str, int]:
+        """Per-kind totals the assembler cross-checks its replay against."""
+
+        return {
+            "adapters": len(self._adapters),
+            "participants": len(self._participants),
+            "audio_streams": len(self._streams),
+            "clock_domains": len(self._extra_clock_domains),
+            "clock_relations": len(self._clock_relations),
+            "coverage": len(self._coverage),
+            "operations": len(self._operations),
+            "events": len(self._events),
+            "quality_samples": len(self._quality_samples),
+            "media_refs": len(self._media_refs),
+            "omissions": len(self._omissions),
+            "raw_otlp_chunks": len(self._raw_otlp_chunks),
+        }
+
+    def _snapshot_locked(
+        self,
+        status: str,
+        status_attributes: dict[str, str],
+        ended_at: TimePoint | None,
+    ) -> RecorderSnapshot:
+        return RecorderSnapshot(
+            producer_name=self.config.producer_name,
+            producer_version=self.config.producer_version,
+            bundle_id=self.bundle_id,
+            session_id=self.session_id,
+            clock_domain_id=self.clock_domain_id,
+            started_wall=self._started_wall,
+            started_mono=self._started_mono,
+            capture_policy=self.config.capture_policy,
+            adapters=tuple(self._adapters),
+            status=status,
+            status_attributes=status_attributes,
+            ended_at=ended_at,
+            participants=tuple(self._participants),
+            audio_streams=tuple(self._streams),
+            extra_clock_domains=tuple(self._extra_clock_domains),
+            clock_relations=tuple(self._clock_relations),
+            coverage=tuple(self._coverage),
+            operations=tuple(self._operations),
+            events=tuple(self._events),
+            quality_samples=tuple(self._quality_samples),
+            media_refs=tuple(self._media_refs),
+            omissions=tuple(self._omissions),
+            retained_classes=frozenset(self._retained_classes),
+            first_limit_reason=self._first_limit_reason,
+            omitted_records_by_class=tuple(self._omitted_records_by_class.items()),
+        )
+
+    def _journal_locked(
+        self,
+        kind: str,
+        record: BaseModel | None = None,
+        *,
+        replaces_index: int | None = None,
+        raw_payload: bytes | None = None,
+    ) -> None:
+        """Append this admitted mutation to the crash journal, under the lock.
+
+        Called at the end of every critical section that changed recorder state,
+        so journal order is exactly admission order. The privacy ledger and the
+        retained-class set are diffed here rather than at each call site: a new
+        admission path then cannot forget to journal what it appended.
+        """
+
+        if not self._journal.enabled:
+            return
+        pending_omissions = tuple(self._omissions[self._journaled_omissions :])
+        self._journaled_omissions = len(self._omissions)
+        pending_classes = tuple(sorted(self._retained_classes - self._journaled_classes))
+        self._journaled_classes.update(pending_classes)
+        if record is None and not pending_omissions and not pending_classes:
+            return
+        self._journal.append_record(
+            RecordMutation(
+                kind=kind,
+                record=record,
+                omissions=pending_omissions,
+                retained_classes=pending_classes,
+                replaces_index=replaces_index,
+                raw_payload=raw_payload,
+            )
+        )
 
     def _notify_close_once(self) -> None:
         with self._lock:

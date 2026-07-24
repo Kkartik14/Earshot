@@ -10,10 +10,18 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
+from .checkpoint.writer import (
+    DEFAULT_FSYNC_INTERVAL_MS,
+    DEFAULT_MAX_JOURNAL_BYTES,
+    FSYNC_MODES,
+    CheckpointConfig,
+    CheckpointWriter,
+)
 from .clock import Clock
 from .context import _conversation_scope, is_instrumentation_suppressed
 from .exporter import (
@@ -35,6 +43,10 @@ from .recorder import (
 )
 from .versions import PACKAGE_VERSION
 
+if TYPE_CHECKING:  # pragma: no cover - the projection seam stays a lazy import
+    from .contract import IncidentBundle
+    from .exporters.registry import IncidentExporter, RegisteredExporter
+
 
 @dataclass(frozen=True)
 class SdkConfig:
@@ -52,6 +64,12 @@ class SdkConfig:
     max_spool_items: int = 1024
     max_spool_bytes: int = 256 * 1024 * 1024
     permanent_rejection_policy: str = "retain"
+    # Checkpointing is off by default. The explicit directory is the storage
+    # opt-in, exactly like the durable spool's.
+    checkpoint_dir: str | None = None
+    checkpoint_fsync_mode: str = "interval"
+    checkpoint_fsync_interval_ms: int = DEFAULT_FSYNC_INTERVAL_MS
+    checkpoint_max_bytes: int = DEFAULT_MAX_JOURNAL_BYTES
     max_records: int = DEFAULT_MAX_RECORDS
     max_capture_bytes: int = DEFAULT_MAX_CAPTURE_BYTES
     max_raw_otlp_bytes: int = DEFAULT_MAX_RAW_OTLP_BYTES
@@ -369,6 +387,21 @@ class _Conversation:
         self.__exit__(exc_type, exc, traceback)
 
 
+def _destination_fingerprint(endpoint: str | None, project_id: str) -> str | None:
+    """Bind at-rest evidence to the route it would have been delivered to.
+
+    Credentials are deliberately excluded so a token rotation can still drain the
+    same private directory.
+    """
+
+    if not endpoint:
+        return None
+    normalized = endpoint.rstrip("/")
+    if not normalized.endswith("/v1/incidents"):
+        normalized += "/v1/incidents"
+    return hashlib.sha256(f"{normalized}\0{project_id}".encode()).hexdigest()
+
+
 class Client:
     """Owner of one Earshot runtime and its background delivery resources."""
 
@@ -389,6 +422,11 @@ class Client:
         max_spool_items: int = 1024,
         max_spool_bytes: int = 256 * 1024 * 1024,
         permanent_rejection_policy: str = "retain",
+        checkpoint_dir: str | Path | None = None,
+        checkpoint_fsync_mode: str = "interval",
+        checkpoint_fsync_interval_ms: int = DEFAULT_FSYNC_INTERVAL_MS,
+        checkpoint_max_bytes: int = DEFAULT_MAX_JOURNAL_BYTES,
+        checkpoint_key: bytes | str | None = None,
         max_records: int = DEFAULT_MAX_RECORDS,
         max_capture_bytes: int = DEFAULT_MAX_CAPTURE_BYTES,
         max_raw_otlp_bytes: int = DEFAULT_MAX_RAW_OTLP_BYTES,
@@ -414,6 +452,7 @@ class Client:
         self.config = SdkConfig()
         self._closed = False
         self._diagnostic = diagnostic
+        self._checkpoint_key: bytes | str | None = None
         self._reconfigure(
             endpoint=endpoint,
             token=token,
@@ -429,6 +468,11 @@ class Client:
             max_spool_items=max_spool_items,
             max_spool_bytes=max_spool_bytes,
             permanent_rejection_policy=permanent_rejection_policy,
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_fsync_mode=checkpoint_fsync_mode,
+            checkpoint_fsync_interval_ms=checkpoint_fsync_interval_ms,
+            checkpoint_max_bytes=checkpoint_max_bytes,
+            checkpoint_key=checkpoint_key,
             max_records=max_records,
             max_capture_bytes=max_capture_bytes,
             max_raw_otlp_bytes=max_raw_otlp_bytes,
@@ -470,6 +514,11 @@ class Client:
         max_spool_items: int,
         max_spool_bytes: int,
         permanent_rejection_policy: str,
+        checkpoint_dir: str | Path | None,
+        checkpoint_fsync_mode: str,
+        checkpoint_fsync_interval_ms: int,
+        checkpoint_max_bytes: int,
+        checkpoint_key: bytes | str | None,
         max_records: int,
         max_capture_bytes: int,
         max_raw_otlp_bytes: int,
@@ -496,6 +545,12 @@ class Client:
                 and self.config.max_spool_items == max_spool_items
                 and self.config.max_spool_bytes == max_spool_bytes
                 and self.config.permanent_rejection_policy == permanent_rejection_policy
+                and self.config.checkpoint_dir
+                == (None if checkpoint_dir is None else str(Path(checkpoint_dir)))
+                and self.config.checkpoint_fsync_mode == checkpoint_fsync_mode
+                and self.config.checkpoint_fsync_interval_ms == checkpoint_fsync_interval_ms
+                and self.config.checkpoint_max_bytes == checkpoint_max_bytes
+                and self._checkpoint_key == checkpoint_key
                 and self.config.max_records == max_records
                 and self.config.max_capture_bytes == max_capture_bytes
                 and self.config.max_raw_otlp_bytes == max_raw_otlp_bytes
@@ -521,6 +576,11 @@ class Client:
         max_spool_items: int,
         max_spool_bytes: int,
         permanent_rejection_policy: str,
+        checkpoint_dir: str | Path | None,
+        checkpoint_fsync_mode: str,
+        checkpoint_fsync_interval_ms: int,
+        checkpoint_max_bytes: int,
+        checkpoint_key: bytes | str | None,
         max_records: int,
         max_capture_bytes: int,
         max_raw_otlp_bytes: int,
@@ -546,6 +606,14 @@ class Client:
             raise ValueError("spool item and byte caps must be positive")
         if permanent_rejection_policy not in {"retain", "delete"}:
             raise ValueError("permanent_rejection_policy must be retain or delete")
+        if checkpoint_fsync_mode not in FSYNC_MODES:
+            raise ValueError("checkpoint_fsync_mode must be interval, always, or never")
+        for name, value in (
+            ("checkpoint_fsync_interval_ms", checkpoint_fsync_interval_ms),
+            ("checkpoint_max_bytes", checkpoint_max_bytes),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
         for name, value in (
             ("max_records", max_records),
             ("max_capture_bytes", max_capture_bytes),
@@ -555,6 +623,7 @@ class Client:
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
         resolved_spool_dir = None if spool_dir is None else str(Path(spool_dir))
+        resolved_checkpoint_dir = None if checkpoint_dir is None else str(Path(checkpoint_dir))
         if delivery_mode == "durable" and (endpoint is None or resolved_spool_dir is None):
             raise ValueError("durable delivery requires both endpoint and explicit spool_dir")
         if not project_id or project_id != project_id.strip():
@@ -575,6 +644,11 @@ class Client:
             max_spool_items=max_spool_items,
             max_spool_bytes=max_spool_bytes,
             permanent_rejection_policy=permanent_rejection_policy,
+            checkpoint_dir=resolved_checkpoint_dir,
+            checkpoint_fsync_mode=checkpoint_fsync_mode,
+            checkpoint_fsync_interval_ms=checkpoint_fsync_interval_ms,
+            checkpoint_max_bytes=checkpoint_max_bytes,
+            checkpoint_key=checkpoint_key,
             max_records=max_records,
             max_capture_bytes=max_capture_bytes,
             max_raw_otlp_bytes=max_raw_otlp_bytes,
@@ -623,12 +697,7 @@ class Client:
             else:
                 from .exporter import DurableExporter
 
-                normalized_destination = endpoint.rstrip("/")
-                if not normalized_destination.endswith("/v1/incidents"):
-                    normalized_destination += "/v1/incidents"
-                destination_fingerprint = hashlib.sha256(
-                    f"{normalized_destination}\0{project_id}".encode()
-                ).hexdigest()
+                destination_fingerprint = _destination_fingerprint(endpoint, project_id)
                 next_exporter = DurableExporter(
                     transport,
                     spool_dir=Path(resolved_spool_dir or ""),
@@ -651,6 +720,10 @@ class Client:
                 max_spool_items=max_spool_items,
                 max_spool_bytes=max_spool_bytes,
                 permanent_rejection_policy=permanent_rejection_policy,
+                checkpoint_dir=resolved_checkpoint_dir,
+                checkpoint_fsync_mode=checkpoint_fsync_mode,
+                checkpoint_fsync_interval_ms=checkpoint_fsync_interval_ms,
+                checkpoint_max_bytes=checkpoint_max_bytes,
                 max_records=max_records,
                 max_capture_bytes=max_capture_bytes,
                 max_raw_otlp_bytes=max_raw_otlp_bytes,
@@ -663,6 +736,9 @@ class Client:
                 self._token = token
                 self._sampling_seed = sampling_seed
                 self._diagnostic = diagnostic
+                # The checkpoint key is a secret, so it stays off ``SdkConfig``
+                # for the same reason the endpoint token does.
+                self._checkpoint_key = checkpoint_key
                 self._closed = False
             if not retirement_complete:
                 raise RuntimeError(
@@ -747,6 +823,11 @@ class Client:
         resolved_session_id = session_id or f"session-{uuid.uuid4().hex}"
         config, exporter, release = self._runtime_for_recorder(resolved_session_id)
         try:
+            checkpoint = self._checkpoint_writer(config)
+        except BaseException:
+            release()
+            raise
+        try:
             recorder = IncidentRecorder(
                 session_id=resolved_session_id,
                 bundle_id=bundle_id,
@@ -764,12 +845,34 @@ class Client:
                 on_close=release,
                 on_status=self._record_recorder_status,
                 diagnostic=self._diagnostic,
+                checkpoint=checkpoint,
             )
         except BaseException:
+            if checkpoint is not None:
+                checkpoint.release()
             release()
             raise
         weakref.finalize(recorder, release)
         return recorder
+
+    def _checkpoint_writer(self, config: SdkConfig) -> CheckpointWriter | None:
+        """One journal per recorder, bound to the route it would be delivered to."""
+
+        if config.checkpoint_dir is None:
+            return None
+        return CheckpointWriter(
+            CheckpointConfig(
+                checkpoint_dir=Path(config.checkpoint_dir),
+                destination_fingerprint=_destination_fingerprint(
+                    config.endpoint, config.project_id
+                ),
+                fsync_mode=config.checkpoint_fsync_mode,
+                fsync_interval_ms=config.checkpoint_fsync_interval_ms,
+                max_journal_bytes=config.checkpoint_max_bytes,
+                checkpoint_key=self._checkpoint_key,
+            ),
+            diagnostic=self._diagnostic,
+        )
 
     def conversation(
         self,
@@ -784,6 +887,45 @@ class Client:
             client_id=self.client_id,
             project_id=self.config.project_id,
         )
+
+    def export(self, bundle: IncidentBundle, *, format: str = "otlp") -> Mapping[str, Any]:
+        """Project a finished incident with a registered exporter, by name.
+
+        This is the seam that keeps a backend integration out of application code:
+        the caller names an exporter (``"otlp"``, ``"openinference"``, or one their
+        own process registered) and never imports a projection module. The named
+        export is policy-checked against the exporter's declared destination, so an
+        incident whose capture policy forbids it is refused before projection.
+
+        The projection is pure and needs none of the client's delivery runtime,
+        which is why it neither reserves a recorder nor cares whether the client is
+        configured with an endpoint or already shut down.
+        """
+
+        from .exporters.registry import default_registry
+
+        return default_registry().export(bundle, format=format)
+
+    def register_exporter(
+        self,
+        name: str,
+        exporter: IncidentExporter,
+        *,
+        destination: str | None = None,
+        replace: bool = False,
+    ) -> RegisteredExporter:
+        """Register a user exporter so :meth:`export` can select it by name."""
+
+        from .exporters.registry import default_registry
+
+        return default_registry().register(name, exporter, destination=destination, replace=replace)
+
+    def exporter_formats(self) -> tuple[str, ...]:
+        """Every exporter name :meth:`export` accepts, sorted."""
+
+        from .exporters.registry import default_registry
+
+        return default_registry().names()
 
     def flush(self, timeout: float | None = 5.0) -> bool:
         return self._router.flush(timeout)
@@ -908,6 +1050,11 @@ def _initialize(
     max_spool_items: int = 1024,
     max_spool_bytes: int = 256 * 1024 * 1024,
     permanent_rejection_policy: str = "retain",
+    checkpoint_dir: str | Path | None = None,
+    checkpoint_fsync_mode: str = "interval",
+    checkpoint_fsync_interval_ms: int = DEFAULT_FSYNC_INTERVAL_MS,
+    checkpoint_max_bytes: int = DEFAULT_MAX_JOURNAL_BYTES,
+    checkpoint_key: bytes | str | None = None,
     max_records: int = DEFAULT_MAX_RECORDS,
     max_capture_bytes: int = DEFAULT_MAX_CAPTURE_BYTES,
     max_raw_otlp_bytes: int = DEFAULT_MAX_RAW_OTLP_BYTES,
@@ -936,6 +1083,11 @@ def _initialize(
                 max_spool_items=max_spool_items,
                 max_spool_bytes=max_spool_bytes,
                 permanent_rejection_policy=permanent_rejection_policy,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_fsync_mode=checkpoint_fsync_mode,
+                checkpoint_fsync_interval_ms=checkpoint_fsync_interval_ms,
+                checkpoint_max_bytes=checkpoint_max_bytes,
+                checkpoint_key=checkpoint_key,
                 max_records=max_records,
                 max_capture_bytes=max_capture_bytes,
                 max_raw_otlp_bytes=max_raw_otlp_bytes,
@@ -959,6 +1111,11 @@ def _initialize(
             max_spool_items=max_spool_items,
             max_spool_bytes=max_spool_bytes,
             permanent_rejection_policy=permanent_rejection_policy,
+            checkpoint_dir=checkpoint_dir,
+            checkpoint_fsync_mode=checkpoint_fsync_mode,
+            checkpoint_fsync_interval_ms=checkpoint_fsync_interval_ms,
+            checkpoint_max_bytes=checkpoint_max_bytes,
+            checkpoint_key=checkpoint_key,
             max_records=max_records,
             max_capture_bytes=max_capture_bytes,
             max_raw_otlp_bytes=max_raw_otlp_bytes,
@@ -981,6 +1138,11 @@ def _initialize(
                 max_spool_items=max_spool_items,
                 max_spool_bytes=max_spool_bytes,
                 permanent_rejection_policy=permanent_rejection_policy,
+                checkpoint_dir=checkpoint_dir,
+                checkpoint_fsync_mode=checkpoint_fsync_mode,
+                checkpoint_fsync_interval_ms=checkpoint_fsync_interval_ms,
+                checkpoint_max_bytes=checkpoint_max_bytes,
+                checkpoint_key=checkpoint_key,
                 max_records=max_records,
                 max_capture_bytes=max_capture_bytes,
                 max_raw_otlp_bytes=max_raw_otlp_bytes,
@@ -1028,20 +1190,25 @@ def _environment_optional_integer(name: str, default: int) -> int | None:
 
 def init(
     *,
-    endpoint: str | None | object = _UNSET,
-    token: str | None | object = _UNSET,
+    endpoint: str | object | None = _UNSET,
+    token: str | object | None = _UNSET,
     project_id: str | object = _UNSET,
     queue_capacity: int | object = _UNSET,
     max_queue_bytes: int | object = _UNSET,
-    compression_threshold_bytes: int | None | object = _UNSET,
+    compression_threshold_bytes: int | object | None = _UNSET,
     sampling_rate: float | object = _UNSET,
     sampling_seed: str | object = _UNSET,
     delivery_mode: str | object = _UNSET,
-    spool_dir: str | Path | None | object = _UNSET,
+    spool_dir: str | Path | object | None = _UNSET,
     sync_deadline_seconds: float | object = _UNSET,
     max_spool_items: int | object = _UNSET,
     max_spool_bytes: int | object = _UNSET,
     permanent_rejection_policy: str | object = _UNSET,
+    checkpoint_dir: str | Path | object | None = _UNSET,
+    checkpoint_fsync_mode: str | object = _UNSET,
+    checkpoint_fsync_interval_ms: int | object = _UNSET,
+    checkpoint_max_bytes: int | object = _UNSET,
+    checkpoint_key: bytes | str | None = None,
     max_records: int | object = _UNSET,
     max_capture_bytes: int | object = _UNSET,
     max_raw_otlp_bytes: int | object = _UNSET,
@@ -1109,6 +1276,24 @@ def init(
         if permanent_rejection_policy is _UNSET
         else permanent_rejection_policy
     )
+    resolved_checkpoint_dir = (
+        os.environ.get("EARSHOT_CHECKPOINT_DIR") if checkpoint_dir is _UNSET else checkpoint_dir
+    )
+    resolved_checkpoint_fsync_mode = (
+        os.environ.get("EARSHOT_CHECKPOINT_FSYNC_MODE", "interval")
+        if checkpoint_fsync_mode is _UNSET
+        else checkpoint_fsync_mode
+    )
+    resolved_checkpoint_interval = (
+        _environment_integer("EARSHOT_CHECKPOINT_FSYNC_INTERVAL_MS", DEFAULT_FSYNC_INTERVAL_MS)
+        if checkpoint_fsync_interval_ms is _UNSET
+        else checkpoint_fsync_interval_ms
+    )
+    resolved_checkpoint_max_bytes = (
+        _environment_integer("EARSHOT_CHECKPOINT_MAX_BYTES", DEFAULT_MAX_JOURNAL_BYTES)
+        if checkpoint_max_bytes is _UNSET
+        else checkpoint_max_bytes
+    )
     resolved_max_records = (
         _environment_integer("EARSHOT_MAX_RECORDS", DEFAULT_MAX_RECORDS)
         if max_records is _UNSET
@@ -1157,7 +1342,13 @@ def init(
         raise TypeError("max_spool_bytes must be an integer")
     if not isinstance(resolved_rejection_policy, str):
         raise TypeError("permanent_rejection_policy must be a string")
+    if resolved_checkpoint_dir is not None and not isinstance(resolved_checkpoint_dir, (str, Path)):
+        raise TypeError("checkpoint_dir must be a path or None")
+    if not isinstance(resolved_checkpoint_fsync_mode, str):
+        raise TypeError("checkpoint_fsync_mode must be a string")
     for name, value in (
+        ("checkpoint_fsync_interval_ms", resolved_checkpoint_interval),
+        ("checkpoint_max_bytes", resolved_checkpoint_max_bytes),
         ("max_records", resolved_max_records),
         ("max_capture_bytes", resolved_max_capture_bytes),
         ("max_raw_otlp_bytes", resolved_max_raw_otlp_bytes),
@@ -1180,6 +1371,11 @@ def init(
         max_spool_items=resolved_max_spool_items,
         max_spool_bytes=resolved_max_spool_bytes,
         permanent_rejection_policy=resolved_rejection_policy,
+        checkpoint_dir=resolved_checkpoint_dir,
+        checkpoint_fsync_mode=resolved_checkpoint_fsync_mode,
+        checkpoint_fsync_interval_ms=resolved_checkpoint_interval,
+        checkpoint_max_bytes=resolved_checkpoint_max_bytes,
+        checkpoint_key=checkpoint_key,
         max_records=resolved_max_records,
         max_capture_bytes=resolved_max_capture_bytes,
         max_raw_otlp_bytes=resolved_max_raw_otlp_bytes,
@@ -1205,6 +1401,11 @@ def configure(
     max_spool_items: int = 1024,
     max_spool_bytes: int = 256 * 1024 * 1024,
     permanent_rejection_policy: str = "retain",
+    checkpoint_dir: str | Path | None = None,
+    checkpoint_fsync_mode: str = "interval",
+    checkpoint_fsync_interval_ms: int = DEFAULT_FSYNC_INTERVAL_MS,
+    checkpoint_max_bytes: int = DEFAULT_MAX_JOURNAL_BYTES,
+    checkpoint_key: bytes | str | None = None,
     max_records: int = DEFAULT_MAX_RECORDS,
     max_capture_bytes: int = DEFAULT_MAX_CAPTURE_BYTES,
     max_raw_otlp_bytes: int = DEFAULT_MAX_RAW_OTLP_BYTES,
@@ -1229,6 +1430,11 @@ def configure(
         max_spool_items=max_spool_items,
         max_spool_bytes=max_spool_bytes,
         permanent_rejection_policy=permanent_rejection_policy,
+        checkpoint_dir=checkpoint_dir,
+        checkpoint_fsync_mode=checkpoint_fsync_mode,
+        checkpoint_fsync_interval_ms=checkpoint_fsync_interval_ms,
+        checkpoint_max_bytes=checkpoint_max_bytes,
+        checkpoint_key=checkpoint_key,
         max_records=max_records,
         max_capture_bytes=max_capture_bytes,
         max_raw_otlp_bytes=max_raw_otlp_bytes,
@@ -1265,6 +1471,30 @@ def conversation(
     clock: Clock | None = None,
 ) -> _Conversation:
     return _client.conversation(session_id=session_id, bundle_id=bundle_id, clock=clock)
+
+
+def export(bundle: IncidentBundle, *, format: str = "otlp") -> Mapping[str, Any]:
+    """Project a finished incident with a registered exporter, by name."""
+
+    return _client.export(bundle, format=format)
+
+
+def register_exporter(
+    name: str,
+    exporter: IncidentExporter,
+    *,
+    destination: str | None = None,
+    replace: bool = False,
+) -> RegisteredExporter:
+    """Register a user exporter so :func:`export` can select it by name."""
+
+    return _client.register_exporter(name, exporter, destination=destination, replace=replace)
+
+
+def exporter_formats() -> tuple[str, ...]:
+    """Every exporter name :func:`export` accepts, sorted."""
+
+    return _client.exporter_formats()
 
 
 def flush(timeout: float | None = 5.0) -> bool:

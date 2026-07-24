@@ -7,6 +7,8 @@ import websocketReconnect from "./__fixtures__/faults/websocket_reconnect.explan
 import webrtcDegradation from "./__fixtures__/faults/webrtc_degradation.explanation.json";
 import nativeInterruption from "./__fixtures__/faults/native_s2s_interruption.explanation.json";
 import bargeIn from "./__fixtures__/faults/barge_in.explanation.json";
+import fullBargeInChain from "./__fixtures__/faults/full_barge_in_chain.explanation.json";
+import falseInterruption from "./__fixtures__/faults/false_interruption.explanation.json";
 import deviceUnavailable from "./__fixtures__/faults/device_unavailable.explanation.json";
 import fastEndpointing from "./__fixtures__/faults/fast_endpointing.explanation.json";
 import llmDelay from "./__fixtures__/faults/llm_delay.explanation.json";
@@ -15,14 +17,19 @@ import sttDelay from "./__fixtures__/faults/stt_delay.explanation.json";
 import privacyOptOut from "./__fixtures__/faults/privacy_opt_out.explanation.json";
 import ttsDelay from "./__fixtures__/faults/tts_delay.explanation.json";
 import {
+  buildClockCalibration,
+  buildContradictions,
   buildDiagnoses,
+  buildMediaCustody,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
   buildUnassigned,
+  clockComparability,
   getCoverage,
   operationStatus,
   type AnalysisLike,
+  type ContradictionsLike,
   type ExplanationLike,
   type IncidentLike,
 } from "./timeline";
@@ -564,6 +571,44 @@ describe("generic operation list", () => {
     expect(tool?.leadMs).toBeNull();
   });
 
+  it("converts a lead measurement to milliseconds using its declared unit", () => {
+    const stages = buildTimeline(
+      turnOf([
+        {
+          operation_name: "llm",
+          start_nano: "1000",
+          // Producers that report the lead in SECONDS (e.g. Pipecat metrics.ttfb,
+          // LiveKit *_latency, both unit="s") must not be read as raw ms.
+          measurements: [{ name: "earshot.llm.ttft", value: 2, unit: "s" }],
+        },
+        {
+          operation_name: "tts",
+          start_nano: "2000",
+          measurements: [{ name: "earshot.tts.ttfb", value: 90, unit: "ms" }],
+        },
+      ]),
+    ).turns[0].stages;
+    const llm = stages.find((s) => s.role === "llm");
+    const tts = stages.find((s) => s.role === "tts");
+    // 2 s -> 2000 ms, not 2 ms.
+    expect(llm?.leadMs).toBe(2000);
+    // A milliseconds-unit lead passes through unchanged.
+    expect(tts?.leadMs).toBe(90);
+  });
+
+  it("leaves a lead measurement in an unconvertible unit unplaced instead of mislabeling it as ms", () => {
+    const stages = buildTimeline(
+      turnOf([
+        {
+          operation_name: "stt",
+          start_nano: "1000",
+          measurements: [{ name: "earshot.stt.ttfb", value: 5, unit: "{frame}" }],
+        },
+      ]),
+    ).turns[0].stages;
+    expect(stages.find((s) => s.role === "stt")?.leadMs).toBeNull();
+  });
+
   it("carries each measurement's real unit through to the drawer view", () => {
     const details = buildTurnDetails(
       turnOf([
@@ -841,11 +886,12 @@ describe("per-operation error / status", () => {
 describe("diagnoses", () => {
   it("surfaces the operation.failed diagnosis with its evidence operation and turn", () => {
     const diagnoses = buildDiagnoses(asExplanation(toolTimeoutRetry));
-    expect(diagnoses).toHaveLength(1);
-    const diag = diagnoses[0];
-    expect(diag.code).toBe("operation.failed");
-    expect(diag.confidence).toBe("measured");
-    expect(diag.evidence).toEqual([{ id: "op-tool-attempt-1", turnIndex: 0 }]);
+    // The analyzer now also attributes the retry pattern (tool.retry) alongside
+    // the raw operation.failed fact; both cite the timed-out tool operation.
+    const diag = diagnoses.find((d) => d.code === "operation.failed");
+    expect(diag).toBeDefined();
+    expect(diag!.confidence).toBe("measured");
+    expect(diag!.evidence).toEqual([{ id: "op-tool-attempt-1", turnIndex: 0 }]);
   });
 
   it("returns no diagnoses when the explanation carries none", () => {
@@ -1194,5 +1240,515 @@ describe("remaining fault-family projections", () => {
       availability: "omitted",
       reason: "capture_class_disabled",
     });
+  });
+});
+
+describe("interruption chains", () => {
+  it("projects every observed stage of a barge-in with its offset from the turn origin", () => {
+    const [detail] = buildTurnDetails(asExplanation(fullBargeInChain));
+    const [chain] = detail.interruptionChains;
+
+    expect(detail.interruptionChains).toHaveLength(1);
+    expect(chain.classification).toBe("accepted");
+    // The full canonical vocabulary, in the analyzer's causal order.
+    expect(chain.stages.map((stage) => stage.stage)).toEqual([
+      "overlap_observed",
+      "intent",
+      "classified",
+      "cancellation_requested",
+      "generation_stopped",
+      "queued_audio_discarded",
+      "transport_stopped",
+      "buffers_purged",
+      "render_stopped",
+      "resumed",
+      "tool_outcome",
+    ]);
+    expect(chain.stages.every((stage) => stage.observed)).toBe(true);
+    const overlap = chain.stages[0];
+    const renderStopped = chain.stages.find((stage) => stage.stage === "render_stopped");
+    expect(overlap.evidenceId).toBe("event-overlap");
+    expect(renderStopped?.atMs).toBe((overlap.atMs as number) + 100);
+    expect(chain.effectiveness).toMatchObject({
+      value: 100,
+      availability: "available",
+      confidence: "measured",
+      limitation: null,
+    });
+  });
+
+  it("keeps an unobserved stage as a coverage reason rather than a zero coordinate", () => {
+    const [detail] = buildTurnDetails(asExplanation(bargeIn));
+    const [chain] = detail.interruptionChains;
+    const missing = chain.stages.filter((stage) => !stage.observed);
+
+    expect(missing.map((stage) => stage.stage)).toEqual([
+      "intent",
+      "transport_stopped",
+      "buffers_purged",
+      "resumed",
+      "tool_outcome",
+    ]);
+    // No coordinate, no evidence, and an explicit reason: absence is coverage.
+    expect(missing.every((stage) => stage.atMs === null)).toBe(true);
+    expect(missing.every((stage) => stage.coordinate === null)).toBe(true);
+    expect(missing.every((stage) => stage.evidenceId === null)).toBe(true);
+    expect(missing.map((stage) => stage.coverageReason)).toEqual([
+      "stage_not_observed",
+      "stage_not_observed",
+      "stage_not_observed",
+      "stage_not_observed",
+      "no_tool_in_turn",
+    ]);
+  });
+
+  it("reports an underivable effectiveness as unavailable with the analyzer's limitation", () => {
+    const [detected] = buildTurnDetails(asExplanation(falseInterruption));
+    const [native] = buildTurnDetails(asExplanation(nativeInterruption));
+
+    expect(detected.interruptionChains[0]).toMatchObject({
+      classification: "false",
+      effectiveness: {
+        value: null,
+        availability: "not_observed",
+        limitation: "target_signal_not_observed",
+      },
+    });
+    expect(native.interruptionChains[0].effectiveness).toMatchObject({
+      value: null,
+      availability: "not_observed",
+      limitation: "turn_anchor_not_observed",
+    });
+  });
+
+  it("keeps a stage coordinate that cannot be placed on the turn axis", () => {
+    const explanation = asExplanation({
+      bundle_id: "b",
+      session_id: "s",
+      session_status: "completed",
+      finality: "final",
+      completeness: "complete",
+      analyzer_version: "t",
+      limitations: [],
+      coverage: [],
+      omissions: [],
+      turns: [
+        {
+          turn_id: "turn-1",
+          metrics: {},
+          operations: [
+            {
+              operation_id: "op-tts",
+              operation_name: "tts",
+              status: "cancelled",
+              shape: "point",
+              time_basis: "monotonic",
+              clock_domain_id: "server-clock",
+              start_nano: "1000000000",
+              measurements: [],
+            },
+          ],
+          events: [],
+          interruption_chains: [
+            {
+              turn_id: "turn-1",
+              classification: "accepted",
+              stages: [
+                {
+                  stage: "overlap_observed",
+                  observed: true,
+                  at_nano: "1200000000",
+                  clock_domain_id: "server-clock",
+                  time_basis: "monotonic",
+                  evidence_id: "evt-overlap",
+                },
+                {
+                  stage: "render_stopped",
+                  observed: true,
+                  at_nano: "1750000000000000000",
+                  clock_domain_id: "device-clock",
+                  time_basis: "source_wall",
+                  evidence_id: "evt-render-stopped",
+                },
+              ],
+              effectiveness: {
+                availability: "not_observed",
+                basis: "interruption_barge_in",
+                confidence: "unavailable",
+                limitation: "cross_clock_domain",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const [chain] = buildTurnDetails(explanation)[0].interruptionChains;
+
+    expect(chain.stages[0].atMs).toBe(200);
+    // The device-clock stage cannot be offset against a server-clock origin, so
+    // the exact recorded coordinate is kept instead of an invented +0.
+    expect(chain.stages[1].atMs).toBeNull();
+    expect(chain.stages[1].coordinate).toBe(
+      "device-clock · source_wall · 1750000000000000000ns",
+    );
+  });
+});
+
+describe("clockComparability", () => {
+  it("names a value estimated through a declared calibration", () => {
+    expect(
+      clockComparability({
+        availability: "available",
+        basis: "cross_clock_calibrated",
+        limitation: null,
+      }),
+    ).toEqual({
+      state: "estimated",
+      note: "estimated across clock domains through a declared calibration",
+    });
+  });
+
+  it("says nothing about a same-domain measurement", () => {
+    expect(
+      clockComparability({
+        availability: "available",
+        basis: "monotonic",
+        limitation: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("explains every clock-related absence and stays silent on unrelated ones", () => {
+    expect(
+      clockComparability({
+        availability: "not_observed",
+        basis: "clock_domain",
+        limitation: "cross_clock_domain",
+      }),
+    ).toEqual({
+      state: "unavailable",
+      note: "two clock domains with no declared calibration between them",
+    });
+    expect(
+      clockComparability({
+        availability: "unavailable",
+        basis: "clock_domain",
+        limitation: "cross_clock_ambiguous",
+      })?.note,
+    ).toMatch(/disagree beyond their uncertainty/);
+    // An absence with a non-clock cause is not attributed to the clocks.
+    expect(
+      clockComparability({
+        availability: "not_observed",
+        basis: "interruption_barge_in",
+        limitation: "target_signal_not_observed",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("buildClockCalibration", () => {
+  const twoDomainIncident = {
+    profile: {
+      clock_domains: [
+        {
+          clock_domain_id: "server-clock",
+          kind: "process_monotonic",
+          observer: "server",
+        },
+        {
+          clock_domain_id: "device-clock",
+          kind: "device_wall",
+          observer: "browser",
+          uncertainty_nano: "2000000",
+        },
+      ],
+      clock_relations: [
+        {
+          relation_id: "rel-1",
+          from_clock_domain_id: "device-clock",
+          to_clock_domain_id: "server-clock",
+          method: "ntp_offset",
+          offset_nano: "5000000",
+          uncertainty_nano: "3000000",
+        },
+      ],
+    },
+  } as unknown as IncidentLike;
+
+  const details = [
+    {
+      turnId: "turn-1",
+      index: 0,
+      metrics: [
+        {
+          key: "response",
+          value: 480,
+          availability: "available",
+          basis: "cross_clock_calibrated",
+          confidence: "estimated",
+          limitation: null,
+        },
+        {
+          key: "render_start",
+          value: null,
+          availability: "not_observed",
+          basis: "clock_domain",
+          confidence: "unavailable",
+          limitation: "cross_clock_domain",
+        },
+        {
+          key: "first_token",
+          value: 150,
+          availability: "available",
+          basis: "monotonic",
+          confidence: "measured",
+          limitation: null,
+        },
+      ],
+      interruptionChains: [
+        {
+          reactKey: "turn-1:0",
+          turnId: "turn-1",
+          classification: "accepted",
+          stages: [],
+          effectiveness: {
+            key: "effectiveness",
+            value: null,
+            availability: "not_observed",
+            basis: "clock_domain",
+            confidence: "unavailable",
+            limitation: "cross_clock_domain",
+          },
+        },
+      ],
+    },
+  ] as unknown as ReturnType<typeof buildTurnDetails>;
+
+  it("carries each declared calibration's own uncertainty", () => {
+    const { domains, relations } = buildClockCalibration(twoDomainIncident, []);
+
+    expect(domains.map((domain) => domain.id)).toEqual(["server-clock", "device-clock"]);
+    // A domain that declares no error bound reports null — unknown, not zero.
+    expect(domains[0].uncertaintyMs).toBeNull();
+    expect(domains[1].uncertaintyMs).toBe(2);
+    expect(relations).toEqual([
+      {
+        relationId: "rel-1",
+        fromDomain: "device-clock",
+        toDomain: "server-clock",
+        method: "ntp_offset",
+        uncertaintyMs: 3,
+        driftPpm: null,
+      },
+    ]);
+  });
+
+  it("lists every latency the clocks decide, and only those", () => {
+    const { crossClock } = buildClockCalibration(twoDomainIncident, details);
+
+    expect(crossClock.map((row) => [row.metric, row.state, row.availability])).toEqual([
+      ["response", "estimated", "available"],
+      ["render_start", "unavailable", "not_observed"],
+      ["interruption 0 · effectiveness", "unavailable", "not_observed"],
+    ]);
+    // A same-domain measured latency is not a cross-clock story.
+    expect(crossClock.some((row) => row.metric === "first_token")).toBe(false);
+    expect(crossClock[1].note).toMatch(/no declared calibration/);
+  });
+
+  it("reports no clock story for a single-domain session", () => {
+    const single = {
+      profile: { clock_domains: [{ clock_domain_id: "c", kind: "k", observer: "o" }] },
+    } as unknown as IncidentLike;
+
+    expect(buildClockCalibration(single, [])).toEqual({
+      domains: [{ id: "c", kind: "k", observer: "o", uncertaintyMs: null }],
+      relations: [],
+      crossClock: [],
+    });
+  });
+});
+
+describe("buildContradictions", () => {
+  it("resolves cited operations to their turn and leaves other evidence inert", () => {
+    const report = {
+      bundle_id: "b",
+      analyzer_version: "0.5.0",
+      input_digest: "a".repeat(64),
+      contradictions: [
+        {
+          kind: "render_claim_conflict",
+          summary: "render_observed_while_coverage_not_observed",
+          evidence_ids: ["op-tool-attempt-1", "quality-sample-9"],
+          boundary: "render",
+          turn_id: "turn-1",
+          subject: "turn-1",
+        },
+      ],
+    } as unknown as ContradictionsLike;
+
+    const [contradiction] = buildContradictions(asExplanation(toolTimeoutRetry), report);
+
+    expect(contradiction).toMatchObject({
+      kind: "render_claim_conflict",
+      boundary: "render",
+      turnId: "turn-1",
+    });
+    expect(contradiction.evidence).toEqual([
+      { id: "op-tool-attempt-1", turnIndex: 0 },
+      { id: "quality-sample-9", turnIndex: null },
+    ]);
+  });
+
+  it("projects an examined incident with no conflicts as an empty list", () => {
+    const report = {
+      bundle_id: "b",
+      analyzer_version: "0.5.0",
+      input_digest: "a".repeat(64),
+      contradictions: [],
+    } as unknown as ContradictionsLike;
+
+    expect(buildContradictions(asExplanation(toolTimeoutRetry), report)).toEqual([]);
+  });
+});
+
+describe("buildMediaCustody", () => {
+  // A session whose own evidence lives in "server-clock", plus a media file with
+  // its own timeline. Everything about alignment is decided from these records.
+  const custodyIncident = (
+    media: Record<string, unknown>,
+    relations: Record<string, unknown>[] = [],
+  ) =>
+    ({
+      profile: {
+        clock_domains: [
+          { clock_domain_id: "server-clock", kind: "process_monotonic", observer: "sdk" },
+          { clock_domain_id: "media-1", kind: "media_timeline", observer: "vapi" },
+        ],
+        clock_relations: relations,
+        operations: [
+          {
+            operation_id: "op",
+            operation_name: "llm",
+            status: "ok",
+            started_at: { clock_domain_id: "server-clock", monotonic_time_nano: "0" },
+          },
+        ],
+        events: [],
+        media_refs: [media],
+      },
+    }) as unknown as IncidentLike;
+
+  const opaque = {
+    media_id: "media-1",
+    session_id: "s",
+    stream_id: "stream-out",
+    media_kind: "audio",
+    content_type: "audio/wav",
+    integrity: "opaque_handle",
+    custodian: "provider.vapi",
+    clock_domain_id: "media-1",
+  };
+
+  const relation = {
+    relation_id: "relation-media",
+    from_clock_domain_id: "media-1",
+    to_clock_domain_id: "server-clock",
+    offset_nano: "0",
+    uncertainty_nano: "12000000",
+    method: "provider_declared",
+  };
+
+  it("carries an opaque handle without inventing a digest", () => {
+    const [custody] = buildMediaCustody(custodyIncident(opaque));
+
+    expect(custody.integrity).toBe("opaque_handle");
+    expect(custody.digest).toBeNull();
+    expect(custody.sizeBytes).toBeNull();
+    expect(custody.custodian).toBe("provider.vapi");
+    expect(custody.integrityNote).toMatch(/cannot attest/);
+  });
+
+  it("attributes a declared digest to its producer, never to earshot", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident({
+        ...opaque,
+        integrity: "content_digest",
+        sha256: "a".repeat(64),
+        size_bytes: 4096,
+        custodian: null,
+      }),
+    );
+
+    expect(custody.integrity).toBe("content_digest");
+    expect(custody.digest).toBe("a".repeat(64));
+    // The copy must not let a reader conclude earshot checked the bytes.
+    expect(custody.integrityNote).toMatch(/earshot did not read these bytes/);
+    expect(custody.integrityNote).not.toMatch(/verified\b(?! it)/);
+  });
+
+  it("aligns media through a declared ClockRelation, carrying its uncertainty", () => {
+    const [custody] = buildMediaCustody(custodyIncident(opaque, [relation]));
+
+    expect(custody.alignment).toEqual({
+      state: "aligned",
+      note: "via relation-media",
+      method: "provider_declared",
+      uncertaintyMs: 12,
+      driftPpm: null,
+    });
+  });
+
+  it("aligns through a relation declared in the opposite direction", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident(opaque, [
+        {
+          ...relation,
+          from_clock_domain_id: "server-clock",
+          to_clock_domain_id: "media-1",
+        },
+      ]),
+    );
+
+    expect(custody.alignment.state).toBe("aligned");
+  });
+
+  it("refuses to guess an offset when no calibration reaches the session", () => {
+    const [custody] = buildMediaCustody(custodyIncident(opaque));
+
+    expect(custody.alignment.state).toBe("unaligned");
+    expect(custody.alignment.note).toMatch(/no offset is assumed/);
+  });
+
+  it("does not treat a relation to an unused domain as alignment", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident(opaque, [{ ...relation, to_clock_domain_id: "stranded" }]),
+    );
+
+    expect(custody.alignment.state).toBe("unaligned");
+  });
+
+  it("needs no relation when the media shares the session's clock domain", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident({ ...opaque, clock_domain_id: "server-clock" }),
+    );
+
+    expect(custody.alignment.state).toBe("session_domain");
+  });
+
+  it("says so when a reference declares no media timeline at all", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident({ ...opaque, clock_domain_id: null }),
+    );
+
+    expect(custody.alignment.state).toBe("undeclared");
+  });
+
+  it("projects nothing for an incident that references no media", () => {
+    expect(
+      buildMediaCustody({ profile: { media_refs: [] } } as unknown as IncidentLike),
+    ).toEqual([]);
   });
 });

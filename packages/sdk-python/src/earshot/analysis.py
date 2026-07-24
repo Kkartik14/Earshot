@@ -16,6 +16,7 @@ from typing import TypeVar
 
 from .contract import (
     UINT64_MAX,
+    ClockRelation,
     DerivedAnalysis,
     Diagnosis,
     Event,
@@ -148,6 +149,41 @@ def _matches_stream_direction(
     return not require_explicit
 
 
+# --- Boundary-attribution SLO recipe -----------------------------------------
+# Deterministic thresholds that turn a governed measurement into a boundary
+# hypothesis. Every default is a conservative, real-time-voice-oriented value; a
+# caller may override any subset through ``SloRecipe`` without touching the rules.
+DEFAULT_PACKET_LOSS_RATIO_SLO = 0.05  # fraction 0..1; >5% loss is audibly degraded
+DEFAULT_JITTER_MS_SLO = 30.0  # ms of inter-arrival jitter a jitter buffer must absorb
+DEFAULT_ROUND_TRIP_TIME_MS_SLO = 150.0  # ms RTT; conversation feels laggy beyond this
+DEFAULT_RENDER_START_LATENCY_MS_SLO = 1500.0  # ms turn-commit -> audio actually rendering
+DEFAULT_STAGE_LATENCY_MS_SLO = 1500.0  # ms a single stt/llm/tts stage may occupy
+DEFAULT_ENDPOINTING_LATENCY_MS_SLO = 1000.0  # ms a turn_detection (EOU) decision may take
+
+
+@dataclass(frozen=True)
+class SloRecipe:
+    """Configurable thresholds for the boundary-attribution engine.
+
+    A metric is only diagnosed as an SLO breach when it was actually measured;
+    an ``unavailable``/``not_observed`` metric yields no diagnosis (the analyzer
+    says *unknown* rather than inventing slowness it did not observe). Latency
+    fields are milliseconds; ``packet_loss_ratio`` is a unit-interval fraction.
+    """
+
+    packet_loss_ratio: float = DEFAULT_PACKET_LOSS_RATIO_SLO
+    jitter_ms: float = DEFAULT_JITTER_MS_SLO
+    round_trip_time_ms: float = DEFAULT_ROUND_TRIP_TIME_MS_SLO
+    render_start_latency_ms: float = DEFAULT_RENDER_START_LATENCY_MS_SLO
+    stt_latency_ms: float = DEFAULT_STAGE_LATENCY_MS_SLO
+    llm_latency_ms: float = DEFAULT_STAGE_LATENCY_MS_SLO
+    tts_latency_ms: float = DEFAULT_STAGE_LATENCY_MS_SLO
+    endpointing_latency_ms: float = DEFAULT_ENDPOINTING_LATENCY_MS_SLO
+
+
+DEFAULT_SLO_RECIPE = SloRecipe()
+
+
 @dataclass(frozen=True)
 class Delta:
     availability: str
@@ -155,6 +191,7 @@ class Delta:
     basis: str
     confidence: str
     limitation: str | None = None
+    uncertainty: int | None = None
 
     def as_dict(self) -> dict[str, object]:
         output: dict[str, object] = {
@@ -187,53 +224,241 @@ def _shared_time_deltas(start: TimePoint, end: TimePoint) -> tuple[tuple[str, in
     )
 
 
-def comparable_delta(start: TimePoint, end: TimePoint) -> Delta:
-    """Subtract only evidence sharing an explicit clock domain.
+class _AmbiguousAlignment:
+    """Sentinel: in-window calibrations disagree beyond their combined uncertainty.
 
-    Wall timestamps from different processes can look ordered while being skewed.
-    A declared clock mapping belongs in a future alignment layer; until then, an
-    exact cross-domain latency is unavailable rather than clamped to zero.
+    Two declared relations can both place a cross-clock instant, and when they
+    disagree by more than they claim to know, there is no honest way to pick one.
+    The aligner returns this rather than silently choosing a lexical winner, so
+    ``comparable_delta`` reports the cross-clock result as unavailable/ambiguous.
     """
 
-    if not start.clock_domain_id or start.clock_domain_id != end.clock_domain_id:
-        return Delta(
-            "unavailable",
-            None,
-            "clock_domain",
-            "unavailable",
-            "cross_clock_domain",
-        )
+    __slots__ = ()
 
-    shared_deltas = _shared_time_deltas(start, end)
-    reversed_basis = next((basis for basis, value in shared_deltas if value < 0), None)
-    if reversed_basis is not None:
-        return Delta(
-            "inconsistent",
-            None,
-            reversed_basis,
-            "unavailable",
-            "same_domain_time_reversed",
-        )
 
-    deltas_by_basis = dict(shared_deltas)
-    if "monotonic" in deltas_by_basis:
-        value = deltas_by_basis["monotonic"]
-        basis = "monotonic"
-    elif "source_wall" in deltas_by_basis:
-        value = deltas_by_basis["source_wall"]
-        basis = "source_wall"
-    else:
-        return Delta(
-            "unavailable",
-            None,
-            "clock_domain",
-            "unavailable",
-            "timestamp_representation_unavailable",
-        )
+_AMBIGUOUS_ALIGNMENT = _AmbiguousAlignment()
+_Alignment = tuple[int, int]
 
-    uncertainty = int(start.uncertainty_nano or "0") + int(end.uncertainty_nano or "0")
-    confidence = "estimated" if uncertainty else "measured"
-    return Delta("available", value, basis, confidence)
+
+class _ClockAligner:
+    """Convert a wall timestamp between clock domains using declared calibrations.
+
+    Only ``source_time_unix_nano`` is aligned: monotonic values are domain-local
+    and are never comparable across domains. Alignment succeeds only inside a
+    relation's declared validity window and always carries the calibration's own
+    uncertainty forward, so a cross-domain latency stays honestly estimated.
+    """
+
+    def __init__(self, relations: Sequence[ClockRelation] = ()) -> None:
+        self._by_pair: dict[tuple[str, str], list[ClockRelation]] = defaultdict(list)
+        for relation in sorted(relations, key=lambda item: item.relation_id):
+            key = (relation.from_clock_domain_id, relation.to_clock_domain_id)
+            self._by_pair[key].append(relation)
+
+    def align(
+        self, point: TimePoint, target_domain: str
+    ) -> _Alignment | _AmbiguousAlignment | None:
+        """Return ``(aligned_unix_nano, added_uncertainty_nano)``, ``None``, or ambiguous.
+
+        Every declared ``point.domain -> target`` relation is applied forward and
+        every ``target -> point.domain`` relation is applied in reverse (its exact
+        affine inverse). Among the in-window results the alignment is decided by a
+        principled, deterministic rule; when two results disagree beyond their
+        combined uncertainty the answer is :data:`_AMBIGUOUS_ALIGNMENT`.
+        """
+
+        domain = point.clock_domain_id
+        if (
+            domain is None
+            or not target_domain
+            or domain == target_domain
+            or point.source_time_unix_nano is None
+        ):
+            return None
+        wall = int(point.source_time_unix_nano)
+        candidates: list[tuple[int, int, str]] = []
+        for relation in self._by_pair.get((domain, target_domain), ()):
+            applied = self._apply(relation, wall, forward=True)
+            if applied is not None:
+                candidates.append((applied[0], applied[1], relation.relation_id))
+        for relation in self._by_pair.get((target_domain, domain), ()):
+            applied = self._apply(relation, wall, forward=False)
+            if applied is not None:
+                candidates.append((applied[0], applied[1], relation.relation_id))
+        return self._reconcile(candidates)
+
+    @staticmethod
+    def _reconcile(
+        candidates: list[tuple[int, int, str]],
+    ) -> _Alignment | _AmbiguousAlignment | None:
+        if not candidates:
+            return None
+        # Deterministic, principled selection: prefer the tightest calibration
+        # (smallest own uncertainty), then the smaller aligned value, then the
+        # relation id. This is a stable serialization rule, not a quality claim.
+        ordered = sorted(candidates, key=lambda item: (item[1], item[0], item[2]))
+        # Honesty over guessing: if any two in-window calibrations place the same
+        # instant more than their combined uncertainty apart, the cross-clock
+        # alignment is not decidable from declared evidence -- refuse.
+        for index_a in range(len(ordered)):
+            value_a, uncertainty_a, _ = ordered[index_a]
+            for index_b in range(index_a + 1, len(ordered)):
+                value_b, uncertainty_b, _ = ordered[index_b]
+                if abs(value_a - value_b) > uncertainty_a + uncertainty_b:
+                    return _AMBIGUOUS_ALIGNMENT
+        value, uncertainty, _ = ordered[0]
+        return (value, uncertainty)
+
+    @staticmethod
+    def _apply(relation: ClockRelation, wall: int, *, forward: bool) -> _Alignment | None:
+        aligned = _ClockAligner._map_wall(relation, wall, forward=forward)
+        if aligned is None:
+            return None
+        # The validity window is declared in the relation's ``from`` domain. On the
+        # forward path the input ``wall`` already lives there; on the inverse path
+        # the ``from``-domain coordinate is the inverse's *output*, so the window
+        # must be checked against ``aligned``, not against the ``to``-domain input.
+        from_coordinate = wall if forward else aligned
+        if relation.valid_from_unix_nano is not None and from_coordinate < int(
+            relation.valid_from_unix_nano
+        ):
+            return None
+        if relation.valid_to_unix_nano is not None and from_coordinate > int(
+            relation.valid_to_unix_nano
+        ):
+            return None
+        added_uncertainty = int(relation.uncertainty_nano or "0")
+        return (aligned, added_uncertainty)
+
+    @staticmethod
+    def _map_wall(relation: ClockRelation, wall: int, *, forward: bool) -> int | None:
+        """Map ``wall`` across the relation's affine calibration, or ``None``.
+
+        The forward transform of a ``from``-domain instant ``t`` is
+        ``f(t) = t + offset + drift * (t - reference)`` with ``drift = drift_ppm/1e6``.
+        That is affine with slope ``1 + drift``; its exact inverse is
+        ``t = reference + (u - offset - reference) / (1 + drift)``. A zero slope
+        makes ``f`` non-injective (a would-be divide-by-zero), so the inverse is
+        refused rather than crashing. Small integer offsets from ``reference`` keep
+        the float arithmetic away from the ~1e18 magnitude of absolute nanoseconds.
+        """
+
+        offset = int(relation.offset_nano)
+        drift_ppm = relation.drift_ppm
+        if not drift_ppm:  # None or exactly 0.0: a pure offset; reference is irrelevant.
+            return wall + offset if forward else wall - offset
+        drift = drift_ppm / 1e6
+        slope = 1.0 + drift
+        # A non-zero drift always carries a reference (enforced by the contract).
+        reference = (
+            int(relation.reference_unix_nano) if relation.reference_unix_nano is not None else wall
+        )
+        if forward:
+            return wall + offset + round(drift * (wall - reference))
+        if slope == 0.0 or not math.isfinite(slope):
+            return None
+        return reference + round((wall - offset - reference) / slope)
+
+
+def comparable_delta(
+    start: TimePoint,
+    end: TimePoint,
+    aligner: _ClockAligner | None = None,
+) -> Delta:
+    """Subtract evidence sharing a clock domain, or a declared calibration across them.
+
+    Within one clock domain an exact difference is taken across every shared basis,
+    failing closed if any basis is reversed. Across domains a value is produced only
+    when a declared, in-window ``ClockRelation`` aligns the endpoints; the
+    calibration's own uncertainty is propagated and the result is at most
+    ``estimated``. Absent such a relation the latency stays ``unavailable`` rather
+    than clamped to zero.
+    """
+
+    if start.clock_domain_id and start.clock_domain_id == end.clock_domain_id:
+        shared_deltas = _shared_time_deltas(start, end)
+        reversed_basis = next((basis for basis, value in shared_deltas if value < 0), None)
+        if reversed_basis is not None:
+            return Delta(
+                "inconsistent",
+                None,
+                reversed_basis,
+                "unavailable",
+                "same_domain_time_reversed",
+            )
+
+        deltas_by_basis = dict(shared_deltas)
+        if "monotonic" in deltas_by_basis:
+            value = deltas_by_basis["monotonic"]
+            basis = "monotonic"
+        elif "source_wall" in deltas_by_basis:
+            value = deltas_by_basis["source_wall"]
+            basis = "source_wall"
+        else:
+            return Delta(
+                "unavailable",
+                None,
+                "clock_domain",
+                "unavailable",
+                "timestamp_representation_unavailable",
+            )
+
+        uncertainty = int(start.uncertainty_nano or "0") + int(end.uncertainty_nano or "0")
+        confidence = "estimated" if uncertainty else "measured"
+        return Delta("available", value, basis, confidence, uncertainty=uncertainty)
+
+    # Different clock domains: only a declared, in-window calibration can relate
+    # wall timestamps. Monotonic values are domain-local and are never aligned.
+    if (
+        aligner is not None
+        and start.clock_domain_id
+        and end.clock_domain_id
+        and start.source_time_unix_nano is not None
+        and end.source_time_unix_nano is not None
+    ):
+        aligned = aligner.align(end, start.clock_domain_id)
+        if aligned is _AMBIGUOUS_ALIGNMENT:
+            # Two in-window calibrations disagree beyond their uncertainty: there is
+            # no honest single alignment, so the latency stays unavailable.
+            return Delta(
+                "unavailable",
+                None,
+                "cross_clock_calibrated",
+                "unavailable",
+                "cross_clock_ambiguous",
+            )
+        if isinstance(aligned, tuple):
+            aligned_end, added_uncertainty = aligned
+            value = aligned_end - int(start.source_time_unix_nano)
+            if value < 0:
+                return Delta(
+                    "inconsistent",
+                    None,
+                    "cross_clock_calibrated",
+                    "unavailable",
+                    "calibrated_time_reversed",
+                )
+            uncertainty = (
+                int(start.uncertainty_nano or "0")
+                + int(end.uncertainty_nano or "0")
+                + added_uncertainty
+            )
+            # A calibrated cross-clock latency is at most estimated, never measured.
+            return Delta(
+                "available",
+                value,
+                "cross_clock_calibrated",
+                "estimated",
+                uncertainty=uncertainty,
+            )
+
+    return Delta(
+        "unavailable",
+        None,
+        "clock_domain",
+        "unavailable",
+        "cross_clock_domain",
+    )
 
 
 def _earliest_event(events: Iterable[Event], names: set[str]) -> Event | None:
@@ -585,7 +810,12 @@ def _first_operation(operations: Sequence[Operation], names: set[str]) -> Operat
     return None
 
 
-def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> dict[str, object]:
+def _latency_metric(
+    anchor: Event | None,
+    target: Event | None,
+    basis: str,
+    aligner: _ClockAligner | None = None,
+) -> dict[str, object]:
     if anchor is None:
         return {
             "availability": "not_observed",
@@ -602,7 +832,7 @@ def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> d
             "limitation": "target_signal_not_observed",
             "evidence_ids": [anchor.event_id],
         }
-    output = comparable_delta(anchor.time, target.time).as_dict()
+    output = comparable_delta(anchor.time, target.time, aligner).as_dict()
     confidence_candidates = [str(output["confidence"])]
     for boundary in (anchor, target):
         if boundary.attributes.get("earshot.analysis.synthetic_projection"):
@@ -627,16 +857,19 @@ def _latency_metric(anchor: Event | None, target: Event | None, basis: str) -> d
     return output
 
 
-def _interval_nanos(operation: Operation) -> int | None:
+def _interval_nanos(operation: Operation, aligner: _ClockAligner | None = None) -> int | None:
     if operation.ended_at is None:
         return None
-    delta = comparable_delta(operation.started_at, operation.ended_at)
+    delta = comparable_delta(operation.started_at, operation.ended_at, aligner)
     return delta.nanoseconds if delta.availability == "available" else None
 
 
-def _tool_metrics(operations: Sequence[Operation]) -> dict[str, object]:
+def _tool_metrics(
+    operations: Sequence[Operation],
+    aligner: _ClockAligner | None = None,
+) -> dict[str, object]:
     tools = [item for item in operations if item.operation_name == "tool"]
-    durations = [(item, _interval_nanos(item)) for item in tools]
+    durations = [(item, _interval_nanos(item, aligner)) for item in tools]
     timed_operation_count = sum(value is not None for _, value in durations)
     untimed_operation_count = len(durations) - timed_operation_count
     total = sum(value for _, value in durations if value is not None)
@@ -768,6 +1001,423 @@ def _provider_stage_latency_fallback(
     }
 
 
+# --- Interruption causal chain -----------------------------------------------
+# The canonical, ordered stages of a barge-in teardown. Each maps to one or more
+# open Earshot event names (or, for ``intent``/``resumed``, a provider
+# measurement, and for ``tool_outcome``, a tool operation's status). A stage is
+# *observed* only when the artifact actually contains its signal; a missing stage
+# is reported as coverage with a reason, never as a fabricated coordinate.
+_STAGE_OVERLAP = "overlap_observed"
+_STAGE_INTENT = "intent"
+_STAGE_CLASSIFIED = "classified"
+_STAGE_CANCELLATION_REQUESTED = "cancellation_requested"
+_STAGE_GENERATION_STOPPED = "generation_stopped"
+_STAGE_QUEUED_AUDIO_DISCARDED = "queued_audio_discarded"
+_STAGE_TRANSPORT_STOPPED = "transport_stopped"
+_STAGE_BUFFERS_PURGED = "buffers_purged"
+_STAGE_RENDER_STOPPED = "render_stopped"
+_STAGE_RESUMED = "resumed"
+_STAGE_TOOL_OUTCOME = "tool_outcome"
+
+_OVERLAP_EVENT_NAMES = {
+    "earshot.interruption.detected",
+    "earshot.interruption.overlapping_speech",
+}
+_ACCEPTED_EVENT_NAME = "earshot.interruption.accepted"
+_IGNORED_EVENT_NAME = "earshot.interruption.ignored"
+_CLASSIFIED_EVENT_NAMES = {_ACCEPTED_EVENT_NAME, _IGNORED_EVENT_NAME}
+_MODEL_CANCELLED_EVENT_NAME = "earshot.model.cancelled"
+_CANCELLATION_REQUESTED_EVENT_NAMES = {
+    _MODEL_CANCELLED_EVENT_NAME,
+    "earshot.interruption.cancellation_requested",
+}
+_GENERATION_STOPPED_EVENT_NAMES = {"earshot.response.cancelled"}
+_QUEUED_AUDIO_DISCARDED_EVENT_NAMES = {"earshot.audio.queued.discarded"}
+_TRANSPORT_STOPPED_EVENT_NAMES = {
+    "earshot.transport.stopped",
+    "earshot.audio.send.stopped",
+}
+_BUFFERS_PURGED_EVENT_NAMES = {"earshot.audio.buffer.purged"}
+_RENDER_STOPPED_EVENT_NAMES = {"earshot.audio.render.stopped"}
+_RESUMED_EVENT_NAMES = {"earshot.interruption.resumed"}
+_INTERRUPTION_PROBABILITY_MEASUREMENT = "earshot.metric.interruption.probability"
+_INTERRUPTION_RESUMED_MEASUREMENT = "earshot.metric.interruption.resumed"
+# CausalLink relationships that assert a tool was cut off by an interruption. A
+# tool is attributed to the barge-in only through such an explicit causal edge;
+# merely sharing the turn is co-occurrence, not causality.
+_INTERRUPTION_TOOL_RELATIONSHIPS = frozenset(
+    {"cancelled_by", "canceled_by", "interrupted_by", "aborted_by", "preempted_by"}
+)
+
+
+def _first_named_event(events: Sequence[Event], names: set[str]) -> Event | None:
+    """Return the earliest event whose name is in ``names`` (deterministic).
+
+    Ordering uses the coordinate-group key, which never subtracts across clock
+    domains, so the choice is stable and source-order-invariant.
+    """
+
+    candidates = [event for event in events if event.event_name in names]
+    if not candidates:
+        return None
+    ordered = _order_by_comparable_time(
+        candidates, point=lambda event: event.time, identity=lambda event: event.event_id
+    )
+    return ordered[0]
+
+
+def _first_measurement_sample(
+    samples: Sequence[QualitySample],
+    measurement_name: str,
+    *,
+    require_true: bool = False,
+) -> QualitySample | None:
+    for sample in sorted(samples, key=lambda item: item.sample_id):
+        for measurement in sample.measurements:
+            if measurement.name != measurement_name:
+                continue
+            if require_true and measurement.value is not True:
+                continue
+            return sample
+    return None
+
+
+def _stage_coordinate(point: TimePoint) -> tuple[str | None, str | None, str | None]:
+    """Return ``(at_nano, clock_domain_id, time_basis)`` copied from real evidence.
+
+    Prefer the monotonic reading, then source wall, then observed wall. The value
+    is taken verbatim from the evidence; analysis never synthesizes a timestamp.
+    """
+
+    domain = point.clock_domain_id
+    if point.monotonic_time_nano is not None:
+        return (point.monotonic_time_nano, domain, "monotonic")
+    if point.source_time_unix_nano is not None:
+        return (point.source_time_unix_nano, domain, "source_wall")
+    if point.observed_time_unix_nano is not None:
+        return (point.observed_time_unix_nano, domain, "observed_wall")
+    return (None, domain, None)
+
+
+def _observed_stage(
+    stage: str,
+    point: TimePoint,
+    evidence_id: str,
+    *,
+    outcome: str | None = None,
+) -> dict:
+    at_nano, clock_domain_id, time_basis = _stage_coordinate(point)
+    projected: dict[str, object] = {
+        "stage": stage,
+        "observed": True,
+        "at_nano": at_nano,
+        "clock_domain_id": clock_domain_id,
+        "time_basis": time_basis,
+        "evidence_id": evidence_id,
+    }
+    if outcome is not None:
+        projected["outcome"] = outcome
+    return projected
+
+
+def _unobserved_stage(stage: str, reason: str = "stage_not_observed") -> dict:
+    return {"stage": stage, "observed": False, "coverage_reason": reason}
+
+
+def _event_stage(stage: str, event: Event | None) -> dict:
+    if event is None:
+        return _unobserved_stage(stage)
+    return _observed_stage(stage, event.time, event.event_id)
+
+
+def _point_at_or_after(candidate: TimePoint, reference: TimePoint) -> bool | None:
+    """Return whether ``candidate >= reference`` within one comparable domain.
+
+    ``None`` means the two coordinates are not comparable (different clock domains
+    or incompatible representations), so the caller must not exclude on time.
+    """
+
+    if candidate.clock_domain_id is None or candidate.clock_domain_id != reference.clock_domain_id:
+        return None
+    if candidate.monotonic_time_nano is not None and reference.monotonic_time_nano is not None:
+        return int(candidate.monotonic_time_nano) >= int(reference.monotonic_time_nano)
+    if candidate.source_time_unix_nano is not None and reference.source_time_unix_nano is not None:
+        return int(candidate.source_time_unix_nano) >= int(reference.source_time_unix_nano)
+    return None
+
+
+def _tool_linked_to_interruption(
+    tool: Operation,
+    episode_operation_ids: set[str],
+    operations_by_otel: Mapping[tuple[str, str], Operation],
+) -> bool:
+    """Return whether ``tool`` carries an explicit causal edge to this episode.
+
+    The edge is a ``CausalLink`` whose relationship asserts an interruption cut the
+    tool off and whose target resolves to an operation in this interruption episode.
+    Absent such an edge, the tool merely co-occurred and is not attributed.
+    """
+
+    for link in tool.links:
+        if link.relationship not in _INTERRUPTION_TOOL_RELATIONSHIPS:
+            continue
+        if (
+            link.target_operation_id is not None
+            and link.target_operation_id in episode_operation_ids
+        ):
+            return True
+        if (
+            link.trace_id is not None
+            and link.span_id is not None
+            and (link.trace_id, link.span_id) in operations_by_otel
+        ):
+            return True
+    return False
+
+
+def _tool_outcome_stage(
+    operations: Sequence[Operation],
+    overlap_event: Event | None,
+) -> dict:
+    """Attribute the disposition of a tool the interruption reached, if any.
+
+    A tool is eligible only when it satisfies both tests: it is still active at or
+    after the overlap (its end coordinate is not strictly before the overlap; when
+    the two are not comparable it is not excluded on time), AND it carries an
+    explicit ``CausalLink`` naming this interruption episode as its cause -- sharing
+    the turn is co-occurrence, not causality. Among eligible tools the earliest by
+    coordinate is chosen deterministically, and its status is recorded as the
+    outcome (ok/error/timeout/cancelled/...).
+    """
+
+    tools = list(
+        _order_by_comparable_time(
+            (operation for operation in operations if operation.operation_name == "tool"),
+            point=lambda operation: operation.started_at,
+            identity=lambda operation: operation.operation_id,
+        )
+    )
+    if not tools:
+        return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_in_turn")
+    if overlap_event is not None:
+        temporally_eligible = [
+            operation
+            for operation in tools
+            if _point_at_or_after(operation.ended_at or operation.started_at, overlap_event.time)
+            is not False
+        ]
+    else:
+        temporally_eligible = list(tools)
+    if not temporally_eligible:
+        return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_after_interruption")
+    episode_operation_ids = {operation.operation_id for operation in operations}
+    operations_by_otel = {
+        (operation.trace_id, operation.span_id): operation
+        for operation in operations
+        if operation.trace_id is not None and operation.span_id is not None
+    }
+    eligible = [
+        operation
+        for operation in temporally_eligible
+        if _tool_linked_to_interruption(operation, episode_operation_ids, operations_by_otel)
+    ]
+    if not eligible:
+        return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_causally_linked_tool")
+    chosen = eligible[0]
+    return _observed_stage(
+        _STAGE_TOOL_OUTCOME,
+        chosen.started_at,
+        chosen.operation_id,
+        outcome=chosen.status,
+    )
+
+
+def _segment_interruption_episodes(events: Sequence[Event]) -> list[tuple[Event, ...]]:
+    """Partition a turn's events into one bucket per interruption episode.
+
+    An episode is anchored by an interruption trigger: each overlap detection starts
+    one, and a classification (accept/ignore) starts one only when it is not the
+    first classification of the current overlap-anchored episode (a native accept
+    with no detection is its own episode). Every other event is assigned to the
+    latest anchor at or before it, so a later episode's teardown is never spliced
+    onto an earlier episode's overlap. With a single anchor the whole turn is one
+    episode -- identical to the un-segmented projection, including cross-clock
+    events that cannot be ordered against the anchor.
+    """
+
+    triggers = _order_by_comparable_time(
+        (
+            event
+            for event in events
+            if event.event_name in _OVERLAP_EVENT_NAMES
+            or event.event_name in _CLASSIFIED_EVENT_NAMES
+        ),
+        point=lambda event: event.time,
+        identity=lambda event: event.event_id,
+    )
+    if not triggers:
+        return []
+
+    anchors: list[Event] = []
+    open_is_overlap = False
+    open_has_classification = False
+    for trigger in triggers:
+        if trigger.event_name in _OVERLAP_EVENT_NAMES:
+            anchors.append(trigger)
+            open_is_overlap = True
+            open_has_classification = False
+        elif anchors and open_is_overlap and not open_has_classification:
+            # The classify decision of the current overlap-anchored episode.
+            open_has_classification = True
+        else:
+            anchors.append(trigger)
+            open_is_overlap = False
+            open_has_classification = True
+
+    if len(anchors) == 1:
+        # Exactly one episode: keep every event, so single-interruption turns (and
+        # their cross-clock teardown) project exactly as before segmentation.
+        return [tuple(events)]
+
+    buckets: list[list[Event]] = [[] for _ in anchors]
+    for event in events:
+        assigned: int | None = None
+        for index, anchor in enumerate(anchors):
+            at_or_after = _point_at_or_after(event.time, anchor.time)
+            if at_or_after is True:
+                assigned = index
+            elif at_or_after is False:
+                break
+            # ``None`` (not comparable to this anchor): cannot place it here; an
+            # event comparable to no anchor is left unassigned rather than guessed.
+        if assigned is not None:
+            buckets[assigned].append(event)
+    return [tuple(bucket) for bucket in buckets]
+
+
+def _interruption_chains(
+    turn_id: str,
+    operations: Sequence[Operation],
+    events: Sequence[Event],
+    quality_samples: Sequence[QualitySample],
+    aligner: _ClockAligner | None,
+) -> list[dict]:
+    """Build one ordered causal chain per interruption episode in the turn.
+
+    Each episode's chain is scoped to that episode's own events, so stages are
+    never merged across distinct interruptions. A turn that observed no interruption
+    yields no chains.
+    """
+
+    chains: list[dict] = []
+    for episode_events in _segment_interruption_episodes(events):
+        chain = _build_interruption_chain(
+            turn_id, operations, episode_events, quality_samples, aligner
+        )
+        if chain is not None:
+            chains.append(chain)
+    return chains
+
+
+def _build_interruption_chain(
+    turn_id: str,
+    operations: Sequence[Operation],
+    events: Sequence[Event],
+    quality_samples: Sequence[QualitySample],
+    aligner: _ClockAligner | None,
+) -> dict | None:
+    """Build the ordered causal chain a single interruption episode produced.
+
+    A chain exists only when the episode's events actually observed an interruption
+    -- an overlap detection or a recorded accept/ignore decision. Downstream teardown
+    signals alone (a model cancel, a render stop) never conjure one.
+    """
+
+    overlap_event = _first_named_event(events, _OVERLAP_EVENT_NAMES)
+    classified_event = _first_named_event(events, _CLASSIFIED_EVENT_NAMES)
+    if overlap_event is None and classified_event is None:
+        return None
+
+    accepted_event = _first_named_event(events, {_ACCEPTED_EVENT_NAME})
+    ignored_event = _first_named_event(events, {_IGNORED_EVENT_NAME})
+    if accepted_event is not None:
+        classification = "accepted"
+    elif overlap_event is not None:
+        # Detected without an accept is a false interruption (T2-consistent).
+        classification = "false"
+    elif ignored_event is not None:
+        classification = "ignored"
+    else:
+        classification = "unknown"
+
+    cancellation_event = _first_named_event(events, _CANCELLATION_REQUESTED_EVENT_NAMES)
+    generation_event = _first_named_event(events, _GENERATION_STOPPED_EVENT_NAMES)
+    if generation_event is None:
+        # Ambiguity: with only earshot.model.cancelled present we cannot separate
+        # the request to cancel from generation actually stopping, so we read the
+        # model-cancel as the effective stop too, citing that same real event. A
+        # distinct earshot.response.cancelled, when present, is preferred above.
+        generation_event = _first_named_event(events, {_MODEL_CANCELLED_EVENT_NAME})
+    queued_event = _first_named_event(events, _QUEUED_AUDIO_DISCARDED_EVENT_NAMES)
+    transport_event = _first_named_event(events, _TRANSPORT_STOPPED_EVENT_NAMES)
+    purged_event = _first_named_event(events, _BUFFERS_PURGED_EVENT_NAMES)
+    render_stopped_event = _first_named_event(events, _RENDER_STOPPED_EVENT_NAMES)
+    resumed_event = _first_named_event(events, _RESUMED_EVENT_NAMES)
+
+    intent_sample = _first_measurement_sample(
+        quality_samples, _INTERRUPTION_PROBABILITY_MEASUREMENT
+    )
+    resumed_sample = (
+        _first_measurement_sample(
+            quality_samples, _INTERRUPTION_RESUMED_MEASUREMENT, require_true=True
+        )
+        if resumed_event is None
+        else None
+    )
+
+    stages: list[dict] = [_event_stage(_STAGE_OVERLAP, overlap_event)]
+    if intent_sample is not None:
+        stages.append(
+            _observed_stage(
+                _STAGE_INTENT, intent_sample.sample_window.start, intent_sample.sample_id
+            )
+        )
+    else:
+        stages.append(_unobserved_stage(_STAGE_INTENT))
+    stages.append(_event_stage(_STAGE_CLASSIFIED, classified_event))
+    stages.append(_event_stage(_STAGE_CANCELLATION_REQUESTED, cancellation_event))
+    stages.append(_event_stage(_STAGE_GENERATION_STOPPED, generation_event))
+    stages.append(_event_stage(_STAGE_QUEUED_AUDIO_DISCARDED, queued_event))
+    stages.append(_event_stage(_STAGE_TRANSPORT_STOPPED, transport_event))
+    stages.append(_event_stage(_STAGE_BUFFERS_PURGED, purged_event))
+    stages.append(_event_stage(_STAGE_RENDER_STOPPED, render_stopped_event))
+    if resumed_event is not None:
+        stages.append(_observed_stage(_STAGE_RESUMED, resumed_event.time, resumed_event.event_id))
+    elif resumed_sample is not None:
+        stages.append(
+            _observed_stage(
+                _STAGE_RESUMED, resumed_sample.sample_window.start, resumed_sample.sample_id
+            )
+        )
+    else:
+        stages.append(_unobserved_stage(_STAGE_RESUMED))
+    stages.append(_tool_outcome_stage(operations, overlap_event))
+
+    # Barge-in effectiveness is the overlap -> render-stop latency, computed only
+    # when both endpoints are observed and comparable (same clock, or a declared
+    # calibration aligns them); otherwise it honestly asserts no value.
+    effectiveness = _latency_metric(
+        overlap_event, render_stopped_event, "interruption_barge_in", aligner
+    )
+
+    return {
+        "turn_id": turn_id,
+        "classification": classification,
+        "stages": stages,
+        "effectiveness": effectiveness,
+    }
+
+
 def _turn_projection(
     turn_id: str,
     operations: Sequence[Operation],
@@ -777,6 +1427,7 @@ def _turn_projection(
     participant_directions: Mapping[str, str] | None = None,
     operations_by_id: Mapping[str, Operation] | None = None,
     operations_by_otel: Mapping[tuple[str, str], Operation] | None = None,
+    aligner: _ClockAligner | None = None,
 ) -> dict:
     directions = stream_directions or {}
 
@@ -901,7 +1552,7 @@ def _turn_projection(
 
     provider_measurements = _quality_measurements(quality_samples)
     first_token_latency = _provider_stage_latency_fallback(
-        _latency_metric(anchor, first_token, "first_token"),
+        _latency_metric(anchor, first_token, "first_token", aligner),
         provider_measurements,
         ("earshot.llm.ttft", "livekit.llm_node_ttft", "pipecat.llm.ttfb"),
         target=first_token,
@@ -910,7 +1561,7 @@ def _turn_projection(
         attribute_names=("lk.response.ttft", "metrics.ttfb"),
     )
     generated_response_latency = _provider_stage_latency_fallback(
-        _latency_metric(anchor, generated, "generated"),
+        _latency_metric(anchor, generated, "generated", aligner),
         provider_measurements,
         ("earshot.tts.ttfb", "livekit.tts_node_ttfb", "pipecat.tts.ttfb"),
         target=generated,
@@ -918,7 +1569,7 @@ def _turn_projection(
         operations=operations,
         attribute_names=("lk.response.ttfb", "metrics.ttfb"),
     )
-    response_latency = _latency_metric(anchor, response_target, response_basis)
+    response_latency = _latency_metric(anchor, response_target, response_basis, aligner)
     direct_e2e = provider_measurements.get("earshot.turn.response_latency")
     if direct_e2e is None:
         direct_e2e = provider_measurements.get("livekit.e2e_latency")
@@ -958,17 +1609,20 @@ def _turn_projection(
         "metrics": {
             "first_token_latency": first_token_latency,
             "generated_response_latency": generated_response_latency,
-            "sent_response_latency": _latency_metric(anchor, sent, "sent"),
-            "received_response_latency": _latency_metric(anchor, received, "received"),
-            "render_start_response_latency": _latency_metric(anchor, rendered, "render"),
+            "sent_response_latency": _latency_metric(anchor, sent, "sent", aligner),
+            "received_response_latency": _latency_metric(anchor, received, "received", aligner),
+            "render_start_response_latency": _latency_metric(anchor, rendered, "render", aligner),
             "response_latency": response_latency,
-            "tools": _tool_metrics(operations),
+            "tools": _tool_metrics(operations, aligner),
             "provider_measurements": provider_measurements,
         },
         "interruptions": [
             {"event_name": event.event_name, "evidence_ids": [event.event_id]}
             for event in interruption_events
         ],
+        "interruption_chains": _interruption_chains(
+            turn_id, operations, events, quality_samples, aligner
+        ),
     }
 
 
@@ -1007,15 +1661,330 @@ def _operation_turn_ids(operations: Sequence[Operation]) -> dict[str, str | None
     return resolved
 
 
+# --- Boundary-attribution engine ---------------------------------------------
+# Each rule turns governed evidence into an evidence-linked ``Diagnosis`` that
+# names the boundary at fault. Rules are deterministic and source-order-invariant
+# (inputs are sorted), they cite only real operation/event/sample ids, and they
+# emit nothing when the deciding signal is absent or unmeasured. Confidence is
+# ``measured`` when the deciding signal is a direct governed fact (a QoS reading,
+# a governed event, an operation status, a causal link) and ``inferred`` when the
+# analyzer had to derive it (an SLO breach on a computed latency, or an absence).
+_DEVICE_EVENT_PREFIX = "earshot.device."
+_TRANSPORT_EVENT_PREFIX = "earshot.transport."
+_RENDER_EVENT_PREFIX = "earshot.audio.render."
+_STALE_EVENT_NAME = "earshot.audio.render.stale"
+_INTERRUPTION_DETECTED = "earshot.interruption.detected"
+_INTERRUPTION_ACCEPTED = "earshot.interruption.accepted"
+_INTERRUPTION_IGNORED = "earshot.interruption.ignored"
+_FALSE_INTERRUPTION_SOURCE = "agent_false_interruption"
+_FAILED_STATUSES = {"error", "timeout", "failed"}
+_STAGE_LATENCY_FIELDS = {
+    "stt": "stt_latency_ms",
+    "llm": "llm_latency_ms",
+    "tts": "tts_latency_ms",
+}
+
+
+def _boundary_diagnosis_id(code: str, key: str) -> str:
+    """Derive a bounded, deterministic diagnosis id from its code and evidence."""
+
+    slug = code.replace(".", "_").replace("-", "_")
+    return f"{slug}." + hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _network_degraded_diagnoses(
+    quality_samples: Sequence[QualitySample],
+    slo: SloRecipe,
+) -> list[Diagnosis]:
+    """Attribute packet loss, jitter growth, and RTT to the transport boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for sample in sorted(quality_samples, key=lambda item: item.sample_id):
+        # An unavailable QoS sample cannot support a diagnosis: say unknown.
+        if sample.evidence is None or sample.evidence.availability.lower() != "available":
+            continue
+        breaches: set[str] = set()
+        for measurement in sample.measurements:
+            if (
+                measurement_value_limitation(measurement.name, measurement.value, measurement.unit)
+                is not None
+            ):
+                continue
+            value = measurement.value
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            name = measurement.name.lower()
+            in_ms = value * 1_000 if measurement.unit == "s" else value
+            is_packet_loss = name == "packet_loss_ratio" or name.endswith(
+                (".packet_loss_ratio", "_packet_loss_ratio")
+            )
+            is_rtt = "round_trip" in name or "roundtrip" in name or name.endswith((".rtt", "_rtt"))
+            # Inter-arrival jitter is the transport signal here; a jitter *buffer*
+            # delay (the de-jitter buffer's own depth) is a distinct, healthy-by-
+            # default quantity that routinely exceeds the inter-arrival SLO, so it
+            # must not be read as excess jitter.
+            is_jitter = "jitter" in name and "buffer" not in name
+            if is_packet_loss and value > slo.packet_loss_ratio:
+                breaches.add("packet_loss_ratio_exceeds_slo")
+            elif is_jitter and in_ms > slo.jitter_ms:
+                breaches.add("jitter_exceeds_slo")
+            elif is_rtt and in_ms > slo.round_trip_time_ms:
+                breaches.add("round_trip_time_exceeds_slo")
+        if breaches:
+            diagnoses.append(
+                Diagnosis(
+                    diagnosis_id=_boundary_diagnosis_id("network.degraded", sample.sample_id),
+                    code="network.degraded",
+                    summary="network_degraded",
+                    confidence="measured",
+                    evidence_refs=(sample.sample_id,),
+                    limitations=tuple(sorted(breaches)),
+                )
+            )
+    return diagnoses
+
+
+def _tool_retry_diagnoses(operations: Sequence[Operation]) -> list[Diagnosis]:
+    """Attribute a failure-then-retry pattern to the tool boundary."""
+
+    by_id = {operation.operation_id: operation for operation in operations}
+    diagnoses: list[Diagnosis] = []
+    for operation in sorted(operations, key=lambda item: item.operation_id):
+        if operation.operation_name != "tool":
+            continue
+        for link in operation.links:
+            if link.relationship != "retries" or link.target_operation_id is None:
+                continue
+            target = by_id.get(link.target_operation_id)
+            if (
+                target is None
+                or target.operation_name != "tool"
+                or target.status not in _FAILED_STATUSES
+            ):
+                continue
+            evidence_refs = tuple(sorted({target.operation_id, operation.operation_id}))
+            diagnoses.append(
+                Diagnosis(
+                    diagnosis_id=_boundary_diagnosis_id(
+                        "tool.retry", f"{target.operation_id}->{operation.operation_id}"
+                    ),
+                    code="tool.retry",
+                    summary="tool_retry",
+                    confidence="measured",
+                    evidence_refs=evidence_refs,
+                )
+            )
+    return diagnoses
+
+
+def _event_prefix_diagnoses(
+    events: Sequence[Event],
+    *,
+    code: str,
+    summary: str,
+    match: object,
+) -> list[Diagnosis]:
+    """Emit one measured diagnosis citing every event that matches ``match``."""
+
+    matched = sorted(
+        (event for event in events if match(event.event_name)),
+        key=lambda event: event.event_id,
+    )
+    if not matched:
+        return []
+    evidence_refs = tuple(event.event_id for event in matched)
+    return [
+        Diagnosis(
+            diagnosis_id=_boundary_diagnosis_id(code, "|".join(evidence_refs)),
+            code=code,
+            summary=summary,
+            confidence="measured",
+            evidence_refs=evidence_refs,
+        )
+    ]
+
+
+def _device_unavailable_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute permission/context loss to the capture boundary."""
+
+    return _event_prefix_diagnoses(
+        events,
+        code="device.unavailable",
+        summary="device_unavailable",
+        match=lambda name: name.startswith(_DEVICE_EVENT_PREFIX),
+    )
+
+
+def _transport_reconnect_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute reconnect/duplicate/out-of-order signals to the transport boundary."""
+
+    if not any(event.event_name == "earshot.transport.reconnecting" for event in events):
+        return []
+    return _event_prefix_diagnoses(
+        events,
+        code="transport.reconnect",
+        summary="transport_reconnect",
+        match=lambda name: name.startswith(_TRANSPORT_EVENT_PREFIX),
+    )
+
+
+def _stale_playback_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute stale-buffer playback to the decode/render boundary."""
+
+    return _event_prefix_diagnoses(
+        events,
+        code="audio.stale_playback",
+        summary="audio_stale_playback",
+        match=lambda name: name == _STALE_EVENT_NAME,
+    )
+
+
+def _interruption_false_diagnoses(events: Sequence[Event]) -> list[Diagnosis]:
+    """Attribute a detected-but-never-accepted interruption to the interruption boundary.
+
+    A cleanly handled barge-in (detected *then* accepted) and a well-handled
+    native accept (accepted with no detection) both produce nothing.
+    """
+
+    buckets: dict[str | None, list[Event]] = defaultdict(list)
+    for event in events:
+        if event.event_name in {
+            _INTERRUPTION_DETECTED,
+            _INTERRUPTION_ACCEPTED,
+            _INTERRUPTION_IGNORED,
+        }:
+            buckets[event.turn_id].append(event)
+    diagnoses: list[Diagnosis] = []
+    for turn_id in sorted(buckets, key=lambda value: (value is None, value or "")):
+        bucket = buckets[turn_id]
+        names = {event.event_name for event in bucket}
+        if _INTERRUPTION_DETECTED not in names or _INTERRUPTION_ACCEPTED in names:
+            continue
+        cited = sorted(
+            (
+                event
+                for event in bucket
+                if event.event_name in {_INTERRUPTION_DETECTED, _INTERRUPTION_IGNORED}
+            ),
+            key=lambda event: event.event_id,
+        )
+        evidence_refs = tuple(event.event_id for event in cited)
+        explicit_false = _INTERRUPTION_IGNORED in names or any(
+            event.evidence is not None and event.evidence.source == _FALSE_INTERRUPTION_SOURCE
+            for event in bucket
+        )
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("interruption.false", "|".join(evidence_refs)),
+                code="interruption.false",
+                summary="interruption_false",
+                confidence="measured" if explicit_false else "inferred",
+                evidence_refs=evidence_refs,
+            )
+        )
+    return diagnoses
+
+
+def _render_delayed_diagnoses(turns: Sequence[dict], slo: SloRecipe) -> list[Diagnosis]:
+    """Attribute an excessive turn-commit -> render latency to the render boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for turn in turns:
+        metric = turn["metrics"]["render_start_response_latency"]
+        # not_observed / unavailable render latency is unknown, never a fault.
+        if metric.get("availability") != "available":
+            continue
+        value = metric.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            continue
+        if value <= slo.render_start_latency_ms:
+            continue
+        evidence_refs = tuple(metric.get("evidence_ids", ()))
+        if not evidence_refs:
+            continue
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("render.delayed", str(turn["turn_id"])),
+                code="render.delayed",
+                summary="render_delayed",
+                confidence="inferred",
+                evidence_refs=evidence_refs,
+                limitations=("render_start_latency_exceeds_slo",),
+            )
+        )
+    return diagnoses
+
+
+def _stage_slow_diagnoses(
+    operations: Sequence[Operation],
+    slo: SloRecipe,
+    aligner: _ClockAligner | None,
+) -> list[Diagnosis]:
+    """Attribute an over-SLO stt/llm/tts duration to that stage boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for operation in sorted(operations, key=lambda item: item.operation_id):
+        field = _STAGE_LATENCY_FIELDS.get(operation.operation_name)
+        if field is None:
+            continue
+        nanos = _interval_nanos(operation, aligner)
+        if nanos is None:
+            continue
+        if nanos / 1_000_000 <= getattr(slo, field):
+            continue
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("stage.slow", operation.operation_id),
+                code="stage.slow",
+                summary=f"{operation.operation_name}_stage_slow",
+                confidence="inferred",
+                evidence_refs=(operation.operation_id,),
+                limitations=(f"{operation.operation_name}_latency_exceeds_slo",),
+            )
+        )
+    return diagnoses
+
+
+def _endpointing_slow_diagnoses(
+    operations: Sequence[Operation],
+    slo: SloRecipe,
+    aligner: _ClockAligner | None,
+) -> list[Diagnosis]:
+    """Attribute an over-SLO end-of-utterance decision to the turn-detection boundary."""
+
+    diagnoses: list[Diagnosis] = []
+    for operation in sorted(operations, key=lambda item: item.operation_id):
+        if operation.operation_name != "turn_detection":
+            continue
+        nanos = _interval_nanos(operation, aligner)
+        if nanos is None:
+            continue
+        if nanos / 1_000_000 <= slo.endpointing_latency_ms:
+            continue
+        diagnoses.append(
+            Diagnosis(
+                diagnosis_id=_boundary_diagnosis_id("endpointing.slow", operation.operation_id),
+                code="endpointing.slow",
+                summary="endpointing_slow",
+                confidence="inferred",
+                evidence_refs=(operation.operation_id,),
+                limitations=("endpointing_latency_exceeds_slo",),
+            )
+        )
+    return diagnoses
+
+
 def analyze_incident(
     bundle: IncidentBundle,
     *,
     input_sha256: str,
     generated_at_unix_nano: int | str,
+    slo: SloRecipe | None = None,
 ) -> DerivedAnalysis:
     """Return a stable projection for an exact immutable input digest."""
 
     profile = bundle.profile
+    aligner = _ClockAligner(profile.clock_relations)
     turn_operations: dict[str, list[Operation]] = defaultdict(list)
     turn_events: dict[str, list[Event]] = defaultdict(list)
     turn_quality: dict[str, list[QualitySample]] = defaultdict(list)
@@ -1092,13 +2061,15 @@ def analyze_incident(
             participant_directions,
             operations_by_id,
             operation_by_otel,
+            aligner,
         )
         for turn_id in ordered_turn_ids
     ]
 
+    recipe = slo if slo is not None else DEFAULT_SLO_RECIPE
     diagnoses: list[Diagnosis] = []
     for operation in sorted(profile.operations, key=lambda item: item.operation_id):
-        if operation.status in {"error", "timeout", "failed"}:
+        if operation.status in _FAILED_STATUSES:
             diagnoses.append(
                 Diagnosis(
                     diagnosis_id=(
@@ -1111,6 +2082,21 @@ def analyze_incident(
                     evidence_refs=(operation.operation_id,),
                 )
             )
+
+    # Boundary attribution layers evidence-linked hypotheses on top of the raw
+    # operation.failed facts: the failure and its retry pattern can co-exist,
+    # each citing its own evidence. The combined list is sorted for a stable,
+    # source-order-invariant projection.
+    diagnoses.extend(_network_degraded_diagnoses(profile.quality_samples, recipe))
+    diagnoses.extend(_tool_retry_diagnoses(profile.operations))
+    diagnoses.extend(_device_unavailable_diagnoses(profile.events))
+    diagnoses.extend(_transport_reconnect_diagnoses(profile.events))
+    diagnoses.extend(_stale_playback_diagnoses(profile.events))
+    diagnoses.extend(_interruption_false_diagnoses(profile.events))
+    diagnoses.extend(_render_delayed_diagnoses(turns, recipe))
+    diagnoses.extend(_stage_slow_diagnoses(profile.operations, recipe, aligner))
+    diagnoses.extend(_endpointing_slow_diagnoses(profile.operations, recipe, aligner))
+    diagnoses.sort(key=lambda item: item.diagnosis_id)
 
     render_availabilities = {
         entry.availability

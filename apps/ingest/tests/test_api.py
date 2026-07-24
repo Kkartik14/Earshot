@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import gzip
 import json
 import threading
@@ -21,7 +22,7 @@ from earshot.codec import (
     encode_incident_json,
     encode_incident_protobuf,
 )
-from earshot.contract import Diagnosis
+from earshot.contract import DerivedAnalysis, Diagnosis, ExportPolicy
 from earshot.storage import IncidentStore
 from incident_factory import SECRET_SENTINEL, make_valid_bundle
 
@@ -688,6 +689,294 @@ def test_explanation_returns_backend_authored_exact_timeline_facts(tmp_path, val
     assert llm["end_nano"] == "1300000000"
     assert llm["duration_nano"] == "250000000"
     assert response.headers["cache-control"] == "no-store"
+
+
+def _ingest(client, bundle) -> None:
+    response = client.post(
+        "/v1/incidents",
+        content=encode_incident_protobuf(bundle),
+        headers={"Content-Type": PROTOBUF_MEDIA_TYPE},
+    )
+    assert response.status_code == 201
+
+
+def _with_render_coverage_denied(bundle):
+    """Claim render was never observed while the render evidence is still present.
+
+    That is exactly the ``render_claim_conflict`` the contradiction detector exists
+    to catch: one part of the artifact asserts a fact another part denies.
+    """
+
+    coverage = tuple(
+        item.model_copy(update={"availability": "not_observed", "reason": "collector_absent"})
+        if item.signal == "client.render"
+        else item
+        for item in bundle.profile.coverage
+    )
+    return bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"coverage": coverage})}
+    )
+
+
+def _with_export_destinations(bundle, *destinations: str):
+    policies = list(bundle.profile.privacy.capture_classes)
+    policies[0] = policies[0].model_copy(
+        update={"export": ExportPolicy(allowed=True, destinations=destinations)}
+    )
+    privacy = bundle.profile.privacy.model_copy(update={"capture_classes": tuple(policies)})
+    return bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"privacy": privacy})}
+    )
+
+
+def test_contradictions_are_evidence_linked_and_bound_to_the_analysis(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, _with_render_coverage_denied(make_valid_bundle()))
+
+    response = client.get("/v1/incidents/bundle-1/contradictions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bundle_id"] == "bundle-1"
+    assert body["analyzer_version"] == ANALYZER_VERSION
+    assert len(body["input_digest"]) == 64
+    conflict = next(
+        item for item in body["contradictions"] if item["kind"] == "render_claim_conflict"
+    )
+    assert conflict["boundary"] == "render"
+    assert conflict["turn_id"] == "turn-1"
+    # Every asserted contradiction cites real evidence ids from this artifact.
+    assert "op-render" in conflict["evidence_ids"]
+    # Deterministic: the same incident yields byte-identical contradictions.
+    assert client.get("/v1/incidents/bundle-1/contradictions").json() == body
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_contradiction_free_incident_reports_an_examined_empty_result(
+    tmp_path, valid_bundle
+) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    body = client.get("/v1/incidents/bundle-1/contradictions").json()
+
+    # "None found" is only sayable because detection ran; the digest it ran against
+    # is named so an empty list can never be mistaken for "no analysis".
+    assert body["contradictions"] == []
+    assert (
+        body["input_digest"] == client.get("/v1/incidents/bundle-1/analysis").json()["input_digest"]
+    )
+
+
+def test_contradictions_absence_is_explicit_when_no_analyzer_configured(
+    tmp_path, valid_bundle
+) -> None:
+    _, client = app_client(tmp_path, analyzer=None)
+    _ingest(client, valid_bundle)
+
+    response = client.get("/v1/incidents/bundle-1/contradictions")
+
+    # Never an empty list that would read as "no problems found".
+    assert response.status_code == 404
+    assert code(response) == "EARSHOT_ANALYSIS_NOT_AVAILABLE"
+
+
+def test_contradictions_refuse_an_analysis_derived_from_other_evidence(
+    tmp_path, valid_bundle, monkeypatch
+) -> None:
+    store, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+    assert client.get("/v1/incidents/bundle-1/contradictions").status_code == 200
+    stored = store.get_analysis("bundle-1", ANALYZER_VERSION)
+    foreign = DerivedAnalysis.model_validate(stored.value).model_copy(
+        update={"input_sha256": "0" * 64}
+    )
+    monkeypatch.setattr(
+        store,
+        "get_analysis",
+        lambda *args, **kwargs: dataclasses.replace(
+            stored, value=foreign.model_dump(mode="json", exclude_none=True)
+        ),
+    )
+
+    response = client.get("/v1/incidents/bundle-1/contradictions")
+
+    # A stale or foreign analysis is a state conflict, never a 500.
+    assert response.status_code == 409
+    assert code(response) == "EARSHOT_ANALYSIS_BINDING_MISMATCH"
+
+
+def test_comparison_reports_structured_change_against_a_known_good_incident(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, make_valid_bundle())
+    _ingest(client, make_valid_bundle(bundle_id="bundle-known-good", include_render=False))
+
+    response = client.get(
+        "/v1/incidents/bundle-1/comparison",
+        params={"known_good_bundle_id": "bundle-known-good"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bundle_id"] == "bundle-1"
+    assert body["known_good_bundle_id"] == "bundle-known-good"
+    assert body["analyzer_version"] == ANALYZER_VERSION
+    assert body["input_digest"] != body["known_good_input_digest"]
+    # The known-good session never observed render; the incident did. That is an
+    # availability change and a removed coverage gap, not a fabricated delta.
+    assert {gap["signal"] for gap in body["coverage_gaps_removed"]} == {"client.render"}
+    assert body["coverage_gaps_new"] == []
+    changed = {
+        (item["metric"], item["known_good_availability"], item["incident_availability"])
+        for item in body["turn_metric_availability_changes"]
+    }
+    assert ("render_start_response_latency", "not_observed", "available") in changed
+    # A delta exists only where both sides are available in one unit, and it is the
+    # arithmetic difference of the two reported values — nothing is imputed.
+    deltas = {item["metric"]: item for item in body["turn_metric_deltas"]}
+    assert deltas["response_latency"]["delta"] == 200.0
+    assert "render_start_response_latency" not in deltas
+    assert all(
+        item["delta"] == item["incident_value"] - item["known_good_value"]
+        for item in deltas.values()
+    )
+    assert body["unmatched_turns"] == {"only_in_incident": [], "only_in_known_good": []}
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_comparison_reports_only_contradictions_the_known_good_does_not_share(
+    tmp_path,
+) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, _with_render_coverage_denied(make_valid_bundle()))
+    _ingest(client, make_valid_bundle(bundle_id="bundle-known-good"))
+
+    body = client.get(
+        "/v1/incidents/bundle-1/comparison",
+        params={"known_good_bundle_id": "bundle-known-good"},
+    ).json()
+
+    assert [item["kind"] for item in body["contradictions_new"]] == ["render_claim_conflict"]
+
+
+def test_comparison_names_the_unavailable_known_good_side(tmp_path, valid_bundle) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    missing = client.get(
+        "/v1/incidents/bundle-1/comparison",
+        params={"known_good_bundle_id": "bundle-absent"},
+    )
+    reversed_sides = client.get(
+        "/v1/incidents/bundle-absent/comparison",
+        params={"known_good_bundle_id": "bundle-1"},
+    )
+
+    # Which of the two incidents is missing is stated, never left ambiguous.
+    assert missing.status_code == 404
+    assert code(missing) == "EARSHOT_KNOWN_GOOD_NOT_FOUND"
+    assert reversed_sides.status_code == 404
+    assert code(reversed_sides) == "EARSHOT_INCIDENT_NOT_FOUND"
+
+
+def test_comparison_names_a_purged_known_good_incident(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, make_valid_bundle())
+    _ingest(client, make_valid_bundle(bundle_id="bundle-known-good"))
+    assert client.delete("/v1/incidents/bundle-known-good").status_code == 204
+
+    response = client.get(
+        "/v1/incidents/bundle-1/comparison",
+        params={"known_good_bundle_id": "bundle-known-good"},
+    )
+
+    assert response.status_code == 410
+    assert code(response) == "EARSHOT_KNOWN_GOOD_PURGED"
+
+
+def test_comparison_states_when_the_known_good_has_no_analysis(tmp_path) -> None:
+    _, client = app_client(tmp_path, analyzer=None)
+    _ingest(client, make_valid_bundle())
+    _ingest(client, make_valid_bundle(bundle_id="bundle-known-good"))
+
+    response = client.get(
+        "/v1/incidents/bundle-1/comparison",
+        params={"known_good_bundle_id": "bundle-known-good"},
+    )
+
+    # Without an analyzer neither side is analysable; the incident is reported first
+    # and by its own code, so no empty diff is ever manufactured.
+    assert response.status_code == 404
+    assert code(response) == "EARSHOT_ANALYSIS_NOT_AVAILABLE"
+
+
+def test_comparison_requires_an_explicit_known_good_bundle_id(tmp_path, valid_bundle) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    response = client.get("/v1/incidents/bundle-1/comparison")
+
+    assert response.status_code == 422
+    assert code(response) == "EARSHOT_INVALID_REQUEST"
+
+
+def test_export_projects_an_incident_through_the_registry(tmp_path, valid_bundle) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    response = client.get("/v1/incidents/bundle-1/export", params={"format": "otlp"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bundle_id"] == "bundle-1"
+    assert body["format"] == "otlp"
+    # The destination the capture policy had to permit travels with the document.
+    assert body["destination"] == "otlp"
+    assert body["document"]["resourceSpans"]
+    # Deterministic projection: the same incident exports byte-identically.
+    assert client.get("/v1/incidents/bundle-1/export", params={"format": "otlp"}).json() == body
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_export_defaults_to_otlp_and_offers_every_registered_format(tmp_path, valid_bundle) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    default = client.get("/v1/incidents/bundle-1/export")
+    openinference = client.get("/v1/incidents/bundle-1/export", params={"format": "openinference"})
+
+    assert default.json()["format"] == "otlp"
+    assert openinference.status_code == 200
+    assert openinference.json()["format"] == "openinference"
+    # Both OTLP-shaped projections declare the same governed destination.
+    assert openinference.json()["destination"] == "otlp"
+    schema = client.get("/openapi.json").json()
+    parameters = schema["paths"]["/v1/incidents/{bundle_id}/export"]["get"]["parameters"]
+    formats = next(item for item in parameters if item["name"] == "format")
+    assert formats["schema"]["enum"] == ["openinference", "otlp"]
+
+
+def test_export_refuses_a_format_no_exporter_is_registered_under(tmp_path, valid_bundle) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    response = client.get("/v1/incidents/bundle-1/export", params={"format": "acme"})
+
+    assert response.status_code == 400
+    assert code(response) == "EARSHOT_UNKNOWN_EXPORT_FORMAT"
+
+
+def test_export_is_refused_when_the_capture_policy_denies_that_destination(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, _with_export_destinations(make_valid_bundle(), "local_api"))
+
+    export = client.get("/v1/incidents/bundle-1/export", params={"format": "otlp"})
+
+    # A clean refusal from the registry's policy gate, not a crash — and reading the
+    # incident through the API still works, so it is the destination being refused.
+    assert export.status_code == 403
+    assert code(export) == "EARSHOT_EXPORT_DENIED"
+    assert client.get("/v1/incidents/bundle-1").status_code == 200
 
 
 def test_analysis_accepts_event_turn_inherited_through_trace_span(tmp_path, valid_bundle) -> None:

@@ -1,0 +1,26 @@
+{
+  "name": "@earshot/browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client-side voice capture kernel — records getUserMedia/RTCPeerConnection/AudioContext/render telemetry and W3C trace-context in the exact shape the server WebRTC/device engines consume, and delivers it to POST /v1/capture.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}

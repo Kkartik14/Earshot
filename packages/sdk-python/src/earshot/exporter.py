@@ -34,6 +34,61 @@ from .context import suppress_instrumentation
 INCIDENT_PROTOBUF = "application/vnd.earshot.incident+protobuf"
 INCIDENT_JSON = "application/vnd.earshot.incident+json"
 
+# Envelope-encryption constants for the durable spool at rest. A single AES-256
+# key protects every record; each record carries its own random 96-bit nonce.
+_SPOOL_KEY_BYTES = 32
+_SPOOL_NONCE_BYTES = 12
+_SPOOL_FORMAT_AESGCM_V1 = "aesgcm-v1"
+
+
+def _import_aesgcm() -> type:
+    """Return the AES-GCM primitive, importing ``cryptography`` lazily.
+
+    Isolated in its own function so the base install never imports the optional
+    dependency, and so tests can simulate the "requested but not installed"
+    condition by patching this symbol to raise ``ImportError``.
+    """
+
+    from .checkpoint.keys import import_aesgcm
+
+    return import_aesgcm()
+
+
+def _coerce_spool_key(value: bytes | str) -> bytes:
+    """Normalize a configured spool key to raw 32 AES-256 bytes."""
+
+    from .checkpoint.keys import coerce_at_rest_key
+
+    return coerce_at_rest_key(value)
+
+
+def _read_spool_key_file(path: Path) -> bytes:
+    """Load a spool key from ``EARSHOT_SPOOL_KEY_FILE`` (raw/base64, mode 0600)."""
+
+    from .checkpoint.keys import read_at_rest_key_file
+
+    return read_at_rest_key_file(path, variable="EARSHOT_SPOOL_KEY_FILE")
+
+
+def _resolve_spool_key(explicit: bytes | str | None) -> bytes | None:
+    """Resolve the at-rest spool key by precedence, or ``None`` for plaintext.
+
+    Precedence: explicit ``spool_key`` argument, then ``EARSHOT_SPOOL_KEY``
+    (base64), then ``EARSHOT_SPOOL_KEY_FILE``. When nothing is configured the
+    spool stays plaintext and behavior is unchanged. The implementation lives in
+    ``earshot.checkpoint.keys`` so the spool and the checkpoint journal cannot
+    drift apart on precedence or on file-permission refusal; it is imported
+    lazily here to keep the module import graph acyclic.
+    """
+
+    from .checkpoint.keys import resolve_at_rest_key
+
+    return resolve_at_rest_key(
+        explicit,
+        env_var="EARSHOT_SPOOL_KEY",
+        env_file_var="EARSHOT_SPOOL_KEY_FILE",
+    )
+
 
 @dataclass(frozen=True)
 class ExportItem:
@@ -688,11 +743,26 @@ class SynchronousExporter:
 
 
 class DurableExporter:
-    """Atomically commit plaintext incidents to a private disk spool before return.
+    """Atomically commit incidents to a private disk spool before return.
 
-    Choosing this exporter and an explicit ``spool_dir`` is the plaintext-storage
+    Choosing this exporter and an explicit ``spool_dir`` is the local-storage
     opt-in. ``submit()`` means the exact payload and idempotency key were fsynced
     locally; remote acknowledgement is reported later by ``status().sent``.
+
+    When a spool key is configured (``spool_key`` argument, ``EARSHOT_SPOOL_KEY``,
+    or ``EARSHOT_SPOOL_KEY_FILE``) each record's payload is envelope-encrypted with
+    AES-256-GCM before the fsync/atomic-replace, and decrypted on the delivery
+    path. With no key configured the spool stays plaintext and behavior is
+    unchanged. Encryption is key-based erasure ("crypto-shredding"): destroying
+    the key permanently renders existing encrypted records undecryptable, and they
+    quarantine on read rather than crashing or delivering.
+
+    The division of labour with ``earshot.checkpoint`` is deliberate: this spool
+    persists **closed** incidents on their way to a destination, while the
+    checkpoint journal persists an **open** session so a process that never
+    reaches ``close()`` still leaves recoverable evidence. Both write to an
+    owner-private directory under the same at-rest key precedence
+    (``earshot.checkpoint.keys``); neither is a coordinated multi-process queue.
     """
 
     _VERSION = 1
@@ -706,6 +776,7 @@ class DurableExporter:
         max_spool_items: int = 1024,
         max_spool_bytes: int = 256 * 1024 * 1024,
         permanent_rejection_policy: str = "retain",
+        spool_key: bytes | str | None = None,
         max_attempts: int = 3,
         base_backoff: float = 0.1,
         jitter_ratio: float = 0.2,
@@ -746,6 +817,21 @@ class DurableExporter:
         self._max_backoff = max_backoff
         self._max_elapsed = max_elapsed
         self._diagnostic = diagnostic or (lambda _: None)
+        # Fail closed: if a key is configured but the optional dependency is
+        # absent, refuse to construct rather than silently spooling plaintext.
+        spool_key_bytes = _resolve_spool_key(spool_key)
+        if spool_key_bytes is None:
+            self._cipher = None
+        else:
+            try:
+                aesgcm = _import_aesgcm()
+            except ImportError as error:
+                raise RuntimeError(
+                    "spool encryption is configured (spool_key / EARSHOT_SPOOL_KEY / "
+                    "EARSHOT_SPOOL_KEY_FILE) but the 'cryptography' package is not installed; "
+                    "install earshot-observability[spool-encryption]"
+                ) from error
+            self._cipher = aesgcm(spool_key_bytes)
         self._prepare_private_directory(self._spool_dir)
         self._lock = threading.Lock()
         self._wake = threading.Event()
@@ -824,15 +910,43 @@ class DurableExporter:
         with contextlib.suppress(Exception):
             self._diagnostic(diagnostic)
 
+    def _spool_aad(self, bundle_id: str, content_type: str) -> bytes:
+        """Associated data binding a record to its identity.
+
+        Authenticated (not encrypted) alongside the ciphertext so a record cannot
+        be replayed against a different route, bundle id, or content type: any
+        tampering with these cleartext fields fails GCM tag verification on read.
+        """
+
+        return json.dumps(
+            {
+                "spool_format": _SPOOL_FORMAT_AESGCM_V1,
+                "version": DurableExporter._VERSION,
+                "destination_fingerprint": self._destination_fingerprint,
+                "bundle_id": bundle_id,
+                "content_type": content_type,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
     def _encode(self, item: ExportItem) -> bytes:
         document = {
             "version": DurableExporter._VERSION,
             "destination_fingerprint": self._destination_fingerprint,
             "bundle_id": item.bundle_id,
             "content_type": item.content_type,
-            "payload_base64": base64.b64encode(item.payload).decode("ascii"),
             "payload_sha256": hashlib.sha256(item.payload).hexdigest(),
         }
+        if self._cipher is None:
+            document["payload_base64"] = base64.b64encode(item.payload).decode("ascii")
+        else:
+            nonce = os.urandom(_SPOOL_NONCE_BYTES)
+            aad = self._spool_aad(item.bundle_id, item.content_type)
+            ciphertext = self._cipher.encrypt(nonce, item.payload, aad)
+            document["spool_format"] = _SPOOL_FORMAT_AESGCM_V1
+            document["nonce_b64"] = base64.b64encode(nonce).decode("ascii")
+            document["ciphertext_b64"] = base64.b64encode(ciphertext).decode("ascii")
         return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     def _decode(self, data: bytes) -> ExportItem:
@@ -843,16 +957,47 @@ class DurableExporter:
             raise ValueError("spool record destination mismatch")
         bundle_id = document.get("bundle_id")
         content_type = document.get("content_type")
-        encoded = document.get("payload_base64")
         checksum = document.get("payload_sha256")
-        if not all(
-            isinstance(value, str) for value in (bundle_id, content_type, encoded, checksum)
-        ):
-            raise ValueError("invalid spool record")
-        payload = base64.b64decode(encoded, validate=True)
-        if hashlib.sha256(payload).hexdigest() != checksum:
+        spool_format = document.get("spool_format")
+        if spool_format is not None:
+            payload = self._decrypt_record(document, bundle_id, content_type, spool_format)
+        else:
+            encoded = document.get("payload_base64")
+            if not all(
+                isinstance(value, str) for value in (bundle_id, content_type, encoded, checksum)
+            ):
+                raise ValueError("invalid spool record")
+            payload = base64.b64decode(encoded, validate=True)
+        if not isinstance(checksum, str) or hashlib.sha256(payload).hexdigest() != checksum:
             raise ValueError("spool checksum mismatch")
         return ExportItem(bundle_id=bundle_id, content_type=content_type, payload=payload)
+
+    def _decrypt_record(
+        self,
+        document: dict,
+        bundle_id: object,
+        content_type: object,
+        spool_format: object,
+    ) -> bytes:
+        if spool_format != _SPOOL_FORMAT_AESGCM_V1:
+            raise ValueError("unsupported spool format")
+        nonce_b64 = document.get("nonce_b64")
+        ciphertext_b64 = document.get("ciphertext_b64")
+        if not all(
+            isinstance(value, str) for value in (bundle_id, content_type, nonce_b64, ciphertext_b64)
+        ):
+            raise ValueError("invalid spool record")
+        # No key at read time means the key was never present or was destroyed
+        # (crypto-shredding). Treat as unreadable/corrupt: quarantine, never crash.
+        if self._cipher is None:
+            raise ValueError("spool record is encrypted but no spool key is available")
+        nonce = base64.b64decode(nonce_b64, validate=True)
+        ciphertext = base64.b64decode(ciphertext_b64, validate=True)
+        aad = self._spool_aad(bundle_id, content_type)
+        try:
+            return self._cipher.decrypt(nonce, ciphertext, aad)
+        except Exception as error:  # InvalidTag (wrong key / AAD / tamper) or malformed input
+            raise ValueError("spool record failed authenticated decryption") from error
 
     def _spool_files(self) -> list[Path]:
         return sorted(self._spool_dir.glob(f"{self._destination_fingerprint}-*.spool"))

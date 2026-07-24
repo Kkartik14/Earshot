@@ -54,6 +54,38 @@ may contain several OTel resources.
 
 The session has an open status vocabulary and start/end `TimePoint`s.
 
+### Recovery
+
+`manifest.recovery` is present only when the artifact was reconstructed from an SDK
+checkpoint journal rather than produced by a live `close()`. It is a typed manifest
+member, next to `finality` and `completeness`, so validation can cross-check it; an
+attribute bag could not be enforced.
+
+| Field                                  | Meaning                                                          |
+| -------------------------------------- | ---------------------------------------------------------------- |
+| `method`                               | how it was rebuilt (`checkpoint_journal`)                        |
+| `reason`                               | why (`process_terminated_before_close`)                          |
+| `close_observed`                       | the machine-checkable assertion that a close was or was not seen |
+| `journal_id`, `last_sequence`          | which journal, and how far the readable prefix reached           |
+| `last_observation`                     | the last durably observed coordinate — **not** the session's end |
+| `torn_tail_bytes`, `discarded_records` | evidence lost at a known boundary                                |
+| `journal_complete`                     | false when the journal reached its cap before the session ended  |
+| `recoverer`                            | the producer that performed the recovery                         |
+
+There is deliberately no "recovered at" timestamp: two recoveries of the same journal
+must produce the same bytes under the same `bundle_id`, or content-addressed ingest
+would reject the second as a conflict.
+
+When `close_observed` is false the artifact must also report `finality="provisional"`,
+`completeness="incomplete"`, `session.status="interrupted"`, **no** `session.ended_at`,
+and `recorder.session_close` coverage as unavailable. Claiming otherwise is a validation
+error, so a recovered artifact cannot pass as a cleanly closed one. Recovering a journal
+that does contain the recorder's finalize record reproduces the closed artifact byte for
+byte and therefore carries no recovery declaration at all.
+
+`manifest.recovery` requires contract version `0.2.0` or newer; a bundle claiming
+`0.1.0` while carrying one is rejected.
+
 ### Participants and audio streams
 
 Participants use opaque IDs and open roles (`user`, `agent`, `human_operator`,
@@ -113,9 +145,30 @@ are a trust boundary and must not carry user content.
 
 ### Media
 
-Media is always external. The bundle records a logical media ID, digest, content
-type, size, governed stream association, optional byte/time range, and an optional
-separately governed locator. Validation never fetches a locator.
+Media is always external: the bundle records custody, never content. It carries a
+logical media ID, content type, governed stream association, an optional covered time
+range, an optional custodian, consent and retention, the media's own clock domain, and
+an optional separately governed locator. Validation never fetches a locator.
+
+`integrity` states what anyone can actually attest to, because earshot never reads the
+bytes:
+
+- `content_digest` requires `sha256` and `size_bytes` — a declaration made by whoever
+  measured the media, not a verification earshot performed.
+- `opaque_handle` requires that both are absent and that `custodian` names the holder,
+  and forbids `byte_range`: you cannot range into bytes whose length was never observed.
+
+Either mix of the two is `EARSHOT_MEDIA_CUSTODY_INCOHERENT`. `sha256`/`size_bytes` are
+optional for exactly this reason; `integrity` still defaults to `content_digest`, so
+omitting them without saying `opaque_handle` is refused rather than quietly downgraded.
+A `MediaRef` using any custody member requires contract version `0.2.0` or newer.
+
+A declared `clock_domain_id` must exist in `profile.clock_domains`
+(`EARSHOT_MEDIA_CLOCK_UNKNOWN`) and is aligned to the incident timeline by an ordinary
+`ClockRelation` — media is just another clock domain, not a second synchronization
+mechanism. Media that no declared relation reaches is reported unaligned
+(`EARSHOT_MEDIA_UNALIGNED`, warning severity), because unalignable custody is still
+legitimate custody.
 
 Credential-bearing locators are invalid. A media reference is always governed by the
 `audio` capture class. A destination restriction rejects the export rather than
@@ -168,6 +221,18 @@ Validation issues have stable codes and paths and never need to echo source valu
 - Media references mislabeled as metadata and error messages mislabeled as metadata.
 - An operation/event/quality record naming a participant who does not own its stream.
 - Non-finite numbers, bad hashes, reversed byte ranges, or embedded `heard_at` claims.
+- A non-final artifact with no `manifest.recovery`
+  (`EARSHOT_RECOVERY_DECLARATION_REQUIRED`).
+- A recovery that never observed a close while claiming `finality="final"`,
+  `completeness="complete"`, or `session.status="completed"`, or a damaged journal
+  claiming it did observe one (`EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY`).
+- A session end time on a session whose close was never observed
+  (`EARSHOT_RECOVERY_SESSION_END_FABRICATED`).
+- A media reference claiming `content_digest` without a digest, or `opaque_handle`
+  while asserting a digest, a size, a byte range, or no custodian
+  (`EARSHOT_MEDIA_CUSTODY_INCOHERENT`).
+- A media reference naming a clock domain the profile does not declare
+  (`EARSHOT_MEDIA_CLOCK_UNKNOWN`).
 
 ## Required valid cases
 
@@ -177,6 +242,7 @@ Validation issues have stable codes and paths and never need to echo source valu
 - Native speech-to-speech sessions without fake STT/LLM/TTS spans.
 - Explicit missing/not-observed coverage.
 - A measured value of zero.
+- Media custody nothing can align to the incident timeline (a warning, not an error).
 
 ## Regeneration
 

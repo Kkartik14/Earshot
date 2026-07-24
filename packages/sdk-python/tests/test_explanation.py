@@ -329,8 +329,9 @@ def test_explanation_surfaces_failed_operation_diagnosis_with_evidence() -> None
 
     explanation = explain_incident(bundle, _analyze(bundle))
 
-    [diagnosis] = explanation.diagnoses
-    assert diagnosis.code == "operation.failed"
+    # The raw failure and the retry-pattern hypothesis co-exist; the failure fact
+    # is still surfaced unchanged alongside the richer tool.retry attribution.
+    diagnosis = next(item for item in explanation.diagnoses if item.code == "operation.failed")
     assert diagnosis.evidence_ids == ("op-tool-attempt-1",)
     assert diagnosis.confidence == "measured"
 
@@ -1291,7 +1292,7 @@ def test_validate_explanation_independently_rejects_duplicate_diagnosis(monkeypa
     bundle = _fault("tool_timeout_retry")
     analysis = _analyze(bundle)
     explanation = explain_incident(bundle, analysis)
-    [diagnosis] = explanation.diagnoses
+    diagnosis = explanation.diagnoses[0]
     duplicated = explanation.model_copy(update={"diagnoses": (*explanation.diagnoses, diagnosis)})
     monkeypatch.setattr(
         explanation_module,

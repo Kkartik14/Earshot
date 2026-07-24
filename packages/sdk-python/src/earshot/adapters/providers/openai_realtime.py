@@ -29,6 +29,17 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
     ) -> None:
         super().__init__("openai", identity_key=identity_key)
         self.model = sanitize_semantic_label(require_string(model, "model"))
+        self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
+        """Clear every per-session response/gesture map at a session boundary.
+
+        These maps grow one entry per response and are only pruned when a
+        ``response.done`` for that response is observed. A session that ends with
+        responses still in flight would otherwise leave their entries behind for
+        the next session on a reused adapter, so ``close()`` resets all of them.
+        """
+
         self._speech_stopped_receipt_ms: float | None = None
         self._response_started_ms: dict[str, float] = {}
         self._response_speech_stopped_ms: dict[str, float | None] = {}

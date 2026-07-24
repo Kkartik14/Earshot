@@ -1,0 +1,533 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "earshot.bundle.id",
+            "value": {
+              "stringValue": "fault-tool-timeout-retry"
+            }
+          },
+          {
+            "key": "earshot.clock.domain.ids",
+            "value": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "fault-fixture-clock"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "key": "earshot.projection.details",
+            "value": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "clock domain and relation definitions are dropped by OTLP"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "key": "earshot.projection.lossy",
+            "value": {
+              "boolValue": true
+            }
+          },
+          {
+            "key": "earshot.projection.note",
+            "value": {
+              "stringValue": "OTLP cannot natively represent earshot clock domains/relations, coverage availability, the privacy omission ledger, or per-record evidence provenance; those facts are projected into earshot.* attributes and may be lossy."
+            }
+          },
+          {
+            "key": "earshot.session.id",
+            "value": {
+              "stringValue": "fixture-session"
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "earshot-fault-corpus"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": ""
+          },
+          "spans": [
+            {
+              "attributes": [
+                {
+                  "key": "earshot.clock.domain.id",
+                  "value": {
+                    "stringValue": "fault-fixture-clock"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.availability",
+                  "value": {
+                    "stringValue": "available"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.confidence",
+                  "value": {
+                    "stringValue": "measured"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.method",
+                  "value": {
+                    "stringValue": "deterministic_fault_injection"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.method_version",
+                  "value": {
+                    "stringValue": "1"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.observer",
+                  "value": {
+                    "stringValue": "test_harness"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.source",
+                  "value": {
+                    "stringValue": "fixture_runtime"
+                  }
+                },
+                {
+                  "key": "earshot.operation.id",
+                  "value": {
+                    "stringValue": "op-tool-attempt-1"
+                  }
+                },
+                {
+                  "key": "earshot.operation.name",
+                  "value": {
+                    "stringValue": "tool"
+                  }
+                },
+                {
+                  "key": "earshot.operation.status",
+                  "value": {
+                    "stringValue": "timeout"
+                  }
+                },
+                {
+                  "key": "earshot.privacy.capture_class",
+                  "value": {
+                    "stringValue": "metadata"
+                  }
+                },
+                {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
+                  }
+                },
+                {
+                  "key": "earshot.span.parent_scope",
+                  "value": {
+                    "stringValue": "external"
+                  }
+                },
+                {
+                  "key": "earshot.time.monotonic_nano",
+                  "value": {
+                    "stringValue": "600000000"
+                  }
+                },
+                {
+                  "key": "earshot.turn.id",
+                  "value": {
+                    "stringValue": "turn-1"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "fixture-session"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1800000001600000000",
+              "kind": 1,
+              "name": "tool",
+              "spanId": "1111111111111111",
+              "startTimeUnixNano": "1800000000600000000",
+              "status": {
+                "code": 2,
+                "message": "timeout"
+              },
+              "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "earshot.clock.domain.id",
+                  "value": {
+                    "stringValue": "fault-fixture-clock"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.availability",
+                  "value": {
+                    "stringValue": "available"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.confidence",
+                  "value": {
+                    "stringValue": "measured"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.method",
+                  "value": {
+                    "stringValue": "deterministic_fault_injection"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.method_version",
+                  "value": {
+                    "stringValue": "1"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.observer",
+                  "value": {
+                    "stringValue": "test_harness"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.source",
+                  "value": {
+                    "stringValue": "fixture_runtime"
+                  }
+                },
+                {
+                  "key": "earshot.operation.id",
+                  "value": {
+                    "stringValue": "op-tool-attempt-2"
+                  }
+                },
+                {
+                  "key": "earshot.operation.name",
+                  "value": {
+                    "stringValue": "tool"
+                  }
+                },
+                {
+                  "key": "earshot.operation.status",
+                  "value": {
+                    "stringValue": "ok"
+                  }
+                },
+                {
+                  "key": "earshot.privacy.capture_class",
+                  "value": {
+                    "stringValue": "metadata"
+                  }
+                },
+                {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
+                  }
+                },
+                {
+                  "key": "earshot.span.parent_scope",
+                  "value": {
+                    "stringValue": "external"
+                  }
+                },
+                {
+                  "key": "earshot.time.monotonic_nano",
+                  "value": {
+                    "stringValue": "1700000000"
+                  }
+                },
+                {
+                  "key": "earshot.turn.id",
+                  "value": {
+                    "stringValue": "turn-1"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "fixture-session"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1800000002000000000",
+              "kind": 1,
+              "links": [
+                {
+                  "attributes": [
+                    {
+                      "key": "earshot.link.target_scope",
+                      "value": {
+                        "stringValue": "internal"
+                      }
+                    },
+                    {
+                      "key": "earshot.link.type",
+                      "value": {
+                        "stringValue": "retries"
+                      }
+                    }
+                  ],
+                  "spanId": "1111111111111111",
+                  "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "name": "tool",
+              "spanId": "2222222222222222",
+              "startTimeUnixNano": "1800000001700000000",
+              "status": {
+                "code": 1
+              },
+              "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "attributes": [
+                {
+                  "key": "earshot.clock.domain.id",
+                  "value": {
+                    "stringValue": "fault-fixture-clock"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.availability",
+                  "value": {
+                    "stringValue": "available"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.confidence",
+                  "value": {
+                    "stringValue": "measured"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.method",
+                  "value": {
+                    "stringValue": "deterministic_fault_injection"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.method_version",
+                  "value": {
+                    "stringValue": "1"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.observer",
+                  "value": {
+                    "stringValue": "test_harness"
+                  }
+                },
+                {
+                  "key": "earshot.evidence.source",
+                  "value": {
+                    "stringValue": "fixture_runtime"
+                  }
+                },
+                {
+                  "key": "earshot.operation.id",
+                  "value": {
+                    "stringValue": "op-downstream-agent"
+                  }
+                },
+                {
+                  "key": "earshot.operation.name",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "earshot.operation.status",
+                  "value": {
+                    "stringValue": "ok"
+                  }
+                },
+                {
+                  "key": "earshot.privacy.capture_class",
+                  "value": {
+                    "stringValue": "metadata"
+                  }
+                },
+                {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
+                  }
+                },
+                {
+                  "key": "earshot.span.parent_scope",
+                  "value": {
+                    "stringValue": "external"
+                  }
+                },
+                {
+                  "key": "earshot.time.monotonic_nano",
+                  "value": {
+                    "stringValue": "2050000000"
+                  }
+                },
+                {
+                  "key": "earshot.turn.id",
+                  "value": {
+                    "stringValue": "turn-1"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "fixture-session"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1800000002300000000",
+              "events": [
+                {
+                  "attributes": [
+                    {
+                      "key": "earshot.clock.domain.id",
+                      "value": {
+                        "stringValue": "fault-fixture-clock"
+                      }
+                    },
+                    {
+                      "key": "earshot.event.id",
+                      "value": {
+                        "stringValue": "event-retry-resumed"
+                      }
+                    },
+                    {
+                      "key": "earshot.event.name",
+                      "value": {
+                        "stringValue": "earshot.tool.retry.downstream_resumed"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.availability",
+                      "value": {
+                        "stringValue": "available"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.confidence",
+                      "value": {
+                        "stringValue": "measured"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method",
+                      "value": {
+                        "stringValue": "deterministic_fault_injection"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method_version",
+                      "value": {
+                        "stringValue": "1"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.observer",
+                      "value": {
+                        "stringValue": "test_harness"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.source",
+                      "value": {
+                        "stringValue": "fixture_runtime"
+                      }
+                    },
+                    {
+                      "key": "earshot.privacy.capture_class",
+                      "value": {
+                        "stringValue": "metadata"
+                      }
+                    },
+                    {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
+                      }
+                    },
+                    {
+                      "key": "earshot.time.monotonic_nano",
+                      "value": {
+                        "stringValue": "2050000000"
+                      }
+                    },
+                    {
+                      "key": "earshot.turn.id",
+                      "value": {
+                        "stringValue": "turn-1"
+                      }
+                    },
+                    {
+                      "key": "session.id",
+                      "value": {
+                        "stringValue": "fixture-session"
+                      }
+                    }
+                  ],
+                  "name": "earshot.tool.retry.downstream_resumed",
+                  "timeUnixNano": "1800000002050000000"
+                }
+              ],
+              "kind": 1,
+              "links": [
+                {
+                  "attributes": [
+                    {
+                      "key": "earshot.link.target_scope",
+                      "value": {
+                        "stringValue": "internal"
+                      }
+                    },
+                    {
+                      "key": "earshot.link.type",
+                      "value": {
+                        "stringValue": "consumes"
+                      }
+                    }
+                  ],
+                  "spanId": "2222222222222222",
+                  "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                }
+              ],
+              "name": "agent",
+              "spanId": "3333333333333333",
+              "startTimeUnixNano": "1800000002050000000",
+              "status": {
+                "code": 1
+              },
+              "traceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

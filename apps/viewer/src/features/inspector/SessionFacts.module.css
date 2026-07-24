@@ -110,6 +110,37 @@
   line-height: 1.4;
 }
 
+/* contradictions */
+.contra {
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--est);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 11px 13px;
+}
+.boundary {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--est);
+  background: color-mix(in oklab, var(--est) 15%, transparent);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* clock comparability */
+.reason {
+  font-size: 10.5px;
+  color: var(--tx-low);
+  text-align: right;
+}
+.dim {
+  color: var(--tx-low);
+  font-weight: 500;
+}
+
 /* unassigned operations + measurements */
 .unop {
   border: 1px solid var(--line-soft);

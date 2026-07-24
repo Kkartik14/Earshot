@@ -1,0 +1,526 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "earshot.bundle.id",
+            "value": {
+              "stringValue": "fault-webrtc-degradation"
+            }
+          },
+          {
+            "key": "earshot.clock.domain.ids",
+            "value": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "fault-fixture-clock"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "key": "earshot.projection.details",
+            "value": {
+              "arrayValue": {
+                "values": [
+                  {
+                    "stringValue": "clock domain and relation definitions are dropped by OTLP"
+                  },
+                  {
+                    "stringValue": "the source did not trace this incident; every span with no recorded trace context shares one trace id derived deterministically from the incident id"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "key": "earshot.projection.lossy",
+            "value": {
+              "boolValue": true
+            }
+          },
+          {
+            "key": "earshot.projection.note",
+            "value": {
+              "stringValue": "OTLP cannot natively represent earshot clock domains/relations, coverage availability, the privacy omission ledger, or per-record evidence provenance; those facts are projected into earshot.* attributes and may be lossy."
+            }
+          },
+          {
+            "key": "earshot.session.id",
+            "value": {
+              "stringValue": "fixture-session"
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "earshot-fault-corpus"
+            }
+          }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": ""
+          },
+          "spans": [
+            {
+              "attributes": [
+                {
+                  "key": "earshot.bundle.id",
+                  "value": {
+                    "stringValue": "fault-webrtc-degradation"
+                  }
+                },
+                {
+                  "key": "earshot.clock.domain.id",
+                  "value": {
+                    "stringValue": "fault-fixture-clock"
+                  }
+                },
+                {
+                  "key": "earshot.operation.status",
+                  "value": {
+                    "stringValue": "completed"
+                  }
+                },
+                {
+                  "key": "earshot.projection.kind",
+                  "value": {
+                    "stringValue": "session"
+                  }
+                },
+                {
+                  "key": "earshot.projection.note",
+                  "value": {
+                    "stringValue": "synthetic session-level span hosting quality-sample measurements"
+                  }
+                },
+                {
+                  "key": "earshot.projection.synthetic",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "earshot.projection.synthetic_span_id",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "earshot.projection.time_basis",
+                  "value": {
+                    "stringValue": "source_wall"
+                  }
+                },
+                {
+                  "key": "earshot.session.id",
+                  "value": {
+                    "stringValue": "fixture-session"
+                  }
+                },
+                {
+                  "key": "earshot.time.monotonic_nano",
+                  "value": {
+                    "stringValue": "0"
+                  }
+                },
+                {
+                  "key": "openinference.span.kind",
+                  "value": {
+                    "stringValue": "CHAIN"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "fixture-session"
+                  }
+                }
+              ],
+              "endTimeUnixNano": "1800000005000000000",
+              "events": [
+                {
+                  "attributes": [
+                    {
+                      "key": "earshot.clock.domain.id",
+                      "value": {
+                        "stringValue": "fault-fixture-clock"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.availability",
+                      "value": {
+                        "stringValue": "available"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.confidence",
+                      "value": {
+                        "stringValue": "measured"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method",
+                      "value": {
+                        "stringValue": "RTCPeerConnection.getStats"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method_version",
+                      "value": {
+                        "stringValue": "1"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.observer",
+                      "value": {
+                        "stringValue": "test_harness"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.source",
+                      "value": {
+                        "stringValue": "webrtc_stats"
+                      }
+                    },
+                    {
+                      "key": "earshot.metric.basis",
+                      "value": {
+                        "stringValue": "webrtc_stats"
+                      }
+                    },
+                    {
+                      "key": "earshot.participant.id",
+                      "value": {
+                        "stringValue": "participant-user"
+                      }
+                    },
+                    {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.aggregation",
+                      "value": {
+                        "stringValue": "instant"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.kind",
+                      "value": {
+                        "stringValue": "transport.quality"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.name",
+                      "value": {
+                        "stringValue": "jitter"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.sample_id",
+                      "value": {
+                        "stringValue": "quality-webrtc"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.unit",
+                      "value": {
+                        "stringValue": "ms"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.value",
+                      "value": {
+                        "intValue": "42"
+                      }
+                    },
+                    {
+                      "key": "earshot.stream.id",
+                      "value": {
+                        "stringValue": "stream-input"
+                      }
+                    },
+                    {
+                      "key": "earshot.time.monotonic_nano",
+                      "value": {
+                        "stringValue": "2000000000"
+                      }
+                    },
+                    {
+                      "key": "session.id",
+                      "value": {
+                        "stringValue": "fixture-session"
+                      }
+                    }
+                  ],
+                  "name": "earshot.quality.sample",
+                  "timeUnixNano": "1800000002000000000"
+                },
+                {
+                  "attributes": [
+                    {
+                      "key": "earshot.clock.domain.id",
+                      "value": {
+                        "stringValue": "fault-fixture-clock"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.availability",
+                      "value": {
+                        "stringValue": "available"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.confidence",
+                      "value": {
+                        "stringValue": "measured"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method",
+                      "value": {
+                        "stringValue": "RTCPeerConnection.getStats"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method_version",
+                      "value": {
+                        "stringValue": "1"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.observer",
+                      "value": {
+                        "stringValue": "test_harness"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.source",
+                      "value": {
+                        "stringValue": "webrtc_stats"
+                      }
+                    },
+                    {
+                      "key": "earshot.metric.basis",
+                      "value": {
+                        "stringValue": "webrtc_stats"
+                      }
+                    },
+                    {
+                      "key": "earshot.participant.id",
+                      "value": {
+                        "stringValue": "participant-user"
+                      }
+                    },
+                    {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.aggregation",
+                      "value": {
+                        "stringValue": "delta"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.kind",
+                      "value": {
+                        "stringValue": "transport.quality"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.name",
+                      "value": {
+                        "stringValue": "packet_loss_ratio"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.raw_counter",
+                      "value": {
+                        "intValue": "18"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.sample_id",
+                      "value": {
+                        "stringValue": "quality-webrtc"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.unit",
+                      "value": {
+                        "stringValue": "1"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.value",
+                      "value": {
+                        "doubleValue": 0.18
+                      }
+                    },
+                    {
+                      "key": "earshot.stream.id",
+                      "value": {
+                        "stringValue": "stream-input"
+                      }
+                    },
+                    {
+                      "key": "earshot.time.monotonic_nano",
+                      "value": {
+                        "stringValue": "2000000000"
+                      }
+                    },
+                    {
+                      "key": "session.id",
+                      "value": {
+                        "stringValue": "fixture-session"
+                      }
+                    }
+                  ],
+                  "name": "earshot.quality.sample",
+                  "timeUnixNano": "1800000002000000000"
+                },
+                {
+                  "attributes": [
+                    {
+                      "key": "earshot.clock.domain.id",
+                      "value": {
+                        "stringValue": "fault-fixture-clock"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.availability",
+                      "value": {
+                        "stringValue": "available"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.confidence",
+                      "value": {
+                        "stringValue": "measured"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method",
+                      "value": {
+                        "stringValue": "RTCPeerConnection.getStats"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.method_version",
+                      "value": {
+                        "stringValue": "1"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.observer",
+                      "value": {
+                        "stringValue": "test_harness"
+                      }
+                    },
+                    {
+                      "key": "earshot.evidence.source",
+                      "value": {
+                        "stringValue": "webrtc_stats"
+                      }
+                    },
+                    {
+                      "key": "earshot.metric.basis",
+                      "value": {
+                        "stringValue": "webrtc_stats"
+                      }
+                    },
+                    {
+                      "key": "earshot.participant.id",
+                      "value": {
+                        "stringValue": "participant-user"
+                      }
+                    },
+                    {
+                      "key": "earshot.projection.time_basis",
+                      "value": {
+                        "stringValue": "source_wall"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.aggregation",
+                      "value": {
+                        "stringValue": "instant"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.kind",
+                      "value": {
+                        "stringValue": "transport.quality"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.name",
+                      "value": {
+                        "stringValue": "round_trip_time"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.sample_id",
+                      "value": {
+                        "stringValue": "quality-webrtc"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.unit",
+                      "value": {
+                        "stringValue": "ms"
+                      }
+                    },
+                    {
+                      "key": "earshot.quality.value",
+                      "value": {
+                        "intValue": "180"
+                      }
+                    },
+                    {
+                      "key": "earshot.stream.id",
+                      "value": {
+                        "stringValue": "stream-input"
+                      }
+                    },
+                    {
+                      "key": "earshot.time.monotonic_nano",
+                      "value": {
+                        "stringValue": "2000000000"
+                      }
+                    },
+                    {
+                      "key": "session.id",
+                      "value": {
+                        "stringValue": "fixture-session"
+                      }
+                    }
+                  ],
+                  "name": "earshot.quality.sample",
+                  "timeUnixNano": "1800000002000000000"
+                }
+              ],
+              "kind": 1,
+              "name": "earshot.session",
+              "spanId": "767e8ff34363cf8a",
+              "startTimeUnixNano": "1800000000000000000",
+              "traceId": "9aa1ec66d7e141b81416b88109e7d281"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

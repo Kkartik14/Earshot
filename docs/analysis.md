@@ -18,7 +18,7 @@ Every diagnosis cites an operation, event, quality sample, or media record prese
 the exact input. Turn operation/event lists and every latency/tool/interruption/provider
 measurement have the same reference requirement.
 
-The current deterministic analyzer identity is `earshot.deterministic@0.3.2`.
+The current deterministic analyzer identity is `earshot.deterministic@0.4.0`.
 Analyzer version is part of the storage cache key; behavior changes such as delta-window
 aggregation therefore cannot reuse a projection produced by an older analyzer.
 
@@ -97,9 +97,13 @@ observed send, receive, or render evidence. Their projection carries
 `server_output_excludes_delivery_and_render` so server playout cannot be mistaken for
 client render or human perception.
 
-Cross-clock subtraction requires the same explicit clock domain. Reversed comparable
-time is `inconsistent`; missing/incomparable time is unavailable, never clamped to
-zero. Parallel tool output reports total work plus union elapsed time separately for
+Within one clock domain, subtraction is an exact difference across every shared basis;
+a reversed comparable time is `inconsistent`. Cross-clock latency between two clock
+domains is _unavailable_ unless a declared, in-window `ClockRelation` calibration aligns
+the endpoints' wall timestamps, in which case it is reported as an _estimated_ latency
+carrying the relation's propagated uncertainty — it is never _measured_. A reversed
+calibrated difference is `inconsistent`; missing or incomparable time stays unavailable,
+never clamped to zero. Parallel tool output reports total work plus union elapsed time separately for
 each source clock/basis. `elapsed_ms_by_clock_domain` is a nested map whose outer keys
 are exact clock-domain IDs and whose inner keys are `monotonic` or `source_wall`; IDs
 are never parsed or suffixed. Values are finite and nonnegative, and independent
@@ -114,14 +118,42 @@ inside that group; equal or unlocated points use their stable identity. Array po
 between different groups is a serialization rule and does not assert temporal or
 causal order across clocks.
 
-## Current diagnosis boundary
+## Boundary attribution
 
-The M1 analyzer emits a measured `operation.failed` diagnosis only for an operation
-whose governed status is `error`, `timeout`, or `failed`. Missing render, unsupported
-stages, and incomplete clocks are limitations, not invented causes. The deterministic
-fault corpus validates representability plus scenario-specific ordering, bottleneck,
-causality, provenance, and absence assertions across all thirteen scenarios. It does
-not claim every scenario is automatically root-caused today.
+Diagnoses are evidence-linked hypotheses that name the boundary at fault. Every one
+cites real operation, event, or quality-sample ids; carries a `confidence` that is
+`measured` when the deciding signal is a direct governed fact and `inferred` when the
+analyzer had to derive it (an SLO breach on a computed latency, or an absence); and is
+emitted only when its deciding signal is present. When a signal is `unavailable` or
+`not_observed` the analyzer says nothing rather than inventing a cause. Rules are
+deterministic and source-order-invariant, and the combined diagnosis list is sorted by
+`diagnosis_id`.
+
+The raw `operation.failed` fact is still emitted (measured) for any operation whose
+governed status is `error`, `timeout`, or `failed`. Boundary attribution layers richer,
+co-existing hypotheses on top of it:
+
+| Code                   | Boundary            | Deciding signal                                                                      | Default SLO                               | Confidence                                                                   |
+| ---------------------- | ------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------- | ---------------------------------------------------------------------------- |
+| `network.degraded`     | transport / network | QoS `packet_loss_ratio`, `jitter`, or `round_trip_time` on a governed quality sample | loss > 0.05, jitter > 30 ms, RTT > 150 ms | measured                                                                     |
+| `render.delayed`       | render              | turn-commit → `earshot.audio.render.started` latency                                 | > 1500 ms                                 | inferred                                                                     |
+| `interruption.false`   | interruption        | `earshot.interruption.detected` in a turn with no `interruption.accepted`            | n/a                                       | measured with an explicit `interruption.ignored`/false source, else inferred |
+| `audio.stale_playback` | decode / render     | `earshot.audio.render.stale` event                                                   | n/a                                       | measured                                                                     |
+| `tool.retry`           | tool                | a `tool` op with a `retries` link to a failed/timed-out sibling `tool` op            | n/a                                       | measured                                                                     |
+| `device.unavailable`   | capture             | `earshot.device.*` events                                                            | n/a                                       | measured                                                                     |
+| `transport.reconnect`  | transport           | `earshot.transport.reconnecting` (+ duplicate / out-of-order) events                 | n/a                                       | measured                                                                     |
+| `stage.slow`           | stt / llm / tts     | that stage operation's own duration                                                  | > 1500 ms                                 | inferred                                                                     |
+| `endpointing.slow`     | turn detection      | `turn_detection` (EOU) operation duration                                            | > 1000 ms                                 | inferred                                                                     |
+
+Thresholds are a configurable `SloRecipe` passed to `analyze_incident(..., slo=...)`; the
+defaults above are conservative real-time-voice values. A cleanly handled barge-in
+(`detected` then `accepted`) and a well-handled native accept (`accepted` alone) produce
+no false-interruption diagnosis. Missing render, unsupported stages, and incomplete
+clocks remain limitations, not invented causes. The deterministic fault corpus validates
+representability plus scenario-specific ordering, bottleneck, causality, provenance, and
+absence assertions across all scenarios, and the boundary-attribution suite proves that
+packet loss, jitter, render delay, false interruption, stale-buffer playback, and tool
+retry each attribute to the right boundary.
 
 Broader incident explanation, counterfactual reasoning, and incident-to-regression
 fixture conversion are later milestones. They should consume this evidence-linked

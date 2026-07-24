@@ -11,6 +11,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .analysis import ANALYZER_VERSION, analyze_incident
+from .checkpoint import (
+    AssemblyError,
+    JournalUnreadableError,
+    assemble_incident,
+    summarize_directory,
+)
+from .checkpoint.keys import resolve_at_rest_key
 from .codec import (
     IncidentCodecError,
     decode_incident_json,
@@ -18,7 +25,11 @@ from .codec import (
     encode_incident_json,
     encode_incident_protobuf,
 )
+from .exporters import span_count
+from .exporters.push import OtlpHttpExporter
+from .exporters.registry import export_incident, exporter_names
 from .privacy import ExportPolicyError, assert_export_allowed
+from .query import EvidenceQuery, compare_incidents
 from .storage import DEFAULT_PROJECT_ID, IncidentStore, StorageError
 from .validation import validate_incident
 
@@ -182,6 +193,175 @@ def _connector_create_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _query_command(arguments: argparse.Namespace) -> int:
+    bundle = _decode_file(Path(arguments.path))
+    query = EvidenceQuery(bundle)
+    if arguments.turn is not None:
+        _print_json(query.known_about_turn(arguments.turn).as_dict())
+    else:
+        _print_json(query.summary().as_dict())
+    return 0
+
+
+def _contradictions_command(arguments: argparse.Namespace) -> int:
+    bundle = _decode_file(Path(arguments.path))
+    query = EvidenceQuery(bundle)
+    _print_json({"contradictions": [item.as_dict() for item in query.contradictions()]})
+    return 0
+
+
+def _diff_command(arguments: argparse.Namespace) -> int:
+    incident = _decode_file(Path(arguments.incident))
+    known_good = _decode_file(Path(arguments.known_good))
+    _print_json(compare_incidents(incident, known_good).as_dict())
+    return 0
+
+
+def _parse_headers(pairs: Sequence[str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for pair in pairs:
+        key, separator, value = pair.partition("=")
+        if not separator or not key:
+            raise ValueError("headers must be supplied as KEY=VALUE")
+        headers[key.strip()] = value
+    return headers
+
+
+def _export_command(arguments: argparse.Namespace) -> int:
+    bundle = _decode_file(Path(arguments.path))
+    # Selecting by name is what makes a registered user exporter usable here
+    # without a CLI change; the registry enforces the declared export restriction
+    # against that exporter's destination, exactly as ``show`` does for its own.
+    document = export_incident(bundle, format=arguments.format)
+
+    if arguments.out is not None:
+        Path(arguments.out).write_text(
+            json.dumps(document, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    if arguments.push_otlp is not None:
+        exporter = OtlpHttpExporter(arguments.push_otlp, headers=_parse_headers(arguments.header))
+        result = exporter.export(document)
+        _print_json(
+            {
+                "endpoint": exporter.endpoint,
+                "error": result.error,
+                "ok": result.ok,
+                "retryable": result.retryable,
+                "spans": result.spans,
+                "status": result.status,
+            }
+        )
+        return 0 if result.ok else 1
+
+    if arguments.out is not None:
+        _print_json(
+            {"format": arguments.format, "out": str(arguments.out), "spans": span_count(document)}
+        )
+        return 0
+
+    _print_json(document)
+    return 0
+
+
+def _checkpoint_key() -> bytes | None:
+    return resolve_at_rest_key(
+        None,
+        env_var="EARSHOT_CHECKPOINT_KEY",
+        env_file_var="EARSHOT_CHECKPOINT_KEY_FILE",
+        label="checkpoint key",
+        fallback=("EARSHOT_SPOOL_KEY", "EARSHOT_SPOOL_KEY_FILE"),
+    )
+
+
+def _checkpoints_list_command(arguments: argparse.Namespace) -> int:
+    summaries = summarize_directory(Path(arguments.checkpoint_dir), key=_checkpoint_key())
+    _print_json(
+        {
+            "journals": [
+                {
+                    "path": str(summary.path),
+                    "journal_id": summary.journal_id,
+                    "session_id": summary.session_id,
+                    "bundle_id": summary.bundle_id,
+                    "state": summary.state,
+                    "last_sequence": summary.last_sequence,
+                    "torn_tail_bytes": summary.torn_tail_bytes,
+                    "total_bytes": summary.total_bytes,
+                }
+                for summary in summaries
+            ]
+        }
+    )
+    return 0
+
+
+def _select_journal(arguments: argparse.Namespace) -> Path:
+    if arguments.journal is not None:
+        return Path(arguments.journal)
+    if arguments.checkpoint_dir is None:
+        raise ValueError("recover requires --journal or --checkpoint-dir")
+    matches = [
+        summary
+        for summary in summarize_directory(Path(arguments.checkpoint_dir), key=_checkpoint_key())
+        if arguments.session_id is None or summary.session_id == arguments.session_id
+    ]
+    if not matches:
+        raise ValueError("no journal matches the requested session")
+    if len(matches) > 1:
+        # Refuse to guess: recovering the wrong session silently would be worse
+        # than making the operator name the one they mean.
+        raise ValueError("more than one journal matches; pass --session-id or --journal")
+    return matches[0].path
+
+
+def _recover_command(arguments: argparse.Namespace) -> int:
+    """Reconstruct an incident from a checkpoint journal.
+
+    Recovering a finalized journal reproduces the artifact ``close()`` produced,
+    byte for byte, which is why a duplicate ingest deduplicates instead of
+    conflicting. When the close was never observed the artifact is explicitly
+    provisional and says so in ``manifest.recovery``.
+    """
+
+    result = assemble_incident(
+        _select_journal(arguments),
+        key=_checkpoint_key(),
+        best_effort=arguments.best_effort,
+        bundle_id_suffix=arguments.bundle_id_suffix,
+    )
+    report = result.report
+    payload = encode_incident_protobuf(result.bundle)
+    created = None
+    if arguments.ingest:
+        store = IncidentStore(_data_dir(arguments.data_dir))
+        ingested = store.ingest(result.bundle, payload, project_id=arguments.project)
+        created = ingested.created
+    if arguments.out is not None:
+        Path(arguments.out).write_bytes(encode_incident_json(result.bundle, indent=2) + b"\n")
+    _print_json(
+        {
+            "bundle_id": report.bundle_id,
+            "session_id": report.session_id,
+            "journal_id": report.journal_id,
+            "close_observed": report.close_observed,
+            "counter_mismatch": report.counter_mismatch,
+            "created": created,
+            "canonical_sha256": hashlib.sha256(payload).hexdigest(),
+            "discarded_records": report.discarded_records,
+            "finality": result.bundle.profile.manifest.finality,
+            "journal_complete": report.journal_complete,
+            "last_sequence": report.last_sequence,
+            "out": None if arguments.out is None else str(arguments.out),
+            "stop_reason": report.stop_reason,
+            "torn_tail_bytes": report.torn_tail_bytes,
+            "unfinished_operations": report.unfinished_operations,
+        }
+    )
+    return 0
+
+
 def _serve_command(arguments: argparse.Namespace) -> int:
     try:
         import uvicorn
@@ -195,8 +375,11 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         )
         return 2
 
+    from .live import LiveSessionRegistry
+
     token = arguments.token or os.environ.get("EARSHOT_TOKEN")
     data_dir = _data_dir(arguments.data_dir).expanduser().resolve()
+    checkpoint_dir = arguments.checkpoint_dir or os.environ.get("EARSHOT_CHECKPOINT_DIR")
     config = ApiConfig(
         host=arguments.host,
         token=token,
@@ -207,13 +390,26 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         behind_tls_proxy=arguments.behind_tls_proxy,
         trust_local_network=arguments.trust_local_network,
     )
+    # Following a checkpoint directory is an explicit opt-in: it is the same
+    # storage decision as writing one, seen from the other end.
+    registry = (
+        None
+        if checkpoint_dir is None
+        else LiveSessionRegistry(
+            journal_dir=Path(checkpoint_dir).expanduser().resolve(),
+            key=_checkpoint_key(),
+        )
+    )
     app = create_app(
         data_dir=data_dir,
         analyzer=analyze_incident,
         config=config,
         web_dir=arguments.web_dir,
+        live_registry=registry,
     )
     print(f"Earshot data path: {data_dir}", file=sys.stderr)
+    if checkpoint_dir is not None:
+        print(f"Earshot live tail: {checkpoint_dir}", file=sys.stderr)
     print(f"Earshot listening: http://{arguments.host}:{arguments.port}/", file=sys.stderr)
     if arguments.trust_local_network:
         print(
@@ -304,6 +500,91 @@ def _build_parser() -> argparse.ArgumentParser:
     connector_create.add_argument("--data-dir")
     connector_create.set_defaults(handler=_connector_create_command)
 
+    query = commands.add_parser(
+        "query", help="query an incident's evidence graph (summary or one turn)"
+    )
+    query.add_argument("path")
+    query.add_argument("--turn", help="report everything known about this turn id")
+    query.add_argument(
+        "--json",
+        action="store_true",
+        help="emit structured JSON (the default and only output form)",
+    )
+    query.set_defaults(handler=_query_command)
+
+    contradictions = commands.add_parser(
+        "contradictions", help="detect evidence-linked contradictions in an incident"
+    )
+    contradictions.add_argument("path")
+    contradictions.set_defaults(handler=_contradictions_command)
+
+    diff = commands.add_parser("diff", help="diff an incident against a known-good incident")
+    diff.add_argument("incident")
+    diff.add_argument("known_good")
+    diff.set_defaults(handler=_diff_command)
+
+    export = commands.add_parser(
+        "export",
+        help="project an incident with a registered exporter and optionally push it",
+    )
+    export.add_argument("path")
+    # Sourced from the registry so a process that registered its own exporter can
+    # drive it from the CLI; sorted names keep `--help` stable.
+    export.add_argument(
+        "--format",
+        choices=exporter_names(),
+        required=True,
+        help="registered exporter name (built in: otlp, openinference)",
+    )
+    export.add_argument("--out", help="write the projected OTLP/JSON document to this file")
+    export.add_argument(
+        "--push-otlp",
+        metavar="ENDPOINT",
+        help="POST the projected document to an OTLP traces endpoint (e.g. Phoenix/Langfuse)",
+    )
+    export.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="header to send with --push-otlp (repeatable), e.g. authentication",
+    )
+    export.set_defaults(handler=_export_command)
+
+    checkpoints = commands.add_parser("checkpoints", help="inspect crash-recovery journals")
+    checkpoints_commands = checkpoints.add_subparsers(dest="checkpoints_command", required=True)
+    checkpoints_list = checkpoints_commands.add_parser(
+        "list", help="identify every journal in a checkpoint directory"
+    )
+    checkpoints_list.add_argument("checkpoint_dir")
+    checkpoints_list.set_defaults(handler=_checkpoints_list_command)
+
+    recover = commands.add_parser(
+        "recover", help="reconstruct an incident from a checkpoint journal"
+    )
+    recover.add_argument("--checkpoint-dir")
+    recover.add_argument("--journal", help="recover this exact journal file")
+    recover.add_argument("--session-id", help="select the journal for this session")
+    recover.add_argument("--out", help="write the recovered incident JSON to this file")
+    recover.add_argument(
+        "--ingest", action="store_true", help="ingest the recovered incident locally"
+    )
+    recover.add_argument("--data-dir")
+    recover.add_argument("--project", default=DEFAULT_PROJECT_ID)
+    recover.add_argument(
+        "--best-effort",
+        action="store_true",
+        help="accept a journal whose replay disagrees with the recorder's own totals",
+    )
+    recover.add_argument(
+        "--bundle-id-suffix",
+        help=(
+            "suffix the recovered bundle id (for example .r2) when a previous "
+            "recovery of this journal is already stored under a different SDK version"
+        ),
+    )
+    recover.set_defaults(handler=_recover_command)
+
     serve = commands.add_parser("serve", help="run the local ingest API")
     serve.add_argument("--data-dir")
     serve.add_argument("--host", default=os.environ.get("EARSHOT_HOST", "127.0.0.1"))
@@ -312,6 +593,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--web-dir",
         default=os.environ.get("EARSHOT_WEB_DIR"),
         help="serve a built viewer SPA from this directory at the site root",
+    )
+    serve.add_argument(
+        "--checkpoint-dir",
+        default=None,
+        help=(
+            "follow the crash-recovery journals in this directory and expose them "
+            "under /v1/live; live sessions are never listed as incidents"
+        ),
     )
     serve.add_argument("--token")
     serve.add_argument(
@@ -356,8 +645,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(arguments.handler(arguments))
     except (
+        AssemblyError,
         ExportPolicyError,
         IncidentCodecError,
+        JournalUnreadableError,
         StorageError,
         OSError,
         ValueError,

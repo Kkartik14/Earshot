@@ -501,14 +501,25 @@
           "producer": {
             "$ref": "#/components/schemas/Producer"
           },
+          "recovery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecoveryRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "schema_version": {
-            "default": "0.1.0",
+            "default": "0.2.0",
             "minLength": 1,
             "title": "Schema Version",
             "type": "string"
           },
           "semantic_profile_version": {
-            "default": "0.1.0",
+            "default": "0.2.0",
             "minLength": 1,
             "title": "Semantic Profile Version",
             "type": "string"
@@ -548,6 +559,140 @@
           "length"
         ],
         "title": "ByteRange",
+        "type": "object"
+      },
+      "CaptureAcceptedResponse": {
+        "additionalProperties": false,
+        "description": "The incident one capture batch became, plus what the server refused.\n\nThe ``rejected_*`` counters are the server-side allowlist's own report: they\nsay how much of the payload was dropped before it could be stored, so a\nclient can see that its batch was trimmed instead of silently reshaped.",
+        "properties": {
+          "accepted_coverage": {
+            "title": "Accepted Coverage",
+            "type": "integer"
+          },
+          "accepted_device_events": {
+            "title": "Accepted Device Events",
+            "type": "integer"
+          },
+          "accepted_snapshots": {
+            "title": "Accepted Snapshots",
+            "type": "integer"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "capture_version": {
+            "title": "Capture Version",
+            "type": "integer"
+          },
+          "completeness": {
+            "title": "Completeness",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "created_at_unix_nano": {
+            "title": "Created At Unix Nano",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "finality": {
+            "title": "Finality",
+            "type": "string"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "ingested_at_unix_nano": {
+            "title": "Ingested At Unix Nano",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "rejected_device_events": {
+            "title": "Rejected Device Events",
+            "type": "integer"
+          },
+          "rejected_device_members": {
+            "title": "Rejected Device Members",
+            "type": "integer"
+          },
+          "rejected_stat_members": {
+            "title": "Rejected Stat Members",
+            "type": "integer"
+          },
+          "rejected_stats": {
+            "title": "Rejected Stats",
+            "type": "integer"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "project_id",
+          "bundle_id",
+          "session_id",
+          "schema_version",
+          "digest",
+          "size_bytes",
+          "status",
+          "finality",
+          "completeness",
+          "framework",
+          "created_at_unix_nano",
+          "ingested_at_unix_nano",
+          "created",
+          "capture_version",
+          "trace_id",
+          "accepted_snapshots",
+          "accepted_device_events",
+          "accepted_coverage",
+          "rejected_stats",
+          "rejected_stat_members",
+          "rejected_device_events",
+          "rejected_device_members"
+        ],
+        "title": "CaptureAcceptedResponse",
         "type": "object"
       },
       "CaptureClassPolicy": {
@@ -635,6 +780,237 @@
         "title": "CaptureClassPolicy",
         "type": "object"
       },
+      "CaptureClockDomainRequest": {
+        "additionalProperties": false,
+        "description": "The browser clock every ``timestamp_ms`` in this payload was read from.\n\nIts identity is what keeps browser readings out of the server clock domain:\nthe facts derived here are recorded against ``id`` at their raw readings, and\nno calibration to the server clock is invented.",
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "browser_monotonic",
+            "title": "Kind",
+            "type": "string"
+          },
+          "uncertaintyMs": {
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Uncertaintyms",
+            "type": "number"
+          },
+          "unit": {
+            "const": "ms",
+            "title": "Unit",
+            "type": "string"
+          },
+          "wallOriginMs": {
+            "anyOf": [
+              {
+                "maximum": 10000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Walloriginms"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "unit",
+          "uncertaintyMs"
+        ],
+        "title": "CaptureClockDomainRequest",
+        "type": "object"
+      },
+      "CaptureCoverageRequest": {
+        "additionalProperties": false,
+        "description": "One explicit gap the client recorded rather than dropping it silently.",
+        "properties": {
+          "availability": {
+            "enum": [
+              "available",
+              "partial",
+              "not_observed"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "droppedCount": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Droppedcount"
+          },
+          "reason": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Reason",
+            "type": "string"
+          },
+          "signal": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Signal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal",
+          "availability",
+          "reason"
+        ],
+        "title": "CaptureCoverageRequest",
+        "type": "object"
+      },
+      "CaptureDeviceEventRequest": {
+        "additionalProperties": true,
+        "description": "One audio-graph/device lifecycle event: ``{type, timestamp_ms, ...members}``.\n\nExtra members are accepted by the parser and then dropped by the server\nallowlist, so an unknown member is refused rather than stored.",
+        "properties": {
+          "timestamp_ms": {
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Timestamp Ms",
+            "type": "number"
+          },
+          "type": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "timestamp_ms"
+        ],
+        "title": "CaptureDeviceEventRequest",
+        "type": "object"
+      },
+      "CaptureRequest": {
+        "additionalProperties": false,
+        "description": "The versioned browser capture payload, exactly as ``drain()`` emits it.",
+        "properties": {
+          "captureVersion": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "title": "Captureversion",
+            "type": "integer"
+          },
+          "clockDomain": {
+            "$ref": "#/components/schemas/CaptureClockDomainRequest"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureCoverageRequest"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "deviceEvents": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureDeviceEventRequest"
+            },
+            "title": "Deviceevents",
+            "type": "array"
+          },
+          "sessionId": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureSnapshotRequest"
+            },
+            "title": "Snapshots",
+            "type": "array"
+          },
+          "traceContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaptureTraceContextRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "captureVersion",
+          "sessionId",
+          "clockDomain"
+        ],
+        "title": "CaptureRequest",
+        "type": "object"
+      },
+      "CaptureSnapshotRequest": {
+        "additionalProperties": false,
+        "description": "One ``RTCPeerConnection.getStats()`` snapshot: stat id -> member bag.\n\nMembers are NOT trusted as sent: the server independently allowlists them\n(see ``_sanitize_capture_stats``) before anything reaches an engine.",
+        "properties": {
+          "stats": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Stats",
+            "type": "object"
+          },
+          "timestamp_ms": {
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Timestamp Ms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "timestamp_ms",
+          "stats"
+        ],
+        "title": "CaptureSnapshotRequest",
+        "type": "object"
+      },
+      "CaptureTraceContextRequest": {
+        "additionalProperties": false,
+        "description": "The session's W3C trace-context: random correlation handles only.",
+        "properties": {
+          "spanId": {
+            "pattern": "^[0-9a-f]{16}$",
+            "title": "Spanid",
+            "type": "string"
+          },
+          "traceId": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Traceid",
+            "type": "string"
+          },
+          "traceparent": {
+            "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+            "title": "Traceparent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceparent",
+          "traceId",
+          "spanId"
+        ],
+        "title": "CaptureTraceContextRequest",
+        "type": "object"
+      },
       "CausalLink": {
         "additionalProperties": true,
         "properties": {
@@ -703,6 +1079,46 @@
           "relationship"
         ],
         "title": "CausalLink",
+        "type": "object"
+      },
+      "CheckpointAcceptedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted_records": {
+            "title": "Accepted Records",
+            "type": "integer"
+          },
+          "accepted_through": {
+            "title": "Accepted Through",
+            "type": "integer"
+          },
+          "journal_id": {
+            "title": "Journal Id",
+            "type": "string"
+          },
+          "sealable": {
+            "title": "Sealable",
+            "type": "boolean"
+          },
+          "state": {
+            "enum": [
+              "live",
+              "stale",
+              "finalized",
+              "abandoned"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "journal_id",
+          "accepted_through",
+          "accepted_records",
+          "state",
+          "sealable"
+        ],
+        "title": "CheckpointAcceptedResponse",
         "type": "object"
       },
       "ClockDomain": {
@@ -804,6 +1220,174 @@
           "observer"
         ],
         "title": "ClockDomain",
+        "type": "object"
+      },
+      "ClockRelation": {
+        "additionalProperties": true,
+        "description": "A declared calibration mapping between two clock domains.\n\n``offset_nano`` converts a ``from``-domain wall timestamp into the ``to``\ndomain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``\nis an optional linear parts-per-million rate anchored at ``reference_unix_nano``,\nso the total correction at wall time ``t`` is\n``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds.\n``uncertainty_nano`` is the calibration's own error bound and is propagated into\nany cross-domain latency derived through this relation. ``valid_from_unix_nano``\nand ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)\nwhere the calibration is trustworthy; timestamps outside it are not aligned.",
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "drift_ppm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Drift Ppm"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Evidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "from_clock_domain_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "From Clock Domain Id",
+            "type": "string"
+          },
+          "method": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Method",
+            "type": "string"
+          },
+          "offset_nano": {
+            "maxLength": 21,
+            "pattern": "^-?(0|[1-9][0-9]*)$",
+            "title": "Offset Nano",
+            "type": "string"
+          },
+          "reference_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reference Unix Nano"
+          },
+          "relation_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Relation Id",
+            "type": "string"
+          },
+          "to_clock_domain_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "To Clock Domain Id",
+            "type": "string"
+          },
+          "uncertainty_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uncertainty Nano"
+          },
+          "valid_from_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Valid From Unix Nano"
+          },
+          "valid_to_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Valid To Unix Nano"
+          }
+        },
+        "required": [
+          "relation_id",
+          "from_clock_domain_id",
+          "to_clock_domain_id",
+          "offset_nano",
+          "method"
+        ],
+        "title": "ClockRelation",
+        "type": "object"
+      },
+      "ComparedDiagnosisResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "boundary": {
+            "title": "Boundary",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "diagnosis_id": {
+            "title": "Diagnosis Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "turn_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Turn Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "boundary",
+          "turn_ids",
+          "diagnosis_id",
+          "evidence_ids"
+        ],
+        "title": "ComparedDiagnosisResponse",
         "type": "object"
       },
       "ConnectorDeliveryResponse": {
@@ -960,6 +1544,67 @@
         "title": "ConsentRecord",
         "type": "object"
       },
+      "ContradictionResponse": {
+        "additionalProperties": false,
+        "description": "One evidence-linked contradiction, exactly as ``query.detect_contradictions``\nreports it. Every field names real evidence; no source payload is surfaced.",
+        "properties": {
+          "boundary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "kind",
+          "summary",
+          "evidence_ids"
+        ],
+        "title": "ContradictionResponse",
+        "type": "object"
+      },
       "Coverage": {
         "additionalProperties": true,
         "properties": {
@@ -1008,6 +1653,36 @@
           "availability"
         ],
         "title": "Coverage",
+        "type": "object"
+      },
+      "CoverageGapResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "title": "Availability",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "signal": {
+            "title": "Signal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal",
+          "availability"
+        ],
+        "title": "CoverageGapResponse",
         "type": "object"
       },
       "DerivedAnalysis": {
@@ -2174,6 +2849,14 @@
             "title": "Events",
             "type": "array"
           },
+          "interruption_chains": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/InterruptionChainProjection"
+            },
+            "title": "Interruption Chains",
+            "type": "array"
+          },
           "measurements": {
             "items": {
               "$ref": "#/components/schemas/ExplainedMeasurement"
@@ -2289,6 +2972,134 @@
         "title": "IncidentBundleJson",
         "type": "object"
       },
+      "IncidentComparisonResponse": {
+        "additionalProperties": false,
+        "description": "A structured diff of one incident against a known-good incident.\n\nBoth sides are named by bundle id and pinned by the digest their analysis was\nderived from, so the reader can tell exactly what was compared. A latency delta\nappears only where both sides are available in the same unit; every other case\nis an availability change, never an invented number.",
+        "properties": {
+          "analyzer_version": {
+            "title": "Analyzer Version",
+            "type": "string"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "contradictions_new": {
+            "items": {
+              "$ref": "#/components/schemas/ContradictionResponse"
+            },
+            "title": "Contradictions New",
+            "type": "array"
+          },
+          "coverage_gaps_new": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGapResponse"
+            },
+            "title": "Coverage Gaps New",
+            "type": "array"
+          },
+          "coverage_gaps_removed": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGapResponse"
+            },
+            "title": "Coverage Gaps Removed",
+            "type": "array"
+          },
+          "diagnoses_added": {
+            "items": {
+              "$ref": "#/components/schemas/ComparedDiagnosisResponse"
+            },
+            "title": "Diagnoses Added",
+            "type": "array"
+          },
+          "diagnoses_removed": {
+            "items": {
+              "$ref": "#/components/schemas/ComparedDiagnosisResponse"
+            },
+            "title": "Diagnoses Removed",
+            "type": "array"
+          },
+          "input_digest": {
+            "title": "Input Digest",
+            "type": "string"
+          },
+          "known_good_bundle_id": {
+            "title": "Known Good Bundle Id",
+            "type": "string"
+          },
+          "known_good_input_digest": {
+            "title": "Known Good Input Digest",
+            "type": "string"
+          },
+          "turn_metric_availability_changes": {
+            "items": {
+              "$ref": "#/components/schemas/TurnMetricAvailabilityChangeResponse"
+            },
+            "title": "Turn Metric Availability Changes",
+            "type": "array"
+          },
+          "turn_metric_deltas": {
+            "items": {
+              "$ref": "#/components/schemas/TurnMetricDeltaResponse"
+            },
+            "title": "Turn Metric Deltas",
+            "type": "array"
+          },
+          "unmatched_turns": {
+            "$ref": "#/components/schemas/UnmatchedTurnsResponse"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "known_good_bundle_id",
+          "analyzer_version",
+          "input_digest",
+          "known_good_input_digest",
+          "diagnoses_added",
+          "diagnoses_removed",
+          "turn_metric_deltas",
+          "turn_metric_availability_changes",
+          "unmatched_turns",
+          "coverage_gaps_new",
+          "coverage_gaps_removed",
+          "contradictions_new"
+        ],
+        "title": "IncidentComparisonResponse",
+        "type": "object"
+      },
+      "IncidentContradictionsResponse": {
+        "additionalProperties": false,
+        "description": "Contradictions found in one incident, bound to the analysis that found them.\n\nAn empty ``contradictions`` list means detection ran against ``input_digest``\nand found none. It never stands in for \"analysis unavailable\": that case is a\n``404 EARSHOT_ANALYSIS_NOT_AVAILABLE`` instead of an empty answer.",
+        "properties": {
+          "analyzer_version": {
+            "title": "Analyzer Version",
+            "type": "string"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "contradictions": {
+            "items": {
+              "$ref": "#/components/schemas/ContradictionResponse"
+            },
+            "title": "Contradictions",
+            "type": "array"
+          },
+          "input_digest": {
+            "title": "Input Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "analyzer_version",
+          "input_digest",
+          "contradictions"
+        ],
+        "title": "IncidentContradictionsResponse",
+        "type": "object"
+      },
       "IncidentExplanation": {
         "additionalProperties": false,
         "properties": {
@@ -2402,6 +3213,42 @@
         "title": "IncidentExplanation",
         "type": "object"
       },
+      "IncidentExportResponse": {
+        "additionalProperties": false,
+        "description": "One incident projected through a named exporter in the exporter registry.\n\n``format`` is the registered exporter name and ``destination`` is the export\ndestination a capture policy must permit for that projection to run, so the\ndocument is always accompanied by the governance decision that released it.",
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "digest",
+          "format",
+          "destination",
+          "document"
+        ],
+        "title": "IncidentExportResponse",
+        "type": "object"
+      },
       "IncidentPageResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2466,6 +3313,14 @@
               "$ref": "#/components/schemas/ClockDomain"
             },
             "title": "Clock Domains",
+            "type": "array"
+          },
+          "clock_relations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ClockRelation"
+            },
+            "title": "Clock Relations",
             "type": "array"
           },
           "coverage": {
@@ -2699,6 +3554,47 @@
         "title": "IngestResponse",
         "type": "object"
       },
+      "InterruptionChainProjection": {
+        "additionalProperties": false,
+        "description": "The ordered causal chain a single turn's interruption produced.\n\nEvery stage in the canonical vocabulary is present exactly once, marked\nobserved or not. ``effectiveness`` is the barge-in latency from the observed\noverlap to the observed render stop, computed only when both endpoints are\ncomparable (same clock, or a declared calibration aligns them); otherwise it\nhonestly asserts no value.",
+        "properties": {
+          "classification": {
+            "enum": [
+              "accepted",
+              "ignored",
+              "false",
+              "unknown"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "effectiveness": {
+            "$ref": "#/components/schemas/AnalysisMetric"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/InterruptionStage"
+            },
+            "minItems": 1,
+            "title": "Stages",
+            "type": "array"
+          },
+          "turn_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "classification",
+          "stages",
+          "effectiveness"
+        ],
+        "title": "InterruptionChainProjection",
+        "type": "object"
+      },
       "InterruptionProjection": {
         "additionalProperties": false,
         "properties": {
@@ -2723,6 +3619,108 @@
           "evidence_ids"
         ],
         "title": "InterruptionProjection",
+        "type": "object"
+      },
+      "InterruptionStage": {
+        "additionalProperties": false,
+        "description": "One canonical stage of a barge-in teardown, observed or not.\n\nAn observed stage cites a real event/operation/sample and carries the exact\ncoordinate that evidence recorded (never a synthesized timestamp). A stage the\nartifact does not contain is reported as ``observed=False`` with a\n``coverage_reason`` and no coordinate, so absence is coverage, not fabrication.\n``outcome`` carries the disposition of the ``tool_outcome`` stage (the tool's\nok/error/timeout/cancelled status) and stays ``None`` for every other stage.",
+        "properties": {
+          "at_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "At Nano"
+          },
+          "clock_domain_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clock Domain Id"
+          },
+          "coverage_reason": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Coverage Reason"
+          },
+          "evidence_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Evidence Id"
+          },
+          "observed": {
+            "title": "Observed",
+            "type": "boolean"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
+          },
+          "stage": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Stage",
+            "type": "string"
+          },
+          "time_basis": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time Basis"
+          }
+        },
+        "required": [
+          "stage",
+          "observed"
+        ],
+        "title": "InterruptionStage",
         "type": "object"
       },
       "JsonRawOtlpChunk": {
@@ -2777,6 +3775,171 @@
         "title": "JsonRawOtlpChunk",
         "type": "object"
       },
+      "LiveSealResponse": {
+        "additionalProperties": false,
+        "description": "The artifact an operator explicitly materialized from a live buffer.",
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "close_observed": {
+            "title": "Close Observed",
+            "type": "boolean"
+          },
+          "completeness": {
+            "title": "Completeness",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "finality": {
+            "title": "Finality",
+            "type": "string"
+          },
+          "journal_complete": {
+            "title": "Journal Complete",
+            "type": "boolean"
+          },
+          "last_sequence": {
+            "title": "Last Sequence",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "torn_tail_bytes": {
+            "title": "Torn Tail Bytes",
+            "type": "integer"
+          },
+          "unfinished_operations": {
+            "title": "Unfinished Operations",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "session_id",
+          "created",
+          "finality",
+          "completeness",
+          "close_observed",
+          "last_sequence",
+          "torn_tail_bytes",
+          "journal_complete",
+          "unfinished_operations"
+        ],
+        "title": "LiveSealResponse",
+        "type": "object"
+      },
+      "LiveSessionPageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "following_journal_directory": {
+            "title": "Following Journal Directory",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LiveSessionResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "limitations",
+          "following_journal_directory"
+        ],
+        "title": "LiveSessionPageResponse",
+        "type": "object"
+      },
+      "LiveSessionResponse": {
+        "additionalProperties": false,
+        "description": "One conversation still being written. Deliberately not an incident.\n\nEvery field here is an observation about the *journal*, never a verdict about\nthe session. ``close_observed`` is the only thing that can say the producer\nfinished, and until it is true nothing downstream may treat this session as\ncomplete.",
+        "properties": {
+          "available_from_sequence": {
+            "title": "Available From Sequence",
+            "type": "integer"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "close_observed": {
+            "title": "Close Observed",
+            "type": "boolean"
+          },
+          "journal_complete": {
+            "title": "Journal Complete",
+            "type": "boolean"
+          },
+          "journal_id": {
+            "title": "Journal Id",
+            "type": "string"
+          },
+          "last_append_unix_nano": {
+            "title": "Last Append Unix Nano",
+            "type": "string"
+          },
+          "last_sequence": {
+            "title": "Last Sequence",
+            "type": "integer"
+          },
+          "sealable": {
+            "title": "Sealable",
+            "type": "boolean"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "journal",
+              "checkpoint"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "live",
+              "stale",
+              "finalized",
+              "abandoned"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "bundle_id",
+          "journal_id",
+          "source",
+          "state",
+          "last_sequence",
+          "available_from_sequence",
+          "last_append_unix_nano",
+          "close_observed",
+          "journal_complete",
+          "sealable"
+        ],
+        "title": "LiveSessionResponse",
+        "type": "object"
+      },
       "MediaLocator": {
         "additionalProperties": true,
         "properties": {
@@ -2814,6 +3977,7 @@
       },
       "MediaRef": {
         "additionalProperties": true,
+        "description": "A reference to media somebody else holds \u2014 never the media itself.\n\nEarshot stores custody, not content: who holds the bytes, what they are,\nwhich window of the session they cover, under what consent and retention,\nand which clock domain their own timeline runs on. It never ingests,\nfetches, caches, or proxies them.\n\n``integrity`` is the honesty discriminator that makes that distinction\nlegible instead of overloading a null:\n\n``content_digest``\n    Somebody measured these bytes and declared a ``sha256`` and\n    ``size_bytes`` for them. The digest is a *declaration carried by the\n    artifact*, not an earshot verification \u2014 earshot still never read the\n    bytes \u2014 but it is a checkable commitment a holder can be held to.\n``opaque_handle``\n    Nobody measured the bytes on this path, so the reference carries no\n    digest and no size and names the ``custodian`` who does hold them.\n    ``byte_range`` is meaningless here: you cannot range into bytes whose\n    length was never observed.\n\nMaking ``sha256``/``size_bytes`` optional is what the real custody case\nrequires. The alternative \u2014 keeping them required and letting a producer\nfill them with something it did not compute \u2014 is exactly the dishonesty\nthis contract exists to prevent. The coherence rule is enforced by\n:func:`media_custody_incoherence` at every boundary, not by convention.",
         "properties": {
           "attributes": {
             "additionalProperties": true,
@@ -2846,9 +4010,56 @@
             "title": "Capture Class",
             "type": "string"
           },
+          "clock_domain_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Clock Domain Id"
+          },
+          "consent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConsentRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "content_type": {
             "minLength": 1,
             "title": "Content Type",
+            "type": "string"
+          },
+          "custodian": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Custodian"
+          },
+          "integrity": {
+            "default": "content_digest",
+            "enum": [
+              "content_digest",
+              "opaque_handle"
+            ],
+            "title": "Integrity",
             "type": "string"
           },
           "locator": {
@@ -2873,6 +4084,17 @@
             "title": "Media Kind",
             "type": "string"
           },
+          "retention": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "session_id": {
             "maxLength": 256,
             "minLength": 1,
@@ -2880,14 +4102,30 @@
             "type": "string"
           },
           "sha256": {
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Sha256",
-            "type": "string"
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sha256"
           },
           "size_bytes": {
-            "minimum": 0,
-            "title": "Size Bytes",
-            "type": "integer"
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size Bytes"
           },
           "stream_id": {
             "maxLength": 256,
@@ -2912,9 +4150,7 @@
           "session_id",
           "stream_id",
           "media_kind",
-          "content_type",
-          "sha256",
-          "size_bytes"
+          "content_type"
         ],
         "title": "MediaRef",
         "type": "object"
@@ -3692,6 +4928,97 @@
         "title": "QualitySample",
         "type": "object"
       },
+      "RecoveryRecord": {
+        "additionalProperties": true,
+        "description": "How this artifact was reconstructed, and what that costs its completeness.\n\nAn artifact that was not produced by a live ``close()`` has to be\nstructurally unable to pass as a cleanly closed one, so the declaration is a\ntyped manifest member rather than an attribute. Attribute bags are a weak\nchannel: their keys need a privacy allowlist, and validation cannot\ncross-check an open bag against ``finality``, ``completeness``,\n``session.status``, and coverage \u2014 which is exactly what makes the\ndeclaration enforceable here.\n\nThe commonest source is a checkpoint-journal replay, but not the only one: a\nbrowser capture batch is a partial observation of a session still in\nprogress, so it declares recovery with ``close_observed=False`` too. The\n``method`` names the reconstruction source (``checkpoint_journal``,\n``browser_capture_batch``); the journal coordinates below are present only\nwhen there actually was a journal.\n\nThere is deliberately no \"recovered at\" timestamp. Two reconstructions of\nthe same evidence must produce the same bytes under the same ``bundle_id``,\nor content-addressed ingest would reject the second as a conflict. When\nrecovery ran is an operational fact for the CLI and the diagnostic channel,\nnot evidence.",
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "close_observed": {
+            "title": "Close Observed",
+            "type": "boolean"
+          },
+          "discarded_records": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Discarded Records",
+            "type": "integer"
+          },
+          "journal_complete": {
+            "default": true,
+            "title": "Journal Complete",
+            "type": "boolean"
+          },
+          "journal_id": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Journal Id"
+          },
+          "last_observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "last_sequence": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Sequence"
+          },
+          "method": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Method",
+            "type": "string"
+          },
+          "reason": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Reason",
+            "type": "string"
+          },
+          "recoverer": {
+            "$ref": "#/components/schemas/Producer"
+          },
+          "torn_tail_bytes": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Torn Tail Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "method",
+          "reason",
+          "close_observed",
+          "recoverer"
+        ],
+        "title": "RecoveryRecord",
+        "type": "object"
+      },
       "RedactionRecord": {
         "additionalProperties": true,
         "properties": {
@@ -4064,6 +5391,101 @@
         "title": "ToolAnalysis",
         "type": "object"
       },
+      "TurnMetricAvailabilityChangeResponse": {
+        "additionalProperties": false,
+        "description": "A metric whose comparability changed, reported instead of a fabricated delta.",
+        "properties": {
+          "comparable": {
+            "title": "Comparable",
+            "type": "boolean"
+          },
+          "incident_availability": {
+            "title": "Incident Availability",
+            "type": "string"
+          },
+          "known_good_availability": {
+            "title": "Known Good Availability",
+            "type": "string"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "metric",
+          "known_good_availability",
+          "incident_availability",
+          "comparable"
+        ],
+        "title": "TurnMetricAvailabilityChangeResponse",
+        "type": "object"
+      },
+      "TurnMetricDeltaResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Delta"
+          },
+          "incident_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Incident Value"
+          },
+          "known_good_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Known Good Value"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "metric",
+          "unit",
+          "known_good_value",
+          "incident_value",
+          "delta"
+        ],
+        "title": "TurnMetricDeltaResponse",
+        "type": "object"
+      },
       "TurnMetricGroupResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4177,6 +5599,7 @@
       },
       "TurnMetricSummaryResponse": {
         "additionalProperties": false,
+        "description": "Fleet percentiles for one metric, bounded by the population they come from.\n\nOnly ``final`` incidents are aggregated. A provisional artifact -- one\nrecovered from a crash, or sealed while its session was still open -- covers\nan unknown fraction of its conversation, so pooling its turns would move\nthese values without anything on them saying why.\n\nThat exclusion is declared rather than performed quietly: ``incident_count``\nis what the groups cover and ``withheld_incident_count`` is what they refuse,\nso an empty ``groups`` beside a non-zero ``withheld_incident_count`` reads as\n\"not aggregated\", never as \"measured zero\".",
         "properties": {
           "group_by": {
             "title": "Group By",
@@ -4189,15 +5612,38 @@
             "title": "Groups",
             "type": "array"
           },
+          "incident_count": {
+            "title": "Incident Count",
+            "type": "integer"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
           "metric": {
             "title": "Metric",
             "type": "string"
+          },
+          "withheld_incident_count": {
+            "title": "Withheld Incident Count",
+            "type": "integer"
+          },
+          "withheld_turn_count": {
+            "title": "Withheld Turn Count",
+            "type": "integer"
           }
         },
         "required": [
           "metric",
           "group_by",
-          "groups"
+          "groups",
+          "incident_count",
+          "withheld_incident_count",
+          "withheld_turn_count",
+          "limitations"
         ],
         "title": "TurnMetricSummaryResponse",
         "type": "object"
@@ -4259,6 +5705,14 @@
             "title": "Event Ids",
             "type": "array"
           },
+          "interruption_chains": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/InterruptionChainProjection"
+            },
+            "title": "Interruption Chains",
+            "type": "array"
+          },
           "interruptions": {
             "default": [],
             "items": {
@@ -4292,6 +5746,31 @@
           "metrics"
         ],
         "title": "TurnProjection",
+        "type": "object"
+      },
+      "UnmatchedTurnsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "only_in_incident": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Only In Incident",
+            "type": "array"
+          },
+          "only_in_known_good": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Only In Known Good",
+            "type": "array"
+          }
+        },
+        "required": [
+          "only_in_incident",
+          "only_in_known_good"
+        ],
+        "title": "UnmatchedTurnsResponse",
         "type": "object"
       },
       "ValidateResponse": {
@@ -4387,7 +5866,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.2.0"
+    "version": "0.8.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -5075,6 +6554,187 @@
           }
         ],
         "summary": "Create Browser Session"
+      }
+    },
+    "/v1/capture": {
+      "post": {
+        "description": "Accept one browser capture batch and store it as a governed incident.\n\nAuthentication, project scoping and CSRF are the same ``/v1`` rules every\nother endpoint uses: the middleware has already resolved a bearer project\nkey or a viewer session, rejected a mismatched ``X-Earshot-Project-Id``,\nand -- because this is an unsafe method -- required a CSRF token from a\ncookie-authenticated caller.\n\nEverything after that is fail-closed: the body is bounded while it is\nstill being streamed, the wire version is checked before the schema, the\ncollection sizes are checked before the payload is materialised, and\nevery stat/event member is re-derived from the server's own allowlist so\nno client value reaches an engine -- or storage -- unless this server\ngoverns it.\n\nDelivery is idempotent by batch content, so a transport retry after an\nunknown outcome resolves to the incident the first delivery created\n(``201`` when this call created it, ``200`` when it already existed).",
+        "operationId": "capture_endpoint_v1_capture_post",
+        "parameters": [
+          {
+            "description": "SDK assertion checked against the project selected by the credential.",
+            "in": "header",
+            "name": "X-Earshot-Project-Id",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureAcceptedResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Capture Endpoint"
       }
     },
     "/v1/incidents": {
@@ -6154,6 +7814,332 @@
         "summary": "Analysis Endpoint"
       }
     },
+    "/v1/incidents/{bundle_id}/comparison": {
+      "get": {
+        "operationId": "comparison_endpoint_v1_incidents__bundle_id__comparison_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "known_good_bundle_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Known Good Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentComparisonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Comparison Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}/contradictions": {
+      "get": {
+        "operationId": "contradictions_endpoint_v1_incidents__bundle_id__contradictions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentContradictionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Contradictions Endpoint"
+      }
+    },
     "/v1/incidents/{bundle_id}/explanation": {
       "get": {
         "operationId": "explanation_endpoint_v1_incidents__bundle_id__explanation_get",
@@ -6312,8 +8298,846 @@
         "summary": "Explanation Endpoint"
       }
     },
+    "/v1/incidents/{bundle_id}/export": {
+      "get": {
+        "operationId": "export_endpoint_v1_incidents__bundle_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Registered exporter name. The enumerated choices are the exporter registry's names when this document was generated; a process that registers its own exporter can select it here by name.",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "otlp",
+              "description": "Registered exporter name. The enumerated choices are the exporter registry's names when this document was generated; a process that registers its own exporter can select it here by name.",
+              "enum": [
+                "openinference",
+                "otlp"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Export Endpoint"
+      }
+    },
+    "/v1/live/sessions": {
+      "get": {
+        "description": "List the conversations currently being written, and nothing more.\n\nThese are not incidents and never appear under ``/v1/incidents``. The\nlimitations travel with the collection so that \"no analysis here\" is read\nas a refusal rather than as an empty result.",
+        "operationId": "live_sessions_endpoint_v1_live_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveSessionPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Live Sessions Endpoint"
+      }
+    },
+    "/v1/live/sessions/{session_id}/checkpoints": {
+      "post": {
+        "description": "Accept a contiguous run of checkpoint frames from a live producer.\n\nThe buffer this feeds is never an incident and never becomes one on its\nown. It expires, it is superseded when the real artifact is ingested, or\nan operator seals it explicitly \u2014 because the server cannot tell a\ncrashed producer from a slow one.",
+        "operationId": "live_checkpoints_endpoint_v1_live_sessions__session_id__checkpoints_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/vnd.earshot.checkpoint+frames": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "description": "A contiguous run of plaintext checkpoint frames from one journal, starting at the header frame or at the sequence the server last accepted. Encrypted journals cannot be uploaded: the server holds no key. A session is identified by this project and this session id together, so two projects may use the same session id for their own sessions. Repeating frames already accepted is idempotent; re-sending a sequence with different content is EARSHOT_CHECKPOINT_DIVERGED, and any frame after the journal's finalize is EARSHOT_CHECKPOINT_JOURNAL_FINALIZED. One frame may be at most 1048576 bytes, which is also the largest batch.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Live Checkpoints Endpoint"
+      }
+    },
+    "/v1/live/sessions/{session_id}/seal": {
+      "post": {
+        "description": "Materialize a live buffer into an artifact, on operator command only.\n\nNothing else in this server turns a live session into an incident. A seal\nof a journal that never reached close produces a *provisional* artifact\nunder a distinct bundle id, so it can never be confused with, or collide\nwith, the final one the producer will still send.",
+        "operationId": "live_seal_endpoint_v1_live_sessions__session_id__seal_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveSealResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveSealResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Live Seal Endpoint"
+      }
+    },
+    "/v1/live/sessions/{session_id}/tail": {
+      "get": {
+        "description": "Stream one journal as server-sent events.\n\nSSE rather than a WebSocket, deliberately. Every guarantee this backend\nmakes \u2014 refusing an unsafe runtime binding, the loopback Host check,\nbearer/API-key/browser-session authentication, CSRF, project scoping \u2014\nlives in one ``@app.middleware(\"http\")``, and Starlette does not run HTTP\nmiddleware for WebSocket scopes. A WebSocket endpoint would have to\nrestate all of it, and the first drift would be a vulnerability. As an\nordinary GET this route inherits the entire stack unchanged, is covered\nby the same-origin policy, and gets ``Last-Event-ID`` resume for free.",
+        "operationId": "live_tail_endpoint_v1_live_sessions__session_id__tail_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three.",
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "default": "start",
+              "description": "start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three.",
+              "pattern": "^(start|live|[0-9]{1,10})$",
+              "title": "From",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A server-sent event stream of admitted journal facts in journal order. Event names are open, record, withheld, operation_open, limit, exhausted, finalize, replay_truncated, reset, overflow, heartbeat and end. Every record-bearing event carries id: <journal_id>:<sequence>, so a dropped connection resumes with Last-Event-ID. No analysis, diagnosis, or turn metric appears on this stream: derived analysis binds to the digest of a finished artifact and this session has none. This stream is an export under the destination name live_tail: a record whose capture class the policy forbids that destination arrives as a withheld event naming what refused it, never as its content and never as a silent gap."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Live Tail Endpoint"
+      }
+    },
     "/v1/metrics/turns": {
       "get": {
+        "description": "Aggregate one turn metric across this project's final incidents.\n\nThe withheld counts and the limitations travel with the numbers so that\na caller reading a percentile also reads the population it came from.",
         "operationId": "turn_metrics_endpoint_v1_metrics_turns_get",
         "parameters": [
           {

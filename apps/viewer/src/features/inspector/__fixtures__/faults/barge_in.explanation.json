@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "83def0d47b00eceeebc0216e97e234aab3e14f3b395a8eff1c59225412425e36",
+  "analyzer_version": "0.5.0",
+  "input_sha256": "3bba13b005513a7efbabcc1667aa3138985d8215c8188ffbd1ee33b3c67ea5c9",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -312,7 +312,137 @@
           "evidence_ids": []
         },
         "provider_measurements": {}
-      }
+      },
+      "interruption_chains": [
+        {
+          "turn_id": "turn-1",
+          "classification": "accepted",
+          "stages": [
+            {
+              "stage": "overlap_observed",
+              "observed": true,
+              "at_nano": "900000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-interruption-detected",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "intent",
+              "observed": false,
+              "at_nano": null,
+              "clock_domain_id": null,
+              "time_basis": null,
+              "evidence_id": null,
+              "coverage_reason": "stage_not_observed",
+              "outcome": null
+            },
+            {
+              "stage": "classified",
+              "observed": true,
+              "at_nano": "940000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-interruption-accepted",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "cancellation_requested",
+              "observed": true,
+              "at_nano": "960000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-model-cancelled",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "generation_stopped",
+              "observed": true,
+              "at_nano": "960000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-model-cancelled",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "queued_audio_discarded",
+              "observed": true,
+              "at_nano": "980000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-audio-discarded",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "transport_stopped",
+              "observed": false,
+              "at_nano": null,
+              "clock_domain_id": null,
+              "time_basis": null,
+              "evidence_id": null,
+              "coverage_reason": "stage_not_observed",
+              "outcome": null
+            },
+            {
+              "stage": "buffers_purged",
+              "observed": false,
+              "at_nano": null,
+              "clock_domain_id": null,
+              "time_basis": null,
+              "evidence_id": null,
+              "coverage_reason": "stage_not_observed",
+              "outcome": null
+            },
+            {
+              "stage": "render_stopped",
+              "observed": true,
+              "at_nano": "1000000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-render-stopped",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "resumed",
+              "observed": false,
+              "at_nano": null,
+              "clock_domain_id": null,
+              "time_basis": null,
+              "evidence_id": null,
+              "coverage_reason": "stage_not_observed",
+              "outcome": null
+            },
+            {
+              "stage": "tool_outcome",
+              "observed": false,
+              "at_nano": null,
+              "clock_domain_id": null,
+              "time_basis": null,
+              "evidence_id": null,
+              "coverage_reason": "no_tool_in_turn",
+              "outcome": null
+            }
+          ],
+          "effectiveness": {
+            "availability": "available",
+            "basis": "interruption_barge_in",
+            "confidence": "measured",
+            "value": 100.0,
+            "unit": "ms",
+            "limitation": null,
+            "evidence_ids": [
+              "event-interruption-detected",
+              "event-render-stopped"
+            ]
+          }
+        }
+      ]
     }
   ],
   "coverage": [],
