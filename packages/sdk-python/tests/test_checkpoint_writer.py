@@ -266,6 +266,9 @@ def test_fsync_mode_controls_per_record_syncing(
         "earshot.checkpoint.writer.os.fsync",
         lambda descriptor: (calls.append(descriptor), real_fsync(descriptor))[1],
     )
+    # This test is about *frame* syncing, so the directory-entry sync that also
+    # runs at creation is silenced here; it has its own tests below.
+    monkeypatch.setattr(CheckpointWriter, "_fsync_directory", lambda self: None)
     writer = _writer(tmp_path, fsync_mode=mode)
     recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
     header_syncs = len(calls)
@@ -279,6 +282,109 @@ def test_fsync_mode_controls_per_record_syncing(
     # The finalize frame is always fsynced too: losing it would silently
     # downgrade a clean close to a recovered artifact.
     assert len(calls) > header_syncs
+
+
+def _track_directory_syncs(monkeypatch) -> list[str]:
+    """Return a growing list of every directory path the writer fsyncs.
+
+    A directory fsync is invisible to a path-level assertion — it leaves no
+    trace in the filesystem — so it is observed through the descriptor: opens
+    carrying ``O_DIRECTORY`` are remembered and matched against later syncs.
+    """
+
+    synced: list[str] = []
+    directories: dict[int, str] = {}
+    real_open = os.open
+    real_fsync = os.fsync
+
+    def tracking_open(path, flags, *args, **kwargs):  # type: ignore[no-untyped-def]
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if flags & os.O_DIRECTORY:
+            directories[descriptor] = str(path)
+        return descriptor
+
+    def tracking_fsync(descriptor: int) -> None:
+        if descriptor in directories:
+            synced.append(directories[descriptor])
+        real_fsync(descriptor)
+
+    monkeypatch.setattr("earshot.checkpoint.writer.os.open", tracking_open)
+    monkeypatch.setattr("earshot.checkpoint.writer.os.fsync", tracking_fsync)
+    return synced
+
+
+@pytest.mark.skipif(not hasattr(os, "O_DIRECTORY"), reason="no directory fsync on this platform")
+def test_creating_a_journal_makes_its_directory_entry_durable(tmp_path: Path, monkeypatch) -> None:
+    """The header's own fsync commits the bytes; only this commits the name."""
+
+    directory = tmp_path / "journals"
+    synced = _track_directory_syncs(monkeypatch)
+    writer = _writer(directory)
+    IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
+
+    assert synced == [str(directory)]
+    writer.release()
+
+
+@pytest.mark.skipif(not hasattr(os, "O_DIRECTORY"), reason="no directory fsync on this platform")
+def test_unlinking_a_delivered_journal_makes_the_removal_durable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A resurrected name replays an already-delivered incident a second time."""
+
+    directory = tmp_path / "journals"
+    synced = _track_directory_syncs(monkeypatch)
+    writer = _writer(directory)
+    recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
+    _record_a_few(recorder)
+    assert synced == [str(directory)]  # creation only, so far
+
+    recorder.close()  # a delivered incident releases and unlinks the journal
+
+    assert not list(directory.glob("*.eck"))
+    assert synced == [str(directory), str(directory)]
+
+
+@pytest.mark.skipif(not hasattr(os, "O_DIRECTORY"), reason="no directory fsync on this platform")
+def test_a_journal_kept_for_replay_never_syncs_a_removal_it_did_not_make(
+    tmp_path: Path, monkeypatch
+) -> None:
+    directory = tmp_path / "journals"
+    synced = _track_directory_syncs(monkeypatch)
+    writer = _writer(directory, keep_finalized=True)
+    recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
+    recorder.close()
+    writer.release(delivered=True)
+
+    assert _journal_path(directory).is_file()
+    assert synced == [str(directory)]
+
+
+def test_a_platform_that_cannot_fsync_a_directory_degrades_instead_of_crashing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Windows and some network filesystems refuse the open outright."""
+
+    real_open = os.open
+
+    def refuse_directories(path, flags, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if flags & getattr(os, "O_DIRECTORY", 0):
+            raise OSError("directory fsync is unsupported here")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr("earshot.checkpoint.writer.os.open", refuse_directories)
+    writer = _writer(tmp_path, keep_finalized=True)
+    recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
+    _record_a_few(recorder)
+    recorder.close()
+
+    status = writer.status()
+    assert not status.degraded  # nothing failed to be written
+    assert status.journal_complete
+    assert status.last_failure is None
+    replay = JournalReader(_journal_path(tmp_path)).read()
+    assert replay.finalize is not None
+    writer.release(delivered=True)
 
 
 # --------------------------------------------------------------- encryption

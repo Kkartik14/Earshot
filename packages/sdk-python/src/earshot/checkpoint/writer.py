@@ -13,7 +13,10 @@ So the design is:
 * the ``open``, ``exhausted``, and ``finalize`` frames are always fsynced
   regardless of mode, because losing the header makes everything after it
   uninterpretable and losing the finalize frame silently downgrades a clean
-  close to a recovered artifact.
+  close to a recovered artifact;
+* the containing *directory* is fsynced when the journal's name appears and
+  when it goes away, because on POSIX the file's own fsync says nothing about
+  its directory entry (see :meth:`CheckpointWriter._fsync_directory`).
 
 Which yields the honest guarantee: process-level termination loses **zero**
 admitted facts; host-level failure loses at most one fsync window.
@@ -316,6 +319,8 @@ class CheckpointWriter:
             self._journal_id = journal_id
             if not self._append_locked(header, force_fsync=True):
                 return
+            # The header's own fsync commits the bytes; this commits the name.
+            self._fsync_directory()
             if self.config.fsync_mode == "interval":
                 self._fsync_thread = threading.Thread(
                     target=self._run_fsync,
@@ -467,6 +472,10 @@ class CheckpointWriter:
         replaying a finalized journal reproduces the closed artifact byte for
         byte, and content-addressed ingest deduplicates the result. That is why
         finalize-then-unlink is safe — because recovery is deterministic.
+
+        The unlink is followed by a directory fsync so the *removal* is durable
+        too. Without it a host failure can resurrect the name, and a resurrected
+        journal is a journal the assembler will replay a second time.
         """
 
         with self._lock:
@@ -492,8 +501,12 @@ class CheckpointWriter:
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=1.0)
         if remove and path is not None:
+            unlinked = False
             with contextlib.suppress(OSError):
                 path.unlink()
+                unlinked = True
+            if unlinked:
+                self._fsync_directory()
 
     def status(self) -> CheckpointStatus:
         with self._lock:
@@ -567,6 +580,44 @@ class CheckpointWriter:
         else:
             self._pending_fsync = True
         return True
+
+    def _fsync_directory(self) -> None:
+        """Commit the journal's *directory entry*, not just its bytes.
+
+        ``os.fsync`` on the journal descriptor durably records the file's data
+        and inode. On POSIX it says nothing about the block that holds the
+        file's *name*, so a host failure can leave a fully written journal that
+        no directory lists — an orphan the assembler will never find — or bring
+        back a name that was already unlinked, which replays a delivered
+        incident a second time. Only the two moments where the entry itself
+        changes need this: creation and removal. A plain append never touches
+        the directory, and neither does the finalize frame.
+
+        Deliberately bounded and never fatal. Directory fsync is not portable:
+        Windows cannot open a directory for reading at all, and some network
+        filesystems answer ``EINVAL``. Those are precisely the platforms whose
+        host-failure story is already weaker than the local POSIX one, and
+        turning a *missing* durability guarantee into a crashed recorder would
+        be the worse trade — instrumentation must never break the voice loop.
+        So a platform that cannot do this silently keeps the file-level
+        guarantee. It is not marked as a write failure, because nothing failed
+        to be written; the writer stays healthy and keeps journaling.
+        """
+
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if directory_flag is None:
+            return
+        try:
+            descriptor = os.open(self._directory, os.O_RDONLY | directory_flag)
+        except OSError:
+            return
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            return
+        finally:
+            with contextlib.suppress(OSError):
+                os.close(descriptor)
 
     def _frame_aad(self, sequence: int) -> bytes:
         """Bind format, journal, and position so a frame cannot be moved.
