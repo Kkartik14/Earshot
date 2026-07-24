@@ -242,11 +242,12 @@ def test_capture_version_must_be_a_declared_integer(tmp_path, version) -> None:
 
 def test_version_is_checked_before_the_rest_of_the_schema(tmp_path) -> None:
     # A client on a future wire format learns that, not a pile of field errors
-    # about a schema it was never targeting.
+    # about a schema it was never targeting. Versions 1 and 2 are governed; a
+    # version beyond them is the clean, specific refusal.
     _, client = app_client(tmp_path)
     response = client.post(
         "/v1/capture",
-        json={"captureVersion": 2, "somethingElseEntirely": True},
+        json={"captureVersion": 3, "somethingElseEntirely": True},
     )
     assert code(response) == "EARSHOT_UNSUPPORTED_CAPTURE_VERSION"
 

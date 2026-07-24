@@ -65,7 +65,16 @@ def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> 
     assert named == {ANALYZER_VERSION}
 
 
-def test_a_capture_batch_must_be_coherent_in_api_version_0_9() -> None:
+def test_the_capture_surface_evolution_is_versioned() -> None:
+    # 0.10.0 adds continuous capture: ``POST /v1/capture`` accepts a
+    # ``captureVersion: 2`` drain and accumulates a whole browser call into one
+    # journal-backed live session instead of a per-drain incident. A v2 drain
+    # answers with a checkpoint-shaped acknowledgement (call_id, journal_id,
+    # accepted_through, sealable) and 202/200 rather than an IncidentRecordResponse
+    # and 201/200, and it can be refused with two new codes,
+    # EARSHOT_CAPTURE_SEQUENCE_GAP and EARSHOT_CAPTURE_SEQUENCE_CONFLICT, that the
+    # v1 single-slice path never produced -- a client-visible change to what the
+    # endpoint accepts and returns, so it takes a version of its own.
     # 0.9.0 makes ``POST /v1/capture`` refuse two payloads it used to accept and
     # then guess at, because neither can be turned into evidence honestly:
     # EARSHOT_INCOHERENT_TRACE_CONTEXT for a ``traceparent`` that disagrees with
@@ -95,7 +104,7 @@ def test_a_capture_batch_must_be_coherent_in_api_version_0_9() -> None:
     # seal. 0.4.0 added the authenticated browser capture endpoint
     # (``POST /v1/capture``); 0.3.0 added the contradiction, comparison, and
     # export read endpoints.
-    assert API_VERSION == "0.9.0"
+    assert API_VERSION == "0.10.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:

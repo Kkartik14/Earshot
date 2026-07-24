@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, scan_frames
+from .checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, encode_frame, scan_frames
 from .checkpoint.limits import (
     CHECKPOINT_COVERAGE_NOTE,
     DEFAULT_MAX_JOURNAL_RECORDS,
@@ -62,6 +62,7 @@ from .checkpoint.records import (
     JournalOperationOpen,
     JournalRecordEntry,
     decode_entry,
+    encode_entry,
 )
 from .privacy import CaptureClass, CapturePolicy, export_denials
 from .storage import DEFAULT_PROJECT_ID
@@ -610,6 +611,13 @@ class _LiveSession:
         self.journal_complete = True
         self.last_append_unix_nano = 0
         self.subscribers: set[Subscription] = set()
+        # How a seal of this session should name its reconstruction when the close
+        # was not observed. ``None`` keeps the assembler's checkpoint-journal
+        # default; a continuous browser-capture session sets these so a mid-call
+        # seal declares itself ``browser_capture_journal`` rather than a generic
+        # crash replay.
+        self.recovery_method: str | None = None
+        self.recovery_reason: str | None = None
         # Only remotely uploaded frames are retained for sealing. A locally
         # tailed journal is already a file on disk; buffering it again would
         # double the storage for no gain.
@@ -993,6 +1001,111 @@ class LiveSessionRegistry:
                 sealable=session.sealable,
             )
 
+    def accept_records(
+        self,
+        session_id: str,
+        entries: Sequence[JournalEntry],
+        *,
+        project_id: str,
+        recovery_method: str | None = None,
+        recovery_reason: str | None = None,
+    ) -> AcceptedCheckpoint:
+        """Append server-authored journal entries to a live call. Scan-free.
+
+        This is the sibling of :meth:`accept_frames` for facts the *server* itself
+        journaled -- a browser-capture drain projected into governed facts through
+        a recorder. The server owns the sequence numbers here, so there is no
+        frame chain to re-scan, no divergence to detect, and no torn tail to fear:
+        the entries arrive already decoded, in admission order, and this registry
+        assigns each the next sequence, frames it, retains it for sealing, and
+        fans it out exactly as an uploaded frame would be.
+
+        The first call for a call must begin with the journal header
+        (:class:`JournalOpen`); it registers the session (under the per-project
+        quota) and records how a later seal should name a mid-call reconstruction.
+        Idempotency lives one layer up, at the drain sequence, so every entry that
+        reaches here is genuinely new and simply extends the journal.
+        """
+
+        if not entries:
+            raise CheckpointFramesInvalidError("no journal entries to append")
+        now_nano = int(self._clock() * 1e9)
+        with self._lock:
+            session = self._sessions.get((project_id, session_id))
+            rest: Sequence[JournalEntry]
+            if session is None:
+                header = entries[0]
+                if not isinstance(header, JournalOpen):
+                    raise CheckpointFramesInvalidError("first capture entries omit the header")
+                if header.session_id != session_id:
+                    raise CheckpointFramesInvalidError(
+                        "capture header declares a different session"
+                    )
+                self._enforce_quota(project_id)
+                session = self._register(
+                    session_id=session_id,
+                    project_id=project_id,
+                    source=SOURCE_CHECKPOINT,
+                    header=header,
+                    path=None,
+                    retain_frames=True,
+                )
+                session.recovery_method = recovery_method
+                session.recovery_reason = recovery_reason
+                header_frame = encode_frame(
+                    1, encode_entry(header), max_body_bytes=self.config.max_frame_bytes
+                )
+                self._retain_frame(session, header_frame)
+                session.remember_checksum(1, header_frame[-CHECKSUM_SIZE:])
+                session.last_append_unix_nano = now_nano
+                self._deliver(session, [session.open_event])
+                rest = entries[1:]
+            else:
+                rest = entries
+            batch: list[LiveEvent] = []
+            for entry in rest:
+                if session.close_observed:
+                    raise CheckpointFinalizedError(
+                        "this journal is finalized and accepts no more entries"
+                    )
+                sequence = session.last_sequence + 1
+                if sequence > self.config.max_journal_records:
+                    raise CheckpointFramesInvalidError("capture journal runs past the record cap")
+                frame = encode_frame(
+                    sequence, encode_entry(entry), max_body_bytes=self.config.max_frame_bytes
+                )
+                self._retain_frame(session, frame)
+                session.remember_checksum(sequence, frame[-CHECKSUM_SIZE:])
+                event = _governed_entry_event(session, entry, sequence)
+                session.append(event)
+                _absorb(session, entry)
+                batch.append(event)
+            if batch:
+                session.last_append_unix_nano = now_nano
+                for subscriber in list(session.subscribers):
+                    subscriber.offer(batch)
+            return AcceptedCheckpoint(
+                journal_id=session.journal_id,
+                accepted_through=session.last_sequence,
+                accepted_records=len(batch),
+                state=session.state(self._clock()),
+                sealable=session.sealable,
+            )
+
+    def seal_recovery(self, session_id: str, *, project_id: str) -> tuple[str | None, str | None]:
+        """How a seal of this session should name a mid-call reconstruction.
+
+        ``(None, None)`` for an ordinary checkpoint session, so the assembler keeps
+        its default; the continuous-capture registry sets these when it appends,
+        so a mid-call seal of a browser call declares ``browser_capture_journal``.
+        """
+
+        with self._lock:
+            session = self._sessions.get((project_id, session_id))
+            if session is None:
+                raise SessionNotLiveError("no live session with this identity")
+            return session.recovery_method, session.recovery_reason
+
     def _retain_frame(self, session: _LiveSession, frame: bytes) -> None:
         """Keep the raw frame so an operator can seal this session later.
 
@@ -1118,6 +1231,12 @@ class LiveSessionRegistry:
             if session is None:
                 raise SessionNotLiveError("no live session with this identity")
             return session.summary(self._clock())
+
+    def contains(self, session_id: str, *, project_id: str) -> bool:
+        """Whether this tenant currently holds a live session with this id."""
+
+        with self._lock:
+            return (project_id, session_id) in self._sessions
 
     # ------------------------------------------------------------ subscribe
 

@@ -30,6 +30,15 @@ from starlette.concurrency import run_in_threadpool
 
 from .analysis import ANALYZER_VERSION
 from .browser_session import BrowserSessionStore
+from .capture import (
+    CaptureCallCapacityError,
+    CaptureCallRegistry,
+    CaptureDrain,
+    CaptureSequenceConflictError,
+    CaptureSequenceGapError,
+    DrainOutcome,
+    ResyncClaim,
+)
 from .capture.sanitize import (
     _CAPTURE_EVENT_ALLOWLIST,
     _CAPTURE_STAT_ID,
@@ -421,6 +430,11 @@ class IncidentExportResponse(ApiModel):
 # route; an unsupported version is a specific, clean client error.
 
 CAPTURE_PROTOCOL_VERSION = 1
+# ``captureVersion: 2`` opts a client into continuous capture: one journal-backed
+# provisional artifact per call instead of a per-drain incident. Version 1 keeps
+# its exact per-batch ``close_partial`` behaviour, so a v1 client is unaffected.
+CONTINUOUS_CAPTURE_VERSION = 2
+SUPPORTED_CAPTURE_VERSIONS = (CAPTURE_PROTOCOL_VERSION, CONTINUOUS_CAPTURE_VERSION)
 
 # The browser clock the payload's raw ``timestamp_ms`` readings belong to. Only a
 # monotonic browser clock is accepted: those readings are recorded in their own
@@ -516,8 +530,29 @@ class CaptureCoverageRequest(ApiModel):
     droppedCount: int | None = Field(default=None, ge=0, le=2**31 - 1)
 
 
+class CaptureResyncRequest(ApiModel):
+    """A ``captureVersion: 2`` client's declaration that it gave up on earlier drains.
+
+    A drain that skips ahead of the sequence the server holds is refused unless
+    the client says, honestly, which drains it permanently lost. The range must
+    cover exactly the gap; the loss is then ledgered as coverage and the WebRTC
+    carry across it is dropped rather than estimated.
+    """
+
+    missedFromSequence: int = Field(ge=1, le=2**31 - 1)
+    missedThroughSequence: int = Field(ge=1, le=2**31 - 1)
+    reason: str = Field(pattern=_CAPTURE_LABEL_PATTERN)
+
+
 class CaptureRequest(ApiModel):
-    """The versioned browser capture payload, exactly as ``drain()`` emits it."""
+    """The versioned browser capture payload, exactly as ``drain()`` emits it.
+
+    ``captureVersion: 1`` is a single, self-contained batch. ``captureVersion: 2``
+    is one drain of a continuous call: ``drainSequence`` is 1-based and monotonic
+    per recorder, ``capturerStartedAtMs`` is the recorder's own first clock reading
+    (not the call start), and ``resync`` is set only when the client permanently
+    gave up on earlier drains.
+    """
 
     captureVersion: int = Field(ge=1, le=2**31 - 1)
     sessionId: str = Field(pattern=_CAPTURE_ID_PATTERN)
@@ -526,6 +561,9 @@ class CaptureRequest(ApiModel):
     snapshots: list[CaptureSnapshotRequest] = Field(default_factory=list)
     deviceEvents: list[CaptureDeviceEventRequest] = Field(default_factory=list)
     coverage: list[CaptureCoverageRequest] = Field(default_factory=list)
+    drainSequence: int | None = Field(default=None, ge=1, le=2**31 - 1)
+    capturerStartedAtMs: float | None = Field(default=None, ge=0.0, le=_MAX_CAPTURE_TIMESTAMP_MS)
+    resync: CaptureResyncRequest | None = None
 
 
 class CaptureAcceptedResponse(IncidentRecordResponse):
@@ -538,6 +576,36 @@ class CaptureAcceptedResponse(IncidentRecordResponse):
 
     created: bool
     capture_version: int
+    trace_id: str | None
+    accepted_snapshots: int
+    accepted_device_events: int
+    accepted_coverage: int
+    rejected_stats: int
+    rejected_stat_members: int
+    rejected_device_events: int
+    rejected_device_members: int
+
+
+class CaptureContinuousResponse(ApiModel):
+    """What one ``captureVersion: 2`` drain resolved to, mirroring a checkpoint ack.
+
+    A drain no longer becomes an incident, so there is no ``bundle_id`` to return
+    -- the growing artifact is materialized on demand by the operator seal. This
+    reports where the call now stands: the journal it accumulates into, the
+    sequence it has accepted through, and that it is a live, sealable session.
+    ``replayed`` is true when this drain had already been applied and this response
+    is an idempotent echo rather than a new application.
+    """
+
+    call_id: str
+    journal_id: str
+    accepted_through: int
+    accepted_records: int
+    state: str
+    sealable: bool
+    bundle_id: None = None
+    capture_version: int
+    replayed: bool
     trace_id: str | None
     accepted_snapshots: int
     accepted_device_events: int
@@ -1130,13 +1198,13 @@ def _decode_capture_request(parsed: Any, config: ApiConfig) -> CaptureRequest:
             "EARSHOT_CAPTURE_VERSION_REQUIRED",
             "capture payload must declare an integer captureVersion",
         )
-    if version != CAPTURE_PROTOCOL_VERSION:
+    if version not in SUPPORTED_CAPTURE_VERSIONS:
         raise ApiProblem(
             400,
             "EARSHOT_UNSUPPORTED_CAPTURE_VERSION",
             (
                 "capture protocol version is not supported; this server accepts "
-                f"version {CAPTURE_PROTOCOL_VERSION}"
+                f"versions {', '.join(str(v) for v in SUPPORTED_CAPTURE_VERSIONS)}"
             ),
         )
     for field, limit in (
@@ -1176,6 +1244,14 @@ def _decode_capture_request(parsed: Any, config: ApiConfig) -> CaptureRequest:
                 "EARSHOT_CAPTURE_NON_MONOTONIC",
                 f"capture {field} must be ordered by a non-decreasing timestamp_ms",
             )
+    if capture.captureVersion == CONTINUOUS_CAPTURE_VERSION and capture.drainSequence is None:
+        # A continuous drain has to name its slot: the whole point of v2 is that a
+        # drain lands at a sequence, and a batch with no sequence cannot.
+        raise ApiProblem(
+            422,
+            "EARSHOT_INVALID_CAPTURE",
+            "a captureVersion 2 drain must carry a drainSequence",
+        )
     return capture
 
 
@@ -1336,6 +1412,151 @@ def _capture_last_observation(
     )
 
 
+async def _capture_continuous(
+    capture: CaptureRequest,
+    project_id: str,
+    capture_calls: CaptureCallRegistry,
+    settings: ApiConfig,
+) -> JSONResponse:
+    """Accept one ``captureVersion: 2`` drain into its continuous call.
+
+    The endpoint is a transcoder: it re-enforces the server allowlist over the
+    batch, then hands the sanitized drain to the call registry, which sequences
+    it (idempotent by slot and content), projects it into governed facts through a
+    recorder while threading the WebRTC carry across the drain boundary, journals
+    those facts, and appends them to the call's live session. No per-drain
+    incident is created; the growing artifact is materialized only by an operator
+    seal, and stays provisional until Phase 2's observed close.
+    """
+
+    def run() -> tuple[DrainOutcome, _CaptureRejections]:
+        snapshots, dropped_stats, dropped_members = _sanitize_capture_snapshots(
+            capture.snapshots,
+            max_stats=settings.max_capture_stats_per_snapshot,
+        )
+        events, dropped_events, dropped_event_members = _sanitize_capture_events(
+            capture.deviceEvents
+        )
+        rejections = _CaptureRejections(
+            stats=dropped_stats,
+            stat_members=dropped_members,
+            device_events=dropped_events,
+            device_members=dropped_event_members,
+        )
+        rejection_coverage = (
+            ("capture.stats", "non_governed_stat_dropped", rejections.stats),
+            ("capture.stat_members", "non_governed_member_dropped", rejections.stat_members),
+            ("capture.device_events", "non_governed_event_dropped", rejections.device_events),
+            (
+                "capture.device_event_members",
+                "non_governed_member_dropped",
+                rejections.device_members,
+            ),
+        )
+        coverage = tuple(
+            (note.signal, note.availability, note.reason, note.droppedCount)
+            for note in capture.coverage
+        )
+        trace = capture.traceContext
+        resync = (
+            None
+            if capture.resync is None
+            else ResyncClaim(
+                missed_from=capture.resync.missedFromSequence,
+                missed_through=capture.resync.missedThroughSequence,
+                reason=capture.resync.reason,
+            )
+        )
+        drain = CaptureDrain(
+            project_id=project_id,
+            session_id=capture.sessionId,
+            capture_version=capture.captureVersion,
+            clock_domain_id=capture.clockDomain.id,
+            clock_uncertainty_ms=capture.clockDomain.uncertaintyMs,
+            clock_wall_origin_ms=capture.clockDomain.wallOriginMs,
+            trace_id=None if trace is None else trace.traceId,
+            span_id=None if trace is None else trace.spanId,
+            drain_sequence=capture.drainSequence,  # type: ignore[arg-type]
+            snapshots=snapshots,
+            device_events=events,
+            coverage=coverage,
+            rejection_coverage=rejection_coverage,
+            resync=resync,
+        )
+        return capture_calls.drain(drain), rejections
+
+    try:
+        outcome, rejections = await run_in_threadpool(run)
+    except CaptureSequenceGapError as error:
+        raise ApiProblem(
+            409,
+            "EARSHOT_CAPTURE_SEQUENCE_GAP",
+            "capture drain skips ahead of the sequence this call holds",
+            issues=[
+                {
+                    "code": "EARSHOT_CAPTURE_SEQUENCE_GAP",
+                    "path": ["expected_sequence"],
+                    "message": str(error.expected_sequence),
+                    "severity": "error",
+                }
+            ],
+        ) from error
+    except CaptureSequenceConflictError as error:
+        raise ApiProblem(
+            409,
+            "EARSHOT_CAPTURE_SEQUENCE_CONFLICT",
+            "capture drain rewrites a sequence this call already resolved",
+            issues=[
+                {
+                    "code": "EARSHOT_CAPTURE_SEQUENCE_CONFLICT",
+                    "path": ["sequence"],
+                    "message": str(error.sequence),
+                    "severity": "error",
+                }
+            ],
+        ) from error
+    except CaptureCallCapacityError as error:
+        raise ApiProblem(
+            429,
+            "EARSHOT_CAPTURE_CALL_CAPACITY",
+            "this project is carrying as many continuous capture calls as it will",
+        ) from error
+    except LiveCapacityError as error:
+        raise ApiProblem(
+            429,
+            "EARSHOT_CAPTURE_CALL_CAPACITY",
+            "the server is holding as many live sessions as it will",
+        ) from error
+
+    trace = capture.traceContext
+    value: dict[str, object] = {
+        "call_id": outcome.call_id,
+        "journal_id": outcome.journal_id,
+        "accepted_through": outcome.accepted_through,
+        "accepted_records": outcome.accepted_records,
+        "state": outcome.state,
+        "sealable": outcome.sealable,
+        "bundle_id": None,
+        "capture_version": capture.captureVersion,
+        "replayed": outcome.replay,
+        "trace_id": None if trace is None else trace.traceId,
+        "accepted_snapshots": outcome.accepted_snapshots,
+        "accepted_device_events": outcome.accepted_device_events,
+        "accepted_coverage": outcome.accepted_coverage,
+        "rejected_stats": rejections.stats,
+        "rejected_stat_members": rejections.stat_members,
+        "rejected_device_events": rejections.device_events,
+        "rejected_device_members": rejections.device_members,
+    }
+    # 202 for a drain this call applied; 200 for an idempotent replay of one it
+    # already had. Never 201: a drain is not an incident and creates none.
+    return JSONResponse(
+        value,
+        status_code=200 if outcome.replay else 202,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 _ProjectionT = TypeVar("_ProjectionT")
 
 
@@ -1449,6 +1670,13 @@ def create_app(
     # because reading one is a decision about where session evidence lives.
     live = live_registry or LiveSessionRegistry()
     live.start()
+    # Continuous browser calls (``captureVersion: 2``) accumulate through this,
+    # onto the same live sessions the checkpoint surface uses. Bounded per project
+    # to the same budget a project's live sessions run under, so capture cannot
+    # spend more of the machine than any other producer.
+    capture_calls = CaptureCallRegistry(
+        live, max_calls_per_project=live.config.max_sessions_per_project
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -1481,6 +1709,7 @@ def create_app(
         ttl_seconds=settings.viewer_session_ttl_seconds,
     )
     app.state.live = live
+    app.state.capture_calls = capture_calls
 
     def openapi_schema() -> dict[str, Any]:
         if app.openapi_schema is not None:
@@ -2003,7 +2232,11 @@ def create_app(
         "/v1/capture",
         response_model=CaptureAcceptedResponse,
         status_code=201,
-        responses={200: {"model": CaptureAcceptedResponse}, **_ERROR_RESPONSES},
+        responses={
+            200: {"model": CaptureAcceptedResponse | CaptureContinuousResponse},
+            202: {"model": CaptureContinuousResponse},
+            **_ERROR_RESPONSES,
+        },
         openapi_extra=_CAPTURE_REQUEST_BODY,
     )
     async def capture_endpoint(request: Request) -> JSONResponse:
@@ -2037,6 +2270,9 @@ def create_app(
         parsed = _strict_json_preflight(body, settings.max_json_depth, subject="capture")
         capture = _decode_capture_request(parsed, settings)
         project_id = request.state.project_id
+
+        if capture.captureVersion == CONTINUOUS_CAPTURE_VERSION:
+            return await _capture_continuous(capture, project_id, capture_calls, settings)
 
         def accept() -> tuple[dict[str, object], bool, _CaptureRejections, int, int]:
             snapshots, dropped_stats, dropped_members = _sanitize_capture_snapshots(
@@ -2482,6 +2718,9 @@ def create_app(
         try:
             kind, source = live.seal_source(session_id, project_id=request.state.project_id)
             summary = live.summary(session_id, project_id=request.state.project_id)
+            recovery_method, recovery_reason = live.seal_recovery(
+                session_id, project_id=request.state.project_id
+            )
         except SessionNotLiveError as error:
             raise ApiProblem(
                 404,
@@ -2502,14 +2741,28 @@ def create_app(
         suffix = None if summary.close_observed else f".s{summary.last_sequence}"
 
         def materialize() -> tuple[Any, Any]:
+            # A continuous browser call names its own reconstruction
+            # (``browser_capture_journal``); an ordinary checkpoint session keeps
+            # the assembler's default. Both are irrelevant once a close was
+            # observed, because a finalized replay carries no recovery record.
             if kind == SOURCE_CHECKPOINT:
                 with tempfile.TemporaryDirectory(prefix="earshot-seal-") as directory:
                     path = Path(directory) / "sealed.eck"
                     path.write_bytes(source if isinstance(source, bytes) else b"")
                     path.chmod(0o600)
-                    result = assemble_incident(path, bundle_id_suffix=suffix)
+                    result = assemble_incident(
+                        path,
+                        bundle_id_suffix=suffix,
+                        recovery_method=recovery_method,
+                        recovery_reason=recovery_reason,
+                    )
             else:
-                result = assemble_incident(Path(str(source)), bundle_id_suffix=suffix)
+                result = assemble_incident(
+                    Path(str(source)),
+                    bundle_id_suffix=suffix,
+                    recovery_method=recovery_method,
+                    recovery_reason=recovery_reason,
+                )
             ingested = repository.ingest(
                 result.bundle,
                 encode_incident_protobuf(result.bundle),
