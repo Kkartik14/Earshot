@@ -375,8 +375,11 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         )
         return 2
 
+    from .live import LiveSessionRegistry
+
     token = arguments.token or os.environ.get("EARSHOT_TOKEN")
     data_dir = _data_dir(arguments.data_dir).expanduser().resolve()
+    checkpoint_dir = arguments.checkpoint_dir or os.environ.get("EARSHOT_CHECKPOINT_DIR")
     config = ApiConfig(
         host=arguments.host,
         token=token,
@@ -387,13 +390,26 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         behind_tls_proxy=arguments.behind_tls_proxy,
         trust_local_network=arguments.trust_local_network,
     )
+    # Following a checkpoint directory is an explicit opt-in: it is the same
+    # storage decision as writing one, seen from the other end.
+    registry = (
+        None
+        if checkpoint_dir is None
+        else LiveSessionRegistry(
+            journal_dir=Path(checkpoint_dir).expanduser().resolve(),
+            key=_checkpoint_key(),
+        )
+    )
     app = create_app(
         data_dir=data_dir,
         analyzer=analyze_incident,
         config=config,
         web_dir=arguments.web_dir,
+        live_registry=registry,
     )
     print(f"Earshot data path: {data_dir}", file=sys.stderr)
+    if checkpoint_dir is not None:
+        print(f"Earshot live tail: {checkpoint_dir}", file=sys.stderr)
     print(f"Earshot listening: http://{arguments.host}:{arguments.port}/", file=sys.stderr)
     if arguments.trust_local_network:
         print(
@@ -577,6 +593,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--web-dir",
         default=os.environ.get("EARSHOT_WEB_DIR"),
         help="serve a built viewer SPA from this directory at the site root",
+    )
+    serve.add_argument(
+        "--checkpoint-dir",
+        default=None,
+        help=(
+            "follow the crash-recovery journals in this directory and expose them "
+            "under /v1/live; live sessions are never listed as incidents"
+        ),
     )
     serve.add_argument("--token")
     serve.add_argument(

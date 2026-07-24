@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import hmac
 import ipaddress
@@ -10,24 +12,26 @@ import math
 import os
 import re
 import sqlite3
+import tempfile
 import time
 import zlib
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypeVar
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .analysis import ANALYZER_VERSION
 from .browser_session import BrowserSessionStore
+from .checkpoint import AssemblyError, JournalUnreadableError, assemble_incident
 from .codec import (
     JSON_MEDIA_TYPE,
     PROTOBUF_MEDIA_TYPE,
@@ -50,6 +54,22 @@ from .engines.device import apply_audio_graph
 from .engines.webrtc import apply_webrtc_stats
 from .explanation import IncidentExplanation, explain_incident
 from .exporters.registry import export_incident, exporter_names, get_exporter
+from .live import (
+    END_FINAL_ARTIFACT_STORED,
+    END_SEALED,
+    EVENT_HEARTBEAT,
+    LIVE_LIMITATIONS,
+    SOURCE_CHECKPOINT,
+    CheckpointFramesInvalidError,
+    CheckpointSequenceError,
+    LiveCapacityError,
+    LiveSessionRegistry,
+    SessionNotLiveError,
+    SessionNotSealableError,
+    TailCapacityError,
+    make_event,
+    render_sse,
+)
 from .pipeline import pipeline
 from .privacy import ExportPolicyError, assert_export_allowed
 from .query import compare_incidents, detect_contradictions
@@ -77,6 +97,8 @@ _VIEWER_SESSION_COOKIE = "earshot_session"
 _CSRF_HEADER = "x-earshot-csrf"
 _PROJECT_HEADER = "x-earshot-project-id"
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+CHECKPOINT_MEDIA_TYPE = "application/vnd.earshot.checkpoint+frames"
+SSE_MEDIA_TYPE = "text/event-stream"
 
 
 class ApiModel(BaseModel):
@@ -157,6 +179,59 @@ class IngestResponse(IncidentRecordResponse):
 class IncidentPageResponse(ApiModel):
     items: list[IncidentRecordResponse]
     next_cursor: str | None
+
+
+class LiveSessionResponse(ApiModel):
+    """One conversation still being written. Deliberately not an incident.
+
+    Every field here is an observation about the *journal*, never a verdict about
+    the session. ``close_observed`` is the only thing that can say the producer
+    finished, and until it is true nothing downstream may treat this session as
+    complete.
+    """
+
+    session_id: str
+    bundle_id: str
+    journal_id: str
+    source: Literal["journal", "checkpoint"]
+    state: Literal["live", "stale", "finalized", "abandoned"]
+    last_sequence: int
+    available_from_sequence: int
+    last_append_unix_nano: str
+    close_observed: bool
+    journal_complete: bool
+    sealable: bool
+
+
+class LiveSessionPageResponse(ApiModel):
+    items: list[LiveSessionResponse]
+    # Stated, never omitted: a reader has to be told which questions this
+    # collection structurally cannot answer.
+    limitations: list[str]
+    following_journal_directory: bool
+
+
+class CheckpointAcceptedResponse(ApiModel):
+    journal_id: str
+    accepted_through: int
+    accepted_records: int
+    state: Literal["live", "stale", "finalized", "abandoned"]
+    sealable: bool
+
+
+class LiveSealResponse(ApiModel):
+    """The artifact an operator explicitly materialized from a live buffer."""
+
+    bundle_id: str
+    session_id: str
+    created: bool
+    finality: str
+    completeness: str
+    close_observed: bool
+    last_sequence: int
+    torn_tail_bytes: int
+    journal_complete: bool
+    unfinished_operations: int
 
 
 class StoredAnalysisResponse(ApiModel):
@@ -693,6 +768,36 @@ _CAPTURE_REQUEST_BODY = {
 }
 
 
+_CHECKPOINT_REQUEST_BODY = {
+    "requestBody": {
+        "required": True,
+        "description": (
+            "A contiguous run of plaintext checkpoint frames from one journal, "
+            "starting at the header frame or at the sequence the server last "
+            "accepted. Encrypted journals cannot be uploaded: the server holds no key."
+        ),
+        "content": {CHECKPOINT_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+    },
+}
+
+
+_TAIL_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "A server-sent event stream of admitted journal facts in journal order. "
+            "Event names are open, record, operation_open, limit, exhausted, finalize, "
+            "replay_truncated, reset, overflow, heartbeat and end. Every record-bearing event "
+            "carries id: <journal_id>:<sequence>, so a dropped connection resumes with "
+            "Last-Event-ID. No analysis, diagnosis, or turn metric appears on this "
+            "stream: derived analysis binds to the digest of a finished artifact and "
+            "this session has none."
+        ),
+        "content": {SSE_MEDIA_TYPE: {"schema": {"type": "string"}}},
+    },
+    **_ERROR_RESPONSES,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ApiConfig:
     host: str = "127.0.0.1"
@@ -708,6 +813,9 @@ class ApiConfig:
     max_capture_device_events: int = 512
     max_capture_coverage: int = 64
     max_capture_stats_per_snapshot: int = 128
+    # Checkpoint uploads are small, frequent batches from a live producer, so
+    # they are bounded far below an incident bundle and far below a capture batch.
+    max_checkpoint_body_bytes: int = 1024 * 1024
     max_json_depth: int = 64
     default_page_size: int = 50
     analyzer_version: str = ANALYZER_VERSION
@@ -736,6 +844,8 @@ class ApiConfig:
             raise ValueError("max_capture_coverage must be positive")
         if self.max_capture_stats_per_snapshot < 1:
             raise ValueError("max_capture_stats_per_snapshot must be positive")
+        if self.max_checkpoint_body_bytes < 1:
+            raise ValueError("max_checkpoint_body_bytes must be positive")
         if self.max_json_depth < 1:
             raise ValueError("max_json_depth must be positive")
         if self.viewer_session_capacity < 1:
@@ -1419,6 +1529,7 @@ def create_app(
     config: ApiConfig | None = None,
     connector_ingestion: HostedProviderIngestion | None = None,
     web_dir: str | Path | None = None,
+    live_registry: LiveSessionRegistry | None = None,
 ) -> FastAPI:
     settings = config or ApiConfig()
     repository = store or IncidentStore(data_dir)
@@ -1430,11 +1541,29 @@ def create_app(
         and not repository.has_active_api_keys()
     ):
         raise ValueError("remote access requires a bearer token or an active project API key")
+    # A registry always exists so remote checkpoint ingestion works out of the
+    # box and the live routes are always describable in the contract. Following a
+    # local checkpoint directory is separate, and stays an explicit opt-in
+    # because reading one is a decision about where session evidence lives.
+    live = live_registry or LiveSessionRegistry()
+    live.start()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        """Stop following journals on shutdown, and tell subscribers why."""
+
+        live.start()
+        try:
+            yield
+        finally:
+            live.close()
+
     app = FastAPI(
         title="Earshot local ingest",
         version=API_VERSION,
         docs_url="/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.state.store = repository
     app.state.config = settings
@@ -1449,6 +1578,7 @@ def create_app(
         capacity=settings.viewer_session_capacity,
         ttl_seconds=settings.viewer_session_ttl_seconds,
     )
+    app.state.live = live
 
     def openapi_schema() -> dict[str, Any]:
         if app.openapi_schema is not None:
@@ -2157,6 +2287,14 @@ def create_app(
             canonical,
             project_id=request.state.project_id,
         )
+        # The artifact now exists, so the live buffer for this session is
+        # superseded and is dropped rather than lingering as a second, weaker
+        # account of the same conversation.
+        live.drop_session(
+            bundle.profile.manifest.session_id,
+            reason=END_FINAL_ARTIFACT_STORED,
+            project_id=request.state.project_id,
+        )
         value = result.record.as_dict()
         value["created"] = result.created
         value["warnings"] = warnings
@@ -2167,6 +2305,323 @@ def create_app(
                 "Location": f"/v1/incidents/{quote(result.record.bundle_id, safe='')}",
                 "ETag": f'"sha256:{result.record.digest}"',
             },
+        )
+
+    def _reject_foreign_origin(request: Request) -> None:
+        """Refuse a browser-driven live request whose Origin is not this host.
+
+        The API sets no CORS headers, so a cross-origin ``EventSource`` cannot
+        read the stream in the first place. This is the belt to that suspenders:
+        a bearer client never sends ``Origin``, so requiring the two to match
+        costs nothing and removes the whole class of confused-deputy reads
+        against a cookie the browser attaches automatically.
+        """
+
+        origin = request.headers.get("origin")
+        if not origin or getattr(request.state, "auth_method", None) == "bearer":
+            return
+        if urlsplit(origin).netloc.lower() != request.headers.get("host", "").lower():
+            raise ApiProblem(
+                403,
+                "EARSHOT_ORIGIN_NOT_ALLOWED",
+                "live requests must originate from this host",
+            )
+
+    @app.get(
+        "/v1/live/sessions",
+        response_model=LiveSessionPageResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def live_sessions_endpoint(request: Request) -> JSONResponse:
+        """List the conversations currently being written, and nothing more.
+
+        These are not incidents and never appear under ``/v1/incidents``. The
+        limitations travel with the collection so that "no analysis here" is read
+        as a refusal rather than as an empty result.
+        """
+
+        _reject_foreign_origin(request)
+        items = live.sessions(project_id=request.state.project_id)
+        return JSONResponse(
+            {
+                "items": [item.as_dict() for item in items],
+                "limitations": list(LIVE_LIMITATIONS),
+                "following_journal_directory": live.journal_dir is not None,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/live/sessions/{session_id}/tail",
+        responses=_TAIL_RESPONSES,
+    )
+    async def live_tail_endpoint(
+        session_id: str,
+        request: Request,
+        from_: str = Query(
+            default="start",
+            alias="from",
+            pattern=r"^(start|live|[0-9]{1,10})$",
+            description=(
+                "start replays the journal from its first frame, live sends only "
+                "what arrives next, and a number resumes at that sequence. "
+                "Last-Event-ID overrides all three."
+            ),
+        ),
+    ) -> Response:
+        """Stream one journal as server-sent events.
+
+        SSE rather than a WebSocket, deliberately. Every guarantee this backend
+        makes — refusing an unsafe runtime binding, the loopback Host check,
+        bearer/API-key/browser-session authentication, CSRF, project scoping —
+        lives in one ``@app.middleware("http")``, and Starlette does not run HTTP
+        middleware for WebSocket scopes. A WebSocket endpoint would have to
+        restate all of it, and the first drift would be a vulnerability. As an
+        ordinary GET this route inherits the entire stack unchanged, is covered
+        by the same-origin policy, and gets ``Last-Event-ID`` resume for free.
+        """
+
+        _reject_foreign_origin(request)
+        try:
+            subscription = live.subscribe(
+                session_id,
+                project_id=request.state.project_id,
+                from_spec=from_,
+                last_event_id=request.headers.get("last-event-id"),
+            )
+        except SessionNotLiveError as error:
+            raise ApiProblem(
+                404,
+                "EARSHOT_SESSION_NOT_LIVE",
+                "no live session with this identifier",
+            ) from error
+        except TailCapacityError as error:
+            raise ApiProblem(
+                429,
+                "EARSHOT_TAIL_CAPACITY",
+                "the server is carrying as many live tails as it will",
+            ) from error
+
+        wakeup = asyncio.Event()
+        subscription.attach(asyncio.get_running_loop(), wakeup)
+        heartbeat = live.config.heartbeat_seconds
+
+        async def stream() -> AsyncIterator[str]:
+            try:
+                while True:
+                    # Cleared before draining so an event queued during the drain
+                    # still wakes the next wait instead of being slept through.
+                    wakeup.clear()
+                    for event in subscription.drain():
+                        yield render_sse(event)
+                    terminal = subscription.terminal()
+                    if terminal:
+                        for event in terminal:
+                            yield render_sse(event)
+                        return
+                    try:
+                        await asyncio.wait_for(wakeup.wait(), timeout=heartbeat)
+                    except TimeoutError:
+                        # Carries no id, so it never advances the client's
+                        # resume cursor, and states the position it is quiet at.
+                        yield render_sse(
+                            make_event(
+                                EVENT_HEARTBEAT,
+                                subscription.journal_id,
+                                0,
+                                {
+                                    "as_of_sequence": subscription.last_delivered_sequence,
+                                    "close_observed": False,
+                                },
+                            )
+                        )
+            finally:
+                subscription.close()
+
+        return StreamingResponse(
+            stream(),
+            media_type=SSE_MEDIA_TYPE,
+            headers={
+                "Cache-Control": "no-store",
+                # Buffering proxies turn an event stream into a long poll; say so
+                # to the ones that listen.
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post(
+        "/v1/live/sessions/{session_id}/checkpoints",
+        response_model=CheckpointAcceptedResponse,
+        status_code=202,
+        responses=_ERROR_RESPONSES,
+        openapi_extra=_CHECKPOINT_REQUEST_BODY,
+    )
+    async def live_checkpoints_endpoint(session_id: str, request: Request) -> JSONResponse:
+        """Accept a contiguous run of checkpoint frames from a live producer.
+
+        The buffer this feeds is never an incident and never becomes one on its
+        own. It expires, it is superseded when the real artifact is ingested, or
+        an operator seals it explicitly — because the server cannot tell a
+        crashed producer from a slow one.
+        """
+
+        _reject_foreign_origin(request)
+        if _content_type(request) != CHECKPOINT_MEDIA_TYPE:
+            raise ApiProblem(
+                415,
+                "EARSHOT_UNSUPPORTED_MEDIA_TYPE",
+                f"checkpoint batches require {CHECKPOINT_MEDIA_TYPE}",
+            )
+        payload = await _read_body(
+            request,
+            settings.max_checkpoint_body_bytes,
+            subject="checkpoint",
+        )
+        try:
+            accepted = await run_in_threadpool(
+                live.accept_frames,
+                session_id,
+                payload,
+                project_id=request.state.project_id,
+            )
+        except SessionNotLiveError as error:
+            raise ApiProblem(
+                404,
+                "EARSHOT_SESSION_NOT_LIVE",
+                "no live session with this identifier",
+            ) from error
+        except CheckpointSequenceError as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_CHECKPOINT_SEQUENCE_GAP",
+                "checkpoint batch does not continue the accepted sequence",
+                issues=[
+                    {
+                        "code": "EARSHOT_CHECKPOINT_SEQUENCE_GAP",
+                        "path": ["expected_sequence"],
+                        "message": str(error.expected_sequence),
+                        "severity": "error",
+                    }
+                ],
+            ) from error
+        except CheckpointFramesInvalidError as error:
+            raise ApiProblem(
+                400,
+                "EARSHOT_CHECKPOINT_FRAMES_INVALID",
+                "checkpoint batch is not an intact run of journal frames",
+            ) from error
+        except LiveCapacityError as error:
+            raise ApiProblem(
+                429,
+                "EARSHOT_LIVE_CAPACITY",
+                "this project is holding as many live sessions as it will",
+            ) from error
+        return JSONResponse(
+            {
+                "journal_id": accepted.journal_id,
+                "accepted_through": accepted.accepted_through,
+                "accepted_records": accepted.accepted_records,
+                "state": accepted.state,
+                "sealable": accepted.sealable,
+            },
+            status_code=202,
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/v1/live/sessions/{session_id}/seal",
+        response_model=LiveSealResponse,
+        status_code=201,
+        responses={200: {"model": LiveSealResponse}, **_ERROR_RESPONSES},
+    )
+    async def live_seal_endpoint(session_id: str, request: Request) -> JSONResponse:
+        """Materialize a live buffer into an artifact, on operator command only.
+
+        Nothing else in this server turns a live session into an incident. A seal
+        of a journal that never reached close produces a *provisional* artifact
+        under a distinct bundle id, so it can never be confused with, or collide
+        with, the final one the producer will still send.
+        """
+
+        _reject_foreign_origin(request)
+        try:
+            kind, source = live.seal_source(session_id, project_id=request.state.project_id)
+            summary = live.summary(session_id, project_id=request.state.project_id)
+        except SessionNotLiveError as error:
+            raise ApiProblem(
+                404,
+                "EARSHOT_SESSION_NOT_LIVE",
+                "no live session with this identifier",
+            ) from error
+        except SessionNotSealableError as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_SESSION_NOT_SEALABLE",
+                "this live session cannot be materialized into an artifact",
+            ) from error
+
+        # A journal that reached close reproduces exactly what the producer will
+        # send, so it keeps its bundle id and content-addressed ingest
+        # deduplicates it. One that did not is a different artifact and takes a
+        # distinct, deterministic id derived from the sequence sealed.
+        suffix = None if summary.close_observed else f".s{summary.last_sequence}"
+
+        def materialize() -> tuple[Any, Any]:
+            if kind == SOURCE_CHECKPOINT:
+                with tempfile.TemporaryDirectory(prefix="earshot-seal-") as directory:
+                    path = Path(directory) / "sealed.eck"
+                    path.write_bytes(source if isinstance(source, bytes) else b"")
+                    path.chmod(0o600)
+                    result = assemble_incident(path, bundle_id_suffix=suffix)
+            else:
+                result = assemble_incident(Path(str(source)), bundle_id_suffix=suffix)
+            ingested = repository.ingest(
+                result.bundle,
+                encode_incident_protobuf(result.bundle),
+                project_id=request.state.project_id,
+            )
+            return result, ingested
+
+        try:
+            result, ingested = await run_in_threadpool(materialize)
+        except (AssemblyError, JournalUnreadableError) as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_SESSION_NOT_SEALABLE",
+                "this live session cannot be materialized into an artifact",
+            ) from error
+        except IncidentValidationError as error:
+            raise ApiProblem(
+                422,
+                "EARSHOT_INVALID_INCIDENT",
+                "the sealed incident does not satisfy the Earshot contract",
+                issues=[_issue_dict(issue) for issue in error.report.errors],
+            ) from error
+
+        if summary.close_observed:
+            # The producer finished and the artifact exists; the live buffer is
+            # now the weaker account of the same conversation.
+            live.drop_session(
+                session_id,
+                reason=END_SEALED,
+                project_id=request.state.project_id,
+            )
+        manifest = result.bundle.profile.manifest
+        return JSONResponse(
+            {
+                "bundle_id": manifest.bundle_id,
+                "session_id": manifest.session_id,
+                "created": ingested.created,
+                "finality": manifest.finality,
+                "completeness": manifest.completeness,
+                "close_observed": result.report.close_observed,
+                "last_sequence": result.report.last_sequence,
+                "torn_tail_bytes": result.report.torn_tail_bytes,
+                "journal_complete": result.report.journal_complete,
+                "unfinished_operations": result.report.unfinished_operations,
+            },
+            status_code=201 if ingested.created else 200,
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.get(

@@ -27,6 +27,7 @@ from .reader import (
     summarize_directory,
 )
 from .records import JOURNAL_FORMAT_VERSION
+from .uploader import CheckpointUploader, UploaderStatus
 from .writer import (
     CheckpointConfig,
     CheckpointStatus,
@@ -44,6 +45,7 @@ __all__ = [
     "AssemblyResult",
     "CheckpointConfig",
     "CheckpointStatus",
+    "CheckpointUploader",
     "CheckpointWriter",
     "FrameScan",
     "JournalReader",
@@ -52,6 +54,7 @@ __all__ = [
     "JournalUnreadableError",
     "NullCheckpointWriter",
     "RecordMutation",
+    "UploaderStatus",
     "assemble_incident",
     "scan_frames",
     "summarize_directory",

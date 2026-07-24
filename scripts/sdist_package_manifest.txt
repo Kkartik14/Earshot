@@ -20,6 +20,7 @@ packages/sdk-python/src/earshot/checkpoint/framing.py
 packages/sdk-python/src/earshot/checkpoint/keys.py
 packages/sdk-python/src/earshot/checkpoint/reader.py
 packages/sdk-python/src/earshot/checkpoint/records.py
+packages/sdk-python/src/earshot/checkpoint/uploader.py
 packages/sdk-python/src/earshot/checkpoint/writer.py
 packages/sdk-python/src/earshot/cli.py
 packages/sdk-python/src/earshot/clock.py
@@ -48,6 +49,7 @@ packages/sdk-python/src/earshot/generated/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/incident_pb2.py
+packages/sdk-python/src/earshot/live.py
 packages/sdk-python/src/earshot/measurement_semantics.py
 packages/sdk-python/src/earshot/observation.py
 packages/sdk-python/src/earshot/pipeline.py
