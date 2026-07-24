@@ -173,12 +173,22 @@ def assemble_incident(
     recoverer: Producer | None = None,
     best_effort: bool = False,
     bundle_id_suffix: str | None = None,
+    recovery_method: str | None = None,
+    recovery_reason: str | None = None,
 ) -> AssemblyResult:
     """Rebuild an incident from one journal file.
 
     ``best_effort`` downgrades a counter cross-check failure from an error to a
     reported flag. It never invents a record and never turns an unclosed session
     into a closed one.
+
+    ``recovery_method`` / ``recovery_reason`` name the reconstruction when the
+    close was not observed, overriding the checkpoint-journal defaults. They exist
+    so a continuous browser-capture journal declares itself as
+    ``browser_capture_journal`` rather than as a generic crash replay -- the one
+    thing that tells a reader one drain from a whole call. They are ignored when a
+    finalize was observed, because a finalized replay carries no recovery record
+    at all.
     """
 
     replay = JournalReader(journal, key=key).read()
@@ -232,8 +242,8 @@ def assemble_incident(
         unfinished = _unfinished_operations(state)
         state.operations.extend(unfinished)
         recovery = RecoveryRecord(
-            method=METHOD_CHECKPOINT_JOURNAL,
-            reason=REASON_BEFORE_CLOSE,
+            method=recovery_method or METHOD_CHECKPOINT_JOURNAL,
+            reason=recovery_reason or REASON_BEFORE_CLOSE,
             close_observed=False,
             journal_id=replay.header.journal_id,
             last_sequence=replay.last_sequence,

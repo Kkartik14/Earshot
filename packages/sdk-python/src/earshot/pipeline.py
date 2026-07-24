@@ -823,6 +823,7 @@ class PipelineSession:
         clock: Clock | None = None,
         trace_id: str | None = None,
         span_id: str | None = None,
+        checkpoint: Any = None,
     ) -> None:
         if clock is not None and started_at_unix_nano is not None:
             raise ValueError("clock and started_at_unix_nano are mutually exclusive")
@@ -877,6 +878,7 @@ class PipelineSession:
                 on_close=release_runtime,
                 on_status=record_runtime_status,
                 diagnostic=runtime_diagnostic,
+                checkpoint=checkpoint,
             )
         except BaseException:
             release_runtime()
@@ -1001,6 +1003,7 @@ def pipeline(
     clock: Clock | None = None,
     trace_id: str | None = None,
     span_id: str | None = None,
+    checkpoint: Any = None,
 ) -> PipelineSession:
     """Start a provider-neutral pipeline capture session.
 
@@ -1010,6 +1013,9 @@ def pipeline(
 
     Pass ``trace_id``/``span_id`` to bind the session to an existing W3C trace so
     the recorded facts carry that OTel identity.
+
+    Pass ``checkpoint`` to journal every admitted mutation to a crash journal (or
+    the in-memory server journal the continuous-capture path accumulates into).
     """
 
     return PipelineSession(
@@ -1022,4 +1028,5 @@ def pipeline(
         clock=clock,
         trace_id=trace_id,
         span_id=span_id,
+        checkpoint=checkpoint,
     )
