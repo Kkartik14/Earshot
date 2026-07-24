@@ -94,6 +94,16 @@ const explanation = {
   })),
 };
 
+// The stored analysis response the `/analysis` endpoint returns, wrapping the
+// captured DerivedAnalysis fixture with its binding, exactly as the API does.
+const analysisResponse = {
+  bundle_id: "fixture-bundle",
+  analyzer_version: "1.0.4",
+  input_digest: "c81631093d9cb7f256e117e2738848fc7d8acea62742d99e91d8a5dd527c1cb6",
+  generated_at_unix_nano: "1784631258902097000",
+  analysis: analysisFixture,
+};
+
 // A backend contradiction report citing an operation this session really owns.
 const contradictionReport = {
   bundle_id: "fixture-bundle",
@@ -203,6 +213,7 @@ function renderInspector({
   });
   client.setQueryData(["incident", "fix"], incidentOverride ?? incidentFixture);
   client.setQueryData(["explanation", "fix"], explanation);
+  client.setQueryData(["analysis", "fix"], analysisResponse);
   if (contradictions !== undefined) {
     client.setQueryData(["contradictions", "fix"], contradictions);
   }
@@ -283,6 +294,16 @@ describe("SessionInspector focus management", () => {
 
     fireEvent.click(panel.getByRole("button", { name: "operation-llm-0-5" }));
     expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
+  });
+
+  it("surfaces the analyzer's own output binding for the incident", () => {
+    renderInspector();
+    const panel = within(screen.getByRole("region", { name: "Analysis" }));
+    // The analyzer identity and the exact evidence digest it is bound to.
+    expect(panel.getByText(/earshot\.deterministic · 1\.0\.4/)).toBeInTheDocument();
+    expect(panel.getByText(/c81631093d9c/)).toBeInTheDocument();
+    // Counts come straight from the analyzer's output arrays, not invented.
+    expect(panel.getByText("turns analyzed").parentElement).toHaveTextContent("5");
   });
 
   it("renders unassigned session-level measurements with their units", () => {

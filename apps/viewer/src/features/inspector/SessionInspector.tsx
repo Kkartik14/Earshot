@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useContradictions, useExplanation, useIncident } from "../../api/hooks";
+import {
+  useAnalysis,
+  useContradictions,
+  useExplanation,
+  useIncident,
+} from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
 import { SessionHeader } from "./SessionHeader";
 import {
@@ -11,6 +16,14 @@ import {
   contradictionsReason,
   type ContradictionsStatus,
 } from "./SessionFacts";
+import {
+  AnalysisSummaryPanel,
+  analysisReason,
+  buildAnalysisSummary,
+  type AnalysisStatus,
+} from "./AnalysisSummary";
+import { ComparisonPanel } from "./ComparisonPanel";
+import { ExportPanel } from "./ExportPanel";
 import { MediaCustodyPanel } from "./MediaCustody";
 import { RecoveryStrip } from "./RecoveryStrip";
 import { StageDrawer } from "./StageDrawer";
@@ -34,6 +47,7 @@ export function SessionInspector() {
   const incident = useIncident(bundleId);
   const explanation = useExplanation(bundleId);
   const contradictions = useContradictions(bundleId);
+  const analysis = useAnalysis(bundleId);
   const [openTurns, setOpenTurns] = useState<Set<number>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
   // The control that opened the detail dialog; focus returns here on close.
@@ -97,6 +111,16 @@ export function SessionInspector() {
   const contradictionViews = contradictions.data
     ? buildContradictions(explained, contradictions.data)
     : [];
+  // The analyzer's own output binding, on the same idiom: pending and unavailable
+  // are distinct, and only a resolved response carries a binding to render.
+  const analysisStatus: AnalysisStatus = analysis.data
+    ? "ready"
+    : analysis.isPending
+      ? "pending"
+      : "unavailable";
+  const analysisView = analysis.data ? buildAnalysisSummary(analysis.data) : null;
+  const analysisUnavailable =
+    analysisStatus === "unavailable" ? analysisReason(analysis.error) : null;
 
   const openTurn = (i: number) =>
     setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
@@ -130,6 +154,11 @@ export function SessionInspector() {
             rather than closed must say so before any of it is read. */}
         <RecoveryStrip incident={inc} />
         <SessionHeader summary={summary} />
+        <AnalysisSummaryPanel
+          status={analysisStatus}
+          reason={analysisUnavailable}
+          view={analysisView}
+        />
         <TurnTimeline
           timeline={timeline}
           openTurns={openTurns}
@@ -149,6 +178,8 @@ export function SessionInspector() {
             media is aligned by a declared ClockRelation or not at all. */}
         <MediaCustodyPanel media={mediaCustody} />
         <UnassignedPanel facts={unassigned} />
+        <ComparisonPanel bundleId={bundleId} />
+        <ExportPanel bundleId={bundleId} />
       </div>
       {sel ? (
         <div className={styles.drawerCol}>

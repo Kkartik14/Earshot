@@ -1,13 +1,27 @@
 import { useQuery } from "@tanstack/react-query";
 import type { GroupBy, MetricKey } from "../features/fleet/fleet";
+import type { paths } from "./schema";
 import { api, unwrap } from "./client";
 
-/** Recent incidents (one per stored voice session). */
+/** The registered exporter names `GET /v1/incidents/{id}/export` accepts, taken
+ * from the generated schema's `format` enum so a spec change that drops one of
+ * them fails the build here rather than at request time. */
+export type ExportFormat = NonNullable<
+  NonNullable<
+    paths["/v1/incidents/{bundle_id}/export"]["get"]["parameters"]["query"]
+  >["format"]
+>;
+
+/** Recent incidents (one per stored voice session). `enabled` lets a caller that
+ * only needs the list on demand (e.g. the known-good picker) defer the fetch
+ * until it is opened, instead of loading it on every mount. */
 export function useIncidents(
   query: { limit?: number; session_id?: string; cursor?: string } = {},
+  { enabled = true }: { enabled?: boolean } = {},
 ) {
   return useQuery({
     queryKey: ["incidents", query],
+    enabled,
     queryFn: () => unwrap(api.GET("/v1/incidents", { params: { query } })),
   });
 }
@@ -109,6 +123,56 @@ export function useExplanation(bundleId: string | undefined) {
       unwrap(
         api.GET("/v1/incidents/{bundle_id}/explanation", {
           params: { path: { bundle_id: bundleId as string } },
+        }),
+      ),
+  });
+}
+
+/** A structured diff of this incident against a chosen known-good incident.
+ *
+ * Lazily enabled: it runs only once a baseline is picked, and never against the
+ * incident itself. The baseline side keeps its own stable error codes
+ * (`EARSHOT_KNOWN_GOOD_*`) so a failure names which incident is missing rather
+ * than blanking the whole diff; those, and a stale-analysis conflict
+ * (`EARSHOT_ANALYSIS_BINDING_MISMATCH`), surface as the code the viewer renders
+ * as an explicit state. */
+export function useComparison(
+  bundleId: string | undefined,
+  knownGoodBundleId: string | null,
+) {
+  return useQuery({
+    queryKey: ["comparison", bundleId, knownGoodBundleId],
+    enabled:
+      bundleId != null && knownGoodBundleId != null && knownGoodBundleId !== bundleId,
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/incidents/{bundle_id}/comparison", {
+          params: {
+            path: { bundle_id: bundleId as string },
+            query: { known_good_bundle_id: knownGoodBundleId as string },
+          },
+        }),
+      ),
+  });
+}
+
+/** Project this incident through a registered exporter, by name.
+ *
+ * Lazily enabled: it runs only once a format is requested. A policy refusal
+ * (`EARSHOT_EXPORT_DENIED`) or an unregistered name
+ * (`EARSHOT_UNKNOWN_EXPORT_FORMAT`) arrives as its stable code, which the viewer
+ * renders as an explicit refusal rather than an empty or fabricated document. */
+export function useExport(bundleId: string | undefined, format: ExportFormat | null) {
+  return useQuery({
+    queryKey: ["export", bundleId, format],
+    enabled: bundleId != null && format != null,
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/incidents/{bundle_id}/export", {
+          params: {
+            path: { bundle_id: bundleId as string },
+            query: { format: format as ExportFormat },
+          },
         }),
       ),
   });
