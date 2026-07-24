@@ -75,6 +75,7 @@ from .privacy import ExportPolicyError, assert_export_allowed
 from .query import compare_incidents, detect_contradictions
 from .storage import (
     DEFAULT_PROJECT_ID,
+    TURN_METRIC_LIMITATIONS,
     ArtifactCorruptionError,
     IncidentConflictError,
     IncidentNotFoundError,
@@ -258,9 +259,28 @@ class TurnMetricGroupResponse(ApiModel):
 
 
 class TurnMetricSummaryResponse(ApiModel):
+    """Fleet percentiles for one metric, bounded by the population they come from.
+
+    Only ``final`` incidents are aggregated. A provisional artifact -- one
+    recovered from a crash, or sealed while its session was still open -- covers
+    an unknown fraction of its conversation, so pooling its turns would move
+    these values without anything on them saying why.
+
+    That exclusion is declared rather than performed quietly: ``incident_count``
+    is what the groups cover and ``withheld_incident_count`` is what they refuse,
+    so an empty ``groups`` beside a non-zero ``withheld_incident_count`` reads as
+    "not aggregated", never as "measured zero".
+    """
+
     metric: str
     group_by: str
     groups: list[TurnMetricGroupResponse]
+    incident_count: int
+    withheld_incident_count: int
+    withheld_turn_count: int
+    # Stated, never omitted: a reader has to be told which questions these
+    # numbers structurally cannot answer.
+    limitations: list[str]
 
 
 class ConnectorDeliveryResponse(ApiModel):
@@ -2057,7 +2077,13 @@ def create_app(
         ] = "response_ms",
         group_by: Literal["framework", "provider", "model", "language", "status"] = "framework",
     ) -> JSONResponse:
-        groups = repository.summarize_turn_metric(
+        """Aggregate one turn metric across this project's final incidents.
+
+        The withheld counts and the limitations travel with the numbers so that
+        a caller reading a percentile also reads the population it came from.
+        """
+
+        fleet = repository.summarize_turn_metric_fleet(
             metric,
             project_id=request.state.project_id,
             group_by=group_by,
@@ -2081,8 +2107,12 @@ def create_app(
                         "p50_ms": group.p50_ms,
                         "p95_ms": group.p95_ms,
                     }
-                    for group in groups
+                    for group in fleet.groups
                 ],
+                "incident_count": fleet.incident_count,
+                "withheld_incident_count": fleet.withheld_incident_count,
+                "withheld_turn_count": fleet.withheld_turn_count,
+                "limitations": list(TURN_METRIC_LIMITATIONS),
             },
             headers={"Cache-Control": "no-store"},
         )

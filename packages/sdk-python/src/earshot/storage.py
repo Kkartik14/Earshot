@@ -202,6 +202,45 @@ class TurnMetricSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnMetricFleetSummary:
+    """Grouped percentiles for one metric, together with what they leave out.
+
+    A percentile is only as trustworthy as the population behind it. A
+    crash-recovered or operator-sealed artifact is ``provisional``: it is missing
+    however much of the conversation the producer never durably observed, so its
+    turn facts describe a fragment and cannot be pooled with cleanly closed ones
+    without quietly biasing the fleet number.
+
+    Dropping them without saying so would only trade one quiet lie for another,
+    so the withheld counts travel with the numbers. ``groups`` empty while
+    ``withheld_incident_count`` is non-zero is a refusal to aggregate, and reads
+    as one; it is never a measured zero.
+    """
+
+    groups: tuple[TurnMetricSummary, ...]
+    # Distinct final incidents whose turn facts these groups are computed from.
+    incident_count: int
+    # Distinct non-final incidents whose turn facts were kept out, and how many
+    # turn facts that cost the aggregate.
+    withheld_incident_count: int
+    withheld_turn_count: int
+
+
+# What a fleet percentile structurally cannot answer. Stated with the numbers
+# rather than left for the reader to infer, in the same spirit as the live
+# session collection: "not counted" and "counted as zero" are different claims.
+TURN_METRIC_LIMITATIONS = (
+    "only final incidents are aggregated: a provisional artifact covers an "
+    "unknown fraction of its conversation, so pooling its turns would bias "
+    "every value here",
+    "withheld_incident_count above zero with no groups means the aggregate was "
+    "refused for want of final evidence, never that the fleet measured zero",
+    "a turn whose metric was never observed is counted in turn_count and "
+    "excluded from available_count, never substituted with a value",
+)
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectorRecord:
     endpoint_id: str
     project_id: str
@@ -2626,6 +2665,41 @@ class IncidentStore:
         project_id: str = DEFAULT_PROJECT_ID,
         group_by: str = "framework",
     ) -> tuple[TurnMetricSummary, ...]:
+        """The grouped percentiles on their own, for callers that state coverage elsewhere.
+
+        These groups already exclude provisional incidents, but on their own they
+        cannot say how many were withheld, so an empty result here is ambiguous
+        between "nothing stored" and "nothing final". Anything that publishes
+        these numbers should use ``summarize_turn_metric_fleet``, which carries
+        that count with them.
+        """
+
+        return self.summarize_turn_metric_fleet(
+            metric, project_id=project_id, group_by=group_by
+        ).groups
+
+    def summarize_turn_metric_fleet(
+        self,
+        metric: str,
+        *,
+        project_id: str = DEFAULT_PROJECT_ID,
+        group_by: str = "framework",
+    ) -> TurnMetricFleetSummary:
+        """Aggregate one turn metric across a project's *final* incidents only.
+
+        ``turn_metrics`` is a projection of every stored incident, including the
+        crash-recovered and operator-sealed ones that declare themselves
+        ``provisional``. Those artifacts are knowingly missing an unknown part of
+        their conversation, so their turns would move a fleet percentile without
+        anything on the number saying why -- exactly the quiet kind of wrong this
+        project exists to refuse. Finality lives on ``incidents``, so the
+        population is fixed by joining there rather than by trusting the
+        projection, and the join is the only change to a query whose grouping,
+        ranking and nearest-rank percentiles stay byte-identical for final data.
+
+        What the join removed is counted and returned, never dropped silently.
+        """
+
         metric_columns = {
             "first_token_ms": (
                 "first_token_ms",
@@ -2711,15 +2785,19 @@ class IncidentStore:
         ) = metric_columns[metric]
         group_column = group_columns[group_by]
         query = f"""
-            WITH totals AS (
+            WITH final_turns AS (
+                SELECT turn_metrics.*
+                FROM turn_metrics
+                JOIN incidents ON incidents.bundle_id = turn_metrics.bundle_id
+                WHERE turn_metrics.project_id = ? AND incidents.finality = 'final'
+            ), totals AS (
                 SELECT COALESCE({group_column}, 'unknown') AS group_value,
                        {availability_column} AS availability_value,
                        {basis_column} AS basis_value,
                        {confidence_column} AS confidence_value,
                        COALESCE({limitation_column}, '') AS limitation_value,
                        COUNT(*) AS turn_count
-                FROM turn_metrics
-                WHERE project_id = ?
+                FROM final_turns
                 GROUP BY COALESCE({group_column}, 'unknown'),
                          {availability_column}, {basis_column},
                          {confidence_column}, COALESCE({limitation_column}, '')
@@ -2743,8 +2821,8 @@ class IncidentStore:
                                         {confidence_column},
                                         COALESCE({limitation_column}, '')
                        ) AS available_count
-                FROM turn_metrics
-                WHERE project_id = ? AND {metric_column} IS NOT NULL
+                FROM final_turns
+                WHERE {metric_column} IS NOT NULL
             )
             SELECT totals.group_value, totals.availability_value,
                    totals.basis_value, totals.confidence_value,
@@ -2775,26 +2853,48 @@ class IncidentStore:
                      totals.basis_value, totals.confidence_value,
                      totals.limitation_value
         """
+        # The same population split the aggregation made, counted so the caller
+        # can see what the number covers and what it refused. Read under the one
+        # lock that produced the groups, so the declaration cannot drift from
+        # them. Both counts are metric-independent, like ``turn_count``.
+        coverage_query = """
+            SELECT
+                COUNT(DISTINCT CASE WHEN incidents.finality = 'final'
+                      THEN turn_metrics.bundle_id END) AS incident_count,
+                COUNT(DISTINCT CASE WHEN incidents.finality <> 'final'
+                      THEN turn_metrics.bundle_id END) AS withheld_incident_count,
+                COUNT(CASE WHEN incidents.finality <> 'final'
+                      THEN 1 END) AS withheld_turn_count
+            FROM turn_metrics
+            JOIN incidents ON incidents.bundle_id = turn_metrics.bundle_id
+            WHERE turn_metrics.project_id = ?
+        """
         with self._mutation():
             self._purge_all_expired_locked(str(time.time_ns()))
             with self._connect() as connection:
-                rows = connection.execute(query, (project_id, project_id)).fetchall()
-        return tuple(
-            TurnMetricSummary(
-                group=row["group_value"],
-                availability=row["availability_value"],
-                basis=row["basis_value"],
-                confidence=row["confidence_value"],
-                limitation=row["limitation_value"] or None,
-                turn_count=row["turn_count"],
-                available_count=row["available_count"],
-                average_ms=row["average_ms"],
-                minimum_ms=row["minimum_ms"],
-                maximum_ms=row["maximum_ms"],
-                p50_ms=row["p50_ms"],
-                p95_ms=row["p95_ms"],
-            )
-            for row in rows
+                rows = connection.execute(query, (project_id,)).fetchall()
+                coverage = connection.execute(coverage_query, (project_id,)).fetchone()
+        return TurnMetricFleetSummary(
+            groups=tuple(
+                TurnMetricSummary(
+                    group=row["group_value"],
+                    availability=row["availability_value"],
+                    basis=row["basis_value"],
+                    confidence=row["confidence_value"],
+                    limitation=row["limitation_value"] or None,
+                    turn_count=row["turn_count"],
+                    available_count=row["available_count"],
+                    average_ms=row["average_ms"],
+                    minimum_ms=row["minimum_ms"],
+                    maximum_ms=row["maximum_ms"],
+                    p50_ms=row["p50_ms"],
+                    p95_ms=row["p95_ms"],
+                )
+                for row in rows
+            ),
+            incident_count=coverage["incident_count"],
+            withheld_incident_count=coverage["withheld_incident_count"],
+            withheld_turn_count=coverage["withheld_turn_count"],
         )
 
     def get_analysis(

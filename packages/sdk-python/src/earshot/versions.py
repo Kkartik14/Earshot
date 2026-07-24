@@ -11,7 +11,7 @@ SUPPORTED_SEMANTIC_PROFILE_VERSIONS = ("0.1.0", "0.2.0")
 # 0.1.0 has no ``manifest.recovery`` member, so an artifact that claims 0.1.0 and
 # carries one is asserting a contract it cannot express.
 RECOVERY_MIN_CONTRACT_VERSION = "0.2.0"
-API_VERSION = "0.5.0"
+API_VERSION = "0.6.0"
 ANALYZER_VERSION = "0.5.0"
 TURN_FACT_PROJECTION_VERSION = "0.1.0"
 PIPELINE_ADAPTER_VERSION = "0.3.0"

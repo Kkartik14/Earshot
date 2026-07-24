@@ -43,14 +43,17 @@ def test_analysis_truth_changes_have_a_new_cache_identity() -> None:
     assert ANALYZER_VERSION == "0.5.0"
 
 
-def test_live_session_surface_is_api_version_0_5() -> None:
-    # 0.5.0 adds the ``/v1/live`` namespace: the server-sent-event tail of an
-    # open conversation, remote checkpoint ingestion, and the explicit operator
-    # seal. A live session is never an incident, so the collection is separate
-    # from ``/v1/incidents`` rather than mixed into it. 0.4.0 added the
-    # authenticated browser capture endpoint (``POST /v1/capture``); 0.3.0 added
-    # the contradiction, comparison, and export read endpoints.
-    assert API_VERSION == "0.5.0"
+def test_fleet_metric_population_is_declared_in_api_version_0_6() -> None:
+    # 0.6.0 makes ``GET /v1/metrics/turns`` state the population behind its
+    # numbers: only final incidents are aggregated, and the provisional ones the
+    # aggregate refused are counted on the response (``incident_count``,
+    # ``withheld_incident_count``, ``withheld_turn_count``, ``limitations``)
+    # rather than dropped silently. 0.5.0 added the ``/v1/live`` namespace: the
+    # server-sent-event tail of an open conversation, remote checkpoint
+    # ingestion, and the explicit operator seal. 0.4.0 added the authenticated
+    # browser capture endpoint (``POST /v1/capture``); 0.3.0 added the
+    # contradiction, comparison, and export read endpoints.
+    assert API_VERSION == "0.6.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:
