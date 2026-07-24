@@ -144,8 +144,10 @@ framework versions; one version number must not be used as a proxy for another.
 - Removing or repurposing a public import, accepted adapter input, persisted field,
   semantic code, or privacy default requires a declared deprecation or a new minor
   release with release notes and an explicit migration path.
-- The `0.1.0` reader accepts contract and semantic-profile label `0.1.0` exactly. It does
-  not claim general support for artifacts labelled `1.0.0` or for future versions.
+- Producers emit contract and semantic-profile label `0.2.0`; the reader accepts `0.1.0`
+  and `0.2.0`, and nothing else. Read tolerance ships with the bump, which is what makes
+  a bump a migration rather than a break. No general support is claimed for artifacts
+  labelled `1.0.0` or for any future version.
 - Runtime compatibility is only the tested range below. Duck-typed unit fixtures do not
   extend a framework version claim.
 - Browser/mobile collectors, generic live OTLP receiving, media upload/replay, and other
