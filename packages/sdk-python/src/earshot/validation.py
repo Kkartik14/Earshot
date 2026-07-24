@@ -20,13 +20,12 @@ if TYPE_CHECKING:
     from .explanation import IncidentExplanation
 
 from .contract import (
-    SCHEMA_VERSION,
-    SEMANTIC_PROFILE_VERSION,
     CausalLink,
     ContractModel,
     DerivedAnalysis,
     Evidence,
     IncidentBundle,
+    IncidentProfile,
     Operation,
     TimePoint,
     TimeRange,
@@ -51,6 +50,23 @@ from .privacy import (
     metadata_value_allowed,
     sanitize_source_label,
 )
+from .versions import (
+    RECOVERY_MIN_CONTRACT_VERSION,
+    SUPPORTED_CONTRACT_VERSIONS,
+    SUPPORTED_SEMANTIC_PROFILE_VERSIONS,
+)
+
+
+def _version_below(candidate: str, floor: str) -> bool:
+    """Compare dotted numeric versions, treating anything unparseable as older."""
+
+    def parts(value: str) -> tuple[int, ...]:
+        try:
+            return tuple(int(part) for part in value.split("."))
+        except ValueError:
+            return ()
+
+    return parts(candidate) < parts(floor)
 
 
 def _check_schema_url_policy(
@@ -756,6 +772,77 @@ def _find_cycle(edges: Mapping[str, set[str]]) -> tuple[str, ...] | None:
     return None
 
 
+def _check_recovery_declaration(
+    profile: IncidentProfile,
+    coverage_availability: Mapping[str, str],
+    issues: list[ValidationIssue],
+) -> None:
+    """Refuse any artifact whose recovery declaration is missing or incoherent.
+
+    This is the mechanism, not a convention: a bundle reconstructed from a
+    checkpoint journal cannot claim a clean close, because a claim of a clean
+    close alongside ``close_observed=False`` is a validation error here — and
+    therefore an error in ``close()``, the CLI, ``POST /v1/incidents``, and every
+    codec path. The first rule keys on ``finality`` rather than
+    ``completeness`` on purpose: a truncated-but-cleanly-closed bundle is
+    ``final``/``incomplete`` and must keep validating unchanged.
+    """
+
+    manifest = profile.manifest
+    recovery = manifest.recovery
+    if manifest.finality != "final" and recovery is None:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_RECOVERY_DECLARATION_REQUIRED",
+                path=("profile", "manifest", "recovery"),
+                message="a non-final artifact must declare how it was reconstructed",
+            )
+        )
+    if recovery is None:
+        return
+    if not recovery.close_observed:
+        if (
+            manifest.finality == "final"
+            or manifest.completeness == "complete"
+            or profile.session.status == "completed"
+        ):
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY",
+                    path=("profile", "manifest", "recovery"),
+                    message="an unclosed recovery cannot claim a clean, complete close",
+                )
+            )
+        if profile.session.ended_at is not None:
+            # The last checkpoint is not the end of the session; the session may
+            # have run on for a long time after it. Carrying that coordinate as
+            # an end time would be a fabricated measurement.
+            issues.append(
+                ValidationIssue(
+                    code="EARSHOT_RECOVERY_SESSION_END_FABRICATED",
+                    path=("profile", "session", "ended_at"),
+                    message="a session whose close was never observed has no end time",
+                )
+            )
+    elif recovery.torn_tail_bytes > 0 or not recovery.journal_complete:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY",
+                path=("profile", "manifest", "recovery"),
+                message="a damaged or truncated journal cannot have observed a close",
+            )
+        )
+    expected_close = "available" if recovery.close_observed else "unavailable"
+    if coverage_availability.get("recorder.session_close") != expected_close:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_RECOVERY_DECLARATION_REQUIRED",
+                path=("profile", "coverage"),
+                message="a recovered artifact must report recorder.session_close coverage",
+            )
+        )
+
+
 def validate_incident(bundle: IncidentBundle) -> ValidationReport:
     """Validate all cross-record invariants without mutating ``bundle``."""
 
@@ -776,15 +863,31 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
     manifest = profile.manifest
     session_id = profile.session.session_id
 
-    if manifest.schema_version != SCHEMA_VERSION:
+    # Membership, not equality: a reader that rejected every artifact produced
+    # before its own release would make each contract bump a break instead of a
+    # migration. Anything outside the supported set is still refused loudly.
+    if manifest.schema_version not in SUPPORTED_CONTRACT_VERSIONS:
         issues.append(
             ValidationIssue(
                 code="EARSHOT_SCHEMA_VERSION_UNSUPPORTED",
                 path=("profile", "manifest", "schema_version"),
-                message=f"expected {SCHEMA_VERSION!r}, got {manifest.schema_version!r}",
+                message=f"expected one of {SUPPORTED_CONTRACT_VERSIONS!r}",
             )
         )
-    if manifest.semantic_profile_version != SEMANTIC_PROFILE_VERSION:
+    elif manifest.recovery is not None and _version_below(
+        manifest.schema_version, RECOVERY_MIN_CONTRACT_VERSION
+    ):
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_SCHEMA_VERSION_UNSUPPORTED",
+                path=("profile", "manifest", "recovery"),
+                message=(
+                    f"a recovery declaration requires contract version "
+                    f"{RECOVERY_MIN_CONTRACT_VERSION} or newer"
+                ),
+            )
+        )
+    if manifest.semantic_profile_version not in SUPPORTED_SEMANTIC_PROFILE_VERSIONS:
         issues.append(
             ValidationIssue(
                 code="EARSHOT_SEMANTIC_PROFILE_VERSION_UNSUPPORTED",
@@ -877,7 +980,9 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                 global_ids[value] = namespace
 
     coverage_signals: set[str] = set()
+    coverage_availability: dict[str, str] = {}
     for index, coverage in enumerate(profile.coverage):
+        coverage_availability.setdefault(coverage.signal, coverage.availability.lower())
         for field_name in ("signal", "availability", "reason"):
             field_value = getattr(coverage, field_name)
             if field_value is not None and not is_safe_semantic_label(field_value):
@@ -917,6 +1022,8 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
             ("profile", "coverage", index, "evidence"),
             issues,
         )
+
+    _check_recovery_declaration(profile, coverage_availability, issues)
 
     # A declared clock calibration may only relate domains this bundle defines.
     # Same-record shape (from != to, window ordering) is enforced by the model.

@@ -189,19 +189,6 @@ class Adapter(ContractModel):
     framework_version: NonEmptyStr | None = None
 
 
-class BundleManifest(ContractModel):
-    schema_version: NonEmptyStr = SCHEMA_VERSION
-    semantic_profile_version: NonEmptyStr = SEMANTIC_PROFILE_VERSION
-    bundle_id: BundleId
-    session_id: OpaqueId
-    created_at_unix_nano: DecimalNano
-    producer: Producer
-    adapters: tuple[Adapter, ...] = ()
-    finality: NonEmptyStr = "final"
-    completeness: NonEmptyStr = "complete"
-    attributes: dict[str, Any] = Field(default_factory=dict)
-
-
 class TimePoint(ContractModel):
     """A timestamp without pretending distributed clocks are globally ordered."""
 
@@ -222,6 +209,52 @@ class TimePoint(ContractModel):
         if self.monotonic_time_nano is not None and self.clock_domain_id is None:
             raise ValueError("monotonic_time_nano requires clock_domain_id")
         return self
+
+
+class RecoveryRecord(ContractModel):
+    """How this artifact was reconstructed, and what that costs its completeness.
+
+    A recovered incident has to be structurally unable to pass as a cleanly
+    closed one, so the declaration is a typed manifest member rather than an
+    attribute. Attribute bags are a weak channel: their keys need a privacy
+    allowlist, and validation cannot cross-check an open bag against
+    ``finality``, ``completeness``, ``session.status``, and coverage — which is
+    exactly what makes the declaration enforceable here.
+
+    There is deliberately no "recovered at" timestamp. Two recoveries of the
+    same journal must produce the same bytes under the same ``bundle_id``, or
+    content-addressed ingest would reject the second as a conflict. When
+    recovery ran is an operational fact for the CLI and the diagnostic channel,
+    not evidence.
+    """
+
+    method: SemanticCode
+    reason: SemanticCode
+    close_observed: StrictBool
+    journal_id: OpaqueId
+    last_sequence: StrictInt = Field(ge=0)
+    # The last coordinate the journal durably observed. This is *not* the end of
+    # the session: the session may have run on for a long time after it.
+    last_observation: TimePoint | None = None
+    torn_tail_bytes: StrictInt = Field(default=0, ge=0)
+    discarded_records: StrictInt = Field(default=0, ge=0)
+    journal_complete: StrictBool = True
+    recoverer: Producer
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class BundleManifest(ContractModel):
+    schema_version: NonEmptyStr = SCHEMA_VERSION
+    semantic_profile_version: NonEmptyStr = SEMANTIC_PROFILE_VERSION
+    bundle_id: BundleId
+    session_id: OpaqueId
+    created_at_unix_nano: DecimalNano
+    producer: Producer
+    adapters: tuple[Adapter, ...] = ()
+    finality: NonEmptyStr = "final"
+    completeness: NonEmptyStr = "complete"
+    recovery: RecoveryRecord | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class TimeRange(ContractModel):

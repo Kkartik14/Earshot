@@ -211,3 +211,68 @@ def test_cli_accepts_every_shipped_connector_provider(provider: str) -> None:
     )
 
     assert arguments.provider == provider
+
+
+def _crashed_journal(directory) -> None:
+    from earshot.checkpoint import CheckpointConfig, CheckpointWriter
+    from earshot.recorder import IncidentRecorder
+
+    writer = CheckpointWriter(CheckpointConfig(checkpoint_dir=directory))
+    recorder = IncidentRecorder(session_id="s1", bundle_id="b1", checkpoint=writer)
+    recorder.add_participant("caller", role="caller")
+    recorder.record_event("earshot.turn.start", turn_id="turn-0")
+
+
+def test_checkpoints_list_identifies_an_unclosed_journal(tmp_path, capsys) -> None:
+    _crashed_journal(tmp_path)
+
+    assert main(["checkpoints", "list", str(tmp_path)]) == 0
+
+    (journal,) = json.loads(capsys.readouterr().out)["journals"]
+    assert journal["session_id"] == "s1"
+    assert journal["state"] == "open"
+    assert journal["torn_tail_bytes"] == 0
+
+
+def test_recover_writes_a_provisional_incident_and_can_ingest_it(tmp_path, capsys) -> None:
+    journals = tmp_path / "journals"
+    _crashed_journal(journals)
+    destination = tmp_path / "recovered.json"
+
+    assert (
+        main(
+            [
+                "recover",
+                "--checkpoint-dir",
+                str(journals),
+                "--out",
+                str(destination),
+                "--ingest",
+                "--data-dir",
+                str(tmp_path / "data"),
+            ]
+        )
+        == 0
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["close_observed"] is False
+    assert report["finality"] == "provisional"
+    assert report["created"] is True
+    document = json.loads(destination.read_text())
+    assert document["profile"]["manifest"]["recovery"]["close_observed"] is False
+    assert "ended_at" not in document["profile"]["session"]
+
+
+def test_recover_refuses_to_guess_between_journals(tmp_path, capsys) -> None:
+    _crashed_journal(tmp_path / "a")
+    _crashed_journal(tmp_path / "b")
+    merged = tmp_path / "merged"
+    merged.mkdir(mode=0o700)
+    for index, source in enumerate((tmp_path / "a", tmp_path / "b")):
+        journal = next(source.glob("*.eck"))
+        (merged / f"{index}-{journal.name}").write_bytes(journal.read_bytes())
+
+    assert main(["recover", "--checkpoint-dir", str(merged)]) == 2
+
+    assert SECRET_SENTINEL not in capsys.readouterr().err

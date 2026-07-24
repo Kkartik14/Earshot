@@ -49,49 +49,25 @@ def _import_aesgcm() -> type:
     condition by patching this symbol to raise ``ImportError``.
     """
 
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from .checkpoint.keys import import_aesgcm
 
-    return AESGCM
+    return import_aesgcm()
 
 
 def _coerce_spool_key(value: bytes | str) -> bytes:
-    """Normalize a configured spool key to raw 32 AES-256 bytes.
+    """Normalize a configured spool key to raw 32 AES-256 bytes."""
 
-    A ``bytes`` value of length 32 is treated as a raw key; any other ``bytes``
-    value and every ``str`` value is interpreted as base64 that must decode to
-    exactly 32 bytes (a 32-byte key is 44 base64 characters).
-    """
+    from .checkpoint.keys import coerce_at_rest_key
 
-    if isinstance(value, str):
-        candidate = value.strip().encode("ascii")
-    else:
-        value = bytes(value)
-        if len(value) == _SPOOL_KEY_BYTES:
-            return value
-        candidate = value.strip()
-    try:
-        decoded = base64.b64decode(candidate, validate=True)
-    except ValueError:
-        raise ValueError(
-            "spool key must be 32 raw bytes or a base64 encoding of 32 bytes"
-        ) from None
-    if len(decoded) != _SPOOL_KEY_BYTES:
-        raise ValueError("spool key must decode to 32 bytes for AES-256")
-    return decoded
+    return coerce_at_rest_key(value)
 
 
 def _read_spool_key_file(path: Path) -> bytes:
     """Load a spool key from ``EARSHOT_SPOOL_KEY_FILE`` (raw/base64, mode 0600)."""
 
-    if path.is_symlink():
-        raise ValueError("EARSHOT_SPOOL_KEY_FILE must not be a symbolic link")
-    if not path.is_file():
-        raise ValueError("EARSHOT_SPOOL_KEY_FILE must reference a regular file")
-    if path.stat().st_mode & 0o077:
-        raise ValueError(
-            "EARSHOT_SPOOL_KEY_FILE must not be accessible by group or other users (chmod 600)"
-        )
-    return _coerce_spool_key(path.read_bytes())
+    from .checkpoint.keys import read_at_rest_key_file
+
+    return read_at_rest_key_file(path, variable="EARSHOT_SPOOL_KEY_FILE")
 
 
 def _resolve_spool_key(explicit: bytes | str | None) -> bytes | None:
@@ -99,18 +75,19 @@ def _resolve_spool_key(explicit: bytes | str | None) -> bytes | None:
 
     Precedence: explicit ``spool_key`` argument, then ``EARSHOT_SPOOL_KEY``
     (base64), then ``EARSHOT_SPOOL_KEY_FILE``. When nothing is configured the
-    spool stays plaintext and behavior is unchanged.
+    spool stays plaintext and behavior is unchanged. The implementation lives in
+    ``earshot.checkpoint.keys`` so the spool and the checkpoint journal cannot
+    drift apart on precedence or on file-permission refusal; it is imported
+    lazily here to keep the module import graph acyclic.
     """
 
-    if explicit is not None:
-        return _coerce_spool_key(explicit)
-    inline = os.environ.get("EARSHOT_SPOOL_KEY")
-    if inline:
-        return _coerce_spool_key(inline)
-    key_file = os.environ.get("EARSHOT_SPOOL_KEY_FILE")
-    if key_file:
-        return _read_spool_key_file(Path(key_file))
-    return None
+    from .checkpoint.keys import resolve_at_rest_key
+
+    return resolve_at_rest_key(
+        explicit,
+        env_var="EARSHOT_SPOOL_KEY",
+        env_file_var="EARSHOT_SPOOL_KEY_FILE",
+    )
 
 
 @dataclass(frozen=True)
@@ -780,9 +757,12 @@ class DurableExporter:
     the key permanently renders existing encrypted records undecryptable, and they
     quarantine on read rather than crashing or delivering.
 
-    Note: live active-session crash journaling (a resumable tail of the in-flight
-    session) is intentionally out of scope here; it needs a live protocol and is
-    tracked as future work.
+    The division of labour with ``earshot.checkpoint`` is deliberate: this spool
+    persists **closed** incidents on their way to a destination, while the
+    checkpoint journal persists an **open** session so a process that never
+    reaches ``close()`` still leaves recoverable evidence. Both write to an
+    owner-private directory under the same at-rest key precedence
+    (``earshot.checkpoint.keys``); neither is a coordinated multi-process queue.
     """
 
     _VERSION = 1
