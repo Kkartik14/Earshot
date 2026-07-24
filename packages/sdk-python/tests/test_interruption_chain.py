@@ -17,7 +17,18 @@ import pytest
 
 from earshot.analysis import analyze_incident
 from earshot.codec import analysis_input_sha256, decode_incident_json
-from earshot.contract import ClockDomain, ClockRelation, Event, Evidence, TimePoint
+from earshot.contract import (
+    CausalLink,
+    ClockDomain,
+    ClockRelation,
+    Event,
+    Evidence,
+    Operation,
+    QualityMeasurement,
+    QualitySample,
+    TimePoint,
+    TimeRange,
+)
 from earshot.validation import validate_derived_analysis, validate_incident
 from incident_factory import make_valid_bundle, point
 
@@ -201,6 +212,207 @@ def test_two_episodes_in_one_turn_produce_two_separated_chains() -> None:
     assert episode_two["render_stopped"].evidence_id == "ep2-render-stop"
     assert chains[1].effectiveness.availability == "available"
     assert chains[1].effectiveness.value == 100.0
+
+
+# --- P1#8(a): operations and samples are scoped to their own episode ----------
+
+
+def _sample(
+    sample_id: str,
+    name: str,
+    start_nano: int,
+    end_nano: int,
+    value: float | bool = 0.9,
+) -> QualitySample:
+    return QualitySample(
+        sample_id=sample_id,
+        session_id="session-1",
+        quality_kind="interruption",
+        sample_window=TimeRange(start=point(start_nano), end=point(end_nano)),
+        measurements=(QualityMeasurement(name=name, value=value, unit="1"),),
+        attributes={"earshot.turn.id": "turn-1"},
+        evidence=Evidence(
+            source="framework_otel",
+            observer="server",
+            method="native_span",
+            confidence="measured",
+            availability="available",
+        ),
+    )
+
+
+def _operation(
+    operation_id: str,
+    operation_name: str,
+    start_nano: int,
+    end_nano: int,
+    *,
+    status: str = "ok",
+    links: tuple[CausalLink, ...] = (),
+) -> Operation:
+    return Operation(
+        operation_id=operation_id,
+        session_id="session-1",
+        operation_name=operation_name,
+        status=status,
+        started_at=point(start_nano),
+        ended_at=point(end_nano),
+        turn_id="turn-1",
+        links=links,
+    )
+
+
+def _episode_scoping_bundle(operations, quality_samples):
+    """Two barge-ins in one turn, two seconds apart, plus the given evidence."""
+
+    def _ev(event_id: str, name: str, nano: int) -> Event:
+        return Event(
+            event_id=event_id,
+            session_id="session-1",
+            event_name=name,
+            time=point(nano),
+            turn_id="turn-1",
+            participant_id="participant-user",
+            evidence=Evidence(
+                source="framework_otel",
+                observer="server",
+                method="native_span",
+                confidence="measured",
+                availability="available",
+            ),
+        )
+
+    events = (
+        _ev("ep1-overlap", "earshot.interruption.detected", 900_000_000),
+        _ev("ep1-accept", "earshot.interruption.accepted", 940_000_000),
+        _ev("ep2-overlap", "earshot.interruption.detected", 2_900_000_000),
+        _ev("ep2-accept", "earshot.interruption.accepted", 2_940_000_000),
+    )
+    bundle = make_valid_bundle()
+    profile = bundle.profile.model_copy(
+        update={
+            "events": events,
+            "operations": operations,
+            "quality_samples": quality_samples,
+        }
+    )
+    return bundle.model_copy(update={"profile": profile})
+
+
+def test_quality_sample_from_a_later_episode_is_not_read_as_an_earlier_intent() -> None:
+    # The sample is measured entirely inside episode two. Before the fix, the
+    # per-episode chain drew samples turn-wide, so episode ONE's intent stage cited
+    # ep2-intent and carried a coordinate two seconds after its own overlap.
+    bundle = _episode_scoping_bundle(
+        operations=(),
+        quality_samples=(
+            _sample(
+                "ep2-intent",
+                "earshot.metric.interruption.probability",
+                2_900_000_000,
+                2_910_000_000,
+            ),
+        ),
+    )
+    analysis = _analyze(bundle)
+    chains = analysis.projections.turns[0].interruption_chains
+    assert len(chains) == 2
+
+    episode_one = _by_stage(chains[0])["intent"]
+    assert not episode_one.observed
+    assert episode_one.evidence_id is None
+    assert episode_one.at_nano is None
+
+    episode_two = _by_stage(chains[1])["intent"]
+    assert episode_two.observed
+    assert episode_two.evidence_id == "ep2-intent"
+    assert validate_derived_analysis(bundle, analysis).ok
+
+
+def test_tool_from_a_later_episode_is_not_attributed_to_an_earlier_one() -> None:
+    # op-ep2-tool runs, and is cancelled, entirely inside episode two. Before the
+    # fix, operations were drawn turn-wide: the tool's end was after episode ONE's
+    # overlap and its causal target shared the turn, so episode one claimed it as
+    # its own tool_outcome.
+    bundle = _episode_scoping_bundle(
+        operations=(
+            _operation(
+                "op-ep2-agent", "agent_turn", 2_900_000_000, 3_000_000_000, status="cancelled"
+            ),
+            _operation(
+                "op-ep2-tool",
+                "tool",
+                2_910_000_000,
+                2_950_000_000,
+                status="cancelled",
+                links=(
+                    CausalLink(
+                        relationship="cancelled_by",
+                        target_scope="internal",
+                        target_operation_id="op-ep2-agent",
+                    ),
+                ),
+            ),
+        ),
+        quality_samples=(),
+    )
+    analysis = _analyze(bundle)
+    chains = analysis.projections.turns[0].interruption_chains
+    assert len(chains) == 2
+
+    episode_one = _by_stage(chains[0])["tool_outcome"]
+    assert not episode_one.observed
+    assert episode_one.evidence_id is None
+    assert episode_one.outcome is None
+    # The turn had a tool; this episode did not. That is a different fact from
+    # "no tool ran at all", and the coverage reason says which.
+    assert episode_one.coverage_reason == "no_tool_in_episode"
+
+    episode_two = _by_stage(chains[1])["tool_outcome"]
+    assert episode_two.observed
+    assert episode_two.evidence_id == "op-ep2-tool"
+    assert episode_two.outcome == "cancelled"
+    assert validate_derived_analysis(bundle, analysis).ok
+
+
+def test_evidence_straddling_two_episodes_is_a_limitation_not_a_guess() -> None:
+    # A tool still running when the second barge-in began, and a sampling window
+    # open across both, have no single owner the evidence can name. Neither episode
+    # claims them; both say why.
+    bundle = _episode_scoping_bundle(
+        operations=(
+            _operation(
+                "op-straddling-tool", "tool", 2_800_000_000, 3_100_000_000, status="cancelled"
+            ),
+        ),
+        quality_samples=(
+            _sample(
+                "straddling-intent",
+                "earshot.metric.interruption.probability",
+                2_800_000_000,
+                3_100_000_000,
+            ),
+        ),
+    )
+    analysis = _analyze(bundle)
+    chains = analysis.projections.turns[0].interruption_chains
+    assert len(chains) == 2
+    for chain in chains:
+        stages = _by_stage(chain)
+        assert stages["tool_outcome"].coverage_reason == "tool_not_attributable_to_episode"
+        assert stages["intent"].coverage_reason == "sample_not_attributable_to_episode"
+        assert stages["tool_outcome"].evidence_id is None
+        assert stages["intent"].evidence_id is None
+    assert validate_derived_analysis(bundle, analysis).ok
+
+
+def test_single_episode_turn_still_sees_the_whole_turn() -> None:
+    # With one interruption there is nothing to mis-attribute a record *to*, so the
+    # projection is unchanged: the tool that began before the barge-in and was cut
+    # off by it is still attributed.
+    stages = _by_stage(_chain(_fault("full_barge_in_chain")))
+    assert stages["tool_outcome"].evidence_id == "op-tool"
+    assert stages["intent"].evidence_id == "quality-interruption-intent"
 
 
 # --- barge_in: partial chain, same-clock effectiveness available --------------

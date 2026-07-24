@@ -831,11 +831,22 @@ def test_comparison_reports_structured_change_against_a_known_good_incident(tmp_
         for item in body["turn_metric_availability_changes"]
     }
     assert ("render_start_response_latency", "not_observed", "available") in changed
-    # A delta exists only where both sides are available in one unit, and it is the
-    # arithmetic difference of the two reported values — nothing is imputed.
+    # Both sides report a response_latency in ms, but they are not the same
+    # quantity: without render the known-good measured to the transport estimate,
+    # while the incident measured all the way to audio render. Their difference is
+    # the render leg the known-good never observed, not a regression, so the pair is
+    # reported incomparable instead of subtracted.
+    incomparable = {
+        (item["metric"], item["comparable"]) for item in body["turn_metric_availability_changes"]
+    }
+    assert ("response_latency", False) in incomparable
+    # A delta exists only where both sides are available on one unit *and* one
+    # basis, and it is the arithmetic difference of the two reported values —
+    # nothing is imputed.
     deltas = {item["metric"]: item for item in body["turn_metric_deltas"]}
-    assert deltas["response_latency"]["delta"] == 200.0
+    assert "response_latency" not in deltas
     assert "render_start_response_latency" not in deltas
+    assert deltas["sent_response_latency"]["delta"] == 0.0
     assert all(
         item["delta"] == item["incident_value"] - item["known_good_value"]
         for item in deltas.values()

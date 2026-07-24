@@ -21,6 +21,7 @@ from earshot.query import (
     BOUNDARY_DIAGNOSIS_CODES,
     LATENCY_METRICS,
     EvidenceQuery,
+    _derive_analysis,
     compare_incidents,
     detect_contradictions,
 )
@@ -552,6 +553,51 @@ def test_compare_incidents_reports_availability_change_not_fabricated_delta() ->
     # A metric whose availability changed must never appear as a numeric delta.
     delta_metrics = {entry["metric"] for entry in comparison.turn_metric_deltas}
     assert "first_token_latency" not in delta_metrics
+
+
+# --- P1#8(b): equal units are not equal measurement bases --------------------
+
+
+def test_compare_incidents_refuses_to_subtract_unlike_measurement_bases() -> None:
+    # The known-good session never observed audio render, so its response_latency is
+    # measured to the transport estimate; the incident's is measured all the way to
+    # render. Both are "ms" and both are available, and before the fix that was
+    # enough: the comparison reported a 200 ms delta that is really the render leg
+    # the known-good never observed, not a regression.
+    known = make_valid_bundle(include_render=False)
+    incident = make_valid_bundle()
+
+    known_metric = _derive_analysis(known).projections.turns[0].metrics.response_latency
+    incident_metric = _derive_analysis(incident).projections.turns[0].metrics.response_latency
+    assert known_metric.availability == incident_metric.availability == "available"
+    assert known_metric.unit == incident_metric.unit == "ms"
+    assert known_metric.basis == "transport_estimate"
+    assert incident_metric.basis == "render"
+
+    comparison = compare_incidents(incident, known)
+    assert "response_latency" not in {entry["metric"] for entry in comparison.turn_metric_deltas}
+    change = next(
+        entry
+        for entry in comparison.turn_metric_availability_changes
+        if entry["metric"] == "response_latency"
+    )
+    assert change["known_good_availability"] == "available"
+    assert change["incident_availability"] == "available"
+    assert change["comparable"] is False
+
+
+def test_compare_incidents_still_subtracts_like_bases() -> None:
+    # The refusal is about unlike bases, not about caution: a metric measured the
+    # same way on both sides still yields its arithmetic difference.
+    known = make_valid_bundle()
+    incident = _degraded_incident()
+    render = next(
+        entry
+        for entry in compare_incidents(incident, known).turn_metric_deltas
+        if entry["metric"] == "render_start_response_latency"
+    )
+    assert render["delta"] == render["incident_value"] - render["known_good_value"]
+    assert render["delta"] > 0
 
 
 def test_compare_incidents_reports_unmatched_turns() -> None:

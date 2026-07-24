@@ -1018,10 +1018,12 @@ def compare_incidents(
     """Diff an incident against a known-good session, structurally and honestly.
 
     Reports diagnoses added/removed (by code + boundary + turn), per-turn latency
-    deltas *only* where both sides are ``available`` and comparable (otherwise an
-    availability change is reported, never a fabricated delta), new/removed
-    coverage gaps, and contradictions the incident has that the known-good does
-    not. Turns are matched by ``turn_id``; unmatched turns are reported
+    deltas *only* where both sides are ``available`` and comparable -- same unit
+    *and* same measurement basis, because two ``ms`` latencies taken from different
+    reference points are not the same quantity -- new/removed coverage gaps, and
+    contradictions the incident has that the known-good does not. Anything else is
+    reported as an availability change with ``comparable`` false, never a fabricated
+    delta. Turns are matched by ``turn_id``; unmatched turns are reported
     explicitly. This is "what changed relative to the last known-good release".
     """
 
@@ -1063,12 +1065,18 @@ def compare_incidents(
                 incident_metric.availability == "available"
                 and known_metric.availability == "available"
             )
-            if (
+            # Matching units are not enough to make two numbers the same quantity.
+            # A metric's ``basis`` names what it was measured *from* and *to*: a
+            # response latency ending at audio render and one ending at a TTS
+            # estimate are both in ``ms``, and subtracting them reports the missing
+            # render leg as if it were a regression. Only like bases subtract; every
+            # other pair is reported as incomparable.
+            comparable = (
                 both_available
                 and incident_metric.unit == known_metric.unit
-                and incident_metric.value is not None
-                and known_metric.value is not None
-            ):
+                and incident_metric.basis == known_metric.basis
+            )
+            if comparable and incident_metric.value is not None and known_metric.value is not None:
                 deltas.append(
                     {
                         "turn_id": turn_id,
@@ -1080,7 +1088,7 @@ def compare_incidents(
                     }
                 )
             elif incident_metric.availability != known_metric.availability or both_available:
-                # Availability changed, or both available but units are not
+                # Availability changed, or both available but the two are not
                 # comparable: report the change, never a fabricated delta.
                 availability_changes.append(
                     {
@@ -1088,7 +1096,7 @@ def compare_incidents(
                         "metric": name,
                         "known_good_availability": known_metric.availability,
                         "incident_availability": incident_metric.availability,
-                        "comparable": both_available,
+                        "comparable": comparable,
                     }
                 )
 
