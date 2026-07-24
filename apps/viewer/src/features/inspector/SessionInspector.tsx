@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useExplanation, useIncident } from "../../api/hooks";
+import { useContradictions, useExplanation, useIncident } from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
 import { SessionHeader } from "./SessionHeader";
-import { DiagnosesPanel, UnassignedPanel } from "./SessionFacts";
+import {
+  ClockCalibrationPanel,
+  ContradictionsPanel,
+  DiagnosesPanel,
+  UnassignedPanel,
+  contradictionsReason,
+  type ContradictionsStatus,
+} from "./SessionFacts";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
 import { TurnTimeline, type Selection } from "./TurnTimeline";
 import styles from "./SessionInspector.module.css";
 import {
+  buildClockCalibration,
+  buildContradictions,
   buildDiagnoses,
   buildSummary,
   buildTimeline,
@@ -21,6 +30,7 @@ export function SessionInspector() {
   const { bundleId } = useParams<{ bundleId: string }>();
   const incident = useIncident(bundleId);
   const explanation = useExplanation(bundleId);
+  const contradictions = useContradictions(bundleId);
   const [openTurns, setOpenTurns] = useState<Set<number>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
   // The control that opened the detail dialog; focus returns here on close.
@@ -68,6 +78,21 @@ export function SessionInspector() {
   const coverage = getCoverage(explained);
   const diagnoses = buildDiagnoses(explained);
   const unassigned = buildUnassigned(explained);
+  const calibration = buildClockCalibration(inc, details);
+  // A detection that has not answered, or could not run, is reported as such.
+  // Only a resolved report may be read as "these are the conflicts".
+  const contradictionsStatus: ContradictionsStatus = contradictions.data
+    ? "ready"
+    : contradictions.isPending
+      ? "pending"
+      : "unavailable";
+  const contradictionsUnavailable =
+    contradictionsStatus === "unavailable"
+      ? contradictionsReason(contradictions.error)
+      : null;
+  const contradictionViews = contradictions.data
+    ? buildContradictions(explained, contradictions.data)
+    : [];
 
   const openTurn = (i: number) =>
     setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
@@ -106,6 +131,13 @@ export function SessionInspector() {
           onSelectOperation={selectOperation}
         />
         <DiagnosesPanel diagnoses={diagnoses} onSelectEvidence={selectOperation} />
+        <ContradictionsPanel
+          status={contradictionsStatus}
+          reason={contradictionsUnavailable}
+          contradictions={contradictionViews}
+          onSelectEvidence={selectOperation}
+        />
+        <ClockCalibrationPanel calibration={calibration} />
         <UnassignedPanel facts={unassigned} />
       </div>
       {sel ? (

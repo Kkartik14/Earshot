@@ -1,11 +1,88 @@
 import { formatMeasurement } from "../../lib/format";
 import { CallGraph } from "./CallGraph";
 import styles from "./drawer.module.css";
-import type { CoverageRow, TurnDetail } from "./timeline";
+import {
+  clockComparability,
+  type CoverageRow,
+  type InterruptionChainView,
+  type MetricRow,
+  type TurnDetail,
+} from "./timeline";
 import { useInitialFocus } from "./useInitialFocus";
 
 const short = (name: string) => name.replace(/^earshot\./, "");
 const humanize = (s: string) => s.replace(/_/g, " ");
+
+/** The right-hand readout for a derived metric: the measured value, or the exact
+ * reason there is none. Never a blank, a dash, or a zero standing in for unknown. */
+function metricReadout(metric: MetricRow): { value: string; reason: string } {
+  const clock = clockComparability(metric);
+  if (metric.value != null) {
+    return {
+      value: formatMeasurement(metric.value, "ms"),
+      reason: clock?.state === "estimated" ? `estimated · ${clock.note}` : metric.basis,
+    };
+  }
+  const reason =
+    clock?.note ??
+    (metric.limitation != null ? humanize(metric.limitation) : metric.basis);
+  return { value: humanize(metric.availability), reason };
+}
+
+/** One interruption episode: the analyzer's ordered stages and the barge-in
+ * latency. An unobserved stage shows its coverage reason and a latency that could
+ * not be derived shows what stopped it — neither is drawn as a success. */
+function InterruptionChain({
+  chain,
+  ordinal,
+  total,
+}: {
+  chain: InterruptionChainView;
+  ordinal: number;
+  total: number;
+}) {
+  const effectiveness = metricReadout(chain.effectiveness);
+  const label = total > 1 ? `Interruption ${ordinal + 1} of ${total}` : "Interruption";
+  return (
+    <article aria-label={`${label} · ${chain.classification}`}>
+      <div className={styles.chainHead}>
+        <span className={styles.title}>{label}</span>
+        <span className={`${styles.chip} ${styles.barge}`}>{chain.classification}</span>
+      </div>
+      <div className={styles.metricLine}>
+        <span className={styles.mln}>barge-in effectiveness</span>
+        <span
+          className={`${styles.mlv} ${chain.effectiveness.value == null ? styles.na : ""}`}
+        >
+          {effectiveness.value}
+        </span>
+        <span className={styles.mlb}>{effectiveness.reason}</span>
+      </div>
+      <ol className={styles.chain}>
+        {chain.stages.map((stage) => (
+          <li
+            key={stage.stage}
+            className={`${styles.chainStage} ${stage.observed ? "" : styles.chainMissing}`}
+          >
+            <span className={styles.chainName}>
+              {humanize(stage.stage)}
+              {stage.outcome != null ? (
+                <span className={styles.evAttach}> → {stage.outcome}</span>
+              ) : null}
+            </span>
+            <span className={styles.chainWhen}>
+              {!stage.observed
+                ? `not observed · ${humanize(stage.coverageReason ?? "reason not stated")}`
+                : stage.atMs != null
+                  ? `+${Math.round(stage.atMs)}ms`
+                  : (stage.coordinate ?? "coordinate not comparable")}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </article>
+  );
+}
 
 function glyphColor(name: string): string {
   if (name.includes("interruption")) return "var(--tts)";
@@ -71,19 +148,34 @@ export function TurnDrawer({
           <CallGraph detail={detail} onPick={onPickStage} />
         </section>
 
+        {detail.interruptionChains.length > 0 ? (
+          <section className={styles.sec}>
+            <h2 className={styles.secLabel}>Interruption chain</h2>
+            {detail.interruptionChains.map((chain, index) => (
+              <InterruptionChain
+                key={chain.reactKey}
+                chain={chain}
+                ordinal={index}
+                total={detail.interruptionChains.length}
+              />
+            ))}
+          </section>
+        ) : null}
+
         <section className={styles.sec}>
           <h2 className={styles.secLabel}>Derived metrics</h2>
-          {detail.metrics.map((m) => (
-            <div key={m.key} className={styles.metricLine}>
-              <span className={styles.mln}>{m.key}</span>
-              <span className={`${styles.mlv} ${m.value == null ? styles.na : ""}`}>
-                {m.value == null
-                  ? humanize(m.availability)
-                  : formatMeasurement(m.value, "ms")}
-              </span>
-              <span className={styles.mlb}>{m.basis}</span>
-            </div>
-          ))}
+          {detail.metrics.map((m) => {
+            const readout = metricReadout(m);
+            return (
+              <div key={m.key} className={styles.metricLine}>
+                <span className={styles.mln}>{m.key}</span>
+                <span className={`${styles.mlv} ${m.value == null ? styles.na : ""}`}>
+                  {readout.value}
+                </span>
+                <span className={styles.mlb}>{readout.reason}</span>
+              </div>
+            );
+          })}
         </section>
 
         {detail.measurements.length > 0 ? (

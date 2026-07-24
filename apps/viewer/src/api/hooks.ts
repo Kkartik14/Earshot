@@ -53,6 +53,22 @@ export function useAnalysis(bundleId: string | undefined) {
   });
 }
 
+/** Backend-detected contradictions in one incident's evidence graph. Kept as its
+ * own query so a failure to detect them is visible as a failure, and never
+ * collapses into an empty "no conflicts" reading of the session. */
+export function useContradictions(bundleId: string | undefined) {
+  return useQuery({
+    queryKey: ["contradictions", bundleId],
+    enabled: bundleId != null,
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/incidents/{bundle_id}/contradictions", {
+          params: { path: { bundle_id: bundleId as string } },
+        }),
+      ),
+  });
+}
+
 /** Backend-authored, evidence-bound timeline facts for one incident. */
 export function useExplanation(bundleId: string | undefined) {
   return useQuery({

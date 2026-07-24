@@ -3,8 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import toolTimeoutRetry from "./__fixtures__/faults/tool_timeout_retry.explanation.json";
 import webrtcDegradation from "./__fixtures__/faults/webrtc_degradation.explanation.json";
 import nativeInterruption from "./__fixtures__/faults/native_s2s_interruption.explanation.json";
+import bargeIn from "./__fixtures__/faults/barge_in.explanation.json";
+import { ApiError } from "../../api/client";
 import { CallGraph } from "./CallGraph";
-import { DiagnosesPanel, UnassignedPanel } from "./SessionFacts";
+import {
+  ClockCalibrationPanel,
+  ContradictionsPanel,
+  DiagnosesPanel,
+  UnassignedPanel,
+  contradictionsReason,
+} from "./SessionFacts";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
 import { TurnTimeline } from "./TurnTimeline";
@@ -13,8 +21,11 @@ import {
   buildTurnDetails,
   buildUnassigned,
   operationStatus,
+  type ClockCalibrationView,
+  type ContradictionView,
   type EdgeView,
   type ExplanationLike,
+  type InterruptionChainView,
   type OperationRole,
   type StageDetail,
   type StageName,
@@ -103,9 +114,11 @@ const turnDetail: TurnDetail = {
       availability: "available",
       basis: "provider_stage_direct",
       confidence: "measured",
+      limitation: null,
     },
   ],
   measurements: [],
+  interruptionChains: [],
   events: [
     {
       name: "earshot.speech.ended",
@@ -662,5 +675,294 @@ describe("Detail drawers", () => {
     expect(screen.getByText("-21.4 dbfs")).toBeInTheDocument();
     expect(screen.getByText("42 character")).toBeInTheDocument();
     expect(screen.queryByText(/-21ms/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Interruption chain", () => {
+  it("renders the ordered causal chain with its measured barge-in latency", () => {
+    const detail = buildTurnDetails(bargeIn as unknown as ExplanationLike)[0];
+    render(
+      <TurnDrawer
+        detail={detail}
+        coverage={[]}
+        onClose={() => {}}
+        onPickStage={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: /interruption chain/i }),
+    ).toBeInTheDocument();
+    // The chain is an ordered list, so assistive tech reads the causal sequence
+    // and its position, not an undifferentiated pile of rows.
+    const stages = within(screen.getByRole("list")).getAllByRole("listitem");
+    expect(stages.map((item) => item.firstElementChild?.textContent)).toEqual([
+      "overlap observed",
+      "intent",
+      "classified",
+      "cancellation requested",
+      "generation stopped",
+      "queued audio discarded",
+      "transport stopped",
+      "buffers purged",
+      "render stopped",
+      "resumed",
+      "tool outcome",
+    ]);
+    expect(screen.getByText("barge-in effectiveness")).toBeInTheDocument();
+    expect(screen.getByText("100ms")).toBeInTheDocument();
+  });
+
+  it("shows an unobserved stage as not observed with its reason, never as a zero", () => {
+    const detail = buildTurnDetails(bargeIn as unknown as ExplanationLike)[0];
+    render(
+      <TurnDrawer
+        detail={detail}
+        coverage={[]}
+        onClose={() => {}}
+        onPickStage={() => {}}
+      />,
+    );
+
+    const chain = within(screen.getByRole("list"));
+    expect(chain.getAllByText("not observed · stage not observed")).toHaveLength(4);
+    expect(chain.getByText("not observed · no tool in turn")).toBeInTheDocument();
+    // An absent stage never borrows the origin's coordinate.
+    expect(chain.queryAllByText("+0ms")).toHaveLength(0);
+  });
+
+  it("states an underivable barge-in latency instead of implying success", () => {
+    const detail = buildTurnDetails(nativeInterruption as unknown as ExplanationLike)[0];
+    render(
+      <TurnDrawer
+        detail={detail}
+        coverage={[]}
+        onClose={() => {}}
+        onPickStage={() => {}}
+      />,
+    );
+
+    const row = screen.getByText("barge-in effectiveness").parentElement as HTMLElement;
+    expect(within(row).getByText("not observed")).toBeInTheDocument();
+    expect(within(row).getByText("turn anchor not observed")).toBeInTheDocument();
+    expect(within(row).queryByText("0ms")).not.toBeInTheDocument();
+  });
+
+  it("labels each episode when one turn produced more than one interruption", () => {
+    const episode = (classification: string, key: string): InterruptionChainView => ({
+      reactKey: key,
+      turnId: "turn-0",
+      classification,
+      stages: [
+        {
+          stage: "overlap_observed",
+          observed: true,
+          atMs: 40,
+          coordinate: null,
+          evidenceId: "evt-overlap",
+          coverageReason: null,
+          outcome: null,
+        },
+      ],
+      effectiveness: {
+        key: "effectiveness",
+        value: null,
+        availability: "not_observed",
+        basis: "interruption_barge_in",
+        confidence: "unavailable",
+        limitation: "target_signal_not_observed",
+      },
+    });
+    render(
+      <TurnDrawer
+        detail={{
+          ...turnDetail,
+          interruptionChains: [episode("accepted", "a"), episode("false", "b")],
+        }}
+        coverage={[]}
+        onClose={() => {}}
+        onPickStage={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("article", { name: /interruption 1 of 2 · accepted/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: /interruption 2 of 2 · false/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("Contradictions panel", () => {
+  const contradiction: ContradictionView = {
+    reactKey: "render_claim_conflict:turn-1:0",
+    kind: "render_claim_conflict",
+    summary: "render_observed_while_coverage_not_observed",
+    boundary: "render",
+    turnId: "turn-1",
+    evidence: [
+      { id: "op-tool-attempt-1", turnIndex: 0 },
+      { id: "quality-sample-9", turnIndex: null },
+    ],
+  };
+
+  it("is a labelled region and selects the evidence operation on click", () => {
+    const onSelect = vi.fn();
+    render(
+      <ContradictionsPanel
+        status="ready"
+        reason={null}
+        contradictions={[contradiction]}
+        onSelectEvidence={onSelect}
+      />,
+    );
+
+    const region = within(screen.getByRole("region", { name: /contradictions/i }));
+    expect(region.getByText("render claim conflict")).toBeInTheDocument();
+    expect(region.getByText("render")).toBeInTheDocument();
+    fireEvent.click(region.getByRole("button", { name: "op-tool-attempt-1" }));
+    expect(onSelect).toHaveBeenCalledWith(0, "op-tool-attempt-1");
+    // Evidence that names no operation in a turn is not made falsely selectable.
+    expect(region.queryByRole("button", { name: "quality-sample-9" })).toBeNull();
+    expect(region.getByText("quality-sample-9")).toBeInTheDocument();
+  });
+
+  it("says detection did not run rather than reporting zero conflicts", () => {
+    render(
+      <ContradictionsPanel
+        status="unavailable"
+        reason="EARSHOT_ANALYSIS_NOT_AVAILABLE"
+        contradictions={[]}
+        onSelectEvidence={() => {}}
+      />,
+    );
+
+    const region = within(screen.getByRole("region", { name: /contradictions/i }));
+    expect(region.getByText(/did not run/i)).toBeInTheDocument();
+    expect(region.getByText(/EARSHOT_ANALYSIS_NOT_AVAILABLE/)).toBeInTheDocument();
+    expect(region.getByText(/unknown, not resolved/i)).toBeInTheDocument();
+    // No count badge: "0" would read as a clean bill of health.
+    expect(region.queryByText("0")).toBeNull();
+  });
+
+  it("names a backend refusal by its code and an unreachable backend as such", () => {
+    expect(
+      contradictionsReason(new ApiError(404, "EARSHOT_ANALYSIS_NOT_AVAILABLE")),
+    ).toBe("EARSHOT_ANALYSIS_NOT_AVAILABLE");
+    expect(contradictionsReason(new TypeError("Failed to fetch"))).toBe(
+      "the backend did not answer",
+    );
+    expect(contradictionsReason(null)).toBe("the backend did not answer");
+  });
+
+  it("reports an examined incident with no conflicts as examined", () => {
+    render(
+      <ContradictionsPanel
+        status="ready"
+        reason={null}
+        contradictions={[]}
+        onSelectEvidence={() => {}}
+      />,
+    );
+
+    const region = within(screen.getByRole("region", { name: /contradictions/i }));
+    expect(region.getByText("0")).toBeInTheDocument();
+    expect(region.getByText(/detection ran/i)).toBeInTheDocument();
+  });
+});
+
+describe("Clock comparability panel", () => {
+  const calibration: ClockCalibrationView = {
+    domains: [
+      {
+        id: "server-clock",
+        kind: "process_monotonic",
+        observer: "server",
+        uncertaintyMs: null,
+      },
+      { id: "device-clock", kind: "device_wall", observer: "browser", uncertaintyMs: 2 },
+    ],
+    relations: [
+      {
+        relationId: "rel-1",
+        fromDomain: "device-clock",
+        toDomain: "server-clock",
+        method: "ntp_offset",
+        uncertaintyMs: 3,
+        driftPpm: null,
+      },
+    ],
+    crossClock: [
+      {
+        reactKey: "turn-1:response",
+        turnIndex: 0,
+        turnId: "turn-1",
+        metric: "response",
+        state: "estimated",
+        availability: "available",
+        note: "estimated across clock domains through a declared calibration",
+      },
+      {
+        reactKey: "turn-1:render_start",
+        turnIndex: 1,
+        turnId: "turn-2",
+        metric: "render_start",
+        state: "unavailable",
+        availability: "not_observed",
+        note: "two clock domains with no declared calibration between them",
+      },
+    ],
+  };
+
+  it("shows the calibration uncertainty an estimated latency carries", () => {
+    render(<ClockCalibrationPanel calibration={calibration} />);
+
+    const region = within(screen.getByRole("region", { name: /clock comparability/i }));
+    expect(region.getByText("device-clock → server-clock")).toBeInTheDocument();
+    expect(region.getByText("±3ms")).toBeInTheDocument();
+    expect(region.getByText("T00 · response")).toBeInTheDocument();
+    expect(region.getByText("estimated")).toBeInTheDocument();
+  });
+
+  it("names the missing calibration behind an unavailable latency", () => {
+    render(<ClockCalibrationPanel calibration={calibration} />);
+
+    const region = within(screen.getByRole("region", { name: /clock comparability/i }));
+    expect(region.getByText("T01 · render_start")).toBeInTheDocument();
+    expect(region.getByText("not observed")).toBeInTheDocument();
+    expect(
+      region.getByText("two clock domains with no declared calibration between them"),
+    ).toBeInTheDocument();
+  });
+
+  it("reports an undeclared relation uncertainty as undeclared, not as zero", () => {
+    render(
+      <ClockCalibrationPanel
+        calibration={{
+          ...calibration,
+          relations: [{ ...calibration.relations[0], uncertaintyMs: null }],
+        }}
+      />,
+    );
+
+    expect(screen.getByText("uncertainty not declared")).toBeInTheDocument();
+    expect(screen.queryByText("±0ms")).toBeNull();
+  });
+
+  it("states plainly when no calibration is declared at all", () => {
+    render(<ClockCalibrationPanel calibration={{ ...calibration, relations: [] }} />);
+
+    expect(screen.getByText(/no clock calibration is declared/i)).toBeInTheDocument();
+  });
+
+  it("renders nothing for a single-clock session with no cross-clock latency", () => {
+    const { container } = render(
+      <ClockCalibrationPanel
+        calibration={{ domains: [calibration.domains[0]], relations: [], crossClock: [] }}
+      />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
   });
 });

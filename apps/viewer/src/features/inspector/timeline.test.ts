@@ -7,6 +7,8 @@ import websocketReconnect from "./__fixtures__/faults/websocket_reconnect.explan
 import webrtcDegradation from "./__fixtures__/faults/webrtc_degradation.explanation.json";
 import nativeInterruption from "./__fixtures__/faults/native_s2s_interruption.explanation.json";
 import bargeIn from "./__fixtures__/faults/barge_in.explanation.json";
+import fullBargeInChain from "./__fixtures__/faults/full_barge_in_chain.explanation.json";
+import falseInterruption from "./__fixtures__/faults/false_interruption.explanation.json";
 import deviceUnavailable from "./__fixtures__/faults/device_unavailable.explanation.json";
 import fastEndpointing from "./__fixtures__/faults/fast_endpointing.explanation.json";
 import llmDelay from "./__fixtures__/faults/llm_delay.explanation.json";
@@ -15,14 +17,18 @@ import sttDelay from "./__fixtures__/faults/stt_delay.explanation.json";
 import privacyOptOut from "./__fixtures__/faults/privacy_opt_out.explanation.json";
 import ttsDelay from "./__fixtures__/faults/tts_delay.explanation.json";
 import {
+  buildClockCalibration,
+  buildContradictions,
   buildDiagnoses,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
   buildUnassigned,
+  clockComparability,
   getCoverage,
   operationStatus,
   type AnalysisLike,
+  type ContradictionsLike,
   type ExplanationLike,
   type IncidentLike,
 } from "./timeline";
@@ -1233,5 +1239,376 @@ describe("remaining fault-family projections", () => {
       availability: "omitted",
       reason: "capture_class_disabled",
     });
+  });
+});
+
+describe("interruption chains", () => {
+  it("projects every observed stage of a barge-in with its offset from the turn origin", () => {
+    const [detail] = buildTurnDetails(asExplanation(fullBargeInChain));
+    const [chain] = detail.interruptionChains;
+
+    expect(detail.interruptionChains).toHaveLength(1);
+    expect(chain.classification).toBe("accepted");
+    // The full canonical vocabulary, in the analyzer's causal order.
+    expect(chain.stages.map((stage) => stage.stage)).toEqual([
+      "overlap_observed",
+      "intent",
+      "classified",
+      "cancellation_requested",
+      "generation_stopped",
+      "queued_audio_discarded",
+      "transport_stopped",
+      "buffers_purged",
+      "render_stopped",
+      "resumed",
+      "tool_outcome",
+    ]);
+    expect(chain.stages.every((stage) => stage.observed)).toBe(true);
+    const overlap = chain.stages[0];
+    const renderStopped = chain.stages.find((stage) => stage.stage === "render_stopped");
+    expect(overlap.evidenceId).toBe("event-overlap");
+    expect(renderStopped?.atMs).toBe((overlap.atMs as number) + 100);
+    expect(chain.effectiveness).toMatchObject({
+      value: 100,
+      availability: "available",
+      confidence: "measured",
+      limitation: null,
+    });
+  });
+
+  it("keeps an unobserved stage as a coverage reason rather than a zero coordinate", () => {
+    const [detail] = buildTurnDetails(asExplanation(bargeIn));
+    const [chain] = detail.interruptionChains;
+    const missing = chain.stages.filter((stage) => !stage.observed);
+
+    expect(missing.map((stage) => stage.stage)).toEqual([
+      "intent",
+      "transport_stopped",
+      "buffers_purged",
+      "resumed",
+      "tool_outcome",
+    ]);
+    // No coordinate, no evidence, and an explicit reason: absence is coverage.
+    expect(missing.every((stage) => stage.atMs === null)).toBe(true);
+    expect(missing.every((stage) => stage.coordinate === null)).toBe(true);
+    expect(missing.every((stage) => stage.evidenceId === null)).toBe(true);
+    expect(missing.map((stage) => stage.coverageReason)).toEqual([
+      "stage_not_observed",
+      "stage_not_observed",
+      "stage_not_observed",
+      "stage_not_observed",
+      "no_tool_in_turn",
+    ]);
+  });
+
+  it("reports an underivable effectiveness as unavailable with the analyzer's limitation", () => {
+    const [detected] = buildTurnDetails(asExplanation(falseInterruption));
+    const [native] = buildTurnDetails(asExplanation(nativeInterruption));
+
+    expect(detected.interruptionChains[0]).toMatchObject({
+      classification: "false",
+      effectiveness: {
+        value: null,
+        availability: "not_observed",
+        limitation: "target_signal_not_observed",
+      },
+    });
+    expect(native.interruptionChains[0].effectiveness).toMatchObject({
+      value: null,
+      availability: "not_observed",
+      limitation: "turn_anchor_not_observed",
+    });
+  });
+
+  it("keeps a stage coordinate that cannot be placed on the turn axis", () => {
+    const explanation = asExplanation({
+      bundle_id: "b",
+      session_id: "s",
+      session_status: "completed",
+      finality: "final",
+      completeness: "complete",
+      analyzer_version: "t",
+      limitations: [],
+      coverage: [],
+      omissions: [],
+      turns: [
+        {
+          turn_id: "turn-1",
+          metrics: {},
+          operations: [
+            {
+              operation_id: "op-tts",
+              operation_name: "tts",
+              status: "cancelled",
+              shape: "point",
+              time_basis: "monotonic",
+              clock_domain_id: "server-clock",
+              start_nano: "1000000000",
+              measurements: [],
+            },
+          ],
+          events: [],
+          interruption_chains: [
+            {
+              turn_id: "turn-1",
+              classification: "accepted",
+              stages: [
+                {
+                  stage: "overlap_observed",
+                  observed: true,
+                  at_nano: "1200000000",
+                  clock_domain_id: "server-clock",
+                  time_basis: "monotonic",
+                  evidence_id: "evt-overlap",
+                },
+                {
+                  stage: "render_stopped",
+                  observed: true,
+                  at_nano: "1750000000000000000",
+                  clock_domain_id: "device-clock",
+                  time_basis: "source_wall",
+                  evidence_id: "evt-render-stopped",
+                },
+              ],
+              effectiveness: {
+                availability: "not_observed",
+                basis: "interruption_barge_in",
+                confidence: "unavailable",
+                limitation: "cross_clock_domain",
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    const [chain] = buildTurnDetails(explanation)[0].interruptionChains;
+
+    expect(chain.stages[0].atMs).toBe(200);
+    // The device-clock stage cannot be offset against a server-clock origin, so
+    // the exact recorded coordinate is kept instead of an invented +0.
+    expect(chain.stages[1].atMs).toBeNull();
+    expect(chain.stages[1].coordinate).toBe(
+      "device-clock · source_wall · 1750000000000000000ns",
+    );
+  });
+});
+
+describe("clockComparability", () => {
+  it("names a value estimated through a declared calibration", () => {
+    expect(
+      clockComparability({
+        availability: "available",
+        basis: "cross_clock_calibrated",
+        limitation: null,
+      }),
+    ).toEqual({
+      state: "estimated",
+      note: "estimated across clock domains through a declared calibration",
+    });
+  });
+
+  it("says nothing about a same-domain measurement", () => {
+    expect(
+      clockComparability({
+        availability: "available",
+        basis: "monotonic",
+        limitation: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("explains every clock-related absence and stays silent on unrelated ones", () => {
+    expect(
+      clockComparability({
+        availability: "not_observed",
+        basis: "clock_domain",
+        limitation: "cross_clock_domain",
+      }),
+    ).toEqual({
+      state: "unavailable",
+      note: "two clock domains with no declared calibration between them",
+    });
+    expect(
+      clockComparability({
+        availability: "unavailable",
+        basis: "clock_domain",
+        limitation: "cross_clock_ambiguous",
+      })?.note,
+    ).toMatch(/disagree beyond their uncertainty/);
+    // An absence with a non-clock cause is not attributed to the clocks.
+    expect(
+      clockComparability({
+        availability: "not_observed",
+        basis: "interruption_barge_in",
+        limitation: "target_signal_not_observed",
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("buildClockCalibration", () => {
+  const twoDomainIncident = {
+    profile: {
+      clock_domains: [
+        {
+          clock_domain_id: "server-clock",
+          kind: "process_monotonic",
+          observer: "server",
+        },
+        {
+          clock_domain_id: "device-clock",
+          kind: "device_wall",
+          observer: "browser",
+          uncertainty_nano: "2000000",
+        },
+      ],
+      clock_relations: [
+        {
+          relation_id: "rel-1",
+          from_clock_domain_id: "device-clock",
+          to_clock_domain_id: "server-clock",
+          method: "ntp_offset",
+          offset_nano: "5000000",
+          uncertainty_nano: "3000000",
+        },
+      ],
+    },
+  } as unknown as IncidentLike;
+
+  const details = [
+    {
+      turnId: "turn-1",
+      index: 0,
+      metrics: [
+        {
+          key: "response",
+          value: 480,
+          availability: "available",
+          basis: "cross_clock_calibrated",
+          confidence: "estimated",
+          limitation: null,
+        },
+        {
+          key: "render_start",
+          value: null,
+          availability: "not_observed",
+          basis: "clock_domain",
+          confidence: "unavailable",
+          limitation: "cross_clock_domain",
+        },
+        {
+          key: "first_token",
+          value: 150,
+          availability: "available",
+          basis: "monotonic",
+          confidence: "measured",
+          limitation: null,
+        },
+      ],
+      interruptionChains: [
+        {
+          reactKey: "turn-1:0",
+          turnId: "turn-1",
+          classification: "accepted",
+          stages: [],
+          effectiveness: {
+            key: "effectiveness",
+            value: null,
+            availability: "not_observed",
+            basis: "clock_domain",
+            confidence: "unavailable",
+            limitation: "cross_clock_domain",
+          },
+        },
+      ],
+    },
+  ] as unknown as ReturnType<typeof buildTurnDetails>;
+
+  it("carries each declared calibration's own uncertainty", () => {
+    const { domains, relations } = buildClockCalibration(twoDomainIncident, []);
+
+    expect(domains.map((domain) => domain.id)).toEqual(["server-clock", "device-clock"]);
+    // A domain that declares no error bound reports null — unknown, not zero.
+    expect(domains[0].uncertaintyMs).toBeNull();
+    expect(domains[1].uncertaintyMs).toBe(2);
+    expect(relations).toEqual([
+      {
+        relationId: "rel-1",
+        fromDomain: "device-clock",
+        toDomain: "server-clock",
+        method: "ntp_offset",
+        uncertaintyMs: 3,
+        driftPpm: null,
+      },
+    ]);
+  });
+
+  it("lists every latency the clocks decide, and only those", () => {
+    const { crossClock } = buildClockCalibration(twoDomainIncident, details);
+
+    expect(crossClock.map((row) => [row.metric, row.state, row.availability])).toEqual([
+      ["response", "estimated", "available"],
+      ["render_start", "unavailable", "not_observed"],
+      ["interruption 0 · effectiveness", "unavailable", "not_observed"],
+    ]);
+    // A same-domain measured latency is not a cross-clock story.
+    expect(crossClock.some((row) => row.metric === "first_token")).toBe(false);
+    expect(crossClock[1].note).toMatch(/no declared calibration/);
+  });
+
+  it("reports no clock story for a single-domain session", () => {
+    const single = {
+      profile: { clock_domains: [{ clock_domain_id: "c", kind: "k", observer: "o" }] },
+    } as unknown as IncidentLike;
+
+    expect(buildClockCalibration(single, [])).toEqual({
+      domains: [{ id: "c", kind: "k", observer: "o", uncertaintyMs: null }],
+      relations: [],
+      crossClock: [],
+    });
+  });
+});
+
+describe("buildContradictions", () => {
+  it("resolves cited operations to their turn and leaves other evidence inert", () => {
+    const report = {
+      bundle_id: "b",
+      analyzer_version: "0.5.0",
+      input_digest: "a".repeat(64),
+      contradictions: [
+        {
+          kind: "render_claim_conflict",
+          summary: "render_observed_while_coverage_not_observed",
+          evidence_ids: ["op-tool-attempt-1", "quality-sample-9"],
+          boundary: "render",
+          turn_id: "turn-1",
+          subject: "turn-1",
+        },
+      ],
+    } as unknown as ContradictionsLike;
+
+    const [contradiction] = buildContradictions(asExplanation(toolTimeoutRetry), report);
+
+    expect(contradiction).toMatchObject({
+      kind: "render_claim_conflict",
+      boundary: "render",
+      turnId: "turn-1",
+    });
+    expect(contradiction.evidence).toEqual([
+      { id: "op-tool-attempt-1", turnIndex: 0 },
+      { id: "quality-sample-9", turnIndex: null },
+    ]);
+  });
+
+  it("projects an examined incident with no conflicts as an empty list", () => {
+    const report = {
+      bundle_id: "b",
+      analyzer_version: "0.5.0",
+      input_digest: "a".repeat(64),
+      contradictions: [],
+    } as unknown as ContradictionsLike;
+
+    expect(buildContradictions(asExplanation(toolTimeoutRetry), report)).toEqual([]);
   });
 });

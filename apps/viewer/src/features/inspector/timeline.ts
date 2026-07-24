@@ -120,7 +120,9 @@ interface MetricLike {
   basis: string;
   confidence: string;
 }
+type AnalysisMetricLike = components["schemas"]["AnalysisMetric"];
 export type AnalysisLike = components["schemas"]["DerivedAnalysis"];
+export type ContradictionsLike = components["schemas"]["IncidentContradictionsResponse"];
 
 type ExplainedMeasurement = components["schemas"]["ExplainedMeasurement"];
 type ExplainedError = components["schemas"]["ExplainedError"];
@@ -288,7 +290,10 @@ interface OperationWindow {
 
 const coordinateDeltaMs = (
   value: string,
-  basis: ExplainedOperation["time_basis"],
+  // Widened to a bare string so analysis-authored coordinates (interruption
+  // stages) can be placed by the same rule: an offset exists only when the basis
+  // and clock domain match the origin's exactly.
+  basis: string | null | undefined,
   domain: string | null | undefined,
   origin: ExplainedOperation | null,
 ): number | null => {
@@ -515,6 +520,47 @@ export interface MetricRow {
   availability: string;
   basis: string;
   confidence: string;
+  /** The analyzer's reason the metric is not `available`, carried so the UI can
+   * name the obstacle instead of leaving a blank where a number would be. */
+  limitation: string | null;
+}
+
+const metricRow = (key: string, metric: AnalysisMetricLike | undefined): MetricRow => ({
+  key,
+  value: metric?.value ?? null,
+  availability: metric?.availability ?? "not_observed",
+  basis: metric?.basis ?? "",
+  confidence: metric?.confidence ?? "unavailable",
+  limitation: metric?.limitation ?? null,
+});
+
+/** One canonical stage of an interruption teardown, exactly as the analyzer
+ * observed (or failed to observe) it. */
+export interface InterruptionStageView {
+  stage: string;
+  observed: boolean;
+  /** Offset from the turn's placement origin, present only when the stage's
+   * coordinate is comparable to it. */
+  atMs: number | null;
+  /** The exact recorded coordinate, kept for stages that cannot be placed on the
+   * turn axis so the fact survives even when the offset does not. */
+  coordinate: string | null;
+  evidenceId: string | null;
+  /** Why an unobserved stage is absent. Never rendered as a zero or a success. */
+  coverageReason: string | null;
+  outcome: string | null;
+}
+
+/** One interruption episode's ordered causal chain and its barge-in latency. */
+export interface InterruptionChainView {
+  reactKey: string;
+  turnId: string;
+  /** `accepted` | `false` | `ignored` | `unknown`, authored by the analyzer. */
+  classification: string;
+  stages: InterruptionStageView[];
+  /** Overlap -> render-stop latency. Unavailable when either endpoint was not
+   * observed or the two are not comparable; the row then states which. */
+  effectiveness: MetricRow;
 }
 export interface CoverageRow {
   signal: string;
@@ -533,6 +579,44 @@ export interface TurnDetail {
   metrics: MetricRow[];
   measurements: MeasurementView[];
   events: EventView[];
+  /** One chain per interruption episode observed in this turn; empty when none
+   * was observed. The viewer never derives a chain — it renders the analyzer's. */
+  interruptionChains: InterruptionChainView[];
+}
+
+/** Project the analyzer's interruption chains for one turn. Stage coordinates are
+ * placed on the turn axis only when they are comparable to its origin; otherwise
+ * the exact recorded coordinate is kept instead of an invented offset. */
+function interruptionChainViews(
+  turn: ExplainedTurn,
+  origin: ExplainedOperation | null,
+): InterruptionChainView[] {
+  return (turn.interruption_chains ?? []).map((chain, index) => ({
+    reactKey: `${turn.turn_id}:${index}`,
+    turnId: chain.turn_id,
+    classification: chain.classification,
+    stages: chain.stages.map((stage) => ({
+      stage: stage.stage,
+      observed: stage.observed,
+      atMs:
+        stage.at_nano == null
+          ? null
+          : coordinateDeltaMs(
+              stage.at_nano,
+              stage.time_basis,
+              stage.clock_domain_id,
+              origin,
+            ),
+      coordinate:
+        stage.at_nano == null
+          ? null
+          : `${stage.clock_domain_id ?? "unknown clock"} · ${stage.time_basis ?? "unknown basis"} · ${stage.at_nano}ns`,
+      evidenceId: stage.evidence_id ?? null,
+      coverageReason: stage.coverage_reason ?? null,
+      outcome: stage.outcome ?? null,
+    })),
+    effectiveness: metricRow("effectiveness", chain.effectiveness),
+  }));
 }
 
 const evidenceView = (e: Evidence | null | undefined): EvidenceView | undefined =>
@@ -697,16 +781,8 @@ export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
         evidence: evidenceView(w.op.evidence),
         measurements: measurementViews(w.op.measurements),
       })),
-      metrics: METRIC_KEYS.map(({ key, label }) => {
-        const m = t.metrics[key];
-        return {
-          key: label,
-          value: m?.value ?? null,
-          availability: m?.availability ?? "not_observed",
-          basis: m?.basis ?? "",
-          confidence: m?.confidence ?? "unavailable",
-        };
-      }),
+      metrics: METRIC_KEYS.map(({ key, label }) => metricRow(label, t.metrics[key])),
+      interruptionChains: interruptionChainViews(t, origin),
       measurements: measurementViews(t.measurements ?? []),
       events: t.events.map((event) => ({
         name: event.event_name,
@@ -737,16 +813,23 @@ export interface DiagnosisView {
   evidence: { id: string; turnIndex: number | null }[];
 }
 
-/** Surface the analyzer's diagnoses. Diagnoses come only from the explanation;
- * the viewer never derives one. Evidence ids that name an operation are linked
- * to their turn so the UI can select it. */
-export function buildDiagnoses(explanation: ExplanationLike): DiagnosisView[] {
+/** Index every operation id to the turn that contains it, so an evidence id that
+ * names an operation can be made selectable and one that does not stays inert. */
+function operationTurnIndex(explanation: ExplanationLike): Map<string, number> {
   const turnOfOp = new Map<string, number>();
   explanation.turns.forEach((turn, index) => {
     for (const op of turn.operations) {
       if (op.operation_id != null) turnOfOp.set(op.operation_id, index);
     }
   });
+  return turnOfOp;
+}
+
+/** Surface the analyzer's diagnoses. Diagnoses come only from the explanation;
+ * the viewer never derives one. Evidence ids that name an operation are linked
+ * to their turn so the UI can select it. */
+export function buildDiagnoses(explanation: ExplanationLike): DiagnosisView[] {
+  const turnOfOp = operationTurnIndex(explanation);
   return (explanation.diagnoses ?? []).map((d) => ({
     id: d.diagnosis_id,
     code: d.code,
@@ -758,6 +841,153 @@ export function buildDiagnoses(explanation: ExplanationLike): DiagnosisView[] {
       turnIndex: turnOfOp.has(id) ? (turnOfOp.get(id) as number) : null,
     })),
   }));
+}
+
+// -- contradictions ---------------------------------------------------------
+
+/** One backend-detected contradiction, with its cited evidence resolved to the
+ * turn that owns it where the id names an operation. */
+export interface ContradictionView {
+  reactKey: string;
+  kind: string;
+  summary: string;
+  boundary: string | null;
+  turnId: string | null;
+  evidence: { id: string; turnIndex: number | null }[];
+}
+
+/** Project the backend's contradiction report. Contradictions are detected by the
+ * backend against a named evidence digest; the viewer only resolves their evidence
+ * ids to turns and never decides that two observations conflict. */
+export function buildContradictions(
+  explanation: ExplanationLike,
+  report: ContradictionsLike,
+): ContradictionView[] {
+  const turnOfOp = operationTurnIndex(explanation);
+  return report.contradictions.map((item, index) => ({
+    reactKey: `${item.kind}:${item.subject ?? ""}:${index}`,
+    kind: item.kind,
+    summary: item.summary,
+    boundary: item.boundary ?? null,
+    turnId: item.turn_id ?? null,
+    evidence: item.evidence_ids.map((id) => ({
+      id,
+      turnIndex: turnOfOp.has(id) ? (turnOfOp.get(id) as number) : null,
+    })),
+  }));
+}
+
+// -- clock comparability ----------------------------------------------------
+
+/** The analyzer's basis for a latency it derived through a declared calibration. */
+const CALIBRATED_BASIS = "cross_clock_calibrated";
+
+/** Plain-language readings of the analyzer's clock-related limitation codes. Each
+ * says what stopped the comparison; none implies the latency was zero or fine. */
+const CLOCK_LIMITATION_NOTE: Record<string, string> = {
+  cross_clock_domain: "two clock domains with no declared calibration between them",
+  cross_clock_ambiguous: "declared calibrations disagree beyond their uncertainty",
+  calibrated_time_reversed: "the calibrated interval runs backwards",
+  same_domain_time_reversed: "the recorded interval runs backwards",
+  timestamp_representation_unavailable: "the two facts share no timestamp representation",
+};
+
+/** How a metric's cross-clock story reads, or `null` when clocks are not the
+ * reason it reads as it does (a same-domain measurement, or an absence with an
+ * unrelated cause). */
+export function clockComparability(
+  metric: Pick<MetricRow, "availability" | "basis" | "limitation">,
+): { state: "estimated" | "unavailable"; note: string } | null {
+  if (metric.availability === "available") {
+    return metric.basis === CALIBRATED_BASIS
+      ? {
+          state: "estimated",
+          note: "estimated across clock domains through a declared calibration",
+        }
+      : null;
+  }
+  const note =
+    metric.limitation == null ? null : CLOCK_LIMITATION_NOTE[metric.limitation];
+  return note == null ? null : { state: "unavailable", note };
+}
+
+export interface ClockDomainView {
+  id: string;
+  kind: string;
+  observer: string;
+  /** The domain's own declared error bound; `null` means it declares none. */
+  uncertaintyMs: number | null;
+}
+export interface ClockRelationView {
+  relationId: string;
+  fromDomain: string;
+  toDomain: string;
+  method: string;
+  /** The calibration's own error bound, which every latency estimated through it
+   * carries. `null` means the relation declares none — unknown, never zero. */
+  uncertaintyMs: number | null;
+  driftPpm: number | null;
+}
+export interface CrossClockMetricView {
+  reactKey: string;
+  turnIndex: number;
+  turnId: string;
+  metric: string;
+  state: "estimated" | "unavailable";
+  availability: string;
+  note: string;
+}
+export interface ClockCalibrationView {
+  domains: ClockDomainView[];
+  relations: ClockRelationView[];
+  /** Every turn latency whose value — or absence — is decided by clock
+   * comparability, so a cross-clock gap is never a silently missing number. */
+  crossClock: CrossClockMetricView[];
+}
+
+/** Assemble the session's clock-comparability picture: the declared domains and
+ * calibrations from the source artifact, and every derived latency those
+ * calibrations either produced (estimated) or could not produce (unavailable). */
+export function buildClockCalibration(
+  incident: IncidentLike,
+  details: TurnDetail[],
+): ClockCalibrationView {
+  const domains = (incident.profile.clock_domains ?? []).map((domain) => ({
+    id: domain.clock_domain_id,
+    kind: domain.kind,
+    observer: domain.observer,
+    uncertaintyMs: uncertaintyMs(domain.uncertainty_nano),
+  }));
+  const relations = (incident.profile.clock_relations ?? []).map((relation) => ({
+    relationId: relation.relation_id,
+    fromDomain: relation.from_clock_domain_id,
+    toDomain: relation.to_clock_domain_id,
+    method: relation.method,
+    uncertaintyMs: uncertaintyMs(relation.uncertainty_nano),
+    driftPpm: relation.drift_ppm ?? null,
+  }));
+
+  const crossClock: CrossClockMetricView[] = [];
+  const record = (detail: TurnDetail, label: string, metric: MetricRow) => {
+    const reading = clockComparability(metric);
+    if (reading == null) return;
+    crossClock.push({
+      reactKey: `${detail.turnId}:${label}`,
+      turnIndex: detail.index,
+      turnId: detail.turnId,
+      metric: label,
+      state: reading.state,
+      availability: metric.availability,
+      note: reading.note,
+    });
+  };
+  for (const detail of details) {
+    for (const metric of detail.metrics) record(detail, metric.key, metric);
+    detail.interruptionChains.forEach((chain, index) =>
+      record(detail, `interruption ${index} · effectiveness`, chain.effectiveness),
+    );
+  }
+  return { domains, relations, crossClock };
 }
 
 /** A session-level operation whose evidence is not turn-scoped (e.g. a

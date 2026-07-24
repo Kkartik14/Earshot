@@ -94,12 +94,32 @@ const explanation = {
   })),
 };
 
-function renderInspector() {
+// A backend contradiction report citing an operation this session really owns.
+const contradictionReport = {
+  bundle_id: "fixture-bundle",
+  analyzer_version: "fixture",
+  input_digest: "a".repeat(64),
+  contradictions: [
+    {
+      kind: "render_claim_conflict",
+      summary: "render_observed_while_coverage_not_observed",
+      evidence_ids: ["operation-llm-0-5"],
+      boundary: "render",
+      turn_id: "turn-0",
+      subject: "turn-0",
+    },
+  ],
+};
+
+function renderInspector({ contradictions }: { contradictions?: unknown } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } },
   });
   client.setQueryData(["incident", "fix"], incidentFixture);
   client.setQueryData(["explanation", "fix"], explanation);
+  if (contradictions !== undefined) {
+    client.setQueryData(["contradictions", "fix"], contradictions);
+  }
   const rendered = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={["/sessions/fix"]}>
@@ -163,6 +183,19 @@ describe("SessionInspector focus management", () => {
 
     // Clicking the evidence chip opens the detail for that exact operation.
     fireEvent.click(screen.getByRole("button", { name: "operation-llm-0-5" }));
+    expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
+  });
+
+  it("surfaces backend contradictions and selects the conflicting operation", () => {
+    renderInspector({ contradictions: contradictionReport });
+
+    const panel = within(screen.getByRole("region", { name: /contradictions/i }));
+    expect(panel.getByText("render claim conflict")).toBeInTheDocument();
+    expect(
+      panel.getByText("render observed while coverage not observed"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(panel.getByRole("button", { name: "operation-llm-0-5" }));
     expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
   });
 
