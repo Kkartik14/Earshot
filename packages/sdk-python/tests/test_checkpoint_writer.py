@@ -479,7 +479,13 @@ def test_the_checkpoint_directory_can_come_from_the_environment(
         assert client.config.checkpoint_dir == str(directory)
         assert client.config.checkpoint_fsync_mode == "never"
     finally:
+        # Drop the patched variables BEFORE reconfiguring: ``configure()`` re-reads
+        # the environment, so reconfiguring while they are still set would write
+        # this test's checkpoint settings back into the process-global config and
+        # leave every later ``init()`` disagreeing with it.
         earshot.shutdown()
+        monkeypatch.delenv("EARSHOT_CHECKPOINT_DIR", raising=False)
+        monkeypatch.delenv("EARSHOT_CHECKPOINT_FSYNC_MODE", raising=False)
         earshot.configure()
 
 
