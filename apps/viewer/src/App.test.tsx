@@ -18,6 +18,12 @@ vi.mock("./api/hooks", () => ({
     isSuccess: true,
     data: { metric: "first_token_ms", group_by: "model", groups: [] },
   }),
+  useLiveSessions: () => ({
+    isPending: false,
+    isError: false,
+    isSuccess: true,
+    data: { items: [], limitations: [], following_journal_directory: false },
+  }),
 }));
 
 describe("App", () => {

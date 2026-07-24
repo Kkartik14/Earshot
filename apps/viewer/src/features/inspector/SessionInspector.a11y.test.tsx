@@ -111,11 +111,41 @@ const contradictionReport = {
   ],
 };
 
-function renderInspector({ contradictions }: { contradictions?: unknown } = {}) {
+/** The same session, but reconstructed from a checkpoint journal after the
+ * process died before close. Validation forces the typed declaration, so a
+ * viewer that renders the incident at all has the facts to render this. */
+const recoveredFixture = {
+  ...incidentFixture,
+  profile: {
+    ...incidentFixture.profile,
+    manifest: {
+      ...incidentFixture.profile.manifest,
+      finality: "provisional",
+      completeness: "incomplete",
+      recovery: {
+        method: "checkpoint_journal",
+        reason: "process_terminated_before_close",
+        close_observed: false,
+        journal_id: "6c64ca59b0544136bc4371db66600b11",
+        last_sequence: 41,
+        torn_tail_bytes: 37,
+        discarded_records: 0,
+        journal_complete: true,
+        recoverer: { name: "earshot", version: "0.1.0", sdk_version: "0.1.0" },
+        attributes: {},
+      },
+    },
+  },
+};
+
+function renderInspector({
+  contradictions,
+  incident: incidentOverride,
+}: { contradictions?: unknown; incident?: unknown } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } },
   });
-  client.setQueryData(["incident", "fix"], incidentFixture);
+  client.setQueryData(["incident", "fix"], incidentOverride ?? incidentFixture);
   client.setQueryData(["explanation", "fix"], explanation);
   if (contradictions !== undefined) {
     client.setQueryData(["contradictions", "fix"], contradictions);
@@ -206,6 +236,32 @@ describe("SessionInspector focus management", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("round_trip_time")).toBeInTheDocument();
     expect(screen.getByText("180ms")).toBeInTheDocument();
+  });
+
+  it("does not claim recovery for an artifact its producer cleanly closed", () => {
+    renderInspector();
+    expect(screen.queryByRole("region", { name: /recovered artifact/i })).toBeNull();
+  });
+
+  it("renders a persistent recovered strip carrying the reason and the loss", () => {
+    renderInspector({ incident: recoveredFixture });
+
+    const strip = screen.getByRole("region", { name: /recovered artifact/i });
+    // Announced once, and stated as the opposite of a clean close.
+    expect(within(strip).getByRole("status")).toHaveTextContent(
+      /process terminated before close/i,
+    );
+    expect(within(strip).getByText(/RECOVERED — NOT A CLEAN CLOSE/)).toBeInTheDocument();
+    expect(within(strip).getByText(/close observed:/i)).toHaveTextContent("no");
+    expect(
+      within(strip).getByText(
+        /evidence was lost at the end of the journal \(37 bytes\)/i,
+      ),
+    ).toBeInTheDocument();
+    // It sits above the session, so it cannot be scrolled past unnoticed.
+    expect(strip.compareDocumentPosition(screen.getByRole("heading", { level: 1 }))).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
   });
 
   it("preserves the open dialog and restore target across a data refresh", () => {

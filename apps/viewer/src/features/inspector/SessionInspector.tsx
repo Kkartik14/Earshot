@@ -11,6 +11,7 @@ import {
   contradictionsReason,
   type ContradictionsStatus,
 } from "./SessionFacts";
+import { RecoveryStrip } from "./RecoveryStrip";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
 import { TurnTimeline, type Selection } from "./TurnTimeline";
@@ -122,6 +123,9 @@ export function SessionInspector() {
   return (
     <div className={styles.inspector} data-open={sel ? "" : undefined}>
       <div className={styles.main}>
+        {/* Structural, above everything: an artifact that was reconstructed
+            rather than closed must say so before any of it is read. */}
+        <RecoveryStrip incident={inc} />
         <SessionHeader summary={summary} />
         <TurnTimeline
           timeline={timeline}

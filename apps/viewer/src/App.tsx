@@ -11,6 +11,7 @@ import { onViewerSessionInvalid } from "./api/client";
 import styles from "./App.module.css";
 import { FleetDashboard } from "./features/fleet/FleetDashboard";
 import { SessionInspector } from "./features/inspector/SessionInspector";
+import { LiveSessionView } from "./features/live/LiveSessionView";
 import { SessionRail } from "./features/sessions/SessionRail";
 
 type AuthState =
@@ -162,6 +163,9 @@ export function App() {
         <Routes>
           <Route index element={<FleetDashboard />} />
           <Route path="sessions/:bundleId" element={<SessionInspector />} />
+          {/* A separate route, not a mode of the inspector: a live session and
+              an artifact are different kinds of thing and must not share a URL. */}
+          <Route path="live/:sessionId" element={<LiveSessionView />} />
         </Routes>
       </main>
     </div>

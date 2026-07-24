@@ -12,6 +12,37 @@ export function useIncidents(
   });
 }
 
+/** Conversations still being written. Never incidents: they carry no artifact,
+ * no digest, and therefore no analysis. The backend ships its own limitations
+ * with the collection and the viewer renders them rather than paraphrasing. */
+export function useLiveSessions() {
+  return useQuery({
+    queryKey: ["live-sessions"],
+    refetchInterval: 5_000,
+    queryFn: () => unwrap(api.GET("/v1/live/sessions")),
+  });
+}
+
+/** Stored incidents for one session id, polled only while something is waiting
+ * for one to appear. Used for the explicit hand-off from a live view to the
+ * artifact — the live view is never silently upgraded in place. */
+export function useSessionIncidents(
+  sessionId: string | undefined,
+  { enabled, pollMs }: { enabled: boolean; pollMs?: number },
+) {
+  return useQuery({
+    queryKey: ["incidents", { session_id: sessionId }],
+    enabled: enabled && sessionId != null,
+    refetchInterval: pollMs ?? false,
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/incidents", {
+          params: { query: { session_id: sessionId as string } },
+        }),
+      ),
+  });
+}
+
 /** The full canonical incident for one session. */
 export function useIncident(bundleId: string | undefined) {
   return useQuery({
