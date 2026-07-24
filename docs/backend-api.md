@@ -112,6 +112,21 @@ body limit, then per-collection count limits on `snapshots`, `deviceEvents`, `co
 and per-snapshot stats (`413 EARSHOT_CAPTURE_TOO_LARGE`), then the schema
 (`422 EARSHOT_INVALID_CAPTURE`, field paths only, never payload values).
 
+Two coherence rules follow the schema, because a payload that contradicts itself
+cannot be turned into evidence without guessing. A `traceparent` that disagrees with
+the `traceId`/`spanId` sent beside it is `422 EARSHOT_INCOHERENT_TRACE_CONTEXT` rather
+than a silent choice of one spelling. A batch whose `timestamp_ms` readings move
+backwards is `422 EARSHOT_CAPTURE_NON_MONOTONIC`: normalizing it would place an
+observation at a coordinate the browser never reported and difference the cumulative
+`getStats` counters over a negative interval.
+
+The batch's trace context, when it sends one, is recorded on the facts themselves
+(`trace_id`/`span_id`), so correlating a capture with the application's trace is a
+property of the stored Incident and not only of the response. Facts derived from the
+batch are attributed to the browser that observed them (`evidence.observer: browser`),
+matching the browser `ClockDomain`'s own declaration, and a client-reported
+`coverage[].droppedCount` is retained as `dropped_count` on the coverage note.
+
 The client is not a trust boundary. The backend re-derives its own allowlist over every
 `RTCStats` and device-event member and drops anything outside it before an engine sees
 the value, so a `base64Certificate`, DTLS `fingerprint`, `usernameFragment`, candidate
@@ -130,7 +145,8 @@ unavailable until a real `ClockRelation` is supplied.
 - `400`: malformed payload or unsupported `captureVersion`;
 - `413`: body or collection limit exceeded;
 - `415`: unsupported media type;
-- `422`: payload fails the capture contract.
+- `422`: payload fails the capture contract, contradicts its own trace context, or
+  carries readings that move backwards.
 
 ### `GET /v1/incidents`
 

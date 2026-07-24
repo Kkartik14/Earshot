@@ -890,6 +890,7 @@
     },
     "Coverage": {
       "additionalProperties": true,
+      "description": "What a fact source could or could not observe for one signal.\n\n``dropped_count`` is how many observations the source counted itself losing\nin this window, when it could count them \u2014 a browser capture kernel whose\nbounded buffer overflowed knows exactly how many samples it discarded. The\nnumber is evidence about the gap, so it belongs on the gap: without it a\nreader can see *that* something was lost but never *how much*, and a count\nthat survives only in a transport acknowledgement is not part of the\nartifact at all. ``None`` means the loss was not countable, which is not the\nsame claim as ``0`` \u2014 nothing lost.",
       "properties": {
         "attributes": {
           "additionalProperties": true,
@@ -900,6 +901,19 @@
           "minLength": 1,
           "title": "Availability",
           "type": "string"
+        },
+        "dropped_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dropped Count"
         },
         "evidence": {
           "anyOf": [

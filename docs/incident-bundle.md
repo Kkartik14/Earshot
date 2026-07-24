@@ -122,7 +122,11 @@ reason: server_cannot_observe_client_render
 ```
 
 Non-available coverage requires a reason. Unknown availability values survive for
-forward compatibility.
+forward compatibility. A source that can count its own loss — a bounded browser
+buffer that overflowed — also carries `dropped_count`; leaving it absent claims
+strictly less than a `0`, which would assert that nothing was lost. The member
+requires contract `0.2.0`: an artifact claiming `0.1.0` while carrying a count is
+asserting a member that version does not have.
 
 ### Operations, events, and quality
 

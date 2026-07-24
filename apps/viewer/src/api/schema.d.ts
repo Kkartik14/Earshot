@@ -798,6 +798,11 @@ export interface components {
         /**
          * CaptureTraceContextRequest
          * @description The session's W3C trace-context: random correlation handles only.
+         *
+         *     ``traceparent`` and the two structured ids are two spellings of ONE context,
+         *     so they must agree. A payload whose spellings disagree is refused rather than
+         *     resolved, because either choice could attribute the evidence to a trace it
+         *     does not belong to.
          */
         CaptureTraceContextRequest: {
             /** Spanid */
@@ -1037,7 +1042,19 @@ export interface components {
             /** Turn Id */
             turn_id?: string | null;
         };
-        /** Coverage */
+        /**
+         * Coverage
+         * @description What a fact source could or could not observe for one signal.
+         *
+         *     ``dropped_count`` is how many observations the source counted itself losing
+         *     in this window, when it could count them — a browser capture kernel whose
+         *     bounded buffer overflowed knows exactly how many samples it discarded. The
+         *     number is evidence about the gap, so it belongs on the gap: without it a
+         *     reader can see *that* something was lost but never *how much*, and a count
+         *     that survives only in a transport acknowledgement is not part of the
+         *     artifact at all. ``None`` means the loss was not countable, which is not the
+         *     same claim as ``0`` — nothing lost.
+         */
         Coverage: {
             /** Attributes */
             attributes?: {
@@ -1045,6 +1062,11 @@ export interface components {
             };
             /** Availability */
             availability: string;
+            /**
+             * Dropped Count
+             * @default null
+             */
+            dropped_count: number | null;
             /** @default null */
             evidence: components["schemas"]["Evidence"] | null;
             /**

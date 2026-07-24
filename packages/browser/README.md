@@ -193,9 +193,9 @@ render-path signal the running platform does not provide:
 | `capture.coverage`         | `partial`      | `coverage_buffer_overflow`               |
 
 The server records these under a `browser.` prefix so the browser's claim about
-what it saw can never overwrite what an engine derived server-side. One honest
-limitation: `droppedCount` has no field on the v1alpha1 `Coverage` record, so the
-gap is stored while the count is only returned in the capture response.
+what it saw can never overwrite what an engine derived server-side, and it keeps
+`droppedCount` as `dropped_count` on the stored coverage note, so how much was lost
+is part of the artifact rather than only of the upload's acknowledgement.
 
 **Bounds & honesty.** The snapshot/event buffers are bounded (`maxSnapshots` /
 `maxDeviceEvents`); on overflow the **oldest** observation is dropped and the loss
@@ -208,10 +208,18 @@ is rejected with a clear error.
 
 **Trace join.** Pass `{ traceparent }` (or a full `traceContext`) to join the
 application's existing trace; the recorder only mints its own when none is supplied
-and never overwrites the app's `traceparent`. The payload's trace context is
-validated by the server and returned as `trace_id` on the capture response for
-correlation; it is not yet attached to the stored incident's individual facts,
-because the server's fact-recording seam does not carry trace ids.
+and never overwrites the app's `traceparent`. The server records that context on the
+facts it derives from the batch (`trace_id` / `span_id`), so the join is a property
+of the stored incident and not only of the capture response. `traceparent` and the
+`traceId`/`spanId` beside it must agree: a payload whose two spellings disagree is
+refused (`422 EARSHOT_INCOHERENT_TRACE_CONTEXT`) rather than resolved by guessing.
+
+**Ordering.** Every buffer here is append-only against one monotonic clock, so a
+drained batch is ordered by construction. The server relies on that and refuses a
+batch whose `timestamp_ms` readings move backwards
+(`422 EARSHOT_CAPTURE_NON_MONOTONIC`) — normalizing one would report an observation
+at a coordinate the browser never read, and difference the cumulative `getStats`
+counters over a negative interval.
 
 ## Privacy posture — metadata only
 
