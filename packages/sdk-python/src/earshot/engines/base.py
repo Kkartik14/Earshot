@@ -90,6 +90,12 @@ class _AppliedClock:
     is recorded as ``monotonic_time_nano`` in :attr:`domain`. Preserving each
     batch's own origin is what stops periodic drains from restarting the timeline
     and stops two batches with different origins from colliding at offset zero.
+
+    ``origin_ms`` is the EARLIEST reading in the batch, not the first-delivered
+    one. For an ordered batch those are the same; for a batch that arrived out of
+    order the distinction is what keeps ``origin_ms + at_ms`` an identity rather
+    than clamping an earlier observation forward onto a coordinate the source
+    never reported.
     """
 
     domain: BrowserClockDomain

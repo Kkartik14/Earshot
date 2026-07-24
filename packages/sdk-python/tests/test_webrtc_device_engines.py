@@ -15,6 +15,7 @@ import pytest
 import earshot
 from earshot.analysis import analyze_incident
 from earshot.codec import analysis_input_sha256
+from earshot.engines import BrowserClockDomain
 from earshot.engines.device import DeviceFacts, analyze_audio_graph, apply_audio_graph
 from earshot.engines.webrtc import WebRtcFacts, analyze_webrtc_stats, apply_webrtc_stats
 from earshot.validation import validate_derived_analysis, validate_incident
@@ -636,3 +637,84 @@ def test_end_to_end_capture_yields_all_four_boundary_diagnoses() -> None:
         "audio.stale_playback",
     } <= _codes(analysis)
     assert validate_derived_analysis(bundle, analysis).ok
+
+
+# -- Out-of-order batches: never a fabricated coordinate or a backward delta ----
+
+
+def _raw_ts(facts: WebRtcFacts | DeviceFacts, name: str) -> list[float]:
+    """The RAW browser timestamps the named measurements were observed at."""
+
+    assert facts.clock is not None
+    return [facts.clock.origin_ms + m.at_ms for m in facts.measurements if m.name == name]
+
+
+def test_a_non_monotonic_snapshot_batch_keeps_each_raw_timestamp() -> None:
+    # A batch delivered out of order used to collapse the later-delivered (but
+    # EARLIER-observed) snapshot onto the first snapshot's coordinate, so two
+    # observations 1s apart were both reported at 2000 ms.
+    clock = BrowserClockDomain(clock_domain_id="clk_session")
+    snapshots = [
+        _snap(2000, {"IT": _inbound(received=2000, lost=100, jitter=0.050)}),
+        _snap(1000, {"IT": _inbound(received=1000, lost=5, jitter=0.010)}),
+    ]
+    facts = analyze_webrtc_stats(snapshots, clock_domain=clock)
+
+    assert sorted(_raw_ts(facts, "jitter")) == [1000.0, 2000.0]
+    assert all(m.at_ms >= 0 for m in facts.measurements)
+
+
+def test_a_non_monotonic_snapshot_batch_never_differences_backward() -> None:
+    # The counters did not reset -- the BATCH went backwards. Differencing the
+    # pair in delivery order reported a reset that never happened; the interval
+    # is dropped and declared as an ordering gap instead.
+    clock = BrowserClockDomain(clock_domain_id="clk_session")
+    snapshots = [
+        _snap(2000, {"IT": _inbound(received=2000, lost=100)}),
+        _snap(1000, {"IT": _inbound(received=1000, lost=5)}),
+    ]
+    facts = analyze_webrtc_stats(snapshots, clock_domain=clock)
+
+    assert _named(facts, "packet_loss_ratio") == []
+    reasons = {note.reason for note in facts.coverage}
+    assert "non_monotonic_snapshot" in reasons
+    assert "counter_reset" not in reasons
+    [order] = [note for note in facts.coverage if note.reason == "non_monotonic_snapshot"]
+    assert order.signal == "webrtc.snapshot_order"
+    assert order.availability == "not_observed"
+
+
+def test_a_monotonic_batch_after_a_backward_step_still_derives_its_interval() -> None:
+    # Only the interval that went backwards is dropped; the ordered pair that
+    # follows it is still real evidence and is still derived.
+    snapshots = [
+        _snap(2000, {"IT": _inbound(received=2000, lost=100)}),
+        _snap(1000, {"IT": _inbound(received=1000, lost=5)}),
+        _snap(3000, {"IT": _inbound(received=1200, lost=25)}),
+    ]
+    facts = analyze_webrtc_stats(snapshots)
+    [loss] = _named(facts, "packet_loss_ratio")
+    assert loss.value == pytest.approx(20 / 220)
+
+
+def test_a_non_monotonic_snapshot_batch_infers_no_transport_transition() -> None:
+    # A reconnect is a claim about ORDER. Across a backward step the order is not
+    # observed, so no transition is inferred over it.
+    snapshots = [
+        _snap(2000, {"T": _transport("connected")}),
+        _snap(1000, {"T": _transport("disconnected")}),
+    ]
+    facts = analyze_webrtc_stats(snapshots)
+    assert [event.name for event in facts.events] == []
+
+
+def test_out_of_order_device_events_keep_their_own_raw_timestamps() -> None:
+    clock = BrowserClockDomain(clock_domain_id="clk_session")
+    events = [
+        {"type": "latency", "timestamp_ms": 2000, "base_latency_s": 0.005},
+        {"type": "latency", "timestamp_ms": 1000, "base_latency_s": 0.007},
+    ]
+    facts = analyze_audio_graph(events, clock_domain=clock)
+
+    assert sorted(_raw_ts(facts, "audio.base_latency")) == [1000.0, 2000.0]
+    assert any(note.reason == "non_monotonic_event" for note in facts.coverage)

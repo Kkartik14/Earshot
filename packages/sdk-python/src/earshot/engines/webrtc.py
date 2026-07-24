@@ -21,9 +21,13 @@ The engine emits the exact governed names the T2 rules consume:
   This is the render half of capture-to-render: it is measured at the playout
   device, not inferred from a transport counter.
 
-Two W3C-mandated disciplines hold throughout: a member absent from a snapshot is
-*unknown* (no measurement, never a zero), and a counter that moved backwards is a
-reset -- the interval is dropped with a coverage note, never reported as negative.
+Three disciplines hold throughout: a member absent from a snapshot is *unknown*
+(no measurement, never a zero); a counter that moved backwards is a reset -- the
+interval is dropped with a coverage note, never reported as negative; and a
+snapshot that precedes its predecessor makes that step unobserved -- the interval
+is dropped the same way, because a delta across it would be differenced over a
+negative span. Every fact keeps the raw timestamp of the observation it came
+from, so an out-of-order batch is never flattened onto one coordinate.
 """
 
 from __future__ import annotations
@@ -69,7 +73,9 @@ _ROUTE_CHANGED = "earshot.transport.route_changed"
 # ``engines/device.py``); ``audio.stale_playback`` reads it by name.
 _RENDER_STALE = "earshot.audio.render.stale"
 
-# Coverage signals for dropped intervals (counter resets).
+# Coverage signals for dropped intervals (counter resets, and a batch whose
+# readings move backwards -- an interval that cannot be differenced honestly).
+_COV_SNAPSHOT_ORDER = "webrtc.snapshot_order"
 _COV_PACKET_LOSS = "webrtc.packet_loss"
 _COV_JITTER_BUFFER = "webrtc.jitter_buffer"
 _COV_CONCEALMENT = "webrtc.concealment"
@@ -137,23 +143,43 @@ def analyze_webrtc_stats(
     if not normalized:
         return WebRtcFacts((), (), ())
 
-    base_ms = normalized[0][0]
+    # The batch's own origin is its EARLIEST reading, so ``base_ms + at_ms`` stays
+    # the raw browser timestamp of every observation even when the batch arrived
+    # out of order. Clamping an earlier reading forward onto the first-delivered
+    # one would report it at a coordinate the browser never observed.
+    base_ms = min(ts_ms for ts_ms, _stats in normalized)
     last_buffer_avg_ms: dict[str, float] = {}
     jitter_buffer_growth = False
     seen_down = False
     reconnected = False
     route_changed = False
+    prev_ts_ms: float | None = None
     prev_state: str | None = None
     prev_route: tuple[str | None, str | None] | None = None
     prev_stats: Mapping[str, Mapping[str, Any]] | None = None
 
     for ts_ms, stats in normalized:
-        at_ms = max(0.0, ts_ms - base_ms)
+        at_ms = ts_ms - base_ms
+        # A reading that precedes its predecessor makes the STEP unobserved: a
+        # delta across it would be differenced backwards, and a transition across
+        # it would assert an order the batch does not establish. Same discipline
+        # as a counter that moved backwards -- drop the interval, record the gap,
+        # and carry on from this snapshot. Per-snapshot instants are unaffected:
+        # an instantaneous reading needs no predecessor.
+        ordered = prev_ts_ms is None or ts_ms >= prev_ts_ms
+        if not ordered:
+            coverage.note(_COV_SNAPSHOT_ORDER, "not_observed", "non_monotonic_snapshot")
+            # Jitter-buffer *growth* is a comparison between consecutive intervals,
+            # so it cannot reach across the discontinuity either. Forgetting the
+            # last average makes the next interval report a level, not a trend.
+            last_buffer_avg_ms.clear()
 
         # --- transport reconnect: an ICE/DTLS drop then recovery --------------
         state = _connection_state(stats)
         if state is not None:
-            if state in _DOWN_STATES:
+            if not ordered:
+                seen_down = state in _DOWN_STATES
+            elif state in _DOWN_STATES:
                 if prev_state not in _DOWN_STATES:
                     events.append(_transport_event(_RECONNECTING, at_ms, "iceState"))
                 seen_down = True
@@ -164,19 +190,23 @@ def analyze_webrtc_stats(
 
         # --- route change: a new selected pair or network type ----------------
         route = _selected_route(stats)
-        if prev_route is not None and _route_changed(prev_route, route):
-            events.append(_transport_event(_ROUTE_CHANGED, at_ms, "selectedCandidatePairId"))
-            route_changed = True
-        prev_route = _merge_route(prev_route, route)
+        if ordered:
+            if prev_route is not None and _route_changed(prev_route, route):
+                events.append(_transport_event(_ROUTE_CHANGED, at_ms, "selectedCandidatePairId"))
+                route_changed = True
+            prev_route = _merge_route(prev_route, route)
+        else:
+            prev_route = route
 
         # --- per-pair deltas + per-snapshot instants --------------------------
-        if prev_stats is not None:
+        if ordered and prev_stats is not None:
             grew = _emit_deltas(
                 prev_stats, stats, at_ms, measurements, events, coverage, last_buffer_avg_ms
             )
             jitter_buffer_growth = jitter_buffer_growth or grew
         _emit_instants(stats, at_ms, measurements)
         prev_stats = stats
+        prev_ts_ms = ts_ms
 
     return WebRtcFacts(
         measurements=tuple(measurements),

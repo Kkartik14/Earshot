@@ -19,7 +19,9 @@ into governed earshot facts the existing analyzer already diagnoses:
   by the graph but not yet played out -- which becomes an ``estimated``
   ``audio.render_queue_delay``.
 
-As in the WebRTC engine, an absent field is *unknown* (no fact), never a zero.
+As in the WebRTC engine, an absent field is *unknown* (no fact), never a zero, and
+every fact keeps the raw timestamp of the event it came from -- a batch that
+arrived out of order is recorded as such, never flattened onto one coordinate.
 """
 
 from __future__ import annotations
@@ -60,6 +62,9 @@ _OUTPUT_LATENCY = "audio.output_latency"
 _RENDER_QUEUE = "audio.render_queue_delay"
 
 _MICROPHONE = "device.microphone"
+# A batch whose readings move backwards. Nothing is dropped -- each event carries
+# its own raw timestamp -- but the disorder itself is worth stating.
+_EVENT_ORDER = "device.event_order"
 
 _SUSPENDED_STATES = frozenset({"suspended", "interrupted"})
 
@@ -128,11 +133,22 @@ def analyze_audio_graph(
     if not normalized:
         return DeviceFacts((), (), ())
 
-    base_ms = normalized[0][0]
+    # The batch's origin is its EARLIEST reading, so ``base_ms + at_ms`` stays the
+    # raw browser timestamp of each event even when the batch arrived out of
+    # order. Clamping an earlier event forward would report it at a coordinate the
+    # browser never observed.
+    base_ms = min(ts_ms for ts_ms, _type, _event in normalized)
     flags = {"permission_denied": False, "context_suspended": False, "route": False, "stale": False}
+    prev_ts_ms: float | None = None
 
     for ts_ms, event_type, event in normalized:
-        at_ms = max(0.0, ts_ms - base_ms)
+        at_ms = ts_ms - base_ms
+        if prev_ts_ms is not None and ts_ms < prev_ts_ms:
+            # Each event stands on its own reading, so nothing here is fabricated
+            # by a batch that arrived out of order. The disorder is still recorded
+            # rather than swallowed: it is a real observation about the source.
+            coverage.note(_EVENT_ORDER, "partial", "non_monotonic_event")
+        prev_ts_ms = ts_ms
         _dispatch(event_type, event, at_ms, measurements, emitted, coverage, flags)
 
     return DeviceFacts(
