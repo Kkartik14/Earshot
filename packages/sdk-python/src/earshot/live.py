@@ -45,6 +45,11 @@ from pathlib import Path
 from typing import Any
 
 from .checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, scan_frames
+from .checkpoint.limits import (
+    CHECKPOINT_COVERAGE_NOTE,
+    DEFAULT_MAX_JOURNAL_RECORDS,
+    MAX_CHECKPOINT_FRAME_BODY_BYTES,
+)
 from .checkpoint.reader import JournalReader, JournalUnreadableError, iter_journals
 from .checkpoint.records import (
     JOURNAL_FORMAT_VERSION,
@@ -58,7 +63,6 @@ from .checkpoint.records import (
     JournalRecordEntry,
     decode_entry,
 )
-from .checkpoint.writer import DEFAULT_MAX_FRAME_BYTES
 from .privacy import CaptureClass, CapturePolicy, export_denials
 from .storage import DEFAULT_PROJECT_ID
 
@@ -131,6 +135,7 @@ LIVE_LIMITATIONS = (
     "because derived analysis binds to the digest of a finished artifact",
     "every value not yet observed is absent rather than zero, and every "
     "operation without an observed end is reported as such",
+    CHECKPOINT_COVERAGE_NOTE,
 )
 
 
@@ -160,6 +165,18 @@ class CheckpointSequenceError(LiveError):
 
 class CheckpointFramesInvalidError(LiveError):
     """An uploaded batch is not an intact run of plaintext journal frames."""
+
+
+class CheckpointFinalizedError(LiveError):
+    """This journal already reached ``finalize``; nothing may follow it."""
+
+
+class CheckpointDivergedError(LiveError):
+    """An uploaded batch rewrites a sequence the server already recorded."""
+
+    def __init__(self, message: str, *, sequence: int) -> None:
+        super().__init__(message)
+        self.sequence = sequence
 
 
 class SessionNotSealableError(LiveError):
@@ -256,6 +273,11 @@ class LiveConfig:
     (``max_queue_records`` / ``max_queue_bytes``) are separate on purpose: the
     first is how far back a *new* subscriber may start, the second is how far
     behind an *existing* one may fall before the server closes it.
+
+    Every capacity bound exists twice, per server and per project. The
+    server-wide number is a machine resource; the per-project one is what stops
+    a single tenant spending the whole machine and denying every other tenant a
+    session or a tail.
     """
 
     poll_interval_ms: int = 200
@@ -268,10 +290,17 @@ class LiveConfig:
     max_replay_bytes: int = 8 * 1024 * 1024
     max_seal_bytes: int = 8 * 1024 * 1024
     max_connections: int = 8
+    max_connections_per_project: int = 4
     max_subscribers_per_session: int = 4
     max_queue_records: int = 512
     max_queue_bytes: int = 1024 * 1024
-    max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES
+    # The wire bound, not the journal's: an uploaded frame larger than a request
+    # may carry is one the server can never have received intact.
+    max_frame_bytes: int = MAX_CHECKPOINT_FRAME_BODY_BYTES
+    # The highest sequence an upload may reach, matching the journal writer's own
+    # record cap so a conforming producer can never meet it. It bounds the
+    # per-sequence checksum ledger that makes a rewritten retry detectable.
+    max_journal_records: int = DEFAULT_MAX_JOURNAL_RECORDS
 
     def __post_init__(self) -> None:
         for name in (
@@ -282,10 +311,12 @@ class LiveConfig:
             "max_replay_bytes",
             "max_seal_bytes",
             "max_connections",
+            "max_connections_per_project",
             "max_subscribers_per_session",
             "max_queue_records",
             "max_queue_bytes",
             "max_frame_bytes",
+            "max_journal_records",
         ):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -336,6 +367,9 @@ class Subscription:
         self._loop: Any = None
         self._wakeup: Any = None
         self.session_id = session.session_id
+        # A session is named by its project as well as its id, so a released
+        # connection is returned to the tenant it was taken from.
+        self.project_id = session.project_id
         self.journal_id = session.journal_id
         self.last_delivered_sequence = resume_from
 
@@ -581,6 +615,24 @@ class _LiveSession:
         # double the storage for no gain.
         self.frames: bytearray | None = bytearray() if retain_frames else None
         self.frames_complete = retain_frames
+        # Four bytes per accepted frame — the CRC-32 the frame already carries
+        # over its own body — indexed by sequence from 1. It is what makes a
+        # retry that *rewrites* history distinguishable from one that merely
+        # repeats it, at 400 KiB for a journal at the writer's record cap. Only
+        # the upload path fills it, because only an upload can rewrite.
+        self.frame_checksums = bytearray()
+
+    def checksum(self, sequence: int) -> int | None:
+        """The checksum recorded for ``sequence``, or ``None`` if unverifiable."""
+
+        offset = (sequence - 1) * CHECKSUM_SIZE
+        if sequence < 1 or offset + CHECKSUM_SIZE > len(self.frame_checksums):
+            return None
+        return int.from_bytes(self.frame_checksums[offset : offset + CHECKSUM_SIZE], "big")
+
+    def remember_checksum(self, sequence: int, checksum: bytes) -> None:
+        if len(self.frame_checksums) == (sequence - 1) * CHECKSUM_SIZE:
+            self.frame_checksums.extend(checksum)
 
     def append(self, event: LiveEvent) -> None:
         self.events.append(event)
@@ -650,6 +702,14 @@ class LiveSessionRegistry:
     through an explicit operator seal — never automatically, because the server
     cannot tell "crashed" from "slow" and must not manufacture artifacts nobody
     produced.
+
+    A session is identified by ``(project_id, session_id)`` and never by the
+    session id alone. A session id is a producer's own name for its own call, so
+    two tenants naming a session ``call-1`` are naming two different calls; a
+    single keyspace would let whichever tenant arrived first own the name and
+    make every later upload from the other tenant a permanent 404. Capacity is
+    accounted in the same two parts, so one tenant's sessions and tails cannot
+    exhaust another's.
     """
 
     def __init__(
@@ -667,11 +727,12 @@ class LiveSessionRegistry:
         self._project_id = project_id
         self._clock = clock
         self._lock = threading.RLock()
-        self._sessions: dict[str, _LiveSession] = {}
+        self._sessions: dict[tuple[str, str], _LiveSession] = {}
         # Structurally mutated only by the polling thread, so a scan can iterate
         # it without racing a request handler.
         self._tracked: dict[Path, _TrackedFile] = {}
         self._connections = 0
+        self._project_connections: dict[str, int] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -744,7 +805,13 @@ class LiveSessionRegistry:
         for path in [known for known in self._tracked if known not in seen]:
             tracked = self._tracked.pop(path)
             if tracked.session_id is not None:
-                self.drop_session(tracked.session_id, reason=END_JOURNAL_REMOVED)
+                # A followed directory belongs to the process that configured it,
+                # so its sessions are always this registry's own project.
+                self.drop_session(
+                    tracked.session_id,
+                    reason=END_JOURNAL_REMOVED,
+                    project_id=self._project_id,
+                )
 
     def _publish_replay(
         self,
@@ -755,7 +822,7 @@ class LiveSessionRegistry:
     ) -> None:
         now_nano = int(self._clock() * 1e9)
         with self._lock:
-            session = self._sessions.get(header.session_id)
+            session = self._sessions.get((self._project_id, header.session_id))
             if session is not None and session.journal_id != header.journal_id:
                 # A new journal for a session we were already following. Tell
                 # every subscriber to discard its state rather than splicing two
@@ -782,15 +849,23 @@ class LiveSessionRegistry:
                 self._deliver(session, [session.open_event])
             batch: list[LiveEvent] = []
             sequence = 1
+            published_through = tracked.last_sequence
             for entry in entries:
                 sequence += 1
                 if sequence <= tracked.last_sequence:
                     continue
+                if session.close_observed:
+                    # ``finalize`` is the end of this journal. A frame after it
+                    # is not a later fact, it is a different journal wearing this
+                    # one's name, and publishing it would let a closed session
+                    # keep speaking.
+                    break
                 batch.append(_governed_entry_event(session, entry, sequence))
                 _absorb(session, entry)
+                published_through = sequence
             if not batch:
                 return
-            tracked.last_sequence = sequence
+            tracked.last_sequence = published_through
             session.last_append_unix_nano = now_nano
             self._deliver(session, batch)
 
@@ -814,6 +889,14 @@ class LiveSessionRegistry:
         An encrypted journal cannot be uploaded: the server has no key, so the
         header would not decode and the batch is refused. Remote live tailing is
         therefore an explicit choice to let the backend read these frames.
+
+        A batch is accepted whole or not at all, and the three ways it can fail
+        to continue this journal are distinguished, because they need different
+        answers: it skips a sequence (retry from the sequence named), it follows
+        a ``finalize`` (this journal is over), or it rewrites a sequence already
+        recorded (the client and the server disagree about history, and the
+        server does not yield). A batch that merely repeats frames already held
+        is idempotent and republishes nothing.
         """
 
         if len(payload) < HEADER_SIZE:
@@ -821,10 +904,10 @@ class LiveSessionRegistry:
         first_sequence = int.from_bytes(payload[1:5], "big")
         now_nano = int(self._clock() * 1e9)
         with self._lock:
-            session = self._sessions.get(session_id)
-            if session is not None and session.project_id != project_id:
-                # Never confirm that another project holds this session id.
-                raise SessionNotLiveError("no live session with this identity")
+            # Keyed by tenant and id together, so a session id another project
+            # holds is simply not this project's session: the answer is the one
+            # an id nobody holds gets, and existence never leaks across tenants.
+            session = self._sessions.get((project_id, session_id))
             if first_sequence != 1:
                 if session is None:
                     raise CheckpointSequenceError(
@@ -842,14 +925,20 @@ class LiveSessionRegistry:
             )
             if scan.torn_tail_bytes or not scan.frames:
                 raise CheckpointFramesInvalidError("checkpoint batch is not an intact frame run")
-            decoded: list[tuple[int, JournalEntry]] = []
+            if scan.last_sequence > self.config.max_journal_records:
+                raise CheckpointFramesInvalidError("checkpoint batch runs past the journal cap")
+            decoded: list[tuple[int, JournalEntry, bytes]] = []
+            offset = 0
             for frame in scan.frames:
+                frame_end = _frame_end(payload, offset)
                 try:
-                    decoded.append((frame.sequence, decode_entry(frame.body)))
+                    entry = decode_entry(frame.body)
                 except JournalFormatError as error:
                     raise CheckpointFramesInvalidError(
                         "checkpoint batch holds a frame that is not a journal entry"
                     ) from error
+                decoded.append((frame.sequence, entry, payload[offset:frame_end]))
+                offset = frame_end
             header: JournalOpen | None = None
             if first_sequence == 1:
                 candidate = decoded[0][1]
@@ -865,6 +954,9 @@ class LiveSessionRegistry:
                 if session is not None and session.journal_id != header.journal_id:
                     self._reset_session(session, header.journal_id)
                     session = None
+            # Everything that can refuse the batch is decided before anything is
+            # recorded, so a refusal leaves the session exactly as it was.
+            _assert_continues(session, decoded)
             if session is None:
                 if header is None:  # pragma: no cover - guarded above
                     raise CheckpointFramesInvalidError("checkpoint batch has no journal header")
@@ -883,15 +975,13 @@ class LiveSessionRegistry:
             else:
                 retained_through = session.last_sequence
             batch: list[LiveEvent] = []
-            offset = 0
-            for sequence, entry in decoded:
-                frame_end = _frame_end(payload, offset)
+            for sequence, entry, frame_bytes in decoded:
                 if sequence > retained_through:
-                    self._retain_frame(session, payload[offset:frame_end])
+                    self._retain_frame(session, frame_bytes)
+                    session.remember_checksum(sequence, frame_bytes[-CHECKSUM_SIZE:])
                     if sequence > 1:
                         batch.append(_governed_entry_event(session, entry, sequence))
                         _absorb(session, entry)
-                offset = frame_end
             if batch:
                 session.last_append_unix_nano = now_nano
                 self._deliver(session, batch)
@@ -922,9 +1012,11 @@ class LiveSessionRegistry:
         frames.extend(frame)
 
     def _enforce_quota(self, project_id: str) -> None:
+        """Both halves of the session budget: the machine's, and this tenant's."""
+
         if len(self._sessions) >= self.config.max_sessions:
             raise LiveCapacityError("the server is holding as many live sessions as it will")
-        owned = sum(1 for item in self._sessions.values() if item.project_id == project_id)
+        owned = sum(1 for held, _ in self._sessions if held == project_id)
         if owned >= self.config.max_sessions_per_project:
             raise LiveCapacityError("this project is holding as many live sessions as it will")
 
@@ -956,7 +1048,7 @@ class LiveSessionRegistry:
             retain_frames=retain_frames,
         )
         session.last_append_unix_nano = int(self._clock() * 1e9)
-        self._sessions[session_id] = session
+        self._sessions[(project_id, session_id)] = session
         return session
 
     def _reset_session(self, session: _LiveSession, journal_id: str) -> None:
@@ -975,7 +1067,7 @@ class LiveSessionRegistry:
             subscriber.offer([event])
             subscriber.finish(END_SESSION_SUPERSEDED)
         session.subscribers.clear()
-        self._sessions.pop(session.session_id, None)
+        self._sessions.pop((session.project_id, session.session_id), None)
 
     def _deliver(self, session: _LiveSession, events: Sequence[LiveEvent]) -> None:
         for event in events:
@@ -983,27 +1075,19 @@ class LiveSessionRegistry:
         for subscriber in list(session.subscribers):
             subscriber.offer(events)
 
-    def drop_session(
-        self,
-        session_id: str,
-        *,
-        reason: str,
-        project_id: str | None = None,
-    ) -> bool:
-        """Forget a live buffer, because its artifact exists or it expired."""
+    def drop_session(self, session_id: str, *, reason: str, project_id: str) -> bool:
+        """Forget one tenant's live buffer, because its artifact exists or it expired."""
 
         with self._lock:
-            session = self._sessions.get(session_id)
+            session = self._sessions.pop((project_id, session_id), None)
             if session is None:
                 return False
-            if project_id is not None and session.project_id != project_id:
-                return False
-            self._sessions.pop(session_id, None)
             subscribers = list(session.subscribers)
             session.subscribers.clear()
-            for tracked in self._tracked.values():
-                if tracked.session_id == session_id:
-                    tracked.session_id = None
+            if project_id == self._project_id:
+                for tracked in self._tracked.values():
+                    if tracked.session_id == session_id:
+                        tracked.session_id = None
         for subscriber in subscribers:
             subscriber.finish(reason)
         return True
@@ -1012,26 +1096,26 @@ class LiveSessionRegistry:
         now = self._clock()
         with self._lock:
             stale = [
-                session.session_id
-                for session in self._sessions.values()
+                key
+                for key, session in self._sessions.items()
                 if session.state(now) == STATE_ABANDONED
             ]
-        for session_id in stale:
-            self.drop_session(session_id, reason=END_SESSION_EXPIRED)
+        for project_id, session_id in stale:
+            self.drop_session(session_id, reason=END_SESSION_EXPIRED, project_id=project_id)
 
     def sessions(self, *, project_id: str) -> tuple[LiveSessionSummary, ...]:
         now = self._clock()
         with self._lock:
             return tuple(
                 session.summary(now)
-                for session in sorted(self._sessions.values(), key=lambda item: item.session_id)
-                if session.project_id == project_id
+                for key, session in sorted(self._sessions.items(), key=lambda item: item[0])
+                if key[0] == project_id
             )
 
     def summary(self, session_id: str, *, project_id: str) -> LiveSessionSummary:
         with self._lock:
-            session = self._sessions.get(session_id)
-            if session is None or session.project_id != project_id:
+            session = self._sessions.get((project_id, session_id))
+            if session is None:
                 raise SessionNotLiveError("no live session with this identity")
             return session.summary(self._clock())
 
@@ -1054,11 +1138,19 @@ class LiveSessionRegistry:
         """
 
         with self._lock:
-            session = self._sessions.get(session_id)
-            if session is None or session.project_id != project_id:
+            session = self._sessions.get((project_id, session_id))
+            if session is None:
                 raise SessionNotLiveError("no live session with this identity")
             if self._connections >= self.config.max_connections:
                 raise TailCapacityError("the server is carrying as many tails as it will")
+            if (
+                self._project_connections.get(project_id, 0)
+                >= self.config.max_connections_per_project
+            ):
+                # Per tenant as well as per server: a connection budget spent
+                # entirely by one project is a denial of service against the
+                # others, however politely it is reported.
+                raise TailCapacityError("this project is carrying as many tails as it will")
             if len(session.subscribers) >= self.config.max_subscribers_per_session:
                 raise TailCapacityError("this session already has as many tails as it will")
 
@@ -1128,14 +1220,22 @@ class LiveSessionRegistry:
             )
             session.subscribers.add(subscription)
             self._connections += 1
+            self._project_connections[project_id] = self._project_connections.get(project_id, 0) + 1
             return subscription
 
     def release(self, subscription: Subscription) -> None:
         with self._lock:
-            session = self._sessions.get(subscription.session_id)
+            session = self._sessions.get((subscription.project_id, subscription.session_id))
             if session is not None:
                 session.subscribers.discard(subscription)
             self._connections = max(0, self._connections - 1)
+            held = self._project_connections.get(subscription.project_id, 0) - 1
+            if held > 0:
+                self._project_connections[subscription.project_id] = held
+            else:
+                # Dropped rather than left at zero: the map is keyed by tenant
+                # and must not grow with every project that ever connected.
+                self._project_connections.pop(subscription.project_id, None)
 
     # ----------------------------------------------------------------- seal
 
@@ -1149,8 +1249,8 @@ class LiveSessionRegistry:
         """
 
         with self._lock:
-            session = self._sessions.get(session_id)
-            if session is None or session.project_id != project_id:
+            session = self._sessions.get((project_id, session_id))
+            if session is None:
                 raise SessionNotLiveError("no live session with this identity")
             if session.source == SOURCE_JOURNAL:
                 if session.path is None:  # pragma: no cover - journals always have a path
@@ -1164,6 +1264,53 @@ class LiveSessionRegistry:
 def _frame_end(payload: bytes, offset: int) -> int:
     length = int.from_bytes(payload[offset + 5 : offset + HEADER_SIZE], "big")
     return offset + HEADER_SIZE + length + CHECKSUM_SIZE
+
+
+def _assert_continues(
+    session: _LiveSession | None,
+    decoded: Sequence[tuple[int, JournalEntry, bytes]],
+) -> None:
+    """Refuse a batch that does not honestly continue what the server holds.
+
+    Two refusals live here, and both are about the same property: an upload may
+    extend the journal and may repeat it, but it may never edit it.
+
+    *Divergence.* A frame at a sequence already recorded must carry the same
+    bytes, compared by the CRC-32 the frame itself carries. A transport retry
+    re-sends identical frames — the uploader restarts at offset zero after a
+    process restart, so a full replay is ordinary — and that stays idempotent.
+    Different bytes at the same sequence are a client rewriting history, and are
+    refused rather than silently ignored, which is what made the server report
+    success for an upload it had discarded. It is fail-closed: a sequence the
+    ledger cannot vouch for is refused too, because a comparison that could not
+    run is not a comparison that passed.
+
+    *Finality.* Nothing follows ``finalize``, including a ``finalize`` in this
+    very batch. The recorder closed; a later frame is a different journal
+    wearing this one's name.
+    """
+
+    if session is None:
+        return
+    closed = session.close_observed
+    for sequence, entry, frame in decoded:
+        if sequence <= session.last_sequence:
+            recorded = session.checksum(sequence)
+            if recorded is None:
+                raise CheckpointDivergedError(
+                    "checkpoint batch repeats a sequence this server cannot verify",
+                    sequence=sequence,
+                )
+            if recorded != int.from_bytes(frame[-CHECKSUM_SIZE:], "big"):
+                raise CheckpointDivergedError(
+                    "checkpoint batch rewrites a sequence already recorded",
+                    sequence=sequence,
+                )
+            continue
+        if closed:
+            raise CheckpointFinalizedError("this journal is finalized and accepts no more frames")
+        if isinstance(entry, JournalFinalize):
+            closed = True
 
 
 def _absorb(session: _LiveSession, entry: JournalEntry) -> None:
@@ -1390,6 +1537,8 @@ __all__ = [
     "STATE_STALE",
     "UNKNOWN_UNTIL_CLOSE",
     "AcceptedCheckpoint",
+    "CheckpointDivergedError",
+    "CheckpointFinalizedError",
     "CheckpointFramesInvalidError",
     "CheckpointSequenceError",
     "LiveCapacityError",

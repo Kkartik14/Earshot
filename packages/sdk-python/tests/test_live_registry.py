@@ -24,6 +24,8 @@ from earshot.live import (
     EVENT_WITHHELD,
     LIVE_TAIL_DESTINATION,
     UNKNOWN_UNTIL_CLOSE,
+    CheckpointDivergedError,
+    CheckpointFinalizedError,
     CheckpointFramesInvalidError,
     CheckpointSequenceError,
     LiveCapacityError,
@@ -474,6 +476,249 @@ def test_live_session_quota_is_enforced_per_project(tmp_path: Path) -> None:
             with pytest.raises(LiveCapacityError):
                 registry.accept_frames("s-2", payload, project_id="p")
         writer.release()
+
+
+def _uploadable(
+    directory: Path,
+    session_id: str,
+    bundle_id: str,
+    *,
+    count: int = 2,
+    close: bool = False,
+    **kwargs,
+) -> tuple[CheckpointWriter, bytes]:
+    """One journal on disk, and the exact bytes an uploader would forward."""
+
+    writer = _writer(directory, keep_finalized=close, **kwargs)
+    recorder = IncidentRecorder(session_id=session_id, bundle_id=bundle_id, checkpoint=writer)
+    _record(recorder, count=count)
+    if close:
+        recorder.close()
+    return writer, _frames(_journal_path(directory))
+
+
+def _entry_frame(sequence: int, entry) -> bytes:
+    return encode_frame(sequence, encode_entry(entry), max_body_bytes=DEFAULT_MAX_FRAME_BYTES)
+
+
+# ------------------------------------------------- per-tenant session identity
+
+
+def test_two_projects_hold_the_same_session_id_independently(tmp_path: Path) -> None:
+    """A session id is a tenant's name for its own session, not a global one.
+
+    Keyed by session id alone, the first tenant to use an id owns it: a second
+    tenant's upload is refused as "not live" forever, which is both a denial of
+    service and a cross-tenant coupling of identity.
+    """
+
+    alpha_writer, alpha = _uploadable(tmp_path / "alpha", "s-1", "b-alpha")
+    beta_writer, beta = _uploadable(tmp_path / "beta", "s-1", "b-beta")
+
+    registry = LiveSessionRegistry()
+    registry.accept_frames("s-1", alpha, project_id="alpha")
+    accepted = registry.accept_frames("s-1", beta, project_id="beta")
+
+    assert accepted.accepted_through > 1
+    assert registry.summary("s-1", project_id="alpha").bundle_id == "b-alpha"
+    assert registry.summary("s-1", project_id="beta").bundle_id == "b-beta"
+    assert [item.bundle_id for item in registry.sessions(project_id="alpha")] == ["b-alpha"]
+    assert [item.bundle_id for item in registry.sessions(project_id="beta")] == ["b-beta"]
+    # Each tenant tails its own journal, never the other's.
+    opened = _payload(registry.subscribe("s-1", project_id="beta").drain()[0])
+    assert opened["bundle_id"] == "b-beta"
+    alpha_writer.release()
+    beta_writer.release()
+
+
+def test_a_foreign_continuation_batch_answers_exactly_like_an_unknown_session(
+    tmp_path: Path,
+) -> None:
+    """Refusing a squatter must not tell it whose id it just guessed."""
+
+    alpha_writer, alpha = _uploadable(tmp_path / "alpha", "s-1", "b-alpha", count=1)
+    registry = LiveSessionRegistry()
+    registry.accept_frames("s-1", alpha, project_id="alpha")
+
+    continuation = _entry_frame(2, JournalRecordEntry(kind="event", value={"name": "probe"}))
+    with pytest.raises(CheckpointSequenceError) as squatted:
+        registry.accept_frames("s-1", continuation, project_id="beta")
+    with pytest.raises(CheckpointSequenceError) as unknown:
+        registry.accept_frames("s-never-used", continuation, project_id="beta")
+
+    assert squatted.value.expected_sequence == unknown.value.expected_sequence == 1
+    assert str(squatted.value) == str(unknown.value)
+    # And the tenant that does hold the id is untouched by the probe.
+    assert registry.summary("s-1", project_id="alpha").last_sequence == 3
+    alpha_writer.release()
+
+
+def test_one_projects_sessions_do_not_consume_another_projects_quota(tmp_path: Path) -> None:
+    alpha_writer, alpha = _uploadable(tmp_path / "alpha", "s-1", "b-alpha", count=1)
+    beta_writer, beta = _uploadable(tmp_path / "beta", "s-1", "b-beta", count=1)
+    registry = LiveSessionRegistry(config=LiveConfig(max_sessions_per_project=1))
+
+    registry.accept_frames("s-1", alpha, project_id="alpha")
+    registry.accept_frames("s-1", beta, project_id="beta")
+
+    assert len(registry.sessions(project_id="alpha")) == 1
+    assert len(registry.sessions(project_id="beta")) == 1
+    alpha_writer.release()
+    beta_writer.release()
+
+
+def test_tail_connections_are_bounded_per_project_not_only_per_server(
+    tmp_path: Path,
+) -> None:
+    """One tenant must not be able to spend the whole connection budget."""
+
+    alpha_writer, alpha = _uploadable(tmp_path / "alpha", "s-1", "b-alpha", count=1)
+    beta_writer, beta = _uploadable(tmp_path / "beta", "s-1", "b-beta", count=1)
+    registry = LiveSessionRegistry(
+        config=LiveConfig(max_connections=4, max_connections_per_project=1)
+    )
+    registry.accept_frames("s-1", alpha, project_id="alpha")
+    registry.accept_frames("s-1", beta, project_id="beta")
+
+    held = registry.subscribe("s-1", project_id="alpha")
+    with pytest.raises(TailCapacityError):
+        registry.subscribe("s-1", project_id="alpha")
+    # The other tenant still has its own budget.
+    registry.subscribe("s-1", project_id="beta")
+    held.close()
+    registry.subscribe("s-1", project_id="alpha")
+    alpha_writer.release()
+    beta_writer.release()
+
+
+# ----------------------------------------------- a finalized journal is closed
+
+
+def test_a_finalized_journal_refuses_a_later_frame(tmp_path: Path) -> None:
+    """``finalize`` is the end of the journal, so nothing may follow it."""
+
+    writer, payload = _uploadable(tmp_path / "journals", "s-1", "b-1", count=1, close=True)
+    registry = LiveSessionRegistry()
+    accepted = registry.accept_frames("s-1", payload, project_id="p")
+    subscription = registry.subscribe("s-1", project_id="p")
+    subscription.drain()
+
+    later = _entry_frame(
+        accepted.accepted_through + 1,
+        JournalRecordEntry(kind="event", value={"name": "after-the-end"}),
+    )
+    with pytest.raises(CheckpointFinalizedError):
+        registry.accept_frames("s-1", later, project_id="p")
+
+    assert subscription.drain() == []
+    assert registry.summary("s-1", project_id="p").last_sequence == accepted.accepted_through
+    # A transport retry of the journal it already holds is still idempotent.
+    again = registry.accept_frames("s-1", payload, project_id="p")
+    assert again.accepted_records == 0
+    writer.release()
+
+
+def test_a_frame_appended_to_a_finalized_journal_is_never_published(
+    tmp_path: Path,
+) -> None:
+    """The same rule on the followed-directory path, where there is no client.
+
+    Nothing legitimate appends to a journal after ``finalize``, so a file that
+    grew past it is damaged or hostile. Either way the closed session does not
+    start speaking again.
+    """
+
+    writer = _writer(tmp_path, keep_finalized=True)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    _record(recorder, count=1)
+    recorder.close()
+    registry = LiveSessionRegistry(journal_dir=tmp_path)
+    registry.refresh()
+    subscription = registry.subscribe("s-1", project_id="default")
+    delivered = subscription.drain()
+    assert _names(delivered)[-1] == EVENT_FINALIZE
+
+    path = _journal_path(tmp_path)
+    with path.open("ab") as handle:
+        handle.write(
+            _entry_frame(
+                len(_split_frames(path.read_bytes())) + 1,
+                JournalRecordEntry(kind="event", value={"name": "after-the-end"}),
+            )
+        )
+    registry.refresh()
+
+    assert subscription.drain() == []
+    assert registry.summary("s-1", project_id="default").last_sequence == len(delivered)
+
+
+def test_a_batch_that_appends_after_its_own_finalize_is_refused_whole(
+    tmp_path: Path,
+) -> None:
+    writer, payload = _uploadable(tmp_path / "journals", "s-1", "b-1", count=1, close=True)
+    frames = _split_frames(payload)
+    registry = LiveSessionRegistry()
+    registry.accept_frames("s-1", b"".join(frames[:-1]), project_id="p")
+    before = registry.summary("s-1", project_id="p").last_sequence
+
+    tail = frames[-1] + _entry_frame(
+        len(frames) + 1,
+        JournalRecordEntry(kind="event", value={"name": "after-the-end"}),
+    )
+    with pytest.raises(CheckpointFinalizedError):
+        registry.accept_frames("s-1", tail, project_id="p")
+
+    # Refused whole: even the finalize frame that led the batch is not recorded.
+    assert registry.summary("s-1", project_id="p").last_sequence == before
+    assert registry.summary("s-1", project_id="p").close_observed is False
+    writer.release()
+
+
+# ------------------------------------------------------- retries never rewrite
+
+
+def test_a_retry_that_rewrites_an_accepted_frame_is_refused(tmp_path: Path) -> None:
+    """A retry may repeat history idempotently; it may never edit it."""
+
+    writer, payload = _uploadable(tmp_path / "journals", "s-1", "b-1", count=1)
+    registry = LiveSessionRegistry()
+    accepted = registry.accept_frames("s-1", payload, project_id="p")
+    subscription = registry.subscribe("s-1", project_id="p")
+    subscription.drain()
+
+    # The identical bytes again: accepted, and nothing is republished.
+    repeated = registry.accept_frames("s-1", payload, project_id="p")
+    assert repeated.accepted_records == 0
+    assert subscription.drain() == []
+
+    divergent = _entry_frame(
+        accepted.accepted_through,
+        JournalRecordEntry(kind="event", value={"name": "rewritten"}),
+    )
+    with pytest.raises(CheckpointDivergedError):
+        registry.accept_frames("s-1", divergent, project_id="p")
+    assert subscription.drain() == []
+    writer.release()
+
+
+def test_a_divergent_frame_refuses_the_frames_that_follow_it(tmp_path: Path) -> None:
+    writer, payload = _uploadable(tmp_path / "journals", "s-1", "b-1", count=1)
+    registry = LiveSessionRegistry()
+    accepted = registry.accept_frames("s-1", payload, project_id="p")
+
+    rewritten = _entry_frame(
+        accepted.accepted_through,
+        JournalRecordEntry(kind="event", value={"name": "rewritten"}),
+    )
+    appended = _entry_frame(
+        accepted.accepted_through + 1,
+        JournalRecordEntry(kind="event", value={"name": "appended"}),
+    )
+    with pytest.raises(CheckpointDivergedError):
+        registry.accept_frames("s-1", rewritten + appended, project_id="p")
+
+    assert registry.summary("s-1", project_id="p").last_sequence == accepted.accepted_through
+    writer.release()
 
 
 def test_a_session_that_outgrew_its_frame_window_stops_being_sealable(

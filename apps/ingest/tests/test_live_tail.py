@@ -26,6 +26,13 @@ from fastapi.testclient import TestClient
 
 from earshot.api import CHECKPOINT_MEDIA_TYPE, ApiConfig, create_app
 from earshot.checkpoint import CheckpointConfig, CheckpointWriter, assemble_incident
+from earshot.checkpoint.framing import encode_frame
+from earshot.checkpoint.limits import (
+    DEFAULT_MAX_FRAME_BYTES,
+    MAX_CHECKPOINT_BATCH_BYTES,
+    MAX_CHECKPOINT_FRAME_BYTES,
+)
+from earshot.checkpoint.records import JournalRecordEntry, encode_entry
 from earshot.codec import PROTOBUF_MEDIA_TYPE, encode_incident_protobuf
 from earshot.live import LiveConfig, LiveSessionRegistry
 from earshot.privacy import CaptureClass, CaptureGovernance, CapturePolicy, ExportConfig
@@ -64,6 +71,16 @@ def _restricted_recorder(writer: CheckpointWriter, export: ExportConfig) -> Inci
 
 def _journal(directory: Path) -> Path:
     return next(directory.glob("*.eck"))
+
+
+def _frame(sequence: int, name: str) -> bytes:
+    """One journal frame an upload could carry at ``sequence``."""
+
+    return encode_frame(
+        sequence,
+        encode_entry(JournalRecordEntry(kind="event", value={"name": name})),
+        max_body_bytes=DEFAULT_MAX_FRAME_BYTES,
+    )
 
 
 def _record(recorder: IncidentRecorder, count: int = 3) -> None:
@@ -680,6 +697,142 @@ def test_a_checkpoint_batch_with_a_gap_is_a_conflict(tmp_path: Path) -> None:
     assert torn.status_code == 400
     assert torn.json()["error"]["code"] == "EARSHOT_CHECKPOINT_FRAMES_INVALID"
     assert wrong_type.status_code == 415
+    writer.release()
+
+
+def test_two_projects_upload_the_same_session_id_without_colliding(tmp_path: Path) -> None:
+    """A session id belongs to a tenant, so one tenant cannot squat another's.
+
+    Keyed by session id alone, whichever project uploaded first owned the id and
+    every later upload from the other project was refused as "not live" — a
+    cross-tenant denial of service dressed as a 404.
+    """
+
+    harness = _build(tmp_path)
+    mine = harness.store.issue_api_key("default", label="live")
+    harness.store.create_project("other", display_name="Other")
+    theirs = harness.store.issue_api_key("other", label="live")
+    first = _writer(tmp_path / "first")
+    _record(IncidentRecorder(session_id="s-1", bundle_id="b-mine", checkpoint=first), count=1)
+    second = _writer(tmp_path / "second")
+    _record(IncidentRecorder(session_id="s-1", bundle_id="b-theirs", checkpoint=second), count=1)
+
+    with TestClient(harness.app) as client:
+        accepted = [
+            client.post(
+                "/v1/live/sessions/s-1/checkpoints",
+                content=_journal(directory).read_bytes(),
+                headers={
+                    "Content-Type": CHECKPOINT_MEDIA_TYPE,
+                    "Authorization": f"Bearer {credential.credential}",
+                },
+            )
+            for directory, credential in (
+                (tmp_path / "first", mine),
+                (tmp_path / "second", theirs),
+            )
+        ]
+        listings = [
+            client.get(
+                "/v1/live/sessions",
+                headers={"Authorization": f"Bearer {credential.credential}"},
+            ).json()
+            for credential in (mine, theirs)
+        ]
+
+    assert [response.status_code for response in accepted] == [202, 202]
+    assert accepted[0].json()["journal_id"] != accepted[1].json()["journal_id"]
+    assert [item["bundle_id"] for item in listings[0]["items"]] == ["b-mine"]
+    assert [item["bundle_id"] for item in listings[1]["items"]] == ["b-theirs"]
+    harness.store.close()
+    first.release()
+    second.release()
+
+
+def test_a_frame_after_finalize_is_a_conflict(tmp_path: Path) -> None:
+    harness = _build(tmp_path)
+    writer = _writer(harness.journals, keep_finalized=True)
+    recorder = IncidentRecorder(session_id="s-2", bundle_id="b-2", checkpoint=writer)
+    _record(recorder, count=1)
+    recorder.close()
+    payload = _journal(harness.journals).read_bytes()
+
+    with TestClient(harness.app) as client:
+        accepted = client.post(
+            "/v1/live/sessions/s-2/checkpoints",
+            content=payload,
+            headers={"Content-Type": CHECKPOINT_MEDIA_TYPE},
+        )
+        refused = client.post(
+            "/v1/live/sessions/s-2/checkpoints",
+            content=_frame(accepted.json()["accepted_through"] + 1, "after-the-end"),
+            headers={"Content-Type": CHECKPOINT_MEDIA_TYPE},
+        )
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "EARSHOT_CHECKPOINT_JOURNAL_FINALIZED"
+    writer.release()
+
+
+def test_a_retry_that_rewrites_an_accepted_frame_is_a_conflict(tmp_path: Path) -> None:
+    harness = _build(tmp_path)
+    writer = _writer(harness.journals)
+    recorder = IncidentRecorder(session_id="s-2", bundle_id="b-2", checkpoint=writer)
+    _record(recorder, count=1)
+    payload = _journal(harness.journals).read_bytes()
+
+    with TestClient(harness.app) as client:
+        accepted = client.post(
+            "/v1/live/sessions/s-2/checkpoints",
+            content=payload,
+            headers={"Content-Type": CHECKPOINT_MEDIA_TYPE},
+        )
+        repeated = client.post(
+            "/v1/live/sessions/s-2/checkpoints",
+            content=payload,
+            headers={"Content-Type": CHECKPOINT_MEDIA_TYPE},
+        )
+        refused = client.post(
+            "/v1/live/sessions/s-2/checkpoints",
+            content=_frame(accepted.json()["accepted_through"], "rewritten"),
+            headers={"Content-Type": CHECKPOINT_MEDIA_TYPE},
+        )
+    assert repeated.status_code == 202
+    assert repeated.json()["accepted_records"] == 0
+    assert refused.status_code == 409
+    assert refused.json()["error"]["code"] == "EARSHOT_CHECKPOINT_DIVERGED"
+    writer.release()
+
+
+def test_a_frame_larger_than_the_upload_contract_is_refused_and_declared(
+    tmp_path: Path,
+) -> None:
+    """The wire bound is one number, and the listing says what it costs."""
+
+    harness = _build(tmp_path)
+    writer = _writer(harness.journals)
+    recorder = IncidentRecorder(session_id="s-2", bundle_id="b-2", checkpoint=writer)
+    _record(recorder, count=1)
+    payload = _journal(harness.journals).read_bytes()
+
+    with TestClient(harness.app) as client:
+        accepted = client.post(
+            "/v1/live/sessions/s-2/checkpoints",
+            content=payload,
+            headers={"Content-Type": CHECKPOINT_MEDIA_TYPE},
+        )
+        refused = client.post(
+            "/v1/live/sessions/s-2/checkpoints",
+            content=_frame(
+                accepted.json()["accepted_through"] + 1,
+                "x" * MAX_CHECKPOINT_BATCH_BYTES,
+            ),
+            headers={"Content-Type": CHECKPOINT_MEDIA_TYPE},
+        )
+        limitations = client.get("/v1/live/sessions").json()["limitations"]
+
+    assert refused.status_code == 413
+    assert refused.json()["error"]["code"] == "EARSHOT_BODY_TOO_LARGE"
+    assert any(str(MAX_CHECKPOINT_FRAME_BYTES) in note for note in limitations)
     writer.release()
 
 
