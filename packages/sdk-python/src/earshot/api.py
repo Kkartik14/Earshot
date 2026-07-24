@@ -48,7 +48,14 @@ from .connectors import (
     HostedProviderIngestion,
     RawProviderDelivery,
 )
-from .contract import DerivedAnalysis, IncidentBundle, IncidentBundleJson
+from .contract import (
+    DerivedAnalysis,
+    IncidentBundle,
+    IncidentBundleJson,
+    Producer,
+    RecoveryRecord,
+    TimePoint,
+)
 from .engines.base import BrowserClockDomain
 from .engines.device import apply_audio_graph
 from .engines.webrtc import apply_webrtc_stats
@@ -91,7 +98,7 @@ from .validation import (
     validate_derived_analysis,
     validate_incident,
 )
-from .versions import API_VERSION
+from .versions import API_VERSION, PACKAGE_VERSION
 
 Analyzer = Callable[..., DerivedAnalysis]
 _VIEWER_SESSION_COOKIE = "earshot_session"
@@ -411,6 +418,16 @@ CAPTURE_PROTOCOL_VERSION = 1
 # monotonic browser clock is accepted: those readings are recorded in their own
 # ClockDomain, never rebased onto the server clock.
 _CAPTURE_CLOCK_KIND = "browser_monotonic"
+
+# A capture batch is a partial observation of a session still in progress: the
+# browser drained telemetry mid-call and never observed the call close. The
+# incident says so through the recovery declaration rather than the journal one
+# it never had -- ``method`` names the reconstruction source, ``reason`` becomes
+# the ``recorder.session_close`` coverage reason, and the session status is not
+# ``completed`` so it cannot pass as a finished call.
+_CAPTURE_RECOVERY_METHOD = "browser_capture_batch"
+_CAPTURE_RECOVERY_REASON = "capture_batch_flushed_before_close"
+_CAPTURE_SESSION_STATUS = "in_progress"
 
 # Bounds on the individual time values, chosen so every derived nanosecond value
 # (monotonic reading, and wall origin + reading) stays inside the contract's
@@ -1406,6 +1423,14 @@ def _build_capture_incident(
     clock -- so the analyzer keeps refusing cross-clock latency until a real
     ``ClockRelation`` is supplied.
 
+    A capture batch is a *partial observation of a session still in progress*:
+    the browser drained telemetry mid-call and never observed the call close. So
+    the incident is closed as provisional, not final -- it declares ``recovery``
+    with ``close_observed=False`` and no ``session.ended_at``, exactly as a
+    crash-recovered incident does, and the validator refuses any claim that it is
+    a finished call. The observed slice is the incident's whole extent; no
+    whole-call duration is fabricated.
+
     Two honest limitations of this projection, stated rather than papered over:
     the client's ``droppedCount`` has no field on the v1alpha1 ``Coverage``
     record (the gap is recorded, the count is returned in the response only), and
@@ -1451,7 +1476,54 @@ def _build_capture_incident(
                 turn.record_coverage(signal, "partial", reason)
         apply_webrtc_stats(turn, snapshots, clock_domain=domain)
         apply_audio_graph(turn, events, clock_domain=domain)
-    return session.close()
+    recovery = RecoveryRecord(
+        method=_CAPTURE_RECOVERY_METHOD,
+        reason=_CAPTURE_RECOVERY_REASON,
+        close_observed=False,
+        # No journal underlies a browser capture batch, so the journal
+        # coordinates are absent rather than invented.
+        journal_id=None,
+        last_sequence=None,
+        last_observation=_capture_last_observation(domain, snapshots, events),
+        recoverer=Producer(
+            name="earshot.capture_api",
+            version=PACKAGE_VERSION,
+            sdk_version=PACKAGE_VERSION,
+        ),
+    )
+    return session.close_partial(recovery, status=_CAPTURE_SESSION_STATUS)
+
+
+def _capture_last_observation(
+    domain: BrowserClockDomain,
+    snapshots: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> TimePoint | None:
+    """The last browser coordinate this batch observed, in the browser clock domain.
+
+    This is *not* the end of the call; it is only how far the observer saw. It is
+    the raw browser reading (its ``monotonic_time_nano``), carrying the browser
+    wall coordinate too only when the browser's wall origin is known -- never a
+    server-clock timestamp. When the batch observed nothing, there is no
+    coordinate to report.
+    """
+
+    timestamps = [snapshot["timestamp_ms"] for snapshot in snapshots]
+    timestamps += [event["timestamp_ms"] for event in events]
+    if not timestamps:
+        return None
+    monotonic_nano = int(max(timestamps) * 1_000_000)
+    source_wall = (
+        None
+        if domain.wall_origin_unix_nano is None
+        else str(int(domain.wall_origin_unix_nano) + monotonic_nano)
+    )
+    return TimePoint(
+        source_time_unix_nano=source_wall,
+        monotonic_time_nano=str(monotonic_nano),
+        clock_domain_id=domain.clock_domain_id,
+        uncertainty_nano=str(int(domain.uncertainty_nano)),
+    )
 
 
 _ProjectionT = TypeVar("_ProjectionT")

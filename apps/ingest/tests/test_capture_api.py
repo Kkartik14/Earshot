@@ -26,7 +26,9 @@ from fastapi.testclient import TestClient
 
 from earshot.analysis import analyze_incident
 from earshot.api import CAPTURE_PROTOCOL_VERSION, ApiConfig, create_app
+from earshot.contract import IncidentBundle
 from earshot.storage import IncidentStore
+from earshot.validation import validate_incident
 
 pytestmark = pytest.mark.integration
 
@@ -128,6 +130,12 @@ def profile(client, bundle_id) -> dict:
     response = client.get(f"/v1/incidents/{bundle_id}")
     assert response.status_code == 200
     return json.loads(response.text)["profile"]
+
+
+def bundle(client, bundle_id) -> IncidentBundle:
+    response = client.get(f"/v1/incidents/{bundle_id}")
+    assert response.status_code == 200
+    return IncidentBundle.model_validate(json.loads(response.text))
 
 
 # -- auth, project scoping, CSRF ----------------------------------------------
@@ -659,6 +667,49 @@ def test_a_different_batch_is_a_different_incident(tmp_path) -> None:
     assert second.json()["bundle_id"] != first.json()["bundle_id"]
 
 
+def test_a_capture_batch_is_a_partial_observation_not_a_finished_call(tmp_path) -> None:
+    # A browser capture batch drains telemetry while the call is still going: the
+    # observer never saw the call close. So the incident must not manufacture a
+    # finished call with an invented end. It stays a provisional observation of an
+    # ongoing session, exactly as a crash-recovered incident does.
+    _, client = app_client(tmp_path)
+    bundle_id = client.post("/v1/capture", json=payload()).json()["bundle_id"]
+    stored = profile(client, bundle_id)
+    manifest = stored["manifest"]
+    session = stored["session"]
+
+    # No claim of a finished call anywhere.
+    assert manifest["finality"] != "final"
+    assert manifest["completeness"] != "complete"
+    assert session["status"] != "completed"
+    # The last snapshot is not the end of the call, so there is no end time.
+    assert session.get("ended_at") is None
+
+    # The declaration that makes the honesty structural: the close was not seen.
+    recovery = manifest["recovery"]
+    assert recovery["close_observed"] is False
+    assert recovery["method"] == "browser_capture_batch"
+    # There is no journal behind a capture batch, so it invents neither a journal
+    # identity/sequence nor a checkpoint-journal health signal it never observed.
+    assert "journal_id" not in recovery
+    assert "last_sequence" not in recovery
+    availability = {note["signal"]: note["availability"] for note in stored["coverage"]}
+    assert availability["recorder.session_close"] == "unavailable"
+    assert "recorder.checkpoint_journal" not in availability
+
+    # The extent reported is only the observed slice: the last coordinate is the
+    # browser's own raw reading (2000 ms into its monotonic domain), never a
+    # server-clock end time.
+    observation = recovery["last_observation"]
+    assert observation["clock_domain_id"] == CLOCK_ID
+    assert observation["monotonic_time_nano"] == str(2000 * 1_000_000)
+
+    # The invariant is enforced by the validator, not just by convention: this
+    # bundle validates only because every completeness claim agrees with
+    # close_observed=False.
+    assert validate_incident(bundle(client, bundle_id)).ok
+
+
 def test_an_empty_batch_is_accepted_and_records_no_fabricated_facts(tmp_path) -> None:
     _, client = app_client(tmp_path)
     response = client.post(
@@ -666,9 +717,16 @@ def test_an_empty_batch_is_accepted_and_records_no_fabricated_facts(tmp_path) ->
         json=payload(snapshots=[], deviceEvents=[], coverage=[]),
     )
     assert response.status_code == 201
-    stored = profile(client, response.json()["bundle_id"])
+    bundle_id = response.json()["bundle_id"]
+    stored = profile(client, bundle_id)
     assert stored["events"] == []
     assert stored["quality_samples"] == []
+    # An empty observation still saw no close and no end, and it observed no
+    # coordinate to report as its last one.
+    assert stored["manifest"]["finality"] != "final"
+    assert stored["session"].get("ended_at") is None
+    assert "last_observation" not in stored["manifest"]["recovery"]
+    assert validate_incident(bundle(client, bundle_id)).ok
 
 
 def test_capture_response_reports_the_accepted_and_refused_counts(tmp_path) -> None:
