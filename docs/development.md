@@ -44,6 +44,9 @@ python scripts/generate_contract.py --check
 python scripts/generate_openapi.py
 python scripts/generate_openapi.py --check
 python scripts/generate_fault_fixtures.py
+python scripts/generate_fault_fixtures.py --check
+python scripts/generate_viewer_explanation_fixtures.py
+python scripts/generate_viewer_explanation_fixtures.py --check
 python scripts/generate_complete_fixture.py
 python scripts/generate_canonical_vector.py
 python scripts/check_semconv.py
@@ -51,10 +54,14 @@ python scripts/check_semconv.py
 
 The contract command compiles `proto/earshot/v1alpha1/incident.proto` and regenerates both
 Pydantic JSON Schemas. The OpenAPI command regenerates the backend contract. Commit
-generated outputs and use both `--check` commands in CI to reject drift.
+generated outputs and use every `--check` command in CI to reject drift.
 
 The fault-fixture generator produces one deterministic, semantically valid incident
 for every plan scenario. The fixture test verifies both validity and required signals.
+The corpus is pinned to the oldest contract and semantic-profile version the reader
+still accepts, not to the version producers emit, so it also serves as read-side
+backward-tolerance coverage. Regenerating it on a clean tree is therefore a no-op;
+`--check` enforces that, in CI and in `pytest`.
 
 ## Run tests
 
@@ -67,6 +74,7 @@ pnpm typecheck
 pnpm format:check
 python scripts/generate_contract.py --check
 python scripts/generate_openapi.py --check
+python scripts/generate_fault_fixtures.py --check
 python scripts/check_semconv.py
 pnpm --filter @earshot/viewer bundle
 python -m build --wheel --sdist --outdir /tmp/earshot-dist

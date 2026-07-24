@@ -193,6 +193,7 @@ pytest -m e2e
 pytest --cov=earshot --cov-report=term-missing
 ruff check .
 python scripts/generate_fault_fixtures.py
+python scripts/generate_fault_fixtures.py --check
 python scripts/generate_contract.py --check
 python scripts/generate_openapi.py --check
 python scripts/check_semconv.py

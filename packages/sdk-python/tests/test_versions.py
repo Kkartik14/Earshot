@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
 import earshot
-from earshot.analysis import ANALYZER_VERSION
+from earshot.analysis import ANALYZER_NAME, ANALYZER_VERSION
 from earshot.api import create_app
 from earshot.connectors.elevenlabs import ADAPTER_VERSION as ELEVENLABS_VERSION
 from earshot.connectors.retell import ADAPTER_VERSION as RETELL_VERSION
@@ -41,6 +42,27 @@ def test_pipeline_evidence_semantics_have_a_new_adapter_version() -> None:
 
 def test_analysis_truth_changes_have_a_new_cache_identity() -> None:
     assert ANALYZER_VERSION == "0.6.0"
+
+
+def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> None:
+    """The analyzer identity is a storage cache key, not a decorative version.
+
+    A doc naming an older one tells a reader their cached projection is current
+    when the code would recompute it. Research notes and private planning docs
+    are excluded on purpose: they are dated records of what was true then.
+    """
+
+    root = Path(__file__).resolve().parents[3] / "docs"
+    published = [
+        path
+        for path in root.rglob("*.md")
+        if not {"private", "research"} & set(path.relative_to(root).parts)
+    ]
+    assert published
+    identity = re.compile(rf"{re.escape(ANALYZER_NAME)}@([0-9]+\.[0-9]+\.[0-9]+)")
+    named = {version for path in published for version in identity.findall(path.read_text())}
+
+    assert named == {ANALYZER_VERSION}
 
 
 def test_a_capture_batch_must_be_coherent_in_api_version_0_9() -> None:

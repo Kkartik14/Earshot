@@ -1,7 +1,21 @@
-"""Generate deterministic, valid incident artifacts for the M1 fault corpus."""
+"""Generate deterministic, valid incident artifacts for the M1 fault corpus.
+
+The corpus is pinned to the *oldest* contract and semantic-profile version this
+build still reads, not to the version producers currently emit. That pin is the
+point: these artifacts are the read-side proof that the supported floor is still
+interpretable, which is what makes a version bump a migration rather than a
+break. Relabelling them on every bump would delete exactly the coverage they
+exist to provide, and would make the documented regeneration step produce a diff
+on a clean tree.
+
+So the invariant this file owes the contributor in `CONTRIBUTING.md` is: running
+it on a clean tree writes byte-identical files. `--check` is that invariant made
+executable.
+"""
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -32,11 +46,33 @@ from earshot.contract import (  # noqa: E402
     TimePoint,
     TimeRange,
 )
+from earshot.versions import (  # noqa: E402
+    SUPPORTED_CONTRACT_VERSIONS,
+    SUPPORTED_SEMANTIC_PROFILE_VERSIONS,
+)
 
 OUTPUT = ROOT / "fixtures" / "faults"
 WALL_ORIGIN = 1_800_000_000_000_000_000
 CLOCK_DOMAIN = "fault-fixture-clock"
 TRACE_ID = "a" * 32
+
+# The corpus deliberately claims the supported floor rather than the current
+# producer version; see the module docstring. Dropping 0.1.0 from the supported
+# set must not silently relabel seventeen committed artifacts, so this fails
+# closed instead: someone has to decide what the corpus covers next, and add the
+# 0.1.0 read-tolerance fixtures elsewhere if it still needs them.
+CORPUS_CONTRACT_VERSION = "0.1.0"
+CORPUS_SEMANTIC_PROFILE_VERSION = "0.1.0"
+if (
+    CORPUS_CONTRACT_VERSION not in SUPPORTED_CONTRACT_VERSIONS
+    or CORPUS_SEMANTIC_PROFILE_VERSION not in SUPPORTED_SEMANTIC_PROFILE_VERSIONS
+):
+    raise SystemExit(
+        "the fault corpus pins contract/semantic-profile "
+        f"{CORPUS_CONTRACT_VERSION}, which this build no longer reads; choose the "
+        "new floor and regenerate, or move the corpus and keep dedicated "
+        "backward-tolerance fixtures for the version being dropped"
+    )
 
 
 def point(milliseconds: int) -> TimePoint:
@@ -152,6 +188,8 @@ def profile(
             manifest=BundleManifest(
                 bundle_id=f"fault-{scenario_id}",
                 session_id="fixture-session",
+                schema_version=CORPUS_CONTRACT_VERSION,
+                semantic_profile_version=CORPUS_SEMANTIC_PROFILE_VERSION,
                 created_at_unix_nano=str(WALL_ORIGIN),
                 producer=Producer(name="earshot-fault-corpus", version="1.0.0"),
                 adapters=(
@@ -917,11 +955,31 @@ def scenarios() -> dict[str, IncidentBundle]:
     }
 
 
+def rendered() -> dict[Path, bytes]:
+    return {
+        OUTPUT / f"{scenario_id}.incident.json": encode_incident_json(bundle, indent=2) + b"\n"
+        for scenario_id, bundle in scenarios().items()
+    }
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true", help="fail if generated files drift")
+    arguments = parser.parse_args()
+    expected = rendered()
+    if arguments.check:
+        stale = [
+            str(path.relative_to(ROOT))
+            for path, payload in expected.items()
+            if not path.is_file() or path.read_bytes() != payload
+        ]
+        if stale:
+            raise SystemExit("generated fault fixture drift: " + ", ".join(sorted(stale)))
+        print("generated fault fixtures are current")
+        return
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    for scenario_id, bundle in scenarios().items():
-        path = OUTPUT / f"{scenario_id}.incident.json"
-        path.write_bytes(encode_incident_json(bundle, indent=2) + b"\n")
+    for path, payload in expected.items():
+        path.write_bytes(payload)
         print(path.relative_to(ROOT))
 
 

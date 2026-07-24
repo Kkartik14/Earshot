@@ -16,6 +16,27 @@ pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def test_regenerating_the_fault_corpus_on_a_clean_tree_produces_no_diff() -> None:
+    """`CONTRIBUTING.md` tells contributors to run this; it must be a no-op.
+
+    The corpus is pinned to the oldest contract version the reader still
+    accepts, so it doubles as read-side backward tolerance. A generator that
+    relabelled it to the current producer version would delete that coverage and
+    hand every contributor an unexplained seventeen-file diff.
+    """
+
+    completed = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "generate_fault_fixtures.py"), "--check"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_viewer_fixture_generator_imports_sdk_from_its_own_checkout(tmp_path: Path) -> None:
     fake_package = tmp_path / "earshot"
     fake_package.mkdir()
