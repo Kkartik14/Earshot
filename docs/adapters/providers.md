@@ -70,7 +70,13 @@ detection, never acceptance. A single detected Flux language populates the fleet
 dimension; multilingual turns retain a provider language count and project as
 `unknown` rather than guessing one language. `response.output_audio.done` records
 an output-part boundary but is not response-terminal; only `response.done` closes
-the fused Realtime operation.
+the fused Realtime operation. Because `response.done` is the only thing that
+retires a response and a provider is under no obligation to send one, the adapter
+tracks at most 512 responses per session and evicts the oldest beyond that. An
+evicted response's later events are refused rather than answered from state that
+is gone, and the session records
+`coverage[openai.realtime.response_lifecycle] = partial /
+tracked_response_cap_exceeded` so the limitation is declared instead of silent.
 
 Sarvam language is projected from STT operations into `TurnFact.language` and can
 be queried with `GET /v1/metrics/turns?...&group_by=language`. Missing or

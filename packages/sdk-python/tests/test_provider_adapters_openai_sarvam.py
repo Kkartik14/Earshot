@@ -8,6 +8,7 @@ import pytest
 
 import earshot
 from earshot.adapters.providers import OpenAIRealtimeAdapter, SarvamAdapter
+from earshot.adapters.providers.openai_realtime import MAX_TRACKED_RESPONSES
 from earshot.analysis import analyze_incident
 from earshot.codec import analysis_input_sha256, encode_incident_protobuf
 from earshot.storage import IncidentStore
@@ -490,11 +491,104 @@ def test_openai_realtime_close_isolates_response_state_across_sessions() -> None
 
         # close() clears every per-session response/correlation map, so a long-lived
         # adapter reused across sessions cannot accumulate them without bound.
-        assert adapter._response_started_ms == {}
-        assert adapter._response_speech_stopped_ms == {}
-        assert adapter._active_responses == set()
-        assert adapter._first_audio_responses == set()
-        assert adapter._response_interruption_gestures == {}
+        assert adapter._responses == {}
         assert adapter._accepted_interruption_gestures == set()
         assert adapter._next_interruption_gesture == 0
         assert adapter._speech_stopped_receipt_ms is None
+
+
+def _abandon_responses(adapter: OpenAIRealtimeAdapter, turn, count: int, *, first: int = 0) -> None:
+    """Create ``count`` responses whose ``response.done`` never arrives."""
+
+    for index in range(first, first + count):
+        adapter.adapt(
+            {"type": "response.created", "response": {"id": f"response-{index}"}},
+            received_at_ms=1_000 + index,
+        ).apply(turn)
+
+
+def test_openai_realtime_response_state_is_bounded_within_one_long_session() -> None:
+    """``response.done`` is the only thing that retires a response, and it may never come."""
+
+    adapter = OpenAIRealtimeAdapter(model="gpt-realtime", identity_key=IDENTITY_KEY)
+    session = earshot.pipeline(session_id="unbounded", started_at_unix_nano=START)
+    with session.turn() as turn:
+        _abandon_responses(adapter, turn, MAX_TRACKED_RESPONSES * 3)
+    bundle = session.close()
+
+    assert len(adapter._responses) == MAX_TRACKED_RESPONSES
+    # Oldest-first: the responses still tracked are the most recent ones.
+    assert f"response-{MAX_TRACKED_RESPONSES * 3 - 1}" in adapter._responses
+    assert "response-0" not in adapter._responses
+    notes = {note.signal: (note.availability, note.reason) for note in bundle.profile.coverage}
+    assert notes["openai.realtime.response_lifecycle"] == (
+        "partial",
+        "tracked_response_cap_exceeded",
+    )
+
+
+def test_openai_realtime_records_no_cap_limitation_before_it_evicts_anything() -> None:
+    adapter = OpenAIRealtimeAdapter(model="gpt-realtime", identity_key=IDENTITY_KEY)
+    session = earshot.pipeline(session_id="under-cap", started_at_unix_nano=START)
+    with session.turn() as turn:
+        _abandon_responses(adapter, turn, MAX_TRACKED_RESPONSES)
+    bundle = session.close()
+
+    assert len(adapter._responses) == MAX_TRACKED_RESPONSES
+    assert "openai.realtime.response_lifecycle" not in {
+        note.signal for note in bundle.profile.coverage
+    }
+
+
+def test_openai_realtime_refuses_events_for_an_evicted_response_rather_than_guessing() -> None:
+    """A dropped start time must not become an invented latency or stage duration."""
+
+    adapter = OpenAIRealtimeAdapter(model="gpt-realtime", identity_key=IDENTITY_KEY)
+    session = earshot.pipeline(session_id="evicted", started_at_unix_nano=START)
+    with session.turn() as turn:
+        _abandon_responses(adapter, turn, MAX_TRACKED_RESPONSES + 1)
+        assert "response-0" not in adapter._responses
+
+        for payload in (
+            {
+                "type": "response.output_audio.delta",
+                "response_id": "response-0",
+                "delta": "private",
+            },
+            {
+                "type": "response.done",
+                "response": {"id": "response-0", "status": "completed"},
+            },
+        ):
+            with pytest.raises(ValueError, match="unknown response"):
+                adapter.adapt(payload, received_at_ms=9_000).apply(turn)
+    bundle = session.close()
+
+    names = [event.event_name for event in bundle.profile.events]
+    assert "earshot.audio.first_packet_received" not in names
+    assert [operation.operation_name for operation in bundle.profile.operations] == []
+
+
+def test_openai_realtime_forgets_an_accepted_gesture_when_its_responses_are_evicted() -> None:
+    adapter = OpenAIRealtimeAdapter(model="gpt-realtime", identity_key=IDENTITY_KEY)
+    session = earshot.pipeline(session_id="gesture-evicted", started_at_unix_nano=START)
+    with session.turn() as turn:
+        _abandon_responses(adapter, turn, 2)
+        adapter.adapt(
+            {"type": "input_audio_buffer.speech_started", "audio_start_ms": 80},
+            received_at_ms=2_000,
+        ).apply(turn)
+        assert adapter._accepted_interruption_gestures == set()
+
+        adapter.adapt(
+            {"type": "response.done", "response": {"id": "response-0", "status": "cancelled"}},
+            received_at_ms=2_100,
+        ).apply(turn)
+        assert adapter._accepted_interruption_gestures == {0}
+
+        # Evicting the only remaining holder of the gesture retires it too, so
+        # the accepted set stays bounded by the response cap.
+        _abandon_responses(adapter, turn, MAX_TRACKED_RESPONSES + 1, first=2)
+    session.close()
+
+    assert adapter._accepted_interruption_gestures == set()
