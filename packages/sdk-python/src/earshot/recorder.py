@@ -316,9 +316,10 @@ def build_incident_profile(
                 count=count,
             )
         )
-    if recovery is not None:
+    if recovery is not None and recovery.journal_id is not None:
         # Absence is coverage: evidence lost at the end of a torn journal, or
-        # past its cap, is ledgered rather than silently missing.
+        # past its cap, is ledgered rather than silently missing. Only a journal
+        # replay can suffer these; a journal-less reconstruction never does.
         if recovery.torn_tail_bytes > 0:
             omissions.append(
                 ContractOmission(
@@ -403,28 +404,36 @@ def build_incident_profile(
             ),
         )
     if recovery is not None:
+        # Whether the close was observed is universal to every reconstruction, so
+        # this signal is always emitted; it is the coverage the validator keys on.
         profile_coverage += (
             Coverage(
                 signal="recorder.session_close",
                 availability="available" if recovery.close_observed else "unavailable",
                 reason=None if recovery.close_observed else recovery.reason,
             ),
-            Coverage(
-                signal="recorder.checkpoint_journal",
-                availability=(
-                    "partial"
-                    if recovery.torn_tail_bytes > 0 or not recovery.journal_complete
-                    else "available"
-                ),
-                reason=(
-                    "torn_tail"
-                    if recovery.torn_tail_bytes > 0
-                    else "journal_full"
-                    if not recovery.journal_complete
-                    else None
-                ),
-            ),
         )
+        # The journal's own health is only meaningful when a journal existed. A
+        # journal-less reconstruction (e.g. a browser capture batch) omits it
+        # rather than claiming an "available" journal it never had.
+        if recovery.journal_id is not None:
+            profile_coverage += (
+                Coverage(
+                    signal="recorder.checkpoint_journal",
+                    availability=(
+                        "partial"
+                        if recovery.torn_tail_bytes > 0 or not recovery.journal_complete
+                        else "available"
+                    ),
+                    reason=(
+                        "torn_tail"
+                        if recovery.torn_tail_bytes > 0
+                        else "journal_full"
+                        if not recovery.journal_complete
+                        else None
+                    ),
+                ),
+            )
         if state.unfinished_operations:
             profile_coverage += (
                 Coverage(
@@ -1854,6 +1863,43 @@ class IncidentRecorder:
             self._journal.release(delivered=self.export_accepted is not False)
             self._notify_close_once()
         return export_bundle.model_copy(deep=True)
+
+    def close_partial(self, recovery: RecoveryRecord, *, status: str) -> IncidentBundle:
+        """Close a session whose end the observer never saw, as a provisional incident.
+
+        A partial observation — a browser capture batch flushed while the call is
+        still ongoing, for instance — is not a finished call. Its close was never
+        observed, so no finalize frame is written (nothing observed a finalize),
+        ``session.ended_at`` stays absent (the last snapshot is not the end of the
+        call), and the artifact carries ``recovery`` with ``close_observed=False``.
+        ``build_incident_profile`` then marks it provisional/incomplete and the
+        validator refuses any manifest, session, or coverage that would let it pass
+        as a clean, complete close.
+        """
+
+        if recovery.close_observed:
+            raise ValueError("close_partial requires a recovery whose close was not observed")
+        with self._lock:
+            if self._close_error is not None:
+                raise self._close_error
+            if self._bundle is not None:
+                return self._bundle.model_copy(deep=True)
+            safe_status = sanitize_semantic_label(status) or "unknown"
+            if safe_status == "completed":
+                raise ValueError("a partial observation cannot present as a completed session")
+            # No ``ended_at``: the real end was genuinely not observed. No journal
+            # finalize either — a finalize frame means an observed close, and this
+            # close was not observed; the journal stays as the partial evidence.
+            snapshot = self._snapshot_locked(safe_status, {}, None)
+            profile = build_incident_profile(snapshot, recovery=recovery)
+            bundle = IncidentBundle(profile=profile, raw_otlp_chunks=tuple(self._raw_otlp_chunks))
+            from .validation import assert_valid_incident  # imported lazily
+
+            assert_valid_incident(bundle)
+            self._status = safe_status
+            self._closed = True
+            self._bundle = bundle.model_copy(deep=True)
+        return self._bundle.model_copy(deep=True)
 
     def checkpoint_status(self) -> CheckpointStatus:
         """Report the crash journal's state, including any degradation."""

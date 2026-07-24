@@ -41,6 +41,7 @@ from .contract import (
     IncidentBundle,
     QualityMeasurement,
     QualitySample,
+    RecoveryRecord,
     TimePoint,
     TimeRange,
 )
@@ -822,6 +823,19 @@ class PipelineSession:
         if not self._closed:
             self._closed = True
         return self.recorder.close(status=status)
+
+    def close_partial(self, recovery: RecoveryRecord, *, status: str) -> IncidentBundle:
+        """Finalize a session whose end was never observed as a provisional incident.
+
+        Use this instead of :meth:`close` when the recorded evidence is a partial
+        observation of a session still in progress (e.g. a browser capture batch):
+        the incident declares ``recovery`` with ``close_observed=False``, carries
+        no session end, and cannot pass as a finished call.
+        """
+
+        if not self._closed:
+            self._closed = True
+        return self.recorder.close_partial(recovery, status=status)
 
 
 def pipeline(

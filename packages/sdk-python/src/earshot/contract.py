@@ -214,16 +214,24 @@ class TimePoint(ContractModel):
 class RecoveryRecord(ContractModel):
     """How this artifact was reconstructed, and what that costs its completeness.
 
-    A recovered incident has to be structurally unable to pass as a cleanly
-    closed one, so the declaration is a typed manifest member rather than an
-    attribute. Attribute bags are a weak channel: their keys need a privacy
-    allowlist, and validation cannot cross-check an open bag against
-    ``finality``, ``completeness``, ``session.status``, and coverage — which is
-    exactly what makes the declaration enforceable here.
+    An artifact that was not produced by a live ``close()`` has to be
+    structurally unable to pass as a cleanly closed one, so the declaration is a
+    typed manifest member rather than an attribute. Attribute bags are a weak
+    channel: their keys need a privacy allowlist, and validation cannot
+    cross-check an open bag against ``finality``, ``completeness``,
+    ``session.status``, and coverage — which is exactly what makes the
+    declaration enforceable here.
 
-    There is deliberately no "recovered at" timestamp. Two recoveries of the
-    same journal must produce the same bytes under the same ``bundle_id``, or
-    content-addressed ingest would reject the second as a conflict. When
+    The commonest source is a checkpoint-journal replay, but not the only one: a
+    browser capture batch is a partial observation of a session still in
+    progress, so it declares recovery with ``close_observed=False`` too. The
+    ``method`` names the reconstruction source (``checkpoint_journal``,
+    ``browser_capture_batch``); the journal coordinates below are present only
+    when there actually was a journal.
+
+    There is deliberately no "recovered at" timestamp. Two reconstructions of
+    the same evidence must produce the same bytes under the same ``bundle_id``,
+    or content-addressed ingest would reject the second as a conflict. When
     recovery ran is an operational fact for the CLI and the diagnostic channel,
     not evidence.
     """
@@ -231,9 +239,12 @@ class RecoveryRecord(ContractModel):
     method: SemanticCode
     reason: SemanticCode
     close_observed: StrictBool
-    journal_id: OpaqueId
-    last_sequence: StrictInt = Field(ge=0)
-    # The last coordinate the journal durably observed. This is *not* the end of
+    # Journal coordinates, present only for a journal replay. A reconstruction
+    # with no journal — a browser capture batch, for instance — omits them
+    # rather than inventing a journal identity and sequence it never had.
+    journal_id: OpaqueId | None = None
+    last_sequence: StrictInt | None = Field(default=None, ge=0)
+    # The last coordinate the evidence durably observed. This is *not* the end of
     # the session: the session may have run on for a long time after it.
     last_observation: TimePoint | None = None
     torn_tail_bytes: StrictInt = Field(default=0, ge=0)
