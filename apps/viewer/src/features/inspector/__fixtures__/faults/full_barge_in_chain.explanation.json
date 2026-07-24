@@ -493,7 +493,137 @@
             ]
           }
         }
-      }
+      },
+      "interruption_chains": [
+        {
+          "turn_id": "turn-1",
+          "classification": "accepted",
+          "stages": [
+            {
+              "stage": "overlap_observed",
+              "observed": true,
+              "at_nano": "900000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-overlap",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "intent",
+              "observed": true,
+              "at_nano": "880000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "quality-interruption-intent",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "classified",
+              "observed": true,
+              "at_nano": "940000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-accepted",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "cancellation_requested",
+              "observed": true,
+              "at_nano": "950000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-model-cancelled",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "generation_stopped",
+              "observed": true,
+              "at_nano": "955000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-response-cancelled",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "queued_audio_discarded",
+              "observed": true,
+              "at_nano": "960000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-audio-discarded",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "transport_stopped",
+              "observed": true,
+              "at_nano": "965000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-transport-stopped",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "buffers_purged",
+              "observed": true,
+              "at_nano": "970000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-buffers-purged",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "render_stopped",
+              "observed": true,
+              "at_nano": "1000000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-render-stopped",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "resumed",
+              "observed": true,
+              "at_nano": "1010000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "event-resumed",
+              "coverage_reason": null,
+              "outcome": null
+            },
+            {
+              "stage": "tool_outcome",
+              "observed": true,
+              "at_nano": "700000000",
+              "clock_domain_id": "fault-fixture-clock",
+              "time_basis": "monotonic",
+              "evidence_id": "op-tool",
+              "coverage_reason": null,
+              "outcome": "cancelled"
+            }
+          ],
+          "effectiveness": {
+            "availability": "available",
+            "basis": "interruption_barge_in",
+            "confidence": "measured",
+            "value": 100.0,
+            "unit": "ms",
+            "limitation": null,
+            "evidence_ids": [
+              "event-overlap",
+              "event-render-stopped"
+            ]
+          }
+        }
+      ]
     }
   ],
   "coverage": [],

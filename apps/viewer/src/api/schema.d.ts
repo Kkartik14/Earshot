@@ -160,6 +160,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/incidents/{bundle_id}/comparison": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Comparison Endpoint */
+        get: operations["comparison_endpoint_v1_incidents__bundle_id__comparison_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/incidents/{bundle_id}/contradictions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Contradictions Endpoint */
+        get: operations["contradictions_endpoint_v1_incidents__bundle_id__contradictions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/incidents/{bundle_id}/explanation": {
         parameters: {
             query?: never;
@@ -169,6 +203,23 @@ export interface paths {
         };
         /** Explanation Endpoint */
         get: operations["explanation_endpoint_v1_incidents__bundle_id__explanation_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/incidents/{bundle_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Endpoint */
+        get: operations["export_endpoint_v1_incidents__bundle_id__export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -573,6 +624,19 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ComparedDiagnosisResponse */
+        ComparedDiagnosisResponse: {
+            /** Boundary */
+            boundary: string;
+            /** Code */
+            code: string;
+            /** Diagnosis Id */
+            diagnosis_id: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Turn Ids */
+            turn_ids: string[];
+        };
         /** ConnectorDeliveryResponse */
         ConnectorDeliveryResponse: {
             /** Bundle Id */
@@ -624,6 +688,25 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * ContradictionResponse
+         * @description One evidence-linked contradiction, exactly as ``query.detect_contradictions``
+         *     reports it. Every field names real evidence; no source payload is surfaced.
+         */
+        ContradictionResponse: {
+            /** Boundary */
+            boundary?: string | null;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Kind */
+            kind: string;
+            /** Subject */
+            subject?: string | null;
+            /** Summary */
+            summary: string;
+            /** Turn Id */
+            turn_id?: string | null;
+        };
         /** Coverage */
         Coverage: {
             /** Attributes */
@@ -643,6 +726,15 @@ export interface components {
             signal: string;
         } & {
             [key: string]: unknown;
+        };
+        /** CoverageGapResponse */
+        CoverageGapResponse: {
+            /** Availability */
+            availability: string;
+            /** Reason */
+            reason?: string | null;
+            /** Signal */
+            signal: string;
         };
         /** DerivedAnalysis */
         DerivedAnalysis: {
@@ -1026,6 +1118,11 @@ export interface components {
         ExplainedTurn: {
             /** Events */
             events: components["schemas"]["ExplainedEvent"][];
+            /**
+             * Interruption Chains
+             * @default []
+             */
+            interruption_chains: components["schemas"]["InterruptionChainProjection"][];
             /** Measurements */
             measurements: components["schemas"]["ExplainedMeasurement"][];
             metrics: components["schemas"]["TurnMetrics"];
@@ -1069,6 +1166,60 @@ export interface components {
              * @default []
              */
             raw_otlp_chunks: components["schemas"]["JsonRawOtlpChunk"][];
+        };
+        /**
+         * IncidentComparisonResponse
+         * @description A structured diff of one incident against a known-good incident.
+         *
+         *     Both sides are named by bundle id and pinned by the digest their analysis was
+         *     derived from, so the reader can tell exactly what was compared. A latency delta
+         *     appears only where both sides are available in the same unit; every other case
+         *     is an availability change, never an invented number.
+         */
+        IncidentComparisonResponse: {
+            /** Analyzer Version */
+            analyzer_version: string;
+            /** Bundle Id */
+            bundle_id: string;
+            /** Contradictions New */
+            contradictions_new: components["schemas"]["ContradictionResponse"][];
+            /** Coverage Gaps New */
+            coverage_gaps_new: components["schemas"]["CoverageGapResponse"][];
+            /** Coverage Gaps Removed */
+            coverage_gaps_removed: components["schemas"]["CoverageGapResponse"][];
+            /** Diagnoses Added */
+            diagnoses_added: components["schemas"]["ComparedDiagnosisResponse"][];
+            /** Diagnoses Removed */
+            diagnoses_removed: components["schemas"]["ComparedDiagnosisResponse"][];
+            /** Input Digest */
+            input_digest: string;
+            /** Known Good Bundle Id */
+            known_good_bundle_id: string;
+            /** Known Good Input Digest */
+            known_good_input_digest: string;
+            /** Turn Metric Availability Changes */
+            turn_metric_availability_changes: components["schemas"]["TurnMetricAvailabilityChangeResponse"][];
+            /** Turn Metric Deltas */
+            turn_metric_deltas: components["schemas"]["TurnMetricDeltaResponse"][];
+            unmatched_turns: components["schemas"]["UnmatchedTurnsResponse"];
+        };
+        /**
+         * IncidentContradictionsResponse
+         * @description Contradictions found in one incident, bound to the analysis that found them.
+         *
+         *     An empty ``contradictions`` list means detection ran against ``input_digest``
+         *     and found none. It never stands in for "analysis unavailable": that case is a
+         *     ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE`` instead of an empty answer.
+         */
+        IncidentContradictionsResponse: {
+            /** Analyzer Version */
+            analyzer_version: string;
+            /** Bundle Id */
+            bundle_id: string;
+            /** Contradictions */
+            contradictions: components["schemas"]["ContradictionResponse"][];
+            /** Input Digest */
+            input_digest: string;
         };
         /** IncidentExplanation */
         IncidentExplanation: {
@@ -1116,6 +1267,28 @@ export interface components {
              * @default []
              */
             unassigned_operations: components["schemas"]["ExplainedOperation"][];
+        };
+        /**
+         * IncidentExportResponse
+         * @description One incident projected through a named exporter in the exporter registry.
+         *
+         *     ``format`` is the registered exporter name and ``destination`` is the export
+         *     destination a capture policy must permit for that projection to run, so the
+         *     document is always accompanied by the governance decision that released it.
+         */
+        IncidentExportResponse: {
+            /** Bundle Id */
+            bundle_id: string;
+            /** Destination */
+            destination: string;
+            /** Digest */
+            digest: string;
+            /** Document */
+            document: {
+                [key: string]: unknown;
+            };
+            /** Format */
+            format: string;
         };
         /** IncidentPageResponse */
         IncidentPageResponse: {
@@ -1866,6 +2039,37 @@ export interface components {
              */
             untimed_operation_count: number;
         };
+        /**
+         * TurnMetricAvailabilityChangeResponse
+         * @description A metric whose comparability changed, reported instead of a fabricated delta.
+         */
+        TurnMetricAvailabilityChangeResponse: {
+            /** Comparable */
+            comparable: boolean;
+            /** Incident Availability */
+            incident_availability: string;
+            /** Known Good Availability */
+            known_good_availability: string;
+            /** Metric */
+            metric: string;
+            /** Turn Id */
+            turn_id: string;
+        };
+        /** TurnMetricDeltaResponse */
+        TurnMetricDeltaResponse: {
+            /** Delta */
+            delta: number;
+            /** Incident Value */
+            incident_value: number;
+            /** Known Good Value */
+            known_good_value: number;
+            /** Metric */
+            metric: string;
+            /** Turn Id */
+            turn_id: string;
+            /** Unit */
+            unit: string;
+        };
         /** TurnMetricGroupResponse */
         TurnMetricGroupResponse: {
             /** Availability */
@@ -1941,6 +2145,13 @@ export interface components {
             operation_ids: string[];
             /** Turn Id */
             turn_id: string;
+        };
+        /** UnmatchedTurnsResponse */
+        UnmatchedTurnsResponse: {
+            /** Only In Incident */
+            only_in_incident: string[];
+            /** Only In Known Good */
+            only_in_known_good: string[];
         };
         /** ValidateResponse */
         ValidateResponse: {
@@ -3333,6 +3544,268 @@ export interface operations {
             };
         };
     };
+    comparison_endpoint_v1_incidents__bundle_id__comparison_get: {
+        parameters: {
+            query: {
+                known_good_bundle_id: string;
+            };
+            header?: never;
+            path: {
+                bundle_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentComparisonResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    contradictions_endpoint_v1_incidents__bundle_id__contradictions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bundle_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentContradictionsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
     explanation_endpoint_v1_incidents__bundle_id__explanation_get: {
         parameters: {
             query?: never;
@@ -3351,6 +3824,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IncidentExplanation"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    export_endpoint_v1_incidents__bundle_id__export_get: {
+        parameters: {
+            query?: {
+                /** @description Registered exporter name. The enumerated choices are the exporter registry's names when this document was generated; a process that registers its own exporter can select it here by name. */
+                format?: "openinference" | "otlp";
+            };
+            header?: never;
+            path: {
+                bundle_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentExportResponse"];
                 };
             };
             /** @description Bad Request */

@@ -139,11 +139,59 @@ The explanation response is a closed API contract. API `0.2.0` adds each event's
 `operation_id`, `trace_id`, and `span_id` when observed, plus an exact per-turn
 `measurements` lane distinct from derived metrics. Operation-owned, turn-owned, and
 ownerless measurement facts are mutually exclusive; repeated observations retain their
-source values and provenance. Validation checks exposed session, operation, event,
+source values and provenance. API `0.3.0` adds a per-turn `interruption_chains` lane,
+carried verbatim from the analyzer: one ordered causal chain per observed interruption
+episode, each canonical stage marked observed (with its exact coordinate and cited
+evidence) or not observed (with a coverage reason), plus a barge-in `effectiveness`
+metric that is available only when both endpoints are observed and comparable. A turn
+that observed no interruption carries an empty lane, which is an absence of evidence and
+not a claim that none occurred. Validation checks exposed session, operation, event,
 measurement, coverage, omission, diagnosis, ownership, and evidence fields independently
 of the projection implementation. API and analyzer versions evolve independently. Pre-v1
 clients pinned to API `0.1.x` must regenerate their response types before consuming
-`0.2.x` explanations.
+`0.2.x` explanations, and `0.2.x` clients must regenerate before consuming `0.3.x`.
+
+### `GET /v1/incidents/{bundle_id}/contradictions`
+
+Returns the evidence-linked contradictions detected in one incident's graph: reversed
+same-domain operation intervals, duplicate and out-of-order transport deliveries, render
+evidence that coverage says was never observed, and two observers disagreeing about one
+turn quantity beyond their combined uncertainty. Each entry cites the real evidence IDs
+it rests on and carries the boundary and turn it belongs to; no source payload is
+surfaced. Detection is deterministic and source-order invariant.
+
+The response names the `analyzer_version` and `input_digest` the detection ran against,
+so an empty `contradictions` list means "examined, none found". When no analysis exists
+for the incident the endpoint answers `404 EARSHOT_ANALYSIS_NOT_AVAILABLE` instead of an
+empty list that would read as a clean bill of health. A stored analysis not derived from
+this incident's evidence is refused with `409 EARSHOT_ANALYSIS_BINDING_MISMATCH`.
+
+### `GET /v1/incidents/{bundle_id}/comparison`
+
+Diffs an incident against a known-good incident named by the required
+`known_good_bundle_id` query parameter, both resolved within the authenticated Project.
+Reports diagnoses added and removed (by code, boundary, and turn), per-turn latency
+deltas, availability changes, coverage gaps gained and lost, unmatched turns, and the
+contradictions the incident has that the baseline does not.
+
+A latency delta appears only where both sides are `available` in the same unit; every
+other case is reported as an availability change rather than a fabricated number. Both
+sides are pinned by the digest their analysis was derived from. The baseline keeps its
+own error codes — `EARSHOT_KNOWN_GOOD_NOT_FOUND`, `EARSHOT_KNOWN_GOOD_PURGED`, and
+`EARSHOT_KNOWN_GOOD_ANALYSIS_NOT_AVAILABLE` — so a caller always knows which of the two
+incidents is unavailable.
+
+### `GET /v1/incidents/{bundle_id}/export`
+
+Projects one incident through a named exporter in the process-wide exporter registry
+(`format`, default `otlp`; the generated OpenAPI enumerates the registry's names, and a
+host process that registered its own exporter can select it here). Two policy gates run
+before any document is produced: the `local_api` destination that governs reading the
+incident out through this API at all, then the exporter's own declared destination,
+enforced by the registry rather than by the route. A capture policy that forbids either
+yields `403 EARSHOT_EXPORT_DENIED`; a name no exporter is registered under yields
+`400 EARSHOT_UNKNOWN_EXPORT_FORMAT`. The response carries the projected `document`
+alongside the `format`, the governed `destination`, and the artifact `digest`.
 
 ### `DELETE /v1/incidents/{bundle_id}`
 

@@ -934,6 +934,46 @@
         "title": "ClockRelation",
         "type": "object"
       },
+      "ComparedDiagnosisResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "boundary": {
+            "title": "Boundary",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "diagnosis_id": {
+            "title": "Diagnosis Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "turn_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Turn Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "boundary",
+          "turn_ids",
+          "diagnosis_id",
+          "evidence_ids"
+        ],
+        "title": "ComparedDiagnosisResponse",
+        "type": "object"
+      },
       "ConnectorDeliveryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1088,6 +1128,67 @@
         "title": "ConsentRecord",
         "type": "object"
       },
+      "ContradictionResponse": {
+        "additionalProperties": false,
+        "description": "One evidence-linked contradiction, exactly as ``query.detect_contradictions``\nreports it. Every field names real evidence; no source payload is surfaced.",
+        "properties": {
+          "boundary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Boundary"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "kind",
+          "summary",
+          "evidence_ids"
+        ],
+        "title": "ContradictionResponse",
+        "type": "object"
+      },
       "Coverage": {
         "additionalProperties": true,
         "properties": {
@@ -1136,6 +1237,36 @@
           "availability"
         ],
         "title": "Coverage",
+        "type": "object"
+      },
+      "CoverageGapResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "title": "Availability",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "signal": {
+            "title": "Signal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal",
+          "availability"
+        ],
+        "title": "CoverageGapResponse",
         "type": "object"
       },
       "DerivedAnalysis": {
@@ -2302,6 +2433,14 @@
             "title": "Events",
             "type": "array"
           },
+          "interruption_chains": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/InterruptionChainProjection"
+            },
+            "title": "Interruption Chains",
+            "type": "array"
+          },
           "measurements": {
             "items": {
               "$ref": "#/components/schemas/ExplainedMeasurement"
@@ -2417,6 +2556,134 @@
         "title": "IncidentBundleJson",
         "type": "object"
       },
+      "IncidentComparisonResponse": {
+        "additionalProperties": false,
+        "description": "A structured diff of one incident against a known-good incident.\n\nBoth sides are named by bundle id and pinned by the digest their analysis was\nderived from, so the reader can tell exactly what was compared. A latency delta\nappears only where both sides are available in the same unit; every other case\nis an availability change, never an invented number.",
+        "properties": {
+          "analyzer_version": {
+            "title": "Analyzer Version",
+            "type": "string"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "contradictions_new": {
+            "items": {
+              "$ref": "#/components/schemas/ContradictionResponse"
+            },
+            "title": "Contradictions New",
+            "type": "array"
+          },
+          "coverage_gaps_new": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGapResponse"
+            },
+            "title": "Coverage Gaps New",
+            "type": "array"
+          },
+          "coverage_gaps_removed": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGapResponse"
+            },
+            "title": "Coverage Gaps Removed",
+            "type": "array"
+          },
+          "diagnoses_added": {
+            "items": {
+              "$ref": "#/components/schemas/ComparedDiagnosisResponse"
+            },
+            "title": "Diagnoses Added",
+            "type": "array"
+          },
+          "diagnoses_removed": {
+            "items": {
+              "$ref": "#/components/schemas/ComparedDiagnosisResponse"
+            },
+            "title": "Diagnoses Removed",
+            "type": "array"
+          },
+          "input_digest": {
+            "title": "Input Digest",
+            "type": "string"
+          },
+          "known_good_bundle_id": {
+            "title": "Known Good Bundle Id",
+            "type": "string"
+          },
+          "known_good_input_digest": {
+            "title": "Known Good Input Digest",
+            "type": "string"
+          },
+          "turn_metric_availability_changes": {
+            "items": {
+              "$ref": "#/components/schemas/TurnMetricAvailabilityChangeResponse"
+            },
+            "title": "Turn Metric Availability Changes",
+            "type": "array"
+          },
+          "turn_metric_deltas": {
+            "items": {
+              "$ref": "#/components/schemas/TurnMetricDeltaResponse"
+            },
+            "title": "Turn Metric Deltas",
+            "type": "array"
+          },
+          "unmatched_turns": {
+            "$ref": "#/components/schemas/UnmatchedTurnsResponse"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "known_good_bundle_id",
+          "analyzer_version",
+          "input_digest",
+          "known_good_input_digest",
+          "diagnoses_added",
+          "diagnoses_removed",
+          "turn_metric_deltas",
+          "turn_metric_availability_changes",
+          "unmatched_turns",
+          "coverage_gaps_new",
+          "coverage_gaps_removed",
+          "contradictions_new"
+        ],
+        "title": "IncidentComparisonResponse",
+        "type": "object"
+      },
+      "IncidentContradictionsResponse": {
+        "additionalProperties": false,
+        "description": "Contradictions found in one incident, bound to the analysis that found them.\n\nAn empty ``contradictions`` list means detection ran against ``input_digest``\nand found none. It never stands in for \"analysis unavailable\": that case is a\n``404 EARSHOT_ANALYSIS_NOT_AVAILABLE`` instead of an empty answer.",
+        "properties": {
+          "analyzer_version": {
+            "title": "Analyzer Version",
+            "type": "string"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "contradictions": {
+            "items": {
+              "$ref": "#/components/schemas/ContradictionResponse"
+            },
+            "title": "Contradictions",
+            "type": "array"
+          },
+          "input_digest": {
+            "title": "Input Digest",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "analyzer_version",
+          "input_digest",
+          "contradictions"
+        ],
+        "title": "IncidentContradictionsResponse",
+        "type": "object"
+      },
       "IncidentExplanation": {
         "additionalProperties": false,
         "properties": {
@@ -2528,6 +2795,42 @@
           "limitations"
         ],
         "title": "IncidentExplanation",
+        "type": "object"
+      },
+      "IncidentExportResponse": {
+        "additionalProperties": false,
+        "description": "One incident projected through a named exporter in the exporter registry.\n\n``format`` is the registered exporter name and ``destination`` is the export\ndestination a capture policy must permit for that projection to run, so the\ndocument is always accompanied by the governance decision that released it.",
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "digest",
+          "format",
+          "destination",
+          "document"
+        ],
+        "title": "IncidentExportResponse",
         "type": "object"
       },
       "IncidentPageResponse": {
@@ -4343,6 +4646,101 @@
         "title": "ToolAnalysis",
         "type": "object"
       },
+      "TurnMetricAvailabilityChangeResponse": {
+        "additionalProperties": false,
+        "description": "A metric whose comparability changed, reported instead of a fabricated delta.",
+        "properties": {
+          "comparable": {
+            "title": "Comparable",
+            "type": "boolean"
+          },
+          "incident_availability": {
+            "title": "Incident Availability",
+            "type": "string"
+          },
+          "known_good_availability": {
+            "title": "Known Good Availability",
+            "type": "string"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "metric",
+          "known_good_availability",
+          "incident_availability",
+          "comparable"
+        ],
+        "title": "TurnMetricAvailabilityChangeResponse",
+        "type": "object"
+      },
+      "TurnMetricDeltaResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Delta"
+          },
+          "incident_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Incident Value"
+          },
+          "known_good_value": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Known Good Value"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "metric",
+          "unit",
+          "known_good_value",
+          "incident_value",
+          "delta"
+        ],
+        "title": "TurnMetricDeltaResponse",
+        "type": "object"
+      },
       "TurnMetricGroupResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4581,6 +4979,31 @@
         "title": "TurnProjection",
         "type": "object"
       },
+      "UnmatchedTurnsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "only_in_incident": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Only In Incident",
+            "type": "array"
+          },
+          "only_in_known_good": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Only In Known Good",
+            "type": "array"
+          }
+        },
+        "required": [
+          "only_in_incident",
+          "only_in_known_good"
+        ],
+        "title": "UnmatchedTurnsResponse",
+        "type": "object"
+      },
       "ValidateResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4674,7 +5097,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6441,6 +6864,332 @@
         "summary": "Analysis Endpoint"
       }
     },
+    "/v1/incidents/{bundle_id}/comparison": {
+      "get": {
+        "operationId": "comparison_endpoint_v1_incidents__bundle_id__comparison_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "known_good_bundle_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Known Good Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentComparisonResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Comparison Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}/contradictions": {
+      "get": {
+        "operationId": "contradictions_endpoint_v1_incidents__bundle_id__contradictions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentContradictionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Contradictions Endpoint"
+      }
+    },
     "/v1/incidents/{bundle_id}/explanation": {
       "get": {
         "operationId": "explanation_endpoint_v1_incidents__bundle_id__explanation_get",
@@ -6597,6 +7346,180 @@
           {}
         ],
         "summary": "Explanation Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}/export": {
+      "get": {
+        "operationId": "export_endpoint_v1_incidents__bundle_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Registered exporter name. The enumerated choices are the exporter registry's names when this document was generated; a process that registers its own exporter can select it here by name.",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "otlp",
+              "description": "Registered exporter name. The enumerated choices are the exporter registry's names when this document was generated; a process that registers its own exporter can select it here by name.",
+              "enum": [
+                "openinference",
+                "otlp"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Export Endpoint"
       }
     },
     "/v1/metrics/turns": {

@@ -239,7 +239,8 @@
           ]
         },
         "provider_measurements": {}
-      }
+      },
+      "interruption_chains": []
     }
   ],
   "coverage": [],
