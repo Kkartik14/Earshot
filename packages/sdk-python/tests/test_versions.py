@@ -66,6 +66,15 @@ def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> 
 
 
 def test_the_capture_surface_evolution_is_versioned() -> None:
+    # 0.12.0 surfaces two of EvidenceQuery's per-incident projections that were
+    # library-only: GET /v1/incidents/{id}/evidence/summary returns the agent-facing
+    # SummaryDigest, and GET /v1/incidents/{id}/evidence/not_observed returns the
+    # explicit "what the evidence does NOT tell us" (coverage gaps, analysis/turn
+    # limitations, and policy omissions, each with its reason). Both bind to the
+    # incident's analysis through the same resolve path the sibling read endpoints
+    # use -- a missing analysis is EARSHOT_ANALYSIS_NOT_AVAILABLE and a stale or
+    # foreign one EARSHOT_ANALYSIS_BINDING_MISMATCH -- so they add read surface
+    # clients can now depend on, and the API takes a version of its own.
     # 0.11.0 gives a continuous call an observed end: a ``captureVersion: 2`` drain
     # may carry an ``end`` declaration, and ``end.reason == "call_ended"`` -- the
     # application's own observation that the call is over -- writes the journal's
@@ -115,7 +124,7 @@ def test_the_capture_surface_evolution_is_versioned() -> None:
     # seal. 0.4.0 added the authenticated browser capture endpoint
     # (``POST /v1/capture``); 0.3.0 added the contradiction, comparison, and
     # export read endpoints.
-    assert API_VERSION == "0.11.0"
+    assert API_VERSION == "0.12.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:

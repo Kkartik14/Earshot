@@ -114,6 +114,41 @@ export function useContradictions(bundleId: string | undefined) {
   });
 }
 
+/** The explicit "what the evidence does NOT tell us" for one incident: coverage
+ * gaps, analysis/turn limitations, and policy omissions, each with its reason.
+ * Kept as its own query so an unavailable or stale-analysis projection surfaces
+ * as its coded state, and an empty answer reads as an examined "no gaps found"
+ * — never silently collapses into "nothing is missing". */
+export function useNotObserved(bundleId: string | undefined) {
+  return useQuery({
+    queryKey: ["not-observed", bundleId],
+    enabled: bundleId != null,
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/incidents/{bundle_id}/evidence/not_observed", {
+          params: { path: { bundle_id: bundleId as string } },
+        }),
+      ),
+  });
+}
+
+/** The compact, agent-facing digest of one incident — session-level counts, its
+ * diagnoses, and the earliest boundary — bound to the incident's analysis. Used
+ * to frame the not-observed surface; it is never read as a substitute for the
+ * per-turn analysis, which `/analysis` and `/explanation` serve. */
+export function useEvidenceSummary(bundleId: string | undefined) {
+  return useQuery({
+    queryKey: ["evidence-summary", bundleId],
+    enabled: bundleId != null,
+    queryFn: () =>
+      unwrap(
+        api.GET("/v1/incidents/{bundle_id}/evidence/summary", {
+          params: { path: { bundle_id: bundleId as string } },
+        }),
+      ),
+  });
+}
+
 /** Backend-authored, evidence-bound timeline facts for one incident. */
 export function useExplanation(bundleId: string | undefined) {
   return useQuery({

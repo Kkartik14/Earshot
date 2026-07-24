@@ -26,7 +26,7 @@ MEDIA_CUSTODY_MIN_CONTRACT_VERSION = "0.2.0"
 # reader to surprise, and one version describing two shapes is the failure worth
 # avoiding.
 COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION = "0.2.0"
-API_VERSION = "0.11.0"
+API_VERSION = "0.12.0"
 ANALYZER_VERSION = "0.6.0"
 TURN_FACT_PROJECTION_VERSION = "0.1.0"
 PIPELINE_ADAPTER_VERSION = "0.3.0"

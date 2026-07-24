@@ -231,6 +231,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/incidents/{bundle_id}/evidence/not_observed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Not Observed Endpoint */
+        get: operations["evidence_not_observed_endpoint_v1_incidents__bundle_id__evidence_not_observed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/incidents/{bundle_id}/evidence/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Summary Endpoint */
+        get: operations["evidence_summary_endpoint_v1_incidents__bundle_id__evidence_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/incidents/{bundle_id}/explanation": {
         parameters: {
             query?: never;
@@ -410,6 +444,19 @@ export interface components {
             version: string;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * AnalysisLimitationResponse
+         * @description A limitation the analysis stated about the whole incident.
+         */
+        AnalysisLimitationResponse: {
+            /** Limitation */
+            limitation: string;
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "analysis";
         };
         /**
          * AnalysisMetric
@@ -1391,6 +1438,115 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * EvidenceBoundaryCoordinateResponse
+         * @description The comparable coordinate the earliest boundary diagnosis was ordered by.
+         *
+         *     Present only when a comparable coordinate exists; ``time_basis`` names which of
+         *     the point's clocks it is stated in (``monotonic``/``source_wall``/
+         *     ``observed_wall``) so a reader never mistakes one basis for another.
+         */
+        EvidenceBoundaryCoordinateResponse: {
+            /** At Nano */
+            at_nano: string;
+            /** Clock Domain Id */
+            clock_domain_id?: string | null;
+            /** Time Basis */
+            time_basis: string;
+        };
+        /**
+         * EvidenceDiagnosisResponse
+         * @description One diagnosis exactly as ``query._diagnosis_dict`` projects it for the
+         *     per-incident evidence digest. Richer than ``ComparedDiagnosisResponse`` (which
+         *     keeps only the cross-incident identity): a summary reader gets the human
+         *     ``summary``, the analyzer's ``confidence``, and the diagnosis's own stated
+         *     ``limitations`` alongside the boundary it attributes fault to. Every field
+         *     names real evidence; no source payload is surfaced.
+         */
+        EvidenceDiagnosisResponse: {
+            /** Boundary */
+            boundary: string;
+            /** Code */
+            code: string;
+            /** Confidence */
+            confidence: string;
+            /** Diagnosis Id */
+            diagnosis_id: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Limitations */
+            limitations: string[];
+            /** Summary */
+            summary: string;
+            /** Turn Ids */
+            turn_ids: string[];
+        };
+        /**
+         * EvidenceOmissionResponse
+         * @description One thing a capture policy deliberately did not record, with its reason.
+         *
+         *     ``count`` is how many observations were omitted when the source could count
+         *     them, and ``None`` when the loss was not countable -- which is not the same
+         *     claim as zero. Every omission names the evidence refs it stands in for.
+         */
+        EvidenceOmissionResponse: {
+            /** Capture Class */
+            capture_class: string;
+            /** Count */
+            count?: number | null;
+            /** Omission Id */
+            omission_id: string;
+            /** Reason */
+            reason: string;
+            /** Source Refs */
+            source_refs: string[];
+        };
+        /**
+         * EvidenceSummaryCountsResponse
+         * @description The whole-incident counts ``SummaryDigest`` reports, each an examined total.
+         *
+         *     A zero here is a measured zero (detection ran and found none), never a stand-in
+         *     for "not analysed": that case is a ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE``.
+         */
+        EvidenceSummaryCountsResponse: {
+            /** Boundary Diagnosis Count */
+            boundary_diagnosis_count: number;
+            /** Contradiction Count */
+            contradiction_count: number;
+            /** Coverage Gap Count */
+            coverage_gap_count: number;
+            /** Diagnosis Count */
+            diagnosis_count: number;
+            /** Event Count */
+            event_count: number;
+            /** Failed Operation Count */
+            failed_operation_count: number;
+            /** Operation Count */
+            operation_count: number;
+            /** Quality Sample Count */
+            quality_sample_count: number;
+            /** Turn Count */
+            turn_count: number;
+        };
+        /**
+         * EvidenceSummaryResponse
+         * @description A compact, agent-facing digest of one incident, mirroring
+         *     ``EvidenceQuery.summary().as_dict()`` field-for-field.
+         *
+         *     Bound to the analysis it was derived from through the same resolve/derive path
+         *     the sibling read endpoints use: a missing analysis is a
+         *     ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE`` and a stale or foreign one a
+         *     ``409 EARSHOT_ANALYSIS_BINDING_MISMATCH``, never a fabricated empty digest.
+         */
+        EvidenceSummaryResponse: {
+            counts: components["schemas"]["EvidenceSummaryCountsResponse"];
+            /** Diagnoses */
+            diagnoses: components["schemas"]["EvidenceDiagnosisResponse"][];
+            /** First Abnormal Boundary */
+            first_abnormal_boundary: components["schemas"]["FirstAbnormalBoundaryFoundResponse"] | components["schemas"]["FirstAbnormalBoundaryUnknownResponse"];
+            /** Session Id */
+            session_id: string | null;
+        };
         /** ExplainedCoverage */
         ExplainedCoverage: {
             /** Availability */
@@ -1624,6 +1780,44 @@ export interface components {
             policy_id: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * FirstAbnormalBoundaryFoundResponse
+         * @description The earliest boundary diagnosis, when one could be ordered honestly.
+         */
+        FirstAbnormalBoundaryFoundResponse: {
+            /** Boundary */
+            boundary: string;
+            /** Code */
+            code: string;
+            coordinate: components["schemas"]["EvidenceBoundaryCoordinateResponse"] | null;
+            /** Diagnosis Id */
+            diagnosis_id: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /**
+             * Found
+             * @constant
+             */
+            found: true;
+            /** Turn Ids */
+            turn_ids: string[];
+        };
+        /**
+         * FirstAbnormalBoundaryUnknownResponse
+         * @description No earliest boundary — stated as an honest 'unknown' with its reason.
+         *
+         *     ``reason`` names why (no boundary diagnosis, or boundaries spanning
+         *     incomparable clocks), so an absent boundary is never mistaken for a clean one.
+         */
+        FirstAbnormalBoundaryUnknownResponse: {
+            /**
+             * Found
+             * @constant
+             */
+            found: false;
+            /** Reason */
+            reason: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2180,6 +2374,27 @@ export interface components {
             time_range: components["schemas"]["TimeRange"] | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * NotObservedResponse
+         * @description Everything the evidence graph explicitly does NOT tell us about one incident,
+         *     mirroring ``EvidenceQuery.not_observed().as_dict()`` field-for-field.
+         *
+         *     The three lists are the unified "what the evidence does not say": signals a
+         *     source could not observe (``coverage_gaps``), analysis- and turn-level
+         *     ``limitations`` on what could be derived, and policy ``omissions``. Each entry
+         *     carries its own reason. An empty list is an examined absence -- the projection
+         *     ran against this incident's analysis -- never a stand-in for "not analysed",
+         *     which is a ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE``; a stale or foreign analysis
+         *     is a ``409 EARSHOT_ANALYSIS_BINDING_MISMATCH``.
+         */
+        NotObservedResponse: {
+            /** Coverage Gaps */
+            coverage_gaps: components["schemas"]["CoverageGapResponse"][];
+            /** Limitations */
+            limitations: (components["schemas"]["AnalysisLimitationResponse"] | components["schemas"]["TurnMetricLimitationResponse"])[];
+            /** Omissions */
+            omissions: components["schemas"]["EvidenceOmissionResponse"][];
         };
         /** Omission */
         Omission: {
@@ -2770,6 +2985,31 @@ export interface components {
             p95_ms: number | null;
             /** Turn Count */
             turn_count: number;
+        };
+        /**
+         * TurnMetricLimitationResponse
+         * @description A per-turn latency metric that was not ``available``, with its stated reason.
+         *
+         *     ``limitation`` names the exact reason the metric could not be derived and
+         *     ``evidence_ids`` the evidence it would have needed, so an unavailable metric
+         *     reads as an explicit unknown rather than a missing or zeroed number.
+         */
+        TurnMetricLimitationResponse: {
+            /** Availability */
+            availability: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Limitation */
+            limitation: string;
+            /** Metric */
+            metric: string;
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "turn";
+            /** Turn Id */
+            turn_id: string;
         };
         /**
          * TurnMetricSummaryResponse
@@ -4542,6 +4782,266 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IncidentContradictionsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    evidence_not_observed_endpoint_v1_incidents__bundle_id__evidence_not_observed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bundle_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotObservedResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    evidence_summary_endpoint_v1_incidents__bundle_id__evidence_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bundle_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceSummaryResponse"];
                 };
             };
             /** @description Bad Request */

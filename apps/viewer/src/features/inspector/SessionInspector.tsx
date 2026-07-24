@@ -23,6 +23,7 @@ import {
   type AnalysisStatus,
 } from "./AnalysisSummary";
 import { ComparisonPanel } from "./ComparisonPanel";
+import { EvidencePanel } from "./EvidencePanel";
 import { ExportPanel } from "./ExportPanel";
 import { MediaCustodyPanel } from "./MediaCustody";
 import { RecoveryStrip } from "./RecoveryStrip";
@@ -178,6 +179,10 @@ export function SessionInspector() {
             media is aligned by a declared ClockRelation or not at all. */}
         <MediaCustodyPanel media={mediaCustody} />
         <UnassignedPanel facts={unassigned} />
+        {/* The explicit "what the evidence does NOT tell us": coverage gaps,
+            limitations, and omissions, each as a first-class unknown with its
+            reason — the honesty surface, before any comparison or export. */}
+        <EvidencePanel bundleId={bundleId} />
         <ComparisonPanel bundleId={bundleId} />
         <ExportPanel bundleId={bundleId} />
       </div>

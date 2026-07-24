@@ -121,6 +121,52 @@ const contradictionReport = {
   ],
 };
 
+// The backend's "what the evidence does not tell us" projection for this session:
+// a coverage gap, a turn-metric limitation, and an uncountable omission — each an
+// explicit unknown the EvidencePanel renders with its reason.
+const notObservedReport = {
+  coverage_gaps: [
+    { signal: "client.render", availability: "not_observed", reason: "collector_absent" },
+  ],
+  limitations: [
+    {
+      scope: "turn",
+      turn_id: "turn-0",
+      metric: "render_start_response_latency",
+      availability: "not_observed",
+      limitation: "render_not_observed",
+      evidence_ids: ["operation-llm-0-5"],
+    },
+  ],
+  omissions: [
+    {
+      omission_id: "om-1",
+      capture_class: "transcript_text",
+      reason: "policy_redacted",
+      count: null,
+      source_refs: [],
+    },
+  ],
+};
+
+// The agent-facing digest the summary endpoint returns for this session.
+const evidenceSummaryReport = {
+  session_id: "fixture-session",
+  counts: {
+    turn_count: 1,
+    operation_count: 3,
+    event_count: 2,
+    quality_sample_count: 1,
+    failed_operation_count: 1,
+    diagnosis_count: 1,
+    boundary_diagnosis_count: 0,
+    coverage_gap_count: 1,
+    contradiction_count: 0,
+  },
+  diagnoses: [],
+  first_abnormal_boundary: { found: false, reason: "no_boundary_diagnosis" },
+};
+
 /** The same session, but reconstructed from a checkpoint journal after the
  * process died before close. Validation forces the typed declaration, so a
  * viewer that renders the incident at all has the facts to render this. */
@@ -214,6 +260,8 @@ function renderInspector({
   client.setQueryData(["incident", "fix"], incidentOverride ?? incidentFixture);
   client.setQueryData(["explanation", "fix"], explanation);
   client.setQueryData(["analysis", "fix"], analysisResponse);
+  client.setQueryData(["not-observed", "fix"], notObservedReport);
+  client.setQueryData(["evidence-summary", "fix"], evidenceSummaryReport);
   if (contradictions !== undefined) {
     client.setQueryData(["contradictions", "fix"], contradictions);
   }
@@ -294,6 +342,20 @@ describe("SessionInspector focus management", () => {
 
     fireEvent.click(panel.getByRole("button", { name: "operation-llm-0-5" }));
     expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
+  });
+
+  it("surfaces what the evidence does not observe as explicit unknowns", () => {
+    renderInspector();
+    const region = within(
+      screen.getByRole("region", { name: /what the evidence does not tell us/i }),
+    );
+    // Each category is a first-class unknown carrying its own reason.
+    expect(region.getByText("client.render")).toBeInTheDocument();
+    expect(region.getByText(/collector absent/i)).toBeInTheDocument();
+    expect(region.getByText(/render not observed/i)).toBeInTheDocument();
+    // An uncountable omission is stated as such, never as a zero.
+    expect(region.getByText("count not recorded")).toBeInTheDocument();
+    expect(region.queryByText(/0 omitted/)).toBeNull();
   });
 
   it("surfaces the analyzer's own output binding for the incident", () => {

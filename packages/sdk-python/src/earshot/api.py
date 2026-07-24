@@ -98,7 +98,7 @@ from .live import (
 )
 from .pipeline import pipeline
 from .privacy import ExportPolicyError, assert_export_allowed
-from .query import compare_incidents, detect_contradictions
+from .query import EvidenceQuery, compare_incidents, detect_contradictions
 from .storage import (
     DEFAULT_PROJECT_ID,
     TURN_METRIC_LIMITATIONS,
@@ -402,6 +402,145 @@ class IncidentComparisonResponse(ApiModel):
     coverage_gaps_new: list[CoverageGapResponse]
     coverage_gaps_removed: list[CoverageGapResponse]
     contradictions_new: list[ContradictionResponse]
+
+
+class EvidenceDiagnosisResponse(ApiModel):
+    """One diagnosis exactly as ``query._diagnosis_dict`` projects it for the
+    per-incident evidence digest. Richer than ``ComparedDiagnosisResponse`` (which
+    keeps only the cross-incident identity): a summary reader gets the human
+    ``summary``, the analyzer's ``confidence``, and the diagnosis's own stated
+    ``limitations`` alongside the boundary it attributes fault to. Every field
+    names real evidence; no source payload is surfaced."""
+
+    diagnosis_id: str
+    code: str
+    boundary: str
+    turn_ids: list[str]
+    summary: str
+    confidence: str
+    evidence_ids: list[str]
+    limitations: list[str]
+
+
+class EvidenceBoundaryCoordinateResponse(ApiModel):
+    """The comparable coordinate the earliest boundary diagnosis was ordered by.
+
+    Present only when a comparable coordinate exists; ``time_basis`` names which of
+    the point's clocks it is stated in (``monotonic``/``source_wall``/
+    ``observed_wall``) so a reader never mistakes one basis for another."""
+
+    clock_domain_id: str | None = None
+    time_basis: str
+    at_nano: str
+
+
+class FirstAbnormalBoundaryFoundResponse(ApiModel):
+    """The earliest boundary diagnosis, when one could be ordered honestly."""
+
+    found: Literal[True]
+    diagnosis_id: str
+    code: str
+    boundary: str
+    turn_ids: list[str]
+    evidence_ids: list[str]
+    coordinate: EvidenceBoundaryCoordinateResponse | None
+
+
+class FirstAbnormalBoundaryUnknownResponse(ApiModel):
+    """No earliest boundary — stated as an honest 'unknown' with its reason.
+
+    ``reason`` names why (no boundary diagnosis, or boundaries spanning
+    incomparable clocks), so an absent boundary is never mistaken for a clean one."""
+
+    found: Literal[False]
+    reason: str | None
+
+
+class EvidenceSummaryCountsResponse(ApiModel):
+    """The whole-incident counts ``SummaryDigest`` reports, each an examined total.
+
+    A zero here is a measured zero (detection ran and found none), never a stand-in
+    for "not analysed": that case is a ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE``."""
+
+    turn_count: int
+    operation_count: int
+    event_count: int
+    quality_sample_count: int
+    failed_operation_count: int
+    diagnosis_count: int
+    boundary_diagnosis_count: int
+    coverage_gap_count: int
+    contradiction_count: int
+
+
+class EvidenceSummaryResponse(ApiModel):
+    """A compact, agent-facing digest of one incident, mirroring
+    ``EvidenceQuery.summary().as_dict()`` field-for-field.
+
+    Bound to the analysis it was derived from through the same resolve/derive path
+    the sibling read endpoints use: a missing analysis is a
+    ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE`` and a stale or foreign one a
+    ``409 EARSHOT_ANALYSIS_BINDING_MISMATCH``, never a fabricated empty digest."""
+
+    session_id: str | None
+    counts: EvidenceSummaryCountsResponse
+    diagnoses: list[EvidenceDiagnosisResponse]
+    first_abnormal_boundary: (
+        FirstAbnormalBoundaryFoundResponse | FirstAbnormalBoundaryUnknownResponse
+    )
+
+
+class AnalysisLimitationResponse(ApiModel):
+    """A limitation the analysis stated about the whole incident."""
+
+    scope: Literal["analysis"]
+    limitation: str
+
+
+class TurnMetricLimitationResponse(ApiModel):
+    """A per-turn latency metric that was not ``available``, with its stated reason.
+
+    ``limitation`` names the exact reason the metric could not be derived and
+    ``evidence_ids`` the evidence it would have needed, so an unavailable metric
+    reads as an explicit unknown rather than a missing or zeroed number."""
+
+    scope: Literal["turn"]
+    turn_id: str
+    metric: str
+    availability: str
+    limitation: str
+    evidence_ids: list[str]
+
+
+class EvidenceOmissionResponse(ApiModel):
+    """One thing a capture policy deliberately did not record, with its reason.
+
+    ``count`` is how many observations were omitted when the source could count
+    them, and ``None`` when the loss was not countable -- which is not the same
+    claim as zero. Every omission names the evidence refs it stands in for."""
+
+    omission_id: str
+    capture_class: str
+    reason: str
+    count: int | None = None
+    source_refs: list[str]
+
+
+class NotObservedResponse(ApiModel):
+    """Everything the evidence graph explicitly does NOT tell us about one incident,
+    mirroring ``EvidenceQuery.not_observed().as_dict()`` field-for-field.
+
+    The three lists are the unified "what the evidence does not say": signals a
+    source could not observe (``coverage_gaps``), analysis- and turn-level
+    ``limitations`` on what could be derived, and policy ``omissions``. Each entry
+    carries its own reason. An empty list is an examined absence -- the projection
+    ran against this incident's analysis -- never a stand-in for "not analysed",
+    which is a ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE``; a stale or foreign analysis
+    is a ``409 EARSHOT_ANALYSIS_BINDING_MISMATCH``."""
+
+    coverage_gaps: list[CoverageGapResponse]
+    limitations: list[AnalysisLimitationResponse | TurnMetricLimitationResponse]
+    omissions: list[EvidenceOmissionResponse]
 
 
 class IncidentExportResponse(ApiModel):
@@ -3058,6 +3197,43 @@ def create_app(
                 "input_digest": stored.input_digest,
                 "contradictions": [item.as_dict() for item in contradictions],
             },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/evidence/summary",
+        response_model=EvidenceSummaryResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def evidence_summary_endpoint(bundle_id: str, request: Request) -> JSONResponse:
+        bundle, _, analysis = resolve_analysis(
+            bundle_id,
+            project_id=request.state.project_id,
+        )
+        # The EvidenceQuery constructor rejects an analysis derived from other
+        # evidence, so it is built inside the projection wrapper: that mismatch
+        # surfaces as 409 EARSHOT_ANALYSIS_BINDING_MISMATCH, never an unhandled 500.
+        summary = _derived_projection(lambda: EvidenceQuery(bundle, analysis).summary())
+        return JSONResponse(
+            summary.as_dict(),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/evidence/not_observed",
+        response_model=NotObservedResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def evidence_not_observed_endpoint(bundle_id: str, request: Request) -> JSONResponse:
+        bundle, _, analysis = resolve_analysis(
+            bundle_id,
+            project_id=request.state.project_id,
+        )
+        # Built inside the projection wrapper so a stale or foreign analysis is a
+        # clean 409 EARSHOT_ANALYSIS_BINDING_MISMATCH rather than a 500.
+        not_observed = _derived_projection(lambda: EvidenceQuery(bundle, analysis).not_observed())
+        return JSONResponse(
+            not_observed.as_dict(),
             headers={"Cache-Control": "no-store"},
         )
 

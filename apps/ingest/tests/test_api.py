@@ -806,6 +806,94 @@ def test_contradictions_refuse_an_analysis_derived_from_other_evidence(
     assert code(response) == "EARSHOT_ANALYSIS_BINDING_MISMATCH"
 
 
+def test_evidence_summary_digests_the_incident_bound_to_its_analysis(
+    tmp_path, valid_bundle
+) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    response = client.get("/v1/incidents/bundle-1/evidence/summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    # Mirrors SummaryDigest.as_dict() exactly: the session id, the examined counts,
+    # the diagnoses, and the earliest boundary (or an honest 'unknown').
+    assert set(body) == {"session_id", "counts", "diagnoses", "first_abnormal_boundary"}
+    assert set(body["counts"]) == {
+        "turn_count",
+        "operation_count",
+        "event_count",
+        "quality_sample_count",
+        "failed_operation_count",
+        "diagnosis_count",
+        "boundary_diagnosis_count",
+        "coverage_gap_count",
+        "contradiction_count",
+    }
+    # An examined 'unknown' or a real boundary — either way the flag is a real bool.
+    assert isinstance(body["first_abnormal_boundary"]["found"], bool)
+    # Deterministic, and never cached.
+    assert client.get("/v1/incidents/bundle-1/evidence/summary").json() == body
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_not_observed_reports_coverage_gaps_as_explicit_unknowns(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    _ingest(client, _with_render_coverage_denied(make_valid_bundle()))
+
+    response = client.get("/v1/incidents/bundle-1/evidence/not_observed")
+
+    assert response.status_code == 200
+    body = response.json()
+    # Mirrors NotObserved.as_dict() exactly: the three unified lists of what the
+    # evidence does not tell us, each entry carrying its own reason.
+    assert set(body) == {"coverage_gaps", "limitations", "omissions"}
+    gap = next(item for item in body["coverage_gaps"] if item["signal"] == "client.render")
+    assert gap["availability"] == "not_observed"
+    assert gap["reason"] == "collector_absent"
+    # Deterministic, and never cached.
+    assert client.get("/v1/incidents/bundle-1/evidence/not_observed").json() == body
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_evidence_projections_are_absent_when_no_analyzer_configured(
+    tmp_path, valid_bundle
+) -> None:
+    _, client = app_client(tmp_path, analyzer=None)
+    _ingest(client, valid_bundle)
+
+    for path in ("summary", "not_observed"):
+        response = client.get(f"/v1/incidents/bundle-1/evidence/{path}")
+        # Never a fabricated empty digest or a blank "nothing is missing".
+        assert response.status_code == 404
+        assert code(response) == "EARSHOT_ANALYSIS_NOT_AVAILABLE"
+
+
+def test_evidence_projections_refuse_an_analysis_derived_from_other_evidence(
+    tmp_path, valid_bundle, monkeypatch
+) -> None:
+    store, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+    assert client.get("/v1/incidents/bundle-1/evidence/summary").status_code == 200
+    stored = store.get_analysis("bundle-1", ANALYZER_VERSION)
+    foreign = DerivedAnalysis.model_validate(stored.value).model_copy(
+        update={"input_sha256": "0" * 64}
+    )
+    monkeypatch.setattr(
+        store,
+        "get_analysis",
+        lambda *args, **kwargs: dataclasses.replace(
+            stored, value=foreign.model_dump(mode="json", exclude_none=True)
+        ),
+    )
+
+    for path in ("summary", "not_observed"):
+        response = client.get(f"/v1/incidents/bundle-1/evidence/{path}")
+        # A stale or foreign analysis is a state conflict, never an unhandled 500.
+        assert response.status_code == 409
+        assert code(response) == "EARSHOT_ANALYSIS_BINDING_MISMATCH"
+
+
 def test_comparison_reports_structured_change_against_a_known_good_incident(tmp_path) -> None:
     _, client = app_client(tmp_path)
     _ingest(client, make_valid_bundle())

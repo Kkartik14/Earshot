@@ -41,6 +41,27 @@
         "title": "Adapter",
         "type": "object"
       },
+      "AnalysisLimitationResponse": {
+        "additionalProperties": false,
+        "description": "A limitation the analysis stated about the whole incident.",
+        "properties": {
+          "limitation": {
+            "title": "Limitation",
+            "type": "string"
+          },
+          "scope": {
+            "const": "analysis",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "limitation"
+        ],
+        "title": "AnalysisLimitationResponse",
+        "type": "object"
+      },
       "AnalysisMetric": {
         "additionalProperties": false,
         "description": "One derived quantity, or the exact reason there is none.\n\n``uncertainty`` is the error bound the derivation propagated, stated in the\nsame ``unit`` as ``value``. It is present only when every contributing bound\nwas known: an input whose own bound is unknown makes the result's bound\nunknown too, and that is reported as a ``limitation`` rather than as an\nexact zero, which would claim a precision nothing measured.",
@@ -2375,6 +2396,241 @@
         "title": "Evidence",
         "type": "object"
       },
+      "EvidenceBoundaryCoordinateResponse": {
+        "additionalProperties": false,
+        "description": "The comparable coordinate the earliest boundary diagnosis was ordered by.\n\nPresent only when a comparable coordinate exists; ``time_basis`` names which of\nthe point's clocks it is stated in (``monotonic``/``source_wall``/\n``observed_wall``) so a reader never mistakes one basis for another.",
+        "properties": {
+          "at_nano": {
+            "title": "At Nano",
+            "type": "string"
+          },
+          "clock_domain_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clock Domain Id"
+          },
+          "time_basis": {
+            "title": "Time Basis",
+            "type": "string"
+          }
+        },
+        "required": [
+          "time_basis",
+          "at_nano"
+        ],
+        "title": "EvidenceBoundaryCoordinateResponse",
+        "type": "object"
+      },
+      "EvidenceDiagnosisResponse": {
+        "additionalProperties": false,
+        "description": "One diagnosis exactly as ``query._diagnosis_dict`` projects it for the\nper-incident evidence digest. Richer than ``ComparedDiagnosisResponse`` (which\nkeeps only the cross-incident identity): a summary reader gets the human\n``summary``, the analyzer's ``confidence``, and the diagnosis's own stated\n``limitations`` alongside the boundary it attributes fault to. Every field\nnames real evidence; no source payload is surfaced.",
+        "properties": {
+          "boundary": {
+            "title": "Boundary",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "confidence": {
+            "title": "Confidence",
+            "type": "string"
+          },
+          "diagnosis_id": {
+            "title": "Diagnosis Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "turn_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Turn Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "diagnosis_id",
+          "code",
+          "boundary",
+          "turn_ids",
+          "summary",
+          "confidence",
+          "evidence_ids",
+          "limitations"
+        ],
+        "title": "EvidenceDiagnosisResponse",
+        "type": "object"
+      },
+      "EvidenceOmissionResponse": {
+        "additionalProperties": false,
+        "description": "One thing a capture policy deliberately did not record, with its reason.\n\n``count`` is how many observations were omitted when the source could count\nthem, and ``None`` when the loss was not countable -- which is not the same\nclaim as zero. Every omission names the evidence refs it stands in for.",
+        "properties": {
+          "capture_class": {
+            "title": "Capture Class",
+            "type": "string"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "omission_id": {
+            "title": "Omission Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "source_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "omission_id",
+          "capture_class",
+          "reason",
+          "source_refs"
+        ],
+        "title": "EvidenceOmissionResponse",
+        "type": "object"
+      },
+      "EvidenceSummaryCountsResponse": {
+        "additionalProperties": false,
+        "description": "The whole-incident counts ``SummaryDigest`` reports, each an examined total.\n\nA zero here is a measured zero (detection ran and found none), never a stand-in\nfor \"not analysed\": that case is a ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE``.",
+        "properties": {
+          "boundary_diagnosis_count": {
+            "title": "Boundary Diagnosis Count",
+            "type": "integer"
+          },
+          "contradiction_count": {
+            "title": "Contradiction Count",
+            "type": "integer"
+          },
+          "coverage_gap_count": {
+            "title": "Coverage Gap Count",
+            "type": "integer"
+          },
+          "diagnosis_count": {
+            "title": "Diagnosis Count",
+            "type": "integer"
+          },
+          "event_count": {
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "failed_operation_count": {
+            "title": "Failed Operation Count",
+            "type": "integer"
+          },
+          "operation_count": {
+            "title": "Operation Count",
+            "type": "integer"
+          },
+          "quality_sample_count": {
+            "title": "Quality Sample Count",
+            "type": "integer"
+          },
+          "turn_count": {
+            "title": "Turn Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "turn_count",
+          "operation_count",
+          "event_count",
+          "quality_sample_count",
+          "failed_operation_count",
+          "diagnosis_count",
+          "boundary_diagnosis_count",
+          "coverage_gap_count",
+          "contradiction_count"
+        ],
+        "title": "EvidenceSummaryCountsResponse",
+        "type": "object"
+      },
+      "EvidenceSummaryResponse": {
+        "additionalProperties": false,
+        "description": "A compact, agent-facing digest of one incident, mirroring\n``EvidenceQuery.summary().as_dict()`` field-for-field.\n\nBound to the analysis it was derived from through the same resolve/derive path\nthe sibling read endpoints use: a missing analysis is a\n``404 EARSHOT_ANALYSIS_NOT_AVAILABLE`` and a stale or foreign one a\n``409 EARSHOT_ANALYSIS_BINDING_MISMATCH``, never a fabricated empty digest.",
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/EvidenceSummaryCountsResponse"
+          },
+          "diagnoses": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceDiagnosisResponse"
+            },
+            "title": "Diagnoses",
+            "type": "array"
+          },
+          "first_abnormal_boundary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FirstAbnormalBoundaryFoundResponse"
+              },
+              {
+                "$ref": "#/components/schemas/FirstAbnormalBoundaryUnknownResponse"
+              }
+            ],
+            "title": "First Abnormal Boundary"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": [
+          "session_id",
+          "counts",
+          "diagnoses",
+          "first_abnormal_boundary"
+        ],
+        "title": "EvidenceSummaryResponse",
+        "type": "object"
+      },
       "ExplainedCoverage": {
         "additionalProperties": false,
         "properties": {
@@ -3166,6 +3422,92 @@
           "allowed"
         ],
         "title": "ExportPolicy",
+        "type": "object"
+      },
+      "FirstAbnormalBoundaryFoundResponse": {
+        "additionalProperties": false,
+        "description": "The earliest boundary diagnosis, when one could be ordered honestly.",
+        "properties": {
+          "boundary": {
+            "title": "Boundary",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceBoundaryCoordinateResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnosis_id": {
+            "title": "Diagnosis Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "found": {
+            "const": true,
+            "title": "Found",
+            "type": "boolean"
+          },
+          "turn_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Turn Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "found",
+          "diagnosis_id",
+          "code",
+          "boundary",
+          "turn_ids",
+          "evidence_ids",
+          "coordinate"
+        ],
+        "title": "FirstAbnormalBoundaryFoundResponse",
+        "type": "object"
+      },
+      "FirstAbnormalBoundaryUnknownResponse": {
+        "additionalProperties": false,
+        "description": "No earliest boundary \u2014 stated as an honest 'unknown' with its reason.\n\n``reason`` names why (no boundary diagnosis, or boundaries spanning\nincomparable clocks), so an absent boundary is never mistaken for a clean one.",
+        "properties": {
+          "found": {
+            "const": false,
+            "title": "Found",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "found",
+          "reason"
+        ],
+        "title": "FirstAbnormalBoundaryUnknownResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -4397,6 +4739,47 @@
           "content_type"
         ],
         "title": "MediaRef",
+        "type": "object"
+      },
+      "NotObservedResponse": {
+        "additionalProperties": false,
+        "description": "Everything the evidence graph explicitly does NOT tell us about one incident,\nmirroring ``EvidenceQuery.not_observed().as_dict()`` field-for-field.\n\nThe three lists are the unified \"what the evidence does not say\": signals a\nsource could not observe (``coverage_gaps``), analysis- and turn-level\n``limitations`` on what could be derived, and policy ``omissions``. Each entry\ncarries its own reason. An empty list is an examined absence -- the projection\nran against this incident's analysis -- never a stand-in for \"not analysed\",\nwhich is a ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE``; a stale or foreign analysis\nis a ``409 EARSHOT_ANALYSIS_BINDING_MISMATCH``.",
+        "properties": {
+          "coverage_gaps": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGapResponse"
+            },
+            "title": "Coverage Gaps",
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AnalysisLimitationResponse"
+                },
+                {
+                  "$ref": "#/components/schemas/TurnMetricLimitationResponse"
+                }
+              ]
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "omissions": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceOmissionResponse"
+            },
+            "title": "Omissions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "coverage_gaps",
+          "limitations",
+          "omissions"
+        ],
+        "title": "NotObservedResponse",
         "type": "object"
       },
       "Omission": {
@@ -5852,6 +6235,50 @@
         "title": "TurnMetricGroupResponse",
         "type": "object"
       },
+      "TurnMetricLimitationResponse": {
+        "additionalProperties": false,
+        "description": "A per-turn latency metric that was not ``available``, with its stated reason.\n\n``limitation`` names the exact reason the metric could not be derived and\n``evidence_ids`` the evidence it would have needed, so an unavailable metric\nreads as an explicit unknown rather than a missing or zeroed number.",
+        "properties": {
+          "availability": {
+            "title": "Availability",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "limitation": {
+            "title": "Limitation",
+            "type": "string"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "scope": {
+            "const": "turn",
+            "title": "Scope",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "turn_id",
+          "metric",
+          "availability",
+          "limitation",
+          "evidence_ids"
+        ],
+        "title": "TurnMetricLimitationResponse",
+        "type": "object"
+      },
       "TurnMetricSummaryResponse": {
         "additionalProperties": false,
         "description": "Fleet percentiles for one metric, bounded by the population they come from.\n\nOnly ``final`` incidents are aggregated. A provisional artifact -- one\nrecovered from a crash, or sealed while its session was still open -- covers\nan unknown fraction of its conversation, so pooling its turns would move\nthese values without anything on them saying why.\n\nThat exclusion is declared rather than performed quietly: ``incident_count``\nis what the groups cover and ``withheld_incident_count`` is what they refuse,\nso an empty ``groups`` beside a non-zero ``withheld_incident_count`` reads as\n\"not aggregated\", never as \"measured zero\".",
@@ -6121,7 +6548,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.11.0"
+    "version": "0.12.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -8411,6 +8838,322 @@
           {}
         ],
         "summary": "Contradictions Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}/evidence/not_observed": {
+      "get": {
+        "operationId": "evidence_not_observed_endpoint_v1_incidents__bundle_id__evidence_not_observed_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotObservedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Evidence Not Observed Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}/evidence/summary": {
+      "get": {
+        "operationId": "evidence_summary_endpoint_v1_incidents__bundle_id__evidence_summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Evidence Summary Endpoint"
       }
     },
     "/v1/incidents/{bundle_id}/explanation": {
