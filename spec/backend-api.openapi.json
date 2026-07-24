@@ -550,6 +550,140 @@
         "title": "ByteRange",
         "type": "object"
       },
+      "CaptureAcceptedResponse": {
+        "additionalProperties": false,
+        "description": "The incident one capture batch became, plus what the server refused.\n\nThe ``rejected_*`` counters are the server-side allowlist's own report: they\nsay how much of the payload was dropped before it could be stored, so a\nclient can see that its batch was trimmed instead of silently reshaped.",
+        "properties": {
+          "accepted_coverage": {
+            "title": "Accepted Coverage",
+            "type": "integer"
+          },
+          "accepted_device_events": {
+            "title": "Accepted Device Events",
+            "type": "integer"
+          },
+          "accepted_snapshots": {
+            "title": "Accepted Snapshots",
+            "type": "integer"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "capture_version": {
+            "title": "Capture Version",
+            "type": "integer"
+          },
+          "completeness": {
+            "title": "Completeness",
+            "type": "string"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "created_at_unix_nano": {
+            "title": "Created At Unix Nano",
+            "type": "string"
+          },
+          "digest": {
+            "title": "Digest",
+            "type": "string"
+          },
+          "finality": {
+            "title": "Finality",
+            "type": "string"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "ingested_at_unix_nano": {
+            "title": "Ingested At Unix Nano",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "rejected_device_events": {
+            "title": "Rejected Device Events",
+            "type": "integer"
+          },
+          "rejected_device_members": {
+            "title": "Rejected Device Members",
+            "type": "integer"
+          },
+          "rejected_stat_members": {
+            "title": "Rejected Stat Members",
+            "type": "integer"
+          },
+          "rejected_stats": {
+            "title": "Rejected Stats",
+            "type": "integer"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "project_id",
+          "bundle_id",
+          "session_id",
+          "schema_version",
+          "digest",
+          "size_bytes",
+          "status",
+          "finality",
+          "completeness",
+          "framework",
+          "created_at_unix_nano",
+          "ingested_at_unix_nano",
+          "created",
+          "capture_version",
+          "trace_id",
+          "accepted_snapshots",
+          "accepted_device_events",
+          "accepted_coverage",
+          "rejected_stats",
+          "rejected_stat_members",
+          "rejected_device_events",
+          "rejected_device_members"
+        ],
+        "title": "CaptureAcceptedResponse",
+        "type": "object"
+      },
       "CaptureClassPolicy": {
         "additionalProperties": true,
         "properties": {
@@ -633,6 +767,237 @@
           "captured"
         ],
         "title": "CaptureClassPolicy",
+        "type": "object"
+      },
+      "CaptureClockDomainRequest": {
+        "additionalProperties": false,
+        "description": "The browser clock every ``timestamp_ms`` in this payload was read from.\n\nIts identity is what keeps browser readings out of the server clock domain:\nthe facts derived here are recorded against ``id`` at their raw readings, and\nno calibration to the server clock is invented.",
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "browser_monotonic",
+            "title": "Kind",
+            "type": "string"
+          },
+          "uncertaintyMs": {
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "title": "Uncertaintyms",
+            "type": "number"
+          },
+          "unit": {
+            "const": "ms",
+            "title": "Unit",
+            "type": "string"
+          },
+          "wallOriginMs": {
+            "anyOf": [
+              {
+                "maximum": 10000000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Walloriginms"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "unit",
+          "uncertaintyMs"
+        ],
+        "title": "CaptureClockDomainRequest",
+        "type": "object"
+      },
+      "CaptureCoverageRequest": {
+        "additionalProperties": false,
+        "description": "One explicit gap the client recorded rather than dropping it silently.",
+        "properties": {
+          "availability": {
+            "enum": [
+              "available",
+              "partial",
+              "not_observed"
+            ],
+            "title": "Availability",
+            "type": "string"
+          },
+          "droppedCount": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Droppedcount"
+          },
+          "reason": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Reason",
+            "type": "string"
+          },
+          "signal": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Signal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "signal",
+          "availability",
+          "reason"
+        ],
+        "title": "CaptureCoverageRequest",
+        "type": "object"
+      },
+      "CaptureDeviceEventRequest": {
+        "additionalProperties": true,
+        "description": "One audio-graph/device lifecycle event: ``{type, timestamp_ms, ...members}``.\n\nExtra members are accepted by the parser and then dropped by the server\nallowlist, so an unknown member is refused rather than stored.",
+        "properties": {
+          "timestamp_ms": {
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Timestamp Ms",
+            "type": "number"
+          },
+          "type": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "timestamp_ms"
+        ],
+        "title": "CaptureDeviceEventRequest",
+        "type": "object"
+      },
+      "CaptureRequest": {
+        "additionalProperties": false,
+        "description": "The versioned browser capture payload, exactly as ``drain()`` emits it.",
+        "properties": {
+          "captureVersion": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "title": "Captureversion",
+            "type": "integer"
+          },
+          "clockDomain": {
+            "$ref": "#/components/schemas/CaptureClockDomainRequest"
+          },
+          "coverage": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureCoverageRequest"
+            },
+            "title": "Coverage",
+            "type": "array"
+          },
+          "deviceEvents": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureDeviceEventRequest"
+            },
+            "title": "Deviceevents",
+            "type": "array"
+          },
+          "sessionId": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+            "title": "Sessionid",
+            "type": "string"
+          },
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureSnapshotRequest"
+            },
+            "title": "Snapshots",
+            "type": "array"
+          },
+          "traceContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaptureTraceContextRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "captureVersion",
+          "sessionId",
+          "clockDomain"
+        ],
+        "title": "CaptureRequest",
+        "type": "object"
+      },
+      "CaptureSnapshotRequest": {
+        "additionalProperties": false,
+        "description": "One ``RTCPeerConnection.getStats()`` snapshot: stat id -> member bag.\n\nMembers are NOT trusted as sent: the server independently allowlists them\n(see ``_sanitize_capture_stats``) before anything reaches an engine.",
+        "properties": {
+          "stats": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Stats",
+            "type": "object"
+          },
+          "timestamp_ms": {
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Timestamp Ms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "timestamp_ms",
+          "stats"
+        ],
+        "title": "CaptureSnapshotRequest",
+        "type": "object"
+      },
+      "CaptureTraceContextRequest": {
+        "additionalProperties": false,
+        "description": "The session's W3C trace-context: random correlation handles only.",
+        "properties": {
+          "spanId": {
+            "pattern": "^[0-9a-f]{16}$",
+            "title": "Spanid",
+            "type": "string"
+          },
+          "traceId": {
+            "pattern": "^[0-9a-f]{32}$",
+            "title": "Traceid",
+            "type": "string"
+          },
+          "traceparent": {
+            "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+            "title": "Traceparent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "traceparent",
+          "traceId",
+          "spanId"
+        ],
+        "title": "CaptureTraceContextRequest",
         "type": "object"
       },
       "CausalLink": {
@@ -5097,7 +5462,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -5785,6 +6150,187 @@
           }
         ],
         "summary": "Create Browser Session"
+      }
+    },
+    "/v1/capture": {
+      "post": {
+        "description": "Accept one browser capture batch and store it as a governed incident.\n\nAuthentication, project scoping and CSRF are the same ``/v1`` rules every\nother endpoint uses: the middleware has already resolved a bearer project\nkey or a viewer session, rejected a mismatched ``X-Earshot-Project-Id``,\nand -- because this is an unsafe method -- required a CSRF token from a\ncookie-authenticated caller.\n\nEverything after that is fail-closed: the body is bounded while it is\nstill being streamed, the wire version is checked before the schema, the\ncollection sizes are checked before the payload is materialised, and\nevery stat/event member is re-derived from the server's own allowlist so\nno client value reaches an engine -- or storage -- unless this server\ngoverns it.\n\nDelivery is idempotent by batch content, so a transport retry after an\nunknown outcome resolves to the incident the first delivery created\n(``201`` when this call created it, ``200`` when it already existed).",
+        "operationId": "capture_endpoint_v1_capture_post",
+        "parameters": [
+          {
+            "description": "SDK assertion checked against the project selected by the credential.",
+            "in": "header",
+            "name": "X-Earshot-Project-Id",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CaptureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureAcceptedResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Capture Endpoint"
       }
     },
     "/v1/incidents": {

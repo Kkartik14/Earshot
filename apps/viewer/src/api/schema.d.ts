@@ -90,6 +90,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/capture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Capture Endpoint
+         * @description Accept one browser capture batch and store it as a governed incident.
+         *
+         *     Authentication, project scoping and CSRF are the same ``/v1`` rules every
+         *     other endpoint uses: the middleware has already resolved a bearer project
+         *     key or a viewer session, rejected a mismatched ``X-Earshot-Project-Id``,
+         *     and -- because this is an unsafe method -- required a CSRF token from a
+         *     cookie-authenticated caller.
+         *
+         *     Everything after that is fail-closed: the body is bounded while it is
+         *     still being streamed, the wire version is checked before the schema, the
+         *     collection sizes are checked before the payload is materialised, and
+         *     every stat/event member is re-derived from the server's own allowlist so
+         *     no client value reaches an engine -- or storage -- unless this server
+         *     governs it.
+         *
+         *     Delivery is idempotent by batch content, so a transport retry after an
+         *     unknown outcome resolves to the incident the first delivery created
+         *     (``201`` when this call created it, ``200`` when it already existed).
+         */
+        post: operations["capture_endpoint_v1_capture_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/incidents": {
         parameters: {
             query?: never;
@@ -467,6 +504,60 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * CaptureAcceptedResponse
+         * @description The incident one capture batch became, plus what the server refused.
+         *
+         *     The ``rejected_*`` counters are the server-side allowlist's own report: they
+         *     say how much of the payload was dropped before it could be stored, so a
+         *     client can see that its batch was trimmed instead of silently reshaped.
+         */
+        CaptureAcceptedResponse: {
+            /** Accepted Coverage */
+            accepted_coverage: number;
+            /** Accepted Device Events */
+            accepted_device_events: number;
+            /** Accepted Snapshots */
+            accepted_snapshots: number;
+            /** Bundle Id */
+            bundle_id: string;
+            /** Capture Version */
+            capture_version: number;
+            /** Completeness */
+            completeness: string;
+            /** Created */
+            created: boolean;
+            /** Created At Unix Nano */
+            created_at_unix_nano: string;
+            /** Digest */
+            digest: string;
+            /** Finality */
+            finality: string;
+            /** Framework */
+            framework: string | null;
+            /** Ingested At Unix Nano */
+            ingested_at_unix_nano: string;
+            /** Project Id */
+            project_id: string;
+            /** Rejected Device Events */
+            rejected_device_events: number;
+            /** Rejected Device Members */
+            rejected_device_members: number;
+            /** Rejected Stat Members */
+            rejected_stat_members: number;
+            /** Rejected Stats */
+            rejected_stats: number;
+            /** Schema Version */
+            schema_version: string;
+            /** Session Id */
+            session_id: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Status */
+            status: string;
+            /** Trace Id */
+            trace_id: string | null;
+        };
         /** CaptureClassPolicy */
         CaptureClassPolicy: {
             /** Attributes */
@@ -492,6 +583,118 @@ export interface components {
             retention: components["schemas"]["RetentionPolicy"] | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * CaptureClockDomainRequest
+         * @description The browser clock every ``timestamp_ms`` in this payload was read from.
+         *
+         *     Its identity is what keeps browser readings out of the server clock domain:
+         *     the facts derived here are recorded against ``id`` at their raw readings, and
+         *     no calibration to the server clock is invented.
+         */
+        CaptureClockDomainRequest: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "browser_monotonic";
+            /** Uncertaintyms */
+            uncertaintyMs: number;
+            /**
+             * Unit
+             * @constant
+             */
+            unit: "ms";
+            /**
+             * Walloriginms
+             * @default null
+             */
+            wallOriginMs: number | null;
+        };
+        /**
+         * CaptureCoverageRequest
+         * @description One explicit gap the client recorded rather than dropping it silently.
+         */
+        CaptureCoverageRequest: {
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "partial" | "not_observed";
+            /**
+             * Droppedcount
+             * @default null
+             */
+            droppedCount: number | null;
+            /** Reason */
+            reason: string;
+            /** Signal */
+            signal: string;
+        };
+        /**
+         * CaptureDeviceEventRequest
+         * @description One audio-graph/device lifecycle event: ``{type, timestamp_ms, ...members}``.
+         *
+         *     Extra members are accepted by the parser and then dropped by the server
+         *     allowlist, so an unknown member is refused rather than stored.
+         */
+        CaptureDeviceEventRequest: {
+            /** Timestamp Ms */
+            timestamp_ms: number;
+            /** Type */
+            type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CaptureRequest
+         * @description The versioned browser capture payload, exactly as ``drain()`` emits it.
+         */
+        CaptureRequest: {
+            /** Captureversion */
+            captureVersion: number;
+            clockDomain: components["schemas"]["CaptureClockDomainRequest"];
+            /** Coverage */
+            coverage?: components["schemas"]["CaptureCoverageRequest"][];
+            /** Deviceevents */
+            deviceEvents?: components["schemas"]["CaptureDeviceEventRequest"][];
+            /** Sessionid */
+            sessionId: string;
+            /** Snapshots */
+            snapshots?: components["schemas"]["CaptureSnapshotRequest"][];
+            /** @default null */
+            traceContext: components["schemas"]["CaptureTraceContextRequest"] | null;
+        };
+        /**
+         * CaptureSnapshotRequest
+         * @description One ``RTCPeerConnection.getStats()`` snapshot: stat id -> member bag.
+         *
+         *     Members are NOT trusted as sent: the server independently allowlists them
+         *     (see ``_sanitize_capture_stats``) before anything reaches an engine.
+         */
+        CaptureSnapshotRequest: {
+            /** Stats */
+            stats: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+            /** Timestamp Ms */
+            timestamp_ms: number;
+        };
+        /**
+         * CaptureTraceContextRequest
+         * @description The session's W3C trace-context: random correlation handles only.
+         */
+        CaptureTraceContextRequest: {
+            /** Spanid */
+            spanId: string;
+            /** Traceid */
+            traceId: string;
+            /** Traceparent */
+            traceparent: string;
         };
         /** CausalLink */
         CausalLink: {
@@ -2623,6 +2826,150 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BrowserSessionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    capture_endpoint_v1_capture_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description SDK assertion checked against the project selected by the credential. */
+                "X-Earshot-Project-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CaptureRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureAcceptedResponse"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureAcceptedResponse"];
                 };
             };
             /** @description Bad Request */

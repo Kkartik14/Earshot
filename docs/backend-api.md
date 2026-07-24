@@ -93,6 +93,45 @@ incident transactionally.
 - `422`: structural/semantic/privacy invalidity;
 - `503`: retryable storage failure.
 
+### `POST /v1/capture`
+
+Accepts one bounded `application/json` browser capture batch — the `CapturePayload`
+the [`@earshot/browser`](../packages/browser/README.md) kernel drains — and turns it
+into a governed Incident through the same WebRTC and audio-graph engines the SDK uses
+(`framework: browser_capture`). It is a normal `/v1` route: the same bearer key or
+viewer session authenticates it, the same project scoping applies, and because it is
+an unsafe method a cookie-authenticated caller must send the CSRF token.
+
+The wire format carries its own version in the body (`captureVersion`), independent of
+the `/v1` path, so client and server evolve separately. The version is checked before
+the rest of the schema, so a client on a format this server does not govern gets
+`400 EARSHOT_UNSUPPORTED_CAPTURE_VERSION` rather than a list of field errors.
+
+Every bound is explicit and enforced before the payload is materialized: a streamed
+body limit, then per-collection count limits on `snapshots`, `deviceEvents`, `coverage`
+and per-snapshot stats (`413 EARSHOT_CAPTURE_TOO_LARGE`), then the schema
+(`422 EARSHOT_INVALID_CAPTURE`, field paths only, never payload values).
+
+The client is not a trust boundary. The backend re-derives its own allowlist over every
+`RTCStats` and device-event member and drops anything outside it before an engine sees
+the value, so a `base64Certificate`, DTLS `fingerprint`, `usernameFragment`, candidate
+address, or device label cannot be stored. Refusals are counted in the response
+(`rejected_*`) and recorded on the Incident as `capture.*` coverage; the batch's own
+coverage is recorded under a `browser.` prefix so a client claim can never overwrite a
+server-derived note.
+
+Browser timestamps are recorded in the declared browser `ClockDomain` at their raw
+readings and are never rebased onto the server clock, so cross-clock latency stays
+unavailable until a real `ClockRelation` is supplied.
+
+- `201`: the batch became a new Incident;
+- `200`: the same batch was already ingested (delivery is idempotent by batch content,
+  so a transport retry after an unknown outcome does not duplicate evidence);
+- `400`: malformed payload or unsupported `captureVersion`;
+- `413`: body or collection limit exceeded;
+- `415`: unsupported media type;
+- `422`: payload fails the capture contract.
+
 ### `GET /v1/incidents`
 
 Stable cursor pagination, optionally filtered by `session_id`. `limit` is 1–100.
