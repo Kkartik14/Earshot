@@ -42,10 +42,8 @@ from .capture import (
     ResyncClaim,
 )
 from .capture.sanitize import (
-    _CAPTURE_EVENT_ALLOWLIST,
-    _CAPTURE_STAT_ID,
-    _capture_event_member,
-    _sanitize_capture_stat,
+    sanitize_device_events,
+    sanitize_snapshot,
 )
 from .checkpoint import AssemblyError, JournalUnreadableError, assemble_incident
 from .checkpoint.limits import MAX_CHECKPOINT_BATCH_BYTES, MAX_CHECKPOINT_FRAME_BYTES
@@ -1243,7 +1241,13 @@ def _sanitize_capture_snapshots(
     *,
     max_stats: int,
 ) -> tuple[list[dict[str, Any]], int, int]:
-    """Return engine-ready snapshots plus (dropped stats, dropped members)."""
+    """Return engine-ready snapshots plus (dropped stats, dropped members).
+
+    The governed-member allowlist lives in ``earshot.capture.sanitize`` so the
+    HTTP path and an in-process capture source enforce byte-for-byte the same
+    decision; only the per-request stat-count ceiling stays here, because it is a
+    property of the request body, not of the allowlist.
+    """
 
     cleaned: list[dict[str, Any]] = []
     dropped_stats = 0
@@ -1255,18 +1259,12 @@ def _sanitize_capture_snapshots(
                 "EARSHOT_CAPTURE_TOO_LARGE",
                 "capture snapshot exceeds the stat count limit",
             )
-        stats: dict[str, dict[str, Any]] = {}
-        for stat_id, stat in snapshot.stats.items():
-            if not _CAPTURE_STAT_ID.fullmatch(stat_id) or not isinstance(stat, dict):
-                dropped_stats += 1
-                continue
-            members, dropped = _sanitize_capture_stat(stat)
-            dropped_members += dropped
-            if members is None:
-                dropped_stats += 1
-                continue
-            stats[stat_id] = members
-        cleaned.append({"timestamp_ms": snapshot.timestamp_ms, "stats": stats})
+        clean, stats, members = sanitize_snapshot(
+            {"timestamp_ms": snapshot.timestamp_ms, "stats": snapshot.stats}
+        )
+        cleaned.append(clean)
+        dropped_stats += stats
+        dropped_members += members
     return cleaned, dropped_stats, dropped_members
 
 
@@ -1275,28 +1273,10 @@ def _sanitize_capture_events(
 ) -> tuple[list[dict[str, Any]], int, int]:
     """Return engine-ready device events plus (dropped events, dropped members)."""
 
-    cleaned: list[dict[str, Any]] = []
-    dropped_events = 0
-    dropped_members = 0
-    for event in events:
-        event_type = event.type.lower()
-        allowed = _CAPTURE_EVENT_ALLOWLIST.get(event_type)
-        if allowed is None:
-            dropped_events += 1  # an event type no engine dispatches on
-            continue
-        payload: dict[str, Any] = {
-            "type": event_type,
-            "timestamp_ms": event.timestamp_ms,
-        }
-        for key, value in (event.model_extra or {}).items():
-            kind = allowed.get(key)
-            accepted = None if kind is None else _capture_event_member(kind, value)
-            if accepted is None:
-                dropped_members += 1
-                continue
-            payload[key] = accepted
-        cleaned.append(payload)
-    return cleaned, dropped_events, dropped_members
+    return sanitize_device_events(
+        {"type": event.type, "timestamp_ms": event.timestamp_ms, **(event.model_extra or {})}
+        for event in events
+    )
 
 
 def _capture_coverage_signal(signal: str) -> str:

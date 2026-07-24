@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 # Ceilings for governed numeric stat members and audio-graph seconds. A reading
@@ -307,3 +307,118 @@ def _capture_event_member(kind: str, value: Any) -> Any | None:
             return value
         return None
     return None
+
+
+# -- batch-level allowlisting --------------------------------------------------
+#
+# These operate on plain mappings (a parsed browser batch), never on FastAPI
+# request models, so the HTTP endpoint and an in-process capture source enforce
+# the SAME allowlist by calling the SAME primitives. The per-request size limits
+# (a snapshot's stat-count ceiling, the Pydantic body shape) stay in
+# ``earshot.api``; only the governed-member allowlist lives here. An
+# already-engine-ready snapshot ``{"timestamp_ms": float, "stats": {...}}`` and
+# device event ``{"type": str, "timestamp_ms": float, ...members}`` come out --
+# exactly what :func:`earshot.engines.webrtc.apply_webrtc_stats` and
+# :func:`earshot.engines.device.apply_audio_graph` consume.
+
+
+def sanitize_snapshot(snapshot: Mapping[str, Any]) -> tuple[dict[str, Any], int, int]:
+    """Allowlist one ``getStats`` snapshot's stat bag.
+
+    Returns ``(engine_ready_snapshot, dropped_stats, dropped_members)``. A stat
+    whose id is not an opaque within-report reference, whose value is not a bag,
+    or whose ``type`` no engine consumes is dropped whole (``dropped_stats``);
+    a governed stat's non-allowlisted members are dropped individually
+    (``dropped_members``). ``timestamp_ms`` is preserved verbatim -- the WebRTC
+    engine validates it (a non-finite reading makes that snapshot unobserved),
+    so this never fabricates or clamps a coordinate.
+    """
+
+    stats_in = snapshot.get("stats")
+    cleaned: dict[str, dict[str, Any]] = {}
+    dropped_stats = 0
+    dropped_members = 0
+    if isinstance(stats_in, Mapping):
+        for stat_id, stat in stats_in.items():
+            if (
+                not isinstance(stat_id, str)
+                or not _CAPTURE_STAT_ID.fullmatch(stat_id)
+                or not isinstance(stat, Mapping)
+            ):
+                dropped_stats += 1
+                continue
+            members, dropped = _sanitize_capture_stat(stat)
+            dropped_members += dropped
+            if members is None:
+                dropped_stats += 1
+                continue
+            cleaned[stat_id] = members
+    snapshot_out = {"timestamp_ms": snapshot.get("timestamp_ms"), "stats": cleaned}
+    return snapshot_out, dropped_stats, dropped_members
+
+
+def sanitize_snapshots(
+    snapshots: Iterable[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Allowlist a batch of snapshots. Returns ``(cleaned, dropped_stats, dropped_members)``."""
+
+    cleaned: list[dict[str, Any]] = []
+    dropped_stats = 0
+    dropped_members = 0
+    for snapshot in snapshots:
+        clean, stats, members = sanitize_snapshot(snapshot)
+        cleaned.append(clean)
+        dropped_stats += stats
+        dropped_members += members
+    return cleaned, dropped_stats, dropped_members
+
+
+def sanitize_device_event(event: Mapping[str, Any]) -> tuple[dict[str, Any] | None, int]:
+    """Allowlist one audio-graph/device event.
+
+    Returns ``(engine_ready_event | None, dropped_members)``. ``None`` drops the
+    event whole -- a type no engine dispatches on, so it can never reach storage
+    by omission. Members outside the type's allowlist (a raw device label, an
+    unexpected field) are dropped individually.
+    """
+
+    event_type_raw = event.get("type")
+    if not isinstance(event_type_raw, str):
+        return None, 0
+    event_type = event_type_raw.lower()
+    allowed = _CAPTURE_EVENT_ALLOWLIST.get(event_type)
+    if allowed is None:
+        return None, 0
+    payload: dict[str, Any] = {"type": event_type, "timestamp_ms": event.get("timestamp_ms")}
+    dropped_members = 0
+    for key, value in event.items():
+        if key in ("type", "timestamp_ms"):
+            continue
+        kind = allowed.get(key)
+        accepted = None if kind is None else _capture_event_member(kind, value)
+        if accepted is None:
+            dropped_members += 1
+            continue
+        payload[key] = accepted
+    return payload, dropped_members
+
+
+def sanitize_device_events(
+    events: Iterable[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Allowlist a batch of device events.
+
+    Returns ``(cleaned, dropped_events, dropped_members)``.
+    """
+
+    cleaned: list[dict[str, Any]] = []
+    dropped_events = 0
+    dropped_members = 0
+    for event in events:
+        clean, members = sanitize_device_event(event)
+        if clean is None:
+            dropped_events += 1
+            continue
+        cleaned.append(clean)
+        dropped_members += members
+    return cleaned, dropped_events, dropped_members
