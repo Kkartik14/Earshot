@@ -29,6 +29,7 @@ from .contract import (
     IncidentProfile,
     MediaRef,
     Operation,
+    RecoveryRecord,
     TimePoint,
     TimeRange,
     media_custody_incoherence,
@@ -882,6 +883,46 @@ def _find_cycle(edges: Mapping[str, set[str]]) -> tuple[str, ...] | None:
     return None
 
 
+def _check_recovery_extent(
+    recovery: RecoveryRecord,
+    issues: list[ValidationIssue],
+) -> None:
+    """Refuse an observed extent whose first coordinate follows its last.
+
+    The two coordinates bound the span the evidence durably saw. When they are in
+    the SAME clock domain a first-after-last ordering is incoherent -- the record
+    claims to have started observing after it stopped. Coordinates in different
+    domains are never compared (there is no shared basis to order them on), exactly
+    as ``_check_time_range`` refuses to reverse-check across domains.
+    """
+
+    first = recovery.first_observation
+    last = recovery.last_observation
+    if first is None or last is None:
+        return
+    if first.clock_domain_id is None or first.clock_domain_id != last.clock_domain_id:
+        return
+    reversed_bases = [
+        field_name
+        for field_name in (
+            "monotonic_time_nano",
+            "source_time_unix_nano",
+            "observed_time_unix_nano",
+        )
+        if (start := getattr(first, field_name)) is not None
+        and (end := getattr(last, field_name)) is not None
+        and int(end) < int(start)
+    ]
+    if reversed_bases:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_RECOVERY_EXTENT_INCOHERENT",
+                path=("profile", "manifest", "recovery", "first_observation"),
+                message="the first observed coordinate follows the last within one clock domain",
+            )
+        )
+
+
 def _check_recovery_declaration(
     profile: IncidentProfile,
     coverage_availability: Mapping[str, str],
@@ -942,6 +983,7 @@ def _check_recovery_declaration(
                 message="a damaged or truncated journal cannot have observed a close",
             )
         )
+    _check_recovery_extent(recovery, issues)
     expected_close = "available" if recovery.close_observed else "unavailable"
     if coverage_availability.get("recorder.session_close") != expected_close:
         issues.append(

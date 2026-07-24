@@ -211,6 +211,94 @@ def test_a_bundle_claiming_a_close_it_never_observed_is_refused_everywhere() -> 
             encode(bundle)
 
 
+def test_a_recovery_extent_must_be_coherent_within_one_domain() -> None:
+    """A first observed coordinate that follows the last is incoherent."""
+
+    bundle = _recovered()
+    domain = bundle.profile.clock_domains[0].clock_domain_id
+    manifest = bundle.profile.manifest.model_copy(
+        update={
+            "recovery": _recovery(
+                first_observation=TimePoint(monotonic_time_nano="5000", clock_domain_id=domain),
+                last_observation=TimePoint(monotonic_time_nano="1000", clock_domain_id=domain),
+            )
+        }
+    )
+    broken = bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"manifest": manifest})}
+    )
+
+    assert "EARSHOT_RECOVERY_EXTENT_INCOHERENT" in issue_codes(broken)
+
+
+def test_a_coherent_recovery_extent_within_one_domain_validates() -> None:
+    bundle = _recovered()
+    domain = bundle.profile.clock_domains[0].clock_domain_id
+    manifest = bundle.profile.manifest.model_copy(
+        update={
+            "recovery": _recovery(
+                first_observation=TimePoint(monotonic_time_nano="1000", clock_domain_id=domain),
+                last_observation=TimePoint(monotonic_time_nano="5000", clock_domain_id=domain),
+            )
+        }
+    )
+    candidate = bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"manifest": manifest})}
+    )
+
+    assert_valid_incident(candidate)
+
+
+def test_a_recovery_extent_across_clock_domains_is_never_ordered() -> None:
+    """Two coordinates in different domains have no shared basis to reverse-check."""
+
+    bundle = _recovered()
+    domain = bundle.profile.clock_domains[0].clock_domain_id
+    manifest = bundle.profile.manifest.model_copy(
+        update={
+            "recovery": _recovery(
+                # ``first`` after ``last`` numerically, but in a foreign domain, so
+                # there is nothing to compare and nothing to complain about.
+                first_observation=TimePoint(monotonic_time_nano="5000", clock_domain_id=domain),
+                last_observation=TimePoint(
+                    monotonic_time_nano="1000", clock_domain_id="other-clock"
+                ),
+            )
+        }
+    )
+    candidate = bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"manifest": manifest})}
+    )
+
+    assert "EARSHOT_RECOVERY_EXTENT_INCOHERENT" not in issue_codes(candidate)
+
+
+def test_first_observation_survives_the_json_and_protobuf_round_trip() -> None:
+    from earshot.codec import decode_incident_protobuf, encode_incident_protobuf
+
+    bundle = _recovered()
+    domain = bundle.profile.clock_domains[0].clock_domain_id
+    manifest = bundle.profile.manifest.model_copy(
+        update={
+            "recovery": _recovery(
+                first_observation=TimePoint(monotonic_time_nano="1000", clock_domain_id=domain),
+                last_observation=TimePoint(monotonic_time_nano="5000", clock_domain_id=domain),
+            )
+        }
+    )
+    candidate = bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"manifest": manifest})}
+    )
+
+    from_json = decode_incident_json(encode_incident_json(candidate))
+    from_protobuf = decode_incident_protobuf(encode_incident_protobuf(candidate))
+    for restored in (from_json, from_protobuf):
+        recovery = restored.profile.manifest.recovery
+        assert recovery is not None
+        assert recovery.first_observation is not None
+        assert recovery.first_observation.monotonic_time_nano == "1000"
+
+
 # ------------------------------------------------------------ version policy
 
 

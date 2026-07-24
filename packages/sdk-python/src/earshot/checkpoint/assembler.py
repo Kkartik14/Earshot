@@ -127,7 +127,23 @@ class _ReplayState:
         self.omitted_by_class: dict[str, int] = dict.fromkeys(
             (capture_class.value for capture_class in CaptureClass), 0
         )
+        self.first_observation: TimePoint | None = None
         self.last_observation: TimePoint | None = None
+
+    def observe(self, point: TimePoint | None) -> None:
+        """Widen the observed extent to include ``point``, in journal order.
+
+        ``last_observation`` follows the journal forward exactly as before;
+        ``first_observation`` records the earliest coordinate seen. Both track only
+        the coordinates the existing tracker already sees (events and operation
+        opens), so no fact that did not already report a coordinate starts to.
+        """
+
+        if point is None:
+            return
+        if self.first_observation is None:
+            self.first_observation = point
+        self.last_observation = point
 
     def append(self, kind: str, record: Any, replaces_index: int | None) -> None:
         target = {
@@ -202,7 +218,7 @@ def assemble_incident(
             _apply_limit(state, entry)
         elif isinstance(entry, JournalOperationOpen):
             state.open_operations[entry.operation_id] = entry
-            state.last_observation = TimePoint.model_validate(entry.started_at)
+            state.observe(TimePoint.model_validate(entry.started_at))
         elif isinstance(entry, JournalExhausted):
             journal_exhausted = True
         elif isinstance(entry, JournalFinalize):
@@ -247,6 +263,7 @@ def assemble_incident(
             close_observed=False,
             journal_id=replay.header.journal_id,
             last_sequence=replay.last_sequence,
+            first_observation=state.first_observation,
             last_observation=state.last_observation,
             torn_tail_bytes=replay.torn_tail_bytes,
             discarded_records=discarded,
@@ -358,13 +375,23 @@ def _decode_raw_otlp(value: dict[str, Any]) -> RawOtlpChunk | None:
 
 
 def _observe_time(state: _ReplayState, record: Any) -> None:
-    """Track the last coordinate the journal durably observed."""
+    """Track the span of coordinates the journal durably observed.
 
+    A quality sample carries its coordinate as a window rather than a bare point,
+    so it is read from there; without this a call whose only facts are measurements
+    (a browser capture drain of pure ``getStats`` scalars) would state no observed
+    extent at all even though it plainly saw evidence.
+    """
+
+    if isinstance(record, QualitySample):
+        state.observe(record.sample_window.start)
+        state.observe(record.sample_window.end)
+        return
     candidate = getattr(record, "ended_at", None) or getattr(record, "started_at", None)
     if candidate is None:
         candidate = getattr(record, "time", None)
     if isinstance(candidate, TimePoint):
-        state.last_observation = candidate
+        state.observe(candidate)
 
 
 def _unfinished_operations(state: _ReplayState) -> list[Operation]:

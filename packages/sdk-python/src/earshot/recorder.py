@@ -1940,6 +1940,51 @@ class IncidentRecorder:
             self._bundle = bundle.model_copy(deep=True)
         return self._bundle.model_copy(deep=True)
 
+    def finalize_journal(
+        self,
+        *,
+        ended: TimePoint,
+        status: str = "completed",
+        status_attributes: Mapping[str, str] | None = None,
+    ) -> None:
+        """Write the journal's finalize frame at a caller-supplied end coordinate.
+
+        This is the one seam the continuous browser-capture path needs that
+        ``close()`` does not give it: a call's end coordinate is a *browser*
+        reading this recorder's own server clock never saw, so the finalize's
+        ``ended`` cannot come from ``self._time()``. It writes the SAME finalize
+        frame ``close()`` writes -- the recorder's own authoritative counters, the
+        cross-check the assembler runs -- but stamps it with the observed coordinate
+        the caller passes, and it does nothing else: no profile is built, validated,
+        or exported here, because a continuous call's artifact is materialized from
+        the journal by the seal path, not returned from this call. Writing a
+        finalize frame is what makes ``ended`` real: only an observed close writes
+        one, so a call that never reaches here stays provisional forever.
+
+        Idempotent and terminal: once the journal is finalized this is a no-op, so a
+        second observed end cannot append a second finalize.
+        """
+
+        self._emit_pending_truncation_diagnostic()
+        with self._lock:
+            if self._closed or self._close_error is not None:
+                return
+            safe_status = sanitize_semantic_label(status) or "unknown"
+            self._journal.finalize(
+                status=safe_status,
+                status_attributes=dict(status_attributes or {}),
+                ended=ended,
+                first_limit_reason=self._first_limit_reason,
+                truncated_records=self._truncated_records,
+                estimated_omitted_bytes=self._estimated_omitted_bytes,
+                omitted_records_by_kind=tuple(self._omitted_records_by_kind.items()),
+                omitted_records_by_capture_class=tuple(self._omitted_records_by_class.items()),
+                retained_classes=tuple(self._retained_classes),
+                record_counts=self._record_counts_locked(),
+            )
+            self._status = safe_status
+            self._closed = True
+
     def checkpoint_status(self) -> CheckpointStatus:
         """Report the crash journal's state, including any degradation."""
 

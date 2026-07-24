@@ -255,8 +255,15 @@ class RecoveryRecord(ContractModel):
     # rather than inventing a journal identity and sequence it never had.
     journal_id: OpaqueId | None = None
     last_sequence: StrictInt | None = Field(default=None, ge=0)
-    # The last coordinate the evidence durably observed. This is *not* the end of
-    # the session: the session may have run on for a long time after it.
+    # The span of coordinates the evidence durably observed. ``last_observation``
+    # is the last such coordinate and ``first_observation`` the first, symmetric so
+    # a provisional or recovered artifact states the extent it actually saw without
+    # a consumer scanning every fact. Neither is a session boundary: the session may
+    # have begun before the first observation and run on long after the last. Both
+    # live in whatever clock domain the evidence was observed in (a browser capture
+    # journal's are browser coordinates), so a coherence check between them only
+    # holds within one domain.
+    first_observation: TimePoint | None = None
     last_observation: TimePoint | None = None
     torn_tail_bytes: StrictInt = Field(default=0, ge=0)
     discarded_records: StrictInt = Field(default=0, ge=0)

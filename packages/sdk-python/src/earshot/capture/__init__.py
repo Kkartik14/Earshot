@@ -15,12 +15,15 @@ construction), and :mod:`calls` sequences, projects and journals each drain of i
 from __future__ import annotations
 
 from .calls import (
+    END_CALL_ENDED,
     RECOVERY_METHOD,
     RECOVERY_REASON_SEALED,
     CaptureCall,
     CaptureCallCapacityError,
+    CaptureCallClosedError,
     CaptureCallRegistry,
     CaptureDrain,
+    CaptureEnd,
     CaptureError,
     CaptureSequenceConflictError,
     CaptureSequenceGapError,
@@ -30,12 +33,15 @@ from .calls import (
 from .identity import call_key
 
 __all__ = [
+    "END_CALL_ENDED",
     "RECOVERY_METHOD",
     "RECOVERY_REASON_SEALED",
     "CaptureCall",
     "CaptureCallCapacityError",
+    "CaptureCallClosedError",
     "CaptureCallRegistry",
     "CaptureDrain",
+    "CaptureEnd",
     "CaptureError",
     "CaptureSequenceConflictError",
     "CaptureSequenceGapError",
