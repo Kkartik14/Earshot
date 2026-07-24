@@ -11,6 +11,7 @@ import {
   contradictionsReason,
   type ContradictionsStatus,
 } from "./SessionFacts";
+import { MediaCustodyPanel } from "./MediaCustody";
 import { RecoveryStrip } from "./RecoveryStrip";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
@@ -20,6 +21,7 @@ import {
   buildClockCalibration,
   buildContradictions,
   buildDiagnoses,
+  buildMediaCustody,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
@@ -80,6 +82,7 @@ export function SessionInspector() {
   const diagnoses = buildDiagnoses(explained);
   const unassigned = buildUnassigned(explained);
   const calibration = buildClockCalibration(inc, details);
+  const mediaCustody = buildMediaCustody(inc);
   // A detection that has not answered, or could not run, is reported as such.
   // Only a resolved report may be read as "these are the conflicts".
   const contradictionsStatus: ContradictionsStatus = contradictions.data
@@ -142,6 +145,9 @@ export function SessionInspector() {
           onSelectEvidence={selectOperation}
         />
         <ClockCalibrationPanel calibration={calibration} />
+        {/* Custody sits beside the clock panel because it is the same question:
+            media is aligned by a declared ClockRelation or not at all. */}
+        <MediaCustodyPanel media={mediaCustody} />
         <UnassignedPanel facts={unassigned} />
       </div>
       {sel ? (

@@ -990,6 +990,164 @@ export function buildClockCalibration(
   return { domains, relations, crossClock };
 }
 
+/** How a media file's own timeline relates to the incident's, if at all.
+ *
+ *  Media synchronization is not a second mechanism: a media file's timeline is
+ *  another clock domain, so this is the ordinary cross-clock question answered by
+ *  the ordinary `ClockRelation`. `aligned` reports the declared calibration and
+ *  its own error bound; `unaligned` refuses to guess an offset. */
+export type MediaAlignmentView =
+  | { state: "session_domain"; note: string }
+  | {
+      state: "aligned";
+      note: string;
+      method: string;
+      uncertaintyMs: number | null;
+      driftPpm: number | null;
+    }
+  | { state: "unaligned"; note: string }
+  | { state: "undeclared"; note: string };
+
+/** The declared retention governing externally-held media. Earshot records the
+ *  policy; it does not enforce it, because it does not hold the bytes. */
+export interface MediaRetentionView {
+  expiresAtUnixNano: string | null;
+  ttlMs: number | null;
+  policyId: string | null;
+}
+
+/** One media reference, as custody facts only. There is deliberately no field
+ *  carrying media bytes, a duration derived from them, or anything earshot could
+ *  only know by reading them: earshot never does. */
+export interface MediaCustodyView {
+  mediaId: string;
+  mediaKind: string;
+  contentType: string;
+  /** Who holds the bytes. `null` renders as "not declared", never as earshot. */
+  custodian: string | null;
+  integrity: "content_digest" | "opaque_handle";
+  /** The declared digest, if the reference carries one. Never computed here. */
+  digest: string | null;
+  sizeBytes: number | null;
+  /** The plain-language integrity claim, written so it cannot be read as
+   *  "earshot checked this". */
+  integrityNote: string;
+  coveredMs: number | null;
+  coveredNote: string;
+  consent: string | null;
+  retention: MediaRetentionView | null;
+  alignment: MediaAlignmentView;
+  /** A custodian URL for a user-initiated, direct hand-off. It is never used as
+   *  a media `src`: an `src` would make the viewer fetch the bytes on render. */
+  locatorUri: string | null;
+  locatorExpiresNano: string | null;
+}
+
+/** Assemble the custody panel: where externally-held media lives, whether anyone
+ *  measured it, and whether a declared calibration can place it on this
+ *  session's timeline. Reads only `profile.media_refs` and the clock records —
+ *  it dereferences nothing. */
+export function buildMediaCustody(incident: IncidentLike): MediaCustodyView[] {
+  const relations = incident.profile.clock_relations ?? [];
+  // The domains this session's own evidence is recorded in: the set media has to
+  // reach to be overlayable at all.
+  const observationDomains = new Set<string>();
+  for (const op of incident.profile.operations ?? []) {
+    for (const point of [op.started_at, op.ended_at]) {
+      if (point?.clock_domain_id != null) observationDomains.add(point.clock_domain_id);
+    }
+  }
+  for (const event of incident.profile.events ?? []) {
+    if (event.time?.clock_domain_id != null)
+      observationDomains.add(event.time.clock_domain_id);
+  }
+
+  return (incident.profile.media_refs ?? []).map((media) => {
+    const integrity =
+      media.integrity === "opaque_handle" ? "opaque_handle" : "content_digest";
+    const digest = media.sha256 ?? null;
+    const covered = durationMs(media.time_range?.start, media.time_range?.end);
+    return {
+      mediaId: media.media_id,
+      mediaKind: media.media_kind,
+      contentType: media.content_type,
+      custodian: media.custodian ?? null,
+      integrity,
+      digest,
+      sizeBytes: media.size_bytes ?? null,
+      integrityNote:
+        integrity === "content_digest"
+          ? "digest declared by the producer — earshot did not read these bytes and has not verified it"
+          : "no digest — earshot never read these bytes and cannot attest to their integrity",
+      coveredMs: covered,
+      coveredNote:
+        media.time_range == null
+          ? "no covered window declared"
+          : covered == null
+            ? "covered window declared, but its endpoints are not comparable"
+            : "covered window",
+      consent: media.consent?.status ?? null,
+      retention: retentionView(media.retention),
+      alignment: mediaAlignment(media.clock_domain_id, observationDomains, relations),
+      locatorUri: media.locator?.uri ?? null,
+      locatorExpiresNano: media.locator?.expires_at_unix_nano ?? null,
+    };
+  });
+}
+
+const retentionView = (
+  retention: components["schemas"]["RetentionPolicy"] | null | undefined,
+): MediaRetentionView | null => {
+  if (retention == null) return null;
+  const ttl = nano(retention.ttl_nano);
+  return {
+    expiresAtUnixNano: retention.expires_at_unix_nano ?? null,
+    ttlMs: ttl == null || ttl < 0n ? null : Number(ttl) / 1_000_000,
+    policyId: retention.policy_id ?? null,
+  };
+};
+
+/** Decide media alignment with the same rule the analyzer's aligner uses: the
+ *  media domain is either one the session records in, or a single declared
+ *  relation joins it to one (in either direction — a calibration is an
+ *  invertible affine map). Chains are not composed, so a media file two hops away
+ *  is reported unaligned rather than aligned by an offset nothing computed. */
+function mediaAlignment(
+  mediaDomain: string | null | undefined,
+  observationDomains: Set<string>,
+  relations: components["schemas"]["ClockRelation"][],
+): MediaAlignmentView {
+  if (mediaDomain == null)
+    return {
+      state: "undeclared",
+      note: "this reference declares no media timeline, so it cannot be placed on the session's",
+    };
+  if (observationDomains.has(mediaDomain))
+    return {
+      state: "session_domain",
+      note: "recorded in a clock domain this session already uses",
+    };
+  const relation = relations.find(
+    (r) =>
+      (r.from_clock_domain_id === mediaDomain &&
+        observationDomains.has(r.to_clock_domain_id)) ||
+      (r.to_clock_domain_id === mediaDomain &&
+        observationDomains.has(r.from_clock_domain_id)),
+  );
+  if (relation == null)
+    return {
+      state: "unaligned",
+      note: "no declared clock relation reaches this session's timeline, so no offset is assumed",
+    };
+  return {
+    state: "aligned",
+    note: `via ${relation.relation_id}`,
+    method: relation.method,
+    uncertaintyMs: uncertaintyMs(relation.uncertainty_nano),
+    driftPpm: relation.drift_ppm ?? null,
+  };
+}
+
 /** A session-level operation whose evidence is not turn-scoped (e.g. a
  * `device_unavailable` op). It has no shared turn axis, so only a self-contained
  * observed duration (from `duration_nano`) is shown — never a cross-op offset. */

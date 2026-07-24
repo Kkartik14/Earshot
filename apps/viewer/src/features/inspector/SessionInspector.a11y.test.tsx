@@ -138,6 +138,30 @@ const recoveredFixture = {
   },
 };
 
+/** The same session, plus a reference to a recording a provider holds. Earshot
+ * stores the reference; the bytes stay with the custodian. */
+const custodyFixture = {
+  ...incidentFixture,
+  profile: {
+    ...incidentFixture.profile,
+    media_refs: [
+      {
+        media_id: "media-1",
+        session_id: incidentFixture.profile.session.session_id,
+        stream_id: "stream-out",
+        media_kind: "audio",
+        content_type: "audio/wav",
+        integrity: "opaque_handle",
+        custodian: "provider.vapi",
+        clock_domain_id: "media-1",
+        capture_class: "audio",
+        locator: { uri: "https://media.example.com/1.wav", access: "governed" },
+        attributes: {},
+      },
+    ],
+  },
+};
+
 function renderInspector({
   contradictions,
   incident: incidentOverride,
@@ -261,6 +285,26 @@ describe("SessionInspector focus management", () => {
     // It sits above the session, so it cannot be scrolled past unnoticed.
     expect(strip.compareDocumentPosition(screen.getByRole("heading", { level: 1 }))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it("shows no custody panel for a session that references no media", () => {
+    renderInspector();
+    expect(screen.queryByRole("region", { name: /media custody/i })).toBeNull();
+  });
+
+  it("renders media custody without loading a single byte of the media", () => {
+    const { container } = renderInspector({ incident: custodyFixture });
+
+    const panel = within(screen.getByRole("region", { name: /media custody/i }));
+    expect(panel.getByText("provider.vapi")).toBeInTheDocument();
+    expect(panel.getByText("cannot align")).toBeInTheDocument();
+    // The whole rendered session, not just the panel: nothing anywhere asks the
+    // browser to fetch media on render.
+    expect(container.querySelectorAll("audio, video, source, [src]")).toHaveLength(0);
+    expect(screen.getByRole("link", { name: /open at the custodian/i })).toHaveAttribute(
+      "href",
+      "https://media.example.com/1.wav",
     );
   });
 

@@ -20,6 +20,7 @@ import {
   buildClockCalibration,
   buildContradictions,
   buildDiagnoses,
+  buildMediaCustody,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
@@ -1610,5 +1611,144 @@ describe("buildContradictions", () => {
     } as unknown as ContradictionsLike;
 
     expect(buildContradictions(asExplanation(toolTimeoutRetry), report)).toEqual([]);
+  });
+});
+
+describe("buildMediaCustody", () => {
+  // A session whose own evidence lives in "server-clock", plus a media file with
+  // its own timeline. Everything about alignment is decided from these records.
+  const custodyIncident = (
+    media: Record<string, unknown>,
+    relations: Record<string, unknown>[] = [],
+  ) =>
+    ({
+      profile: {
+        clock_domains: [
+          { clock_domain_id: "server-clock", kind: "process_monotonic", observer: "sdk" },
+          { clock_domain_id: "media-1", kind: "media_timeline", observer: "vapi" },
+        ],
+        clock_relations: relations,
+        operations: [
+          {
+            operation_id: "op",
+            operation_name: "llm",
+            status: "ok",
+            started_at: { clock_domain_id: "server-clock", monotonic_time_nano: "0" },
+          },
+        ],
+        events: [],
+        media_refs: [media],
+      },
+    }) as unknown as IncidentLike;
+
+  const opaque = {
+    media_id: "media-1",
+    session_id: "s",
+    stream_id: "stream-out",
+    media_kind: "audio",
+    content_type: "audio/wav",
+    integrity: "opaque_handle",
+    custodian: "provider.vapi",
+    clock_domain_id: "media-1",
+  };
+
+  const relation = {
+    relation_id: "relation-media",
+    from_clock_domain_id: "media-1",
+    to_clock_domain_id: "server-clock",
+    offset_nano: "0",
+    uncertainty_nano: "12000000",
+    method: "provider_declared",
+  };
+
+  it("carries an opaque handle without inventing a digest", () => {
+    const [custody] = buildMediaCustody(custodyIncident(opaque));
+
+    expect(custody.integrity).toBe("opaque_handle");
+    expect(custody.digest).toBeNull();
+    expect(custody.sizeBytes).toBeNull();
+    expect(custody.custodian).toBe("provider.vapi");
+    expect(custody.integrityNote).toMatch(/cannot attest/);
+  });
+
+  it("attributes a declared digest to its producer, never to earshot", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident({
+        ...opaque,
+        integrity: "content_digest",
+        sha256: "a".repeat(64),
+        size_bytes: 4096,
+        custodian: null,
+      }),
+    );
+
+    expect(custody.integrity).toBe("content_digest");
+    expect(custody.digest).toBe("a".repeat(64));
+    // The copy must not let a reader conclude earshot checked the bytes.
+    expect(custody.integrityNote).toMatch(/earshot did not read these bytes/);
+    expect(custody.integrityNote).not.toMatch(/verified\b(?! it)/);
+  });
+
+  it("aligns media through a declared ClockRelation, carrying its uncertainty", () => {
+    const [custody] = buildMediaCustody(custodyIncident(opaque, [relation]));
+
+    expect(custody.alignment).toEqual({
+      state: "aligned",
+      note: "via relation-media",
+      method: "provider_declared",
+      uncertaintyMs: 12,
+      driftPpm: null,
+    });
+  });
+
+  it("aligns through a relation declared in the opposite direction", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident(opaque, [
+        {
+          ...relation,
+          from_clock_domain_id: "server-clock",
+          to_clock_domain_id: "media-1",
+        },
+      ]),
+    );
+
+    expect(custody.alignment.state).toBe("aligned");
+  });
+
+  it("refuses to guess an offset when no calibration reaches the session", () => {
+    const [custody] = buildMediaCustody(custodyIncident(opaque));
+
+    expect(custody.alignment.state).toBe("unaligned");
+    expect(custody.alignment.note).toMatch(/no offset is assumed/);
+  });
+
+  it("does not treat a relation to an unused domain as alignment", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident(opaque, [{ ...relation, to_clock_domain_id: "stranded" }]),
+    );
+
+    expect(custody.alignment.state).toBe("unaligned");
+  });
+
+  it("needs no relation when the media shares the session's clock domain", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident({ ...opaque, clock_domain_id: "server-clock" }),
+    );
+
+    expect(custody.alignment.state).toBe("session_domain");
+  });
+
+  it("says so when a reference declares no media timeline at all", () => {
+    const [custody] = buildMediaCustody(
+      custodyIncident({ ...opaque, clock_domain_id: null }),
+    );
+
+    expect(custody.alignment.state).toBe("undeclared");
+  });
+
+  it("projects nothing for an incident that references no media", () => {
+    expect(
+      buildMediaCustody({ profile: { media_refs: [] } } as unknown as IncidentLike),
+    ).toEqual([]);
   });
 });
