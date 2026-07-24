@@ -55,6 +55,19 @@ export interface EventTargetLike {
   removeEventListener(type: string, listener: () => void): void;
 }
 
+/**
+ * The `AudioTimestamp` returned by `AudioContext.getOutputTimestamp()`.
+ *
+ * `contextTime` is the audio-graph time of the sample frame the output device
+ * is *currently rendering*; `performanceTime` is the `performance.now()` moment
+ * that sample was (or will be) played. Both members are optional here because
+ * the platform may return an unpopulated timestamp before audio starts flowing.
+ */
+export interface AudioTimestampLike {
+  readonly contextTime?: number;
+  readonly performanceTime?: number;
+}
+
 /** The minimal `AudioContext` surface we read. */
 export interface AudioContextLike extends EventTargetLike {
   /** "running" | "suspended" | "closed" | (iOS) "interrupted". */
@@ -65,12 +78,29 @@ export interface AudioContextLike extends EventTargetLike {
   readonly outputLatency?: number;
   /** Current output sink id (a device id — hashed before it leaves the client). */
   readonly sinkId?: string | { type: string };
+  /**
+   * Graph time, in seconds: the time of the sample frame *after* the block the
+   * graph most recently processed. It runs AHEAD of what is audible, which is
+   * exactly why `currentTime - getOutputTimestamp().contextTime` is the depth of
+   * the render queue.
+   */
+  readonly currentTime?: number;
+  /** The graph's sample rate in Hz — compared against the capture track's. */
+  readonly sampleRate?: number;
+  /** Present on browsers that expose the playout position (see above). */
+  getOutputTimestamp?(): AudioTimestampLike;
 }
 
 /** A single audio `MediaStreamTrack` surface (lifecycle + settings only). */
 export interface MediaTrackLike extends EventTargetLike {
   readonly kind?: string;
-  getSettings?(): { deviceId?: string; groupId?: string; label?: string };
+  getSettings?(): {
+    deviceId?: string;
+    groupId?: string;
+    label?: string;
+    /** The rate the capture device actually settled on, in Hz. */
+    sampleRate?: number;
+  };
   stop?(): void;
 }
 
@@ -188,6 +218,13 @@ export interface CaptureCoverage {
 
 /** The unit the client POSTs to the server, which feeds the two engines. */
 export interface CapturePayload {
+  /**
+   * The capture wire-format version, carried in the body so the client and the
+   * server can evolve independently of the `/v1` route. The server accepts a
+   * version it governs and answers an unsupported one with a specific error
+   * (`EARSHOT_UNSUPPORTED_CAPTURE_VERSION`) rather than a schema complaint.
+   */
+  captureVersion: number;
   sessionId: string;
   traceContext: TraceContext;
   /** The browser clock these snapshots'/events' `timestamp_ms` values belong to. */

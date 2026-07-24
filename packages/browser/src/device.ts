@@ -14,7 +14,7 @@
  *  - "sink_change"          + { sinkHash? }               (output route changed)
  *  - "sample_rate_mismatch" + { configured_hz, actual_hz }
  *  - "underrun" / "dropped_frames"
- *  - "latency"              + { base_latency_s, output_latency_s }
+ *  - "latency"              + { base_latency_s, output_latency_s, render_queue_s }
  *
  * Privacy: sink/device ids arrive here already hashed (`sinkHash`, `deviceHash`);
  * raw labels/ids never reach this module.
@@ -40,23 +40,50 @@ export function audioContextStateEvent(state: string, timestampMs: number): Devi
 }
 
 /**
- * A latency reading. `baseLatency` is a deterministic context property; the
- * server labels it `measured`. `outputLatency` is a W3C *estimate*; the server
- * labels it `estimated`. We surface both in seconds (Web Audio's own unit) and
- * omit whichever is unavailable — an absent latency is unknown, not zero.
+ * A latency / render-timing reading. `baseLatency` is a deterministic context
+ * property; the server labels it `measured`. `outputLatency` is a W3C
+ * *estimate*; the server labels it `estimated`. `renderQueueS` is
+ * `currentTime - getOutputTimestamp().contextTime` — the audio the graph has
+ * already rendered but the output device has not yet played, i.e. the render
+ * queue's depth — and is likewise an estimate (the two readings are taken at
+ * slightly different instants). All three are in seconds (Web Audio's own unit)
+ * and whichever the platform does not expose is omitted: an absent latency is
+ * unknown, not zero.
  */
 export function latencyEvent(
   baseLatencyS: number | undefined,
   outputLatencyS: number | undefined,
   timestampMs: number,
+  renderQueueS?: number,
 ): DeviceEvent | null {
   const hasBase = typeof baseLatencyS === "number" && Number.isFinite(baseLatencyS);
   const hasOutput = typeof outputLatencyS === "number" && Number.isFinite(outputLatencyS);
-  if (!hasBase && !hasOutput) return null;
+  const hasQueue = typeof renderQueueS === "number" && Number.isFinite(renderQueueS);
+  if (!hasBase && !hasOutput && !hasQueue) return null;
   const event: DeviceEvent = { type: "latency", timestamp_ms: timestampMs };
   if (hasBase) event.base_latency_s = baseLatencyS;
   if (hasOutput) event.output_latency_s = outputLatencyS; // estimate (see docstring)
+  if (hasQueue) event.render_queue_s = renderQueueS; // estimate (see docstring)
   return event;
+}
+
+/**
+ * The render queue's depth in seconds, or `undefined` when the platform cannot
+ * tell us. `getOutputTimestamp()` is optional in practice (partial support), and
+ * even where it exists it returns an unpopulated timestamp until audio actually
+ * flows — so a missing, non-finite or negative result is reported as *unknown*
+ * (the caller records coverage), never as a zero-depth queue.
+ */
+export function renderQueueSeconds(
+  currentTimeS: number | undefined,
+  timestamp: { contextTime?: number } | undefined,
+): number | undefined {
+  const contextTime = timestamp?.contextTime;
+  if (typeof currentTimeS !== "number" || !Number.isFinite(currentTimeS))
+    return undefined;
+  if (typeof contextTime !== "number" || !Number.isFinite(contextTime)) return undefined;
+  const queued = currentTimeS - contextTime;
+  return Number.isFinite(queued) && queued >= 0 ? queued : undefined;
 }
 
 /** A `devicechange` (an input/output device was added, removed or switched). */

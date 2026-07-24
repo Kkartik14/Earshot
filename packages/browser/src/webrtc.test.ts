@@ -157,6 +157,71 @@ describe("normalizeStatsReport", () => {
     expect(snapshot.stats.pair!.selected).toBe(true);
   });
 
+  it("privacy sentinel: the render-path additions open no new hole", () => {
+    // The render/queue/decode members were added to the allowlist; this proves
+    // the stats carrying them still surrender ONLY those members, and that the
+    // newly-consumed `media-playout` type is not a pass-through.
+    const report = makeStatsReport({
+      playout: {
+        id: "playout",
+        type: "media-playout",
+        kind: "audio",
+        totalPlayoutDelay: 3.2,
+        totalSamplesCount: 96000,
+        synthesizedSamplesDuration: 0.02,
+        synthesizedSamplesEvents: 1,
+        totalSamplesDuration: 2,
+        // Not governed: an output device's identity must not ride along.
+        deviceLabel: "Jabra Elite 75t",
+        sinkId: "0e5f1a2b3c4d5e6f",
+      },
+      inbound: {
+        id: "inbound",
+        type: "inbound-rtp",
+        kind: "audio",
+        jitterBufferTargetDelay: 5,
+        jitterBufferFlushes: 2,
+        totalProcessingDelay: 1.5,
+        concealmentEvents: 3,
+        // Not governed: identifiers and free text that could carry anything.
+        trackIdentifier: "Jabra Elite 75t",
+        playoutId: "AP0e5f1a2b",
+        mid: "0",
+        remoteId: "RI0e5f1a",
+        codecId: "COT/opus",
+        decoderImplementation: "libopus (build 203.0.113.7)",
+      },
+    });
+
+    const snapshot = normalizeStatsReport(report, 4242);
+    const serialized = JSON.stringify(snapshot);
+
+    for (const leaked of [
+      "Jabra",
+      "deviceLabel",
+      "sinkId",
+      "trackIdentifier",
+      "playoutId",
+      "decoderImplementation",
+      "203.0.113.7",
+      "codecId",
+      "remoteId",
+    ]) {
+      expect(serialized).not.toContain(leaked);
+    }
+    expect(Object.keys(snapshot.stats.playout!).sort()).toEqual([
+      "id",
+      "kind",
+      "synthesizedSamplesDuration",
+      "synthesizedSamplesEvents",
+      "totalPlayoutDelay",
+      "totalSamplesCount",
+      "totalSamplesDuration",
+      "type",
+    ]);
+    expect(snapshot.stats.inbound!.totalProcessingDelay).toBe(1.5);
+  });
+
   it("bounds retained string members to a defensive length cap", () => {
     const report = makeStatsReport({
       t: { id: "t", type: "transport", iceState: "x".repeat(5000) },

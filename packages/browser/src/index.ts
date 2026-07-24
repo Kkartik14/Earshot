@@ -2,20 +2,37 @@
  * @earshot/browser — the client-side voice capture kernel.
  *
  * Captures `getUserMedia`/`RTCPeerConnection`/`AudioContext` telemetry and a
- * W3C trace-context, and emits a `CapturePayload` in the exact shape the
- * server engines (`analyze_webrtc_stats`, `analyze_audio_graph`) consume.
+ * W3C trace-context, emits a versioned `CapturePayload` in the exact shape the
+ * server engines (`analyze_webrtc_stats`, `analyze_audio_graph`) consume, and
+ * delivers it to the backend's `POST /v1/capture` endpoint.
  *
- * STATUS: scaffolding. The mapping logic is unit-tested against mocked W3C APIs
- * but is NOT yet validated in a real browser / WebRTC runtime. See README.md.
+ * STATUS: the mapping, bounding and delivery logic is unit-tested against mocked
+ * W3C APIs and a mocked `fetch`; it has NOT yet been run against a real browser
+ * / WebRTC / Web Audio runtime. See README.md for exactly what that leaves open.
  */
 
 export {
   EarshotBrowserRecorder,
   createBrowserRecorder,
-  type BrowserRecorderOptions,
+  type AttachAudioContextOptions,
   type AttachPeerConnectionOptions,
+  type BrowserRecorderOptions,
   type ObserveMediaDevicesOptions,
 } from "./recorder.js";
+
+export {
+  EarshotCaptureTransport,
+  createCaptureTransport,
+  type CaptureCoverageSink,
+  type CaptureDeliveryFailure,
+  type CaptureDeliveryResult,
+  type CaptureRequestInit,
+  type CaptureResponseLike,
+  type CaptureTransportOptions,
+  type FetchLike,
+} from "./transport.js";
+
+export { CAPTURE_PROTOCOL_VERSION } from "./protocol.js";
 
 export { normalizeStatsReport } from "./webrtc.js";
 export {
@@ -24,6 +41,7 @@ export {
   deviceChangeEvent,
   latencyEvent,
   permissionEvent,
+  renderQueueSeconds,
   sampleRateMismatchEvent,
   sinkChangeEvent,
   sinkIdToString,
@@ -38,6 +56,7 @@ export { opaqueDeviceId, makeSalt } from "./privacy.js";
 
 export type {
   AudioContextLike,
+  AudioTimestampLike,
   BrowserClockDomain,
   CaptureCoverage,
   CapturePayload,

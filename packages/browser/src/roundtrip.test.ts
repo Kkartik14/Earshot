@@ -27,6 +27,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { CAPTURE_PROTOCOL_VERSION } from "./protocol.js";
 import { EarshotBrowserRecorder } from "./recorder.js";
 import type { CapturePayload } from "./types.js";
 import {
@@ -152,5 +153,14 @@ describe("payload round-trips into the Python engine inputs", () => {
     const payload = await buildPayload();
     expect(payload.sessionId).toMatch(/^sess_/);
     expect(payload.traceContext.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  });
+
+  it("declares the capture wire version the server gates on", async () => {
+    // `POST /v1/capture` reads `captureVersion` BEFORE the rest of the schema and
+    // answers EARSHOT_UNSUPPORTED_CAPTURE_VERSION when it does not govern it, so
+    // the field has to be present on every drained payload.
+    const payload = await buildPayload();
+    expect(payload.captureVersion).toBe(CAPTURE_PROTOCOL_VERSION);
+    expect(Number.isInteger(payload.captureVersion)).toBe(true);
   });
 });

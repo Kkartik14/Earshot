@@ -2,10 +2,17 @@
  * `EarshotBrowserRecorder` — the client-side capture kernel.
  *
  * It observes the live W3C APIs (`RTCPeerConnection.getStats()`, `AudioContext`
- * state/latency/sink, `navigator.mediaDevices` + Permissions) and buffers the
- * results in the EXACT shapes the server engines consume, then `drain()`s a
- * `CapturePayload` the client POSTs. The server feeds `snapshots` to
- * `analyze_webrtc_stats` and `deviceEvents` to `analyze_audio_graph`.
+ * state/latency/render position, `navigator.mediaDevices` + Permissions) and
+ * buffers the results in the EXACT shapes the server engines consume, then
+ * `drain()`s a `CapturePayload` the client POSTs (see `transport.ts`). The
+ * server feeds `snapshots` to `analyze_webrtc_stats` and `deviceEvents` to
+ * `analyze_audio_graph`.
+ *
+ * Coverage over completeness: every render-path signal the running browser does
+ * not expose — `getOutputTimestamp`, the `media-playout` stats,
+ * `totalProcessingDelay` — becomes an explicit coverage note. Nothing is
+ * synthesised to fill the hole, and per-frame audio decode time is never
+ * claimed at all because webrtc-stats only defines it for video.
  *
  * Design seams (all injectable, all defaulted): a monotonic `clock`, an interval
  * `scheduler`, and a `random` source. Injecting them is what lets the tests run
@@ -36,6 +43,7 @@ import {
   deviceChangeEvent,
   latencyEvent,
   permissionEvent,
+  renderQueueSeconds,
   sampleRateMismatchEvent,
   sinkChangeEvent,
   sinkIdToString,
@@ -48,6 +56,7 @@ import {
   defaultWallOriginMs,
 } from "./env.js";
 import { makeSalt, opaqueDeviceId } from "./privacy.js";
+import { CAPTURE_PROTOCOL_VERSION } from "./protocol.js";
 import {
   createTraceContext,
   injectTraceHeaders,
@@ -110,15 +119,28 @@ export interface AttachPeerConnectionOptions {
   intervalMs?: number;
 }
 
+export interface AttachAudioContextOptions {
+  /**
+   * Period in ms for sampling the render position via `getOutputTimestamp()`
+   * (default 1000). Must be a positive finite number. No interval is scheduled
+   * at all on a context that does not implement `getOutputTimestamp` — the
+   * absence is recorded once as coverage instead.
+   */
+  renderTimingIntervalMs?: number;
+}
+
 export interface ObserveMediaDevicesOptions {
   /** Optional Permissions API to read + watch the `microphone` permission. */
   permissions?: PermissionsLike;
 }
 
 const DEFAULT_SAMPLE_INTERVAL_MS = 1000;
+const DEFAULT_RENDER_TIMING_INTERVAL_MS = 1000;
 const DEFAULT_MAX_SNAPSHOTS = 1024;
 const DEFAULT_MAX_DEVICE_EVENTS = 1024;
 const DEFAULT_CLOCK_UNCERTAINTY_MS = 1;
+/** Upper bound on caller-supplied coverage notes buffered between drains. */
+const MAX_PENDING_COVERAGE = 32;
 
 /** Mutable per-window coverage counters (reset each `drain()`). */
 interface CoverageCounters {
@@ -127,6 +149,8 @@ interface CoverageCounters {
   statsErrors: number;
   statsOverlaps: number;
   permissionErrors: number;
+  renderTimingUnpopulated: number;
+  droppedCoverageNotes: number;
 }
 
 function zeroCounters(): CoverageCounters {
@@ -136,6 +160,34 @@ function zeroCounters(): CoverageCounters {
     statsErrors: 0,
     statsOverlaps: 0,
     permissionErrors: 0,
+    renderTimingUnpopulated: 0,
+    droppedCoverageNotes: 0,
+  };
+}
+
+/**
+ * What the platform actually exposed in this window.
+ *
+ * These are not measurements — they are the record of which render-path signals
+ * this browser offered, so a signal the platform does not implement becomes an
+ * explicit coverage note rather than a silent absence the server would read as
+ * "nothing happened".
+ */
+interface SignalAvailability {
+  sampledStats: boolean;
+  audioInbound: boolean;
+  processingDelay: boolean;
+  playout: boolean;
+  renderTimingMissing: boolean;
+}
+
+function zeroAvailability(): SignalAvailability {
+  return {
+    sampledStats: false,
+    audioInbound: false,
+    processingDelay: false,
+    playout: false,
+    renderTimingMissing: false,
   };
 }
 
@@ -156,6 +208,9 @@ export class EarshotBrowserRecorder {
   private snapshots: WebRtcSnapshot[] = [];
   private deviceEvents: DeviceEvent[] = [];
   private counters: CoverageCounters = zeroCounters();
+  private availability: SignalAvailability = zeroAvailability();
+  private pendingCoverage: CaptureCoverage[] = [];
+  private audioContext: AudioContextLike | null = null;
   private readonly teardowns: Array<() => void> = [];
   private stopped = false;
 
@@ -237,7 +292,9 @@ export class EarshotBrowserRecorder {
       try {
         const report = await pc.getStats();
         if (this.stopped) return;
-        this.pushSnapshot(normalizeStatsReport(report, this.clock()));
+        const snapshot = normalizeStatsReport(report, this.clock());
+        this.noteStatsAvailability(snapshot);
+        this.pushSnapshot(snapshot);
       } catch {
         // A getStats() rejection is an explicit coverage gap, not a crash.
         this.counters.statsErrors += 1;
@@ -252,17 +309,52 @@ export class EarshotBrowserRecorder {
   // -- Web Audio -------------------------------------------------------------
 
   /**
-   * Observe an `AudioContext`: record its current latency + state, then every
-   * `statechange` and `sinkchange`. `baseLatency` is deterministic (measured);
-   * `outputLatency` is a W3C estimate — both are surfaced and the server keeps
-   * the distinction.
+   * Observe an `AudioContext` across the render path.
+   *
+   * Recorded on attach and then continuously:
+   *  - `baseLatency` (deterministic, `measured`) and `outputLatency` (a W3C
+   *    estimate) — the server keeps that distinction;
+   *  - the render queue's depth, sampled periodically from
+   *    `currentTime - getOutputTimestamp().contextTime` — the audio the graph
+   *    has rendered that the output device has not yet played;
+   *  - every `statechange` (a suspended/interrupted context is silence) and
+   *    `sinkchange` (the render device moved).
+   *
+   * Nothing here is derived from a signal the platform does not offer: a context
+   * without `getOutputTimestamp`, or one whose timestamp is not yet populated,
+   * yields an explicit coverage note instead of a fabricated queue depth.
    */
-  attachAudioContext(ctx: AudioContextLike): void {
+  attachAudioContext(
+    ctx: AudioContextLike,
+    options: AttachAudioContextOptions = {},
+  ): void {
+    const renderTimingIntervalMs =
+      options.renderTimingIntervalMs ?? DEFAULT_RENDER_TIMING_INTERVAL_MS;
+    if (
+      typeof renderTimingIntervalMs !== "number" ||
+      !Number.isFinite(renderTimingIntervalMs) ||
+      renderTimingIntervalMs <= 0
+    ) {
+      throw new RangeError(
+        `attachAudioContext: renderTimingIntervalMs must be a positive finite number (got ${String(
+          renderTimingIntervalMs,
+        )})`,
+      );
+    }
     if (this.stopped) return;
+    // Remembered so a capture track's settled sample rate can be compared with
+    // the graph's — the one sample-rate mismatch the platform lets us observe.
+    this.audioContext = ctx;
 
-    const latency = latencyEvent(ctx.baseLatency, ctx.outputLatency, this.clock());
+    const latency = latencyEvent(
+      ctx.baseLatency,
+      ctx.outputLatency,
+      this.clock(),
+      this.readRenderQueue(ctx),
+    );
     if (latency) this.pushDeviceEvent(latency);
     this.pushDeviceEvent(audioContextStateEvent(ctx.state, this.clock()));
+    this.scheduleRenderTiming(ctx, renderTimingIntervalMs);
 
     const onStateChange = (): void => {
       if (this.stopped) return;
@@ -344,6 +436,7 @@ export class EarshotBrowserRecorder {
       const granted = permissionEvent("granted", this.clock());
       if (deviceHash) granted.deviceHash = deviceHash;
       this.pushDeviceEvent(granted);
+      if (primary) this.checkSampleRate(primary);
       for (const track of tracks) this.trackAudioTrack(track);
       return stream;
     } catch (error) {
@@ -367,6 +460,40 @@ export class EarshotBrowserRecorder {
     this.pushDeviceEvent(underrunEvent(this.clock(), kind));
   }
 
+  /**
+   * Ledger a gap someone else observed — most importantly the capture transport,
+   * which records the observations a payload it could not deliver took with it.
+   * The note joins the next `drain()`'s `coverage`, so a delivery failure is
+   * still visible as an explicit unknown rather than as clean-looking silence.
+   *
+   * Repeat notes with the same signal/availability/reason are merged (their
+   * `droppedCount`s add up) and the buffer is bounded, so an endlessly failing
+   * uploader cannot grow it without limit; overflow is itself recorded.
+   */
+  recordCoverage(note: CaptureCoverage): void {
+    if (this.stopped) return;
+    if (typeof note?.signal !== "string" || note.signal.length === 0) {
+      throw new TypeError("recordCoverage: a coverage note needs a non-empty signal");
+    }
+    const existing = this.pendingCoverage.find(
+      (item) =>
+        item.signal === note.signal &&
+        item.availability === note.availability &&
+        item.reason === note.reason,
+    );
+    if (existing) {
+      if (typeof note.droppedCount === "number" && Number.isFinite(note.droppedCount)) {
+        existing.droppedCount = (existing.droppedCount ?? 0) + note.droppedCount;
+      }
+      return;
+    }
+    if (this.pendingCoverage.length >= MAX_PENDING_COVERAGE) {
+      this.counters.droppedCoverageNotes += 1;
+      return;
+    }
+    this.pendingCoverage.push({ ...note });
+  }
+
   // -- drain / stop ----------------------------------------------------------
 
   /**
@@ -377,6 +504,7 @@ export class EarshotBrowserRecorder {
    */
   drain(): CapturePayload {
     const payload: CapturePayload = {
+      captureVersion: CAPTURE_PROTOCOL_VERSION,
       sessionId: this.sessionId,
       traceContext: this.trace,
       clockDomain: this.clockDomain(),
@@ -387,6 +515,8 @@ export class EarshotBrowserRecorder {
     this.snapshots = [];
     this.deviceEvents = [];
     this.counters = zeroCounters();
+    this.availability = zeroAvailability();
+    this.pendingCoverage = [];
     return payload;
   }
 
@@ -474,7 +604,135 @@ export class EarshotBrowserRecorder {
         droppedCount: counters.permissionErrors,
       });
     }
+    if (counters.renderTimingUnpopulated > 0) {
+      // `getOutputTimestamp()` exists but has not yet reported a playout
+      // position (no audio has flowed). Unknown depth, not a zero-depth queue.
+      coverage.push({
+        signal: "audio.render_timing",
+        availability: "partial",
+        reason: "output_timestamp_unpopulated",
+        droppedCount: counters.renderTimingUnpopulated,
+      });
+    }
+    if (counters.droppedCoverageNotes > 0) {
+      coverage.push({
+        signal: "capture.coverage",
+        availability: "partial",
+        reason: "coverage_buffer_overflow",
+        droppedCount: counters.droppedCoverageNotes,
+      });
+    }
+    coverage.push(...this.platformCoverage());
+    coverage.push(...this.pendingCoverage);
     return coverage;
+  }
+
+  /**
+   * Coverage for render-path signals this platform does not expose.
+   *
+   * Each note below is a statement about the API surface, not a guess about the
+   * session: without them, a browser that simply lacks a counter is
+   * indistinguishable from a session in which nothing went wrong.
+   */
+  private platformCoverage(): CaptureCoverage[] {
+    const coverage: CaptureCoverage[] = [];
+    if (this.availability.renderTimingMissing) {
+      coverage.push({
+        signal: "audio.render_timing",
+        availability: "not_observed",
+        reason: "getoutputtimestamp_unavailable",
+      });
+    }
+    if (this.availability.audioInbound) {
+      // W3C webrtc-stats exposes `totalDecodeTime`/`framesDecoded` for VIDEO
+      // only, so per-frame audio decode time is not measurable here at all. The
+      // nearest governed signal is `totalProcessingDelay` (received -> decoded).
+      coverage.push({
+        signal: "webrtc.audio_decode_time",
+        availability: "not_observed",
+        reason: "decode_time_is_video_only_in_w3c_stats",
+      });
+      if (!this.availability.processingDelay) {
+        coverage.push({
+          signal: "webrtc.processing_delay",
+          availability: "not_observed",
+          reason: "member_not_exposed",
+        });
+      }
+    }
+    if (this.availability.sampledStats && !this.availability.playout) {
+      coverage.push({
+        signal: "webrtc.playout",
+        availability: "not_observed",
+        reason: "media_playout_stat_not_exposed",
+      });
+    }
+    return coverage;
+  }
+
+  /** Note which render-path stats this platform actually produced. */
+  private noteStatsAvailability(snapshot: WebRtcSnapshot): void {
+    this.availability.sampledStats = true;
+    for (const stat of Object.values(snapshot.stats)) {
+      if (stat.type === "media-playout") {
+        this.availability.playout = true;
+        continue;
+      }
+      if (stat.type !== "inbound-rtp") continue;
+      const kind = stat.kind ?? stat.mediaType;
+      if (kind !== undefined && kind !== "audio") continue;
+      this.availability.audioInbound = true;
+      if (typeof stat.totalProcessingDelay === "number") {
+        this.availability.processingDelay = true;
+      }
+    }
+  }
+
+  /** The render queue's depth right now, or `undefined` when unobservable. */
+  private readRenderQueue(ctx: AudioContextLike): number | undefined {
+    if (typeof ctx.getOutputTimestamp !== "function") return undefined;
+    try {
+      return renderQueueSeconds(ctx.currentTime, ctx.getOutputTimestamp());
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Sample the render position periodically. A context that cannot report one
+   * gets no interval at all — just the coverage note saying so.
+   */
+  private scheduleRenderTiming(ctx: AudioContextLike, intervalMs: number): void {
+    if (typeof ctx.getOutputTimestamp !== "function") {
+      this.availability.renderTimingMissing = true;
+      return;
+    }
+    const sample = (): void => {
+      if (this.stopped) return;
+      const queued = this.readRenderQueue(ctx);
+      if (queued === undefined) {
+        this.counters.renderTimingUnpopulated += 1;
+        return;
+      }
+      const event = latencyEvent(undefined, ctx.outputLatency, this.clock(), queued);
+      if (event) this.pushDeviceEvent(event);
+    };
+    const handle = this.scheduler.setInterval(sample, intervalMs);
+    this.teardowns.push(() => this.scheduler.clearInterval(handle));
+  }
+
+  /**
+   * Compare the capture track's settled rate with the graph's and record a
+   * mismatch. Both numbers are platform-reported (`MediaTrackSettings.sampleRate`
+   * and `AudioContext.sampleRate`); when either is absent nothing is claimed.
+   */
+  private checkSampleRate(track: MediaTrackLike): void {
+    const contextHz = this.audioContext?.sampleRate;
+    const trackHz = track.getSettings?.().sampleRate;
+    if (typeof contextHz !== "number" || !Number.isFinite(contextHz)) return;
+    if (typeof trackHz !== "number" || !Number.isFinite(trackHz)) return;
+    if (contextHz === trackHz) return;
+    this.pushDeviceEvent(sampleRateMismatchEvent(contextHz, trackHz, this.clock()));
   }
 
   private resolveTrace(options: BrowserRecorderOptions): TraceContext {

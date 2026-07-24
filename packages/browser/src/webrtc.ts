@@ -6,8 +6,9 @@
  * as `type`, `packetsReceived`, `packetsLost`, `jitter`, `jitterBufferDelay`,
  * `jitterBufferEmittedCount`, `concealedSamples`, `totalSamplesReceived`,
  * `roundTripTime`/`currentRoundTripTime`, `iceState`/`dtlsState`,
- * `selectedCandidatePairId`, `selected`/`nominated`, `localCandidateId` and
- * `networkType`.
+ * `selectedCandidatePairId`, `selected`/`nominated`, `localCandidateId`,
+ * `networkType`, `totalProcessingDelay` and the `media-playout`
+ * (`RTCAudioPlayoutStats`) render counters.
  *
  * Privacy posture — allowlist, not denylist. An `RTCStatsReport` is a firehose of
  * host-identifying material: ICE candidates carry raw `address`/`ip`/`port`/`url`
@@ -51,11 +52,31 @@ const STAT_ALLOWLIST: Record<string, Set<string>> = {
     "mediaType",
     "packetsReceived",
     "packetsLost",
+    "packetsDiscarded",
+    "fecPacketsReceived",
     "jitter",
+    // Jitter-buffer depth and behaviour: the receive queue between the network
+    // and the decoder. `jitterBufferDelay/EmittedCount` is the average wait a
+    // sample took; target/minimum are what the buffer was aiming for; a flush is
+    // the buffer discarding its contents outright.
     "jitterBufferDelay",
     "jitterBufferEmittedCount",
+    "jitterBufferTargetDelay",
+    "jitterBufferMinimumDelay",
+    "jitterBufferFlushes",
+    // Concealment and rate adaptation: what the decoder had to invent or stretch
+    // when packets did not arrive in time.
     "concealedSamples",
+    "silentConcealedSamples",
+    "concealmentEvents",
+    "insertedSamplesForDeceleration",
+    "removedSamplesForAcceleration",
     "totalSamplesReceived",
+    // Packet-received-to-decoded time, summed per sample. This is the closest the
+    // W3C stats API comes to audio decode timing: `totalDecodeTime`/`framesDecoded`
+    // are video-only, so per-frame audio decode time is genuinely not exposed and
+    // the recorder records that as coverage instead of inventing it.
+    "totalProcessingDelay",
   ]),
   "remote-inbound-rtp": new Set(["roundTripTime"]),
   "candidate-pair": new Set([
@@ -74,6 +95,20 @@ const STAT_ALLOWLIST: Record<string, Set<string>> = {
     "selectedCandidatePairId",
   ]),
   "local-candidate": new Set(["networkType"]),
+  /**
+   * `RTCAudioPlayoutStats` — the render end of the path, measured at the audio
+   * output device rather than inferred from a transport counter.
+   * `totalPlayoutDelay/totalSamplesCount` is the average delay a played-out
+   * sample carried; `synthesizedSamplesDuration` grows only when the device had
+   * to invent audio because the render queue ran dry (a real under-run).
+   */
+  "media-playout": new Set([
+    "synthesizedSamplesDuration",
+    "synthesizedSamplesEvents",
+    "totalSamplesDuration",
+    "totalPlayoutDelay",
+    "totalSamplesCount",
+  ]),
 };
 
 /**

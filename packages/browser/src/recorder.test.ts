@@ -62,7 +62,7 @@ describe("stop", () => {
     recorder.attachPeerConnection(pc);
     recorder.attachAudioContext(ctx);
 
-    expect(scheduler.activeCount).toBe(1);
+    expect(scheduler.activeCount).toBe(2); // getStats sampling + render timing
     expect(ctx.listenerCount()).toBe(2); // statechange + sinkchange
 
     recorder.stop();

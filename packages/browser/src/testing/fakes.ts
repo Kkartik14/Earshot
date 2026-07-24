@@ -10,8 +10,10 @@
  * Excluded from the built package (see `tsconfig.build.json`).
  */
 
+import type { CaptureRequestInit, FetchLike } from "../transport.js";
 import type {
   AudioContextLike,
+  AudioTimestampLike,
   MediaDevicesLike,
   MediaStreamLike,
   MediaTrackLike,
@@ -187,6 +189,10 @@ export interface FakeAudioContextOptions {
   baseLatency?: number;
   outputLatency?: number;
   sinkId?: string | { type: string };
+  currentTime?: number;
+  sampleRate?: number;
+  /** Omit to model a browser without `getOutputTimestamp` (partial support). */
+  contextTime?: number | null;
 }
 
 export class FakeAudioContext extends FakeEventTarget implements AudioContextLike {
@@ -194,6 +200,10 @@ export class FakeAudioContext extends FakeEventTarget implements AudioContextLik
   baseLatency?: number;
   outputLatency?: number;
   sinkId?: string | { type: string };
+  currentTime?: number;
+  sampleRate?: number;
+  contextTime?: number;
+  getOutputTimestamp?: () => AudioTimestampLike;
 
   constructor(options: FakeAudioContextOptions = {}) {
     super();
@@ -201,6 +211,25 @@ export class FakeAudioContext extends FakeEventTarget implements AudioContextLik
     this.baseLatency = options.baseLatency;
     this.outputLatency = options.outputLatency;
     this.sinkId = options.sinkId;
+    this.currentTime = options.currentTime;
+    this.sampleRate = options.sampleRate;
+    if (options.contextTime !== null && options.contextTime !== undefined) {
+      this.contextTime = options.contextTime;
+    }
+    if (options.contextTime !== null) {
+      // `null` models a platform that does not implement the method at all;
+      // `undefined` models one that implements it but has no playout position yet.
+      this.getOutputTimestamp = (): AudioTimestampLike => ({
+        contextTime: this.contextTime,
+        performanceTime: 0,
+      });
+    }
+  }
+
+  /** Advance the graph clock and the playout position independently. */
+  setRenderPosition(currentTime: number, contextTime: number | undefined): void {
+    this.currentTime = currentTime;
+    this.contextTime = contextTime;
   }
 
   /** Transition state and fire `statechange` (as the real context does). */
@@ -224,12 +253,18 @@ export class FakeMediaTrack extends FakeEventTarget implements MediaTrackLike {
       deviceId?: string;
       groupId?: string;
       label?: string;
+      sampleRate?: number;
     } = {},
   ) {
     super();
   }
 
-  getSettings(): { deviceId?: string; groupId?: string; label?: string } {
+  getSettings(): {
+    deviceId?: string;
+    groupId?: string;
+    label?: string;
+    sampleRate?: number;
+  } {
     return this.settings;
   }
 
@@ -296,4 +331,60 @@ export class FakePermissions implements PermissionsLike {
   query(_descriptor: { name: string }): Promise<PermissionStatusLike> {
     return Promise.resolve(this.status);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Capture transport fakes
+// ---------------------------------------------------------------------------
+
+/** One recorded POST, so a test can assert on headers and body without a server. */
+export interface RecordedRequest {
+  url: string;
+  init: CaptureRequestInit;
+}
+
+/**
+ * A scripted `fetch`: each entry is either an HTTP status to answer with or
+ * `"throw"` to model a transport-level failure. The last entry repeats once the
+ * script runs out, so a test can drive "always failing" without a long list.
+ */
+export class FakeFetch {
+  readonly requests: RecordedRequest[] = [];
+
+  constructor(private readonly script: Array<number | "throw"> = [201]) {}
+
+  get calls(): number {
+    return this.requests.length;
+  }
+
+  fetch: FetchLike = (url, init) => {
+    const index = Math.min(this.requests.length, this.script.length - 1);
+    this.requests.push({ url, init });
+    const outcome = this.script[index] ?? 201;
+    if (outcome === "throw") {
+      // A real fetch rejection can quote the whole request; the transport must
+      // never read it, so the fake makes that mistake visible if it ever does.
+      return Promise.reject(
+        new Error(`network unreachable: ${url} ${JSON.stringify(init)}`),
+      );
+    }
+    return Promise.resolve({ ok: outcome >= 200 && outcome < 300, status: outcome });
+  };
+
+  /** The bodies posted so far, parsed. */
+  bodies(): Array<Record<string, unknown>> {
+    return this.requests.map(
+      (request) => JSON.parse(request.init.body) as Record<string, unknown>,
+    );
+  }
+}
+
+/** A `sleep` that records the delays it was asked for and never actually waits. */
+export class FakeSleep {
+  readonly delays: number[] = [];
+
+  sleep = (ms: number): Promise<void> => {
+    this.delays.push(ms);
+    return Promise.resolve();
+  };
 }
