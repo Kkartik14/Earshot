@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>earshot browser voice capture</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          sans-serif;
+        line-height: 1.5;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 60rem;
+        padding: 1.5rem;
+      }
+      h1 {
+        font-size: 1.4rem;
+      }
+      fieldset {
+        border: 1px solid rgba(128, 128, 128, 0.4);
+        border-radius: 8px;
+        margin: 0 0 1rem;
+        padding: 0.75rem 1rem;
+      }
+      legend {
+        font-weight: 600;
+        padding: 0 0.4rem;
+      }
+      label {
+        display: block;
+        margin: 0.35rem 0 0.1rem;
+        font-size: 0.85rem;
+      }
+      input,
+      select,
+      button {
+        font: inherit;
+      }
+      input[type="text"],
+      input[type="password"],
+      input[type="url"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.35rem 0.5rem;
+      }
+      button {
+        cursor: pointer;
+        padding: 0.4rem 0.9rem;
+        margin: 0.5rem 0.4rem 0 0;
+        border-radius: 6px;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+      }
+      .row {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      .row > * {
+        flex: 1 1 12rem;
+      }
+      #status {
+        font-weight: 600;
+      }
+      #log {
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.78rem;
+        background: rgba(128, 128, 128, 0.12);
+        border-radius: 8px;
+        padding: 0.75rem;
+        max-height: 24rem;
+        overflow: auto;
+      }
+      .muted {
+        color: rgba(128, 128, 128, 0.9);
+        font-size: 0.82rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

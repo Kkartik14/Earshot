@@ -70,6 +70,25 @@ importers:
         specifier: ^3.2.6
         version: 3.2.7(@types/node@22.20.1)(jsdom@25.0.1)
 
+  examples/browser-voice:
+    dependencies:
+      '@earshot/browser':
+        specifier: workspace:*
+        version: link:../../packages/browser
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^6.0.5
+        version: 6.4.3(@types/node@22.20.1)
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.7(@types/node@22.20.1)(jsdom@25.0.1)
+
   packages/analysis:
     dependencies:
       '@earshot/schema':

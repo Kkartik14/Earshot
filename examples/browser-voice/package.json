@@ -1,0 +1,24 @@
+{
+  "name": "@earshot/example-browser-voice",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Runnable browser voice app that captures a real getUserMedia/RTCPeerConnection/AudioContext session with @earshot/browser and POSTs it to POST /v1/capture. Consumes the SDK from the workspace; nothing here is published.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "test": "vitest run src",
+    "selfcheck": "pnpm --filter @earshot/browser build && vitest run selfcheck",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@earshot/browser": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^3.2.6"
+  }
+}
