@@ -70,6 +70,7 @@ import type {
   AudioContextLike,
   BrowserClockDomain,
   CaptureCoverage,
+  CaptureEndReason,
   CapturePayload,
   Clock,
   DeviceEvent,
@@ -145,6 +146,17 @@ export interface AttachAudioContextOptions {
 export interface ObserveMediaDevicesOptions {
   /** Optional Permissions API to read + watch the `microphone` permission. */
   permissions?: PermissionsLike;
+}
+
+export interface DrainOptions {
+  /**
+   * Declare, on this drain, that the observer stopped — and why. `captureVersion:
+   * 2` only. `call_ended` ENDS the call (the server finalizes it into a `final`
+   * artifact); an abandon reason (`capture_stopped` / `page_hidden` /
+   * `page_unloaded`) leaves the call provisional. Omit it on an ordinary drain.
+   * Prefer `endCall()` over passing `call_ended` here.
+   */
+  end?: CaptureEndReason;
 }
 
 const DEFAULT_SAMPLE_INTERVAL_MS = 1000;
@@ -522,8 +534,14 @@ export class EarshotBrowserRecorder {
    * POST starts clean. The session id, trace-context and clock-domain id are
    * stable across drains (so the browser timeline is continuous, not restarted),
    * while the per-window coverage counters reset each drain.
+   *
+   * Passing `{ end }` marks this the call's FINAL drain and declares why the
+   * observer stopped (`captureVersion: 2` only). It is stamped with the clock
+   * reading taken now, in the payload's clock domain. Ending a call is an explicit
+   * act: this method never sets `end` on its own, so an ordinary periodic drain
+   * can never be mistaken for a close.
    */
-  drain(): CapturePayload {
+  drain(options: DrainOptions = {}): CapturePayload {
     const payload: CapturePayload = {
       captureVersion: this.captureVersion,
       sessionId: this.sessionId,
@@ -539,6 +557,13 @@ export class EarshotBrowserRecorder {
       this.drainSequence += 1;
       payload.drainSequence = this.drainSequence;
       payload.capturerStartedAtMs = this.capturerStartedAtMs;
+      if (options.end !== undefined) {
+        // The observed end coordinate is a real reading of the recorder's clock,
+        // in the same domain as every snapshot — never fabricated, never a server
+        // timestamp. Only `call_ended` finalizes; the server keeps the rest
+        // provisional.
+        payload.end = { reason: options.end, timestampMs: this.clock() };
+      }
     }
     this.snapshots = [];
     this.deviceEvents = [];
@@ -548,7 +573,36 @@ export class EarshotBrowserRecorder {
     return payload;
   }
 
-  /** Stop all sampling and remove every listener. Idempotent; safe to re-call. */
+  /**
+   * End the call: flush a FINAL drain declaring an explicit, application-observed
+   * close (`end.reason === "call_ended"`), then stop sampling. This is the one
+   * signal that finalizes a continuous capture — the server writes the journal's
+   * finalize frame at the observed coordinate and the sealed artifact is `final`,
+   * with a real, same-clock-domain call duration.
+   *
+   * It is deliberately distinct from `stop()`: the application is the best-placed
+   * observer of a browser call's end, so ending the call is an explicit act it
+   * takes, never something inferred from a lifecycle hook. `stop()`, `pagehide`,
+   * and `visibilitychange` tear the observer down without ending the call, and the
+   * server keeps such a call provisional forever.
+   *
+   * Returns the final payload for the caller to POST. On a `captureVersion: 1`
+   * recorder there is no continuous call to close, so this simply drains and stops
+   * without an end signal.
+   */
+  endCall(): CapturePayload {
+    const payload = this.drain({ end: "call_ended" });
+    this.stop();
+    return payload;
+  }
+
+  /**
+   * Stop all sampling and remove every listener. Idempotent; safe to re-call.
+   *
+   * Stopping capture is NOT ending the call: it emits no end signal, so a call a
+   * recorder merely `stop()`s stays provisional on the server forever. Use
+   * `endCall()` when the call actually ended.
+   */
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;

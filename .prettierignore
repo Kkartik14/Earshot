@@ -1,3 +1,5 @@
+# Claude Code harness scratch: agent git worktrees, never project source.
+.claude/
 docs/private/
 local/
 fixtures/faults/*.incident.json

@@ -17,6 +17,7 @@ export {
   type AttachAudioContextOptions,
   type AttachPeerConnectionOptions,
   type BrowserRecorderOptions,
+  type DrainOptions,
   type ObserveMediaDevicesOptions,
 } from "./recorder.js";
 
@@ -63,6 +64,8 @@ export type {
   AudioTimestampLike,
   BrowserClockDomain,
   CaptureCoverage,
+  CaptureEnd,
+  CaptureEndReason,
   CapturePayload,
   Clock,
   DeviceEvent,

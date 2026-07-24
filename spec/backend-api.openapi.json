@@ -881,6 +881,10 @@
             "title": "Capture Version",
             "type": "integer"
           },
+          "finalized": {
+            "title": "Finalized",
+            "type": "boolean"
+          },
           "journal_id": {
             "title": "Journal Id",
             "type": "string"
@@ -934,6 +938,7 @@
           "sealable",
           "capture_version",
           "replayed",
+          "finalized",
           "trace_id",
           "accepted_snapshots",
           "accepted_device_events",
@@ -1015,6 +1020,34 @@
         "title": "CaptureDeviceEventRequest",
         "type": "object"
       },
+      "CaptureEndRequest": {
+        "additionalProperties": false,
+        "description": "A ``captureVersion: 2`` client's declaration, on its final drain, of the end.\n\n``call_ended`` is an explicit application-observed close -- the browser is the\nbest-placed observer of a browser call's end -- and is the ONLY reason that\nfinalizes the call. ``capture_stopped`` / ``page_hidden`` / ``page_unloaded``\nare lifecycle flushes that stopped the observer without ending the call; they\nkeep it provisional forever and are never treated as a close. ``timestampMs``\nis the raw browser coordinate of the declaration, in the payload's clock domain.",
+        "properties": {
+          "reason": {
+            "enum": [
+              "call_ended",
+              "capture_stopped",
+              "page_hidden",
+              "page_unloaded"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "timestampMs": {
+            "maximum": 10000000000.0,
+            "minimum": 0.0,
+            "title": "Timestampms",
+            "type": "number"
+          }
+        },
+        "required": [
+          "reason",
+          "timestampMs"
+        ],
+        "title": "CaptureEndRequest",
+        "type": "object"
+      },
       "CaptureRequest": {
         "additionalProperties": false,
         "description": "The versioned browser capture payload, exactly as ``drain()`` emits it.\n\n``captureVersion: 1`` is a single, self-contained batch. ``captureVersion: 2``\nis one drain of a continuous call: ``drainSequence`` is 1-based and monotonic\nper recorder, ``capturerStartedAtMs`` is the recorder's own first clock reading\n(not the call start), and ``resync`` is set only when the client permanently\ngave up on earlier drains.",
@@ -1069,6 +1102,17 @@
             ],
             "default": null,
             "title": "Drainsequence"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaptureEndRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "resync": {
             "anyOf": [
@@ -5147,6 +5191,17 @@
             "title": "Discarded Records",
             "type": "integer"
           },
+          "first_observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "journal_complete": {
             "default": true,
             "title": "Journal Complete",
@@ -6066,7 +6121,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.10.0"
+    "version": "0.11.0"
   },
   "openapi": "3.1.0",
   "paths": {

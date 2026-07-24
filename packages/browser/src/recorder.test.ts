@@ -110,6 +110,46 @@ describe("stop", () => {
   });
 });
 
+describe("endCall vs stop: only an explicit end finalizes", () => {
+  it("endCall() emits a call_ended end at the observed coordinate and stops", () => {
+    const clock = new FakeClock(7000, 0);
+    const recorder = createBrowserRecorder({ captureVersion: 2, clock: clock.now });
+    recorder.drain(); // an ordinary drain carries no end
+    const closing = recorder.endCall();
+
+    expect(closing.end).toEqual({ reason: "call_ended", timestampMs: 7000 });
+    expect(closing.drainSequence).toBe(2);
+    // The call ended: sampling is torn down like stop().
+    expect(recorder.drain().snapshots).toHaveLength(0);
+  });
+
+  it("stop() finalizes nothing: it emits no end signal at all", () => {
+    const recorder = createBrowserRecorder({
+      captureVersion: 2,
+      clock: new FakeClock().now,
+    });
+    const ordinary = recorder.drain();
+    expect(ordinary.end).toBeUndefined();
+    recorder.stop();
+    // A drain after stop() is still just an abandon flush, never a close.
+    expect(recorder.drain().end).toBeUndefined();
+  });
+
+  it("an ordinary drain is never mistaken for a close, but an explicit abandon is declared", () => {
+    const clock = new FakeClock(1234, 0);
+    const recorder = createBrowserRecorder({ captureVersion: 2, clock: clock.now });
+    expect(recorder.drain().end).toBeUndefined();
+    // A lifecycle flush may declare an abandon reason -- which never finalizes.
+    const flushed = recorder.drain({ end: "page_unloaded" });
+    expect(flushed.end).toEqual({ reason: "page_unloaded", timestampMs: 1234 });
+  });
+
+  it("carries no end on a version 1 recorder, which has no continuous call to close", () => {
+    const recorder = createBrowserRecorder({ captureVersion: 1 });
+    expect(recorder.endCall().end).toBeUndefined();
+  });
+});
+
 describe("bounded buffers + explicit loss reporting (F8)", () => {
   const inbound = (packetsReceived: number) =>
     makeStatsReport({

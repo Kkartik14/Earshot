@@ -394,6 +394,235 @@ def test_sealing_mid_call_yields_a_provisional_artifact_under_a_sequence_suffix(
     assert [item["session_id"] for item in still_live] == [call_id]
 
 
+# -- Phase 2: observed close and honest duration ------------------------------
+
+
+def endcall(sequence: int, snapshots: list[dict], ts: float, **extra) -> dict:
+    """A final drain that declares an explicit application-observed close."""
+
+    return drain(sequence, snapshots, end={"reason": "call_ended", "timestampMs": ts}, **extra)
+
+
+def named_measurements(bundle: IncidentBundle, name: str) -> list:
+    return [
+        (sample, measurement)
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
+        if measurement.name == name
+    ]
+
+
+def test_a_declared_call_end_produces_a_final_incident_with_a_real_duration(tmp_path) -> None:
+    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
+    headers = {"Authorization": "Bearer t"}
+    snaps = series(5)
+    for index in range(4):
+        client.post("/v1/capture", json=drain(index + 1, [snaps[index]]), headers=headers)
+
+    # The call ends at a real browser coordinate after the last snapshot (t=1400).
+    ended_at_ms = 5000.0
+    response = client.post("/v1/capture", json=endcall(5, [snaps[4]], ended_at_ms), headers=headers)
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["finalized"] is True
+    assert body["state"] == "finalized"
+    call_id = body["call_id"]
+
+    sealed = seal(client, headers, call_id)
+    assert sealed["finality"] == "final"
+    assert sealed["completeness"] == "complete"
+    assert sealed["close_observed"] is True
+    # A finalized call keeps its bundle id -- no ``.s{seq}`` provisional suffix.
+    assert sealed["bundle_id"] == call_id
+
+    bundle = fetch_bundle(client, headers, sealed["bundle_id"])
+    manifest = bundle.profile.manifest
+    assert manifest.finality == "final"
+    assert manifest.completeness == "complete"
+    # A finalized replay carries no recovery declaration at all.
+    assert manifest.recovery is None
+
+    ended = bundle.profile.session.ended_at
+    assert ended is not None
+    # ``session.ended_at`` is the endCall's observed browser coordinate, in the
+    # browser clock domain -- never the last snapshot, never a server reading.
+    assert ended.clock_domain_id == CLOCK_ID
+    assert int(ended.monotonic_time_nano) == int(ended_at_ms * 1_000_000)
+
+    duration = named_measurements(bundle, "client.observed_call_duration")
+    assert len(duration) == 1
+    sample, measurement = duration[0]
+    # The duration is a same-clock-domain difference: endCall - first observed
+    # coordinate (t=1000), both raw browser readings.
+    assert measurement.value == pytest.approx(ended_at_ms - 1000.0)
+    assert measurement.unit == "ms"
+    assert sample.sample_window.start.clock_domain_id == CLOCK_ID
+    # The two bounding events frame the call in the browser clock domain.
+    names = {event.event_name for event in bundle.profile.events}
+    assert "earshot.client.capture_started" in names
+    assert "earshot.client.call_ended" in names
+    assert validate_incident(bundle).ok
+
+
+def test_an_ended_call_with_lost_drains_is_final_but_incomplete(tmp_path) -> None:
+    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
+    headers = {"Authorization": "Bearer t"}
+    snaps = series(6)
+    for index in range(3):
+        client.post("/v1/capture", json=drain(index + 1, [snaps[index]]), headers=headers)
+    # Drain 4 is permanently lost; drain 5 declares it, then the call ends.
+    client.post(
+        "/v1/capture",
+        json=drain(
+            5,
+            [snaps[4]],
+            resync={
+                "missedFromSequence": 4,
+                "missedThroughSequence": 4,
+                "reason": "drains_lost_in_transport",
+            },
+        ),
+        headers=headers,
+    )
+    response = client.post("/v1/capture", json=endcall(6, [snaps[5]], 6000.0), headers=headers)
+    assert response.json()["finalized"] is True
+    call_id = response.json()["call_id"]
+
+    sealed = seal(client, headers, call_id)
+    # An observed close is still final -- but a call that lost a drain can never
+    # present as complete.
+    assert sealed["finality"] == "final"
+    assert sealed["completeness"] == "incomplete"
+    bundle = fetch_bundle(client, headers, sealed["bundle_id"])
+    assert bundle.profile.manifest.completeness == "incomplete"
+    assert bundle.profile.session.ended_at is not None
+    coverage = {note.signal for note in bundle.profile.coverage}
+    assert "capture.drain_sequence" in coverage
+    assert validate_incident(bundle).ok
+
+
+def test_a_closed_tab_never_becomes_a_finished_call(tmp_path) -> None:
+    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
+    headers = {"Authorization": "Bearer t"}
+    # Twenty drains, then the tab simply closes: no ``end`` ever arrives.
+    for index, snapshot in enumerate(series(20)):
+        response = client.post("/v1/capture", json=drain(index + 1, [snapshot]), headers=headers)
+    call_id = response.json()["call_id"]
+
+    sealed = seal(client, headers, call_id)
+    assert sealed["finality"] == "provisional"
+    assert sealed["close_observed"] is False
+    bundle = fetch_bundle(client, headers, sealed["bundle_id"])
+    manifest = bundle.profile.manifest
+    assert manifest.finality == "provisional"
+    # No close was observed, so there is no end and no call duration -- only the
+    # extent the observer actually saw, stated on the recovery declaration.
+    assert bundle.profile.session.ended_at is None
+    assert named_measurements(bundle, "client.observed_call_duration") == []
+    assert manifest.recovery is not None
+    assert manifest.recovery.close_observed is False
+    assert manifest.recovery.first_observation is not None
+    assert manifest.recovery.last_observation is not None
+    assert int(manifest.recovery.first_observation.monotonic_time_nano) < int(
+        manifest.recovery.last_observation.monotonic_time_nano
+    )
+    assert validate_incident(bundle).ok
+
+
+def test_stop_and_pagehide_are_not_a_call_end(tmp_path) -> None:
+    for reason in ("capture_stopped", "page_hidden", "page_unloaded"):
+        _, client = app_client(tmp_path / reason, config=ApiConfig(token="t"))
+        headers = {"Authorization": "Bearer t"}
+        snaps = series(4)
+        for index in range(3):
+            client.post("/v1/capture", json=drain(index + 1, [snaps[index]]), headers=headers)
+        # A lifecycle flush declares an abandon reason, never ``call_ended``.
+        response = client.post(
+            "/v1/capture",
+            json=drain(4, [snaps[3]], end={"reason": reason, "timestampMs": 9000.0}),
+            headers=headers,
+        )
+        assert response.status_code == 202, response.text
+        # It does not finalize: the call stays live and sealable.
+        assert response.json()["finalized"] is False
+        assert response.json()["state"] != "finalized"
+        call_id = response.json()["call_id"]
+        still_live = client.get("/v1/live/sessions", headers=headers).json()["items"]
+        assert [item["session_id"] for item in still_live] == [call_id]
+
+        sealed = seal(client, headers, call_id)
+        assert sealed["finality"] == "provisional"
+        bundle = fetch_bundle(client, headers, sealed["bundle_id"])
+        assert bundle.profile.session.ended_at is None
+        assert named_measurements(bundle, "client.observed_call_duration") == []
+        # An abandon states how far the observer saw and that the close was unseen.
+        assert named_measurements(bundle, "client.observed_capture_extent")
+        coverage = {note.signal: note for note in bundle.profile.coverage}
+        assert coverage["client.call_duration"].reason == "close_not_observed"
+        assert validate_incident(bundle).ok
+
+
+def test_duration_is_never_computed_across_clock_domains(tmp_path) -> None:
+    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
+    headers = {"Authorization": "Bearer t"}
+    snaps = series(3)
+    for index in range(2):
+        client.post("/v1/capture", json=drain(index + 1, [snaps[index]]), headers=headers)
+    response = client.post("/v1/capture", json=endcall(3, [snaps[2]], 4000.0), headers=headers)
+    call_id = response.json()["call_id"]
+    bundle = fetch_bundle(client, headers, seal(client, headers, call_id)["bundle_id"])
+
+    # No calibration was declared, so no relation aligns the browser and server
+    # clocks -- the analyzer must keep refusing cross-clock latency.
+    assert bundle.profile.clock_relations == ()
+    session = bundle.profile.session
+    # The session's start is a server-clock reading and its end a browser one: two
+    # different domains, so their difference is never taken. The honest duration is
+    # the same-domain browser measurement instead.
+    assert session.ended_at is not None
+    assert session.ended_at.clock_domain_id == CLOCK_ID
+    assert session.started_at.clock_domain_id != session.ended_at.clock_domain_id
+    (sample, _measurement) = named_measurements(bundle, "client.observed_call_duration")[0]
+    assert sample.sample_window.start.clock_domain_id == CLOCK_ID
+    assert validate_incident(bundle).ok
+
+
+def test_a_drain_after_the_close_is_refused(tmp_path) -> None:
+    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
+    headers = {"Authorization": "Bearer t"}
+    snaps = series(4)
+    for index in range(2):
+        client.post("/v1/capture", json=drain(index + 1, [snaps[index]]), headers=headers)
+    ended = client.post("/v1/capture", json=endcall(3, [snaps[2]], 4000.0), headers=headers)
+    assert ended.json()["finalized"] is True
+
+    late = client.post("/v1/capture", json=drain(4, [snaps[3]]), headers=headers)
+    assert late.status_code == 409
+    assert code(late) == "EARSHOT_CAPTURE_CALL_CLOSED"
+
+    # A retry of the endCall drain itself is still an idempotent replay, not a
+    # refusal: the client that never saw the ack can safely resend it.
+    retry = client.post("/v1/capture", json=endcall(3, [snaps[2]], 4000.0), headers=headers)
+    assert retry.status_code == 200
+    assert retry.json()["replayed"] is True
+    assert retry.json()["finalized"] is True
+
+
+def test_an_end_declaration_requires_capture_version_2(tmp_path) -> None:
+    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
+    headers = {"Authorization": "Bearer t"}
+    body = {
+        "captureVersion": 1,
+        "sessionId": "sess_a1b2c3d4",
+        "clockDomain": clock_domain(),
+        "snapshots": series(1),
+        "end": {"reason": "call_ended", "timestampMs": 2000.0},
+    }
+    response = client.post("/v1/capture", json=body, headers=headers)
+    assert response.status_code == 422
+    assert code(response) == "EARSHOT_INVALID_CAPTURE"
+
+
 # -- a real loopback listener for the streaming assertion ---------------------
 
 

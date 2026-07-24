@@ -32,8 +32,10 @@ from .analysis import ANALYZER_VERSION
 from .browser_session import BrowserSessionStore
 from .capture import (
     CaptureCallCapacityError,
+    CaptureCallClosedError,
     CaptureCallRegistry,
     CaptureDrain,
+    CaptureEnd,
     CaptureSequenceConflictError,
     CaptureSequenceGapError,
     DrainOutcome,
@@ -544,6 +546,21 @@ class CaptureResyncRequest(ApiModel):
     reason: str = Field(pattern=_CAPTURE_LABEL_PATTERN)
 
 
+class CaptureEndRequest(ApiModel):
+    """A ``captureVersion: 2`` client's declaration, on its final drain, of the end.
+
+    ``call_ended`` is an explicit application-observed close -- the browser is the
+    best-placed observer of a browser call's end -- and is the ONLY reason that
+    finalizes the call. ``capture_stopped`` / ``page_hidden`` / ``page_unloaded``
+    are lifecycle flushes that stopped the observer without ending the call; they
+    keep it provisional forever and are never treated as a close. ``timestampMs``
+    is the raw browser coordinate of the declaration, in the payload's clock domain.
+    """
+
+    reason: Literal["call_ended", "capture_stopped", "page_hidden", "page_unloaded"]
+    timestampMs: float = Field(ge=0.0, le=_MAX_CAPTURE_TIMESTAMP_MS)
+
+
 class CaptureRequest(ApiModel):
     """The versioned browser capture payload, exactly as ``drain()`` emits it.
 
@@ -564,6 +581,7 @@ class CaptureRequest(ApiModel):
     drainSequence: int | None = Field(default=None, ge=1, le=2**31 - 1)
     capturerStartedAtMs: float | None = Field(default=None, ge=0.0, le=_MAX_CAPTURE_TIMESTAMP_MS)
     resync: CaptureResyncRequest | None = None
+    end: CaptureEndRequest | None = None
 
 
 class CaptureAcceptedResponse(IncidentRecordResponse):
@@ -606,6 +624,11 @@ class CaptureContinuousResponse(ApiModel):
     bundle_id: None = None
     capture_version: int
     replayed: bool
+    # True only for the drain whose explicit ``endCall()`` finalized the call. The
+    # call is then closed: sealing it yields a *final* artifact under the call id,
+    # and any further drain is refused. Every other drain leaves it ``false`` and
+    # the call provisional.
+    finalized: bool
     trace_id: str | None
     accepted_snapshots: int
     accepted_device_events: int
@@ -1252,6 +1275,14 @@ def _decode_capture_request(parsed: Any, config: ApiConfig) -> CaptureRequest:
             "EARSHOT_INVALID_CAPTURE",
             "a captureVersion 2 drain must carry a drainSequence",
         )
+    if capture.captureVersion != CONTINUOUS_CAPTURE_VERSION and capture.end is not None:
+        # Only a continuous call can be ended: the v1 single-slice path has no call
+        # to close, and an ``end`` there would be a signal the server cannot honour.
+        raise ApiProblem(
+            422,
+            "EARSHOT_INVALID_CAPTURE",
+            "an end-of-call declaration requires captureVersion 2",
+        )
     return capture
 
 
@@ -1467,6 +1498,11 @@ async def _capture_continuous(
                 reason=capture.resync.reason,
             )
         )
+        end = (
+            None
+            if capture.end is None
+            else CaptureEnd(reason=capture.end.reason, timestamp_ms=capture.end.timestampMs)
+        )
         drain = CaptureDrain(
             project_id=project_id,
             session_id=capture.sessionId,
@@ -1482,6 +1518,7 @@ async def _capture_continuous(
             coverage=coverage,
             rejection_coverage=rejection_coverage,
             resync=resync,
+            end=end,
         )
         return capture_calls.drain(drain), rejections
 
@@ -1515,6 +1552,12 @@ async def _capture_continuous(
                 }
             ],
         ) from error
+    except CaptureCallClosedError as error:
+        raise ApiProblem(
+            409,
+            "EARSHOT_CAPTURE_CALL_CLOSED",
+            "this call was ended by an explicit endCall() and accepts no more drains",
+        ) from error
     except CaptureCallCapacityError as error:
         raise ApiProblem(
             429,
@@ -1539,6 +1582,7 @@ async def _capture_continuous(
         "bundle_id": None,
         "capture_version": capture.captureVersion,
         "replayed": outcome.replay,
+        "finalized": outcome.finalized,
         "trace_id": None if trace is None else trace.traceId,
         "accepted_snapshots": outcome.accepted_snapshots,
         "accepted_device_events": outcome.accepted_device_events,

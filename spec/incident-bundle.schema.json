@@ -2742,6 +2742,17 @@
           "title": "Discarded Records",
           "type": "integer"
         },
+        "first_observation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TimePoint"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "journal_complete": {
           "default": true,
           "title": "Journal Complete",

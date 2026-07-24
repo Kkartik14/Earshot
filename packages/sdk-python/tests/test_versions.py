@@ -66,6 +66,17 @@ def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> 
 
 
 def test_the_capture_surface_evolution_is_versioned() -> None:
+    # 0.11.0 gives a continuous call an observed end: a ``captureVersion: 2`` drain
+    # may carry an ``end`` declaration, and ``end.reason == "call_ended"`` -- the
+    # application's own observation that the call is over -- writes the journal's
+    # finalize frame so the sealed artifact is *final* rather than provisional, with
+    # a real browser-domain ``session.ended_at`` and an observed call duration. A
+    # drain arriving after that close is refused with a new code,
+    # EARSHOT_CAPTURE_CALL_CLOSED, and the v2 acknowledgement gains a ``finalized``
+    # flag -- both client-visible changes to what the endpoint accepts and returns,
+    # so the capture surface takes a version of its own. (The abandon reasons --
+    # capture_stopped / page_hidden / page_unloaded -- are declarations too, but
+    # they never finalize: the call stays provisional forever.)
     # 0.10.0 adds continuous capture: ``POST /v1/capture`` accepts a
     # ``captureVersion: 2`` drain and accumulates a whole browser call into one
     # journal-backed live session instead of a per-drain incident. A v2 drain
@@ -104,7 +115,7 @@ def test_the_capture_surface_evolution_is_versioned() -> None:
     # seal. 0.4.0 added the authenticated browser capture endpoint
     # (``POST /v1/capture``); 0.3.0 added the contradiction, comparison, and
     # export read endpoints.
-    assert API_VERSION == "0.10.0"
+    assert API_VERSION == "0.11.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:

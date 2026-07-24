@@ -216,6 +216,32 @@ export interface CaptureCoverage {
   droppedCount?: number;
 }
 
+/**
+ * Why a `captureVersion: 2` call's final drain says the observer stopped.
+ *
+ * `call_ended` is the one reason that ENDS the call: an explicit, application-
+ * observed close (the app called `endCall()`), which the server finalizes into a
+ * `final` artifact with a real call duration. The other three are lifecycle
+ * flushes that stop the observer WITHOUT ending the call — a `stop()`
+ * (`capture_stopped`), or a `pagehide`/`visibilitychange` keepalive flush
+ * (`page_hidden` / `page_unloaded`). The server keeps such a call provisional
+ * forever: the observer looking away is not the call being over.
+ */
+export type CaptureEndReason =
+  "call_ended" | "capture_stopped" | "page_hidden" | "page_unloaded";
+
+/**
+ * `captureVersion: 2` only. The client's declaration, on its final drain, that
+ * the observer stopped — and whether that was the call ending (`call_ended`) or
+ * merely the observer being torn down (an abandon reason). `timestampMs` is the
+ * raw reading of the recorder's clock at the declaration, in the same clock
+ * domain as every other `timestamp_ms` in the payload.
+ */
+export interface CaptureEnd {
+  reason: CaptureEndReason;
+  timestampMs: number;
+}
+
 /** The unit the client POSTs to the server, which feeds the two engines. */
 export interface CapturePayload {
   /**
@@ -249,6 +275,15 @@ export interface CapturePayload {
    * capture without conflating it with the observed call duration.
    */
   capturerStartedAtMs?: number;
+  /**
+   * `captureVersion: 2` only, and only on the final drain. The observer's
+   * declaration that it stopped: `end.reason === "call_ended"` ends the call (the
+   * server writes the finalize frame and the sealed artifact is final), while an
+   * abandon reason leaves the call provisional forever. Set exclusively by
+   * `endCall()` (for `call_ended`) or an explicit `drain({ end })`; `stop()` never
+   * sets it.
+   */
+  end?: CaptureEnd;
 }
 
 // ---------------------------------------------------------------------------

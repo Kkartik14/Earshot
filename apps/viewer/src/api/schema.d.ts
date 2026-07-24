@@ -766,6 +766,8 @@ export interface components {
             call_id: string;
             /** Capture Version */
             capture_version: number;
+            /** Finalized */
+            finalized: boolean;
             /** Journal Id */
             journal_id: string;
             /** Rejected Device Events */
@@ -821,6 +823,26 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * CaptureEndRequest
+         * @description A ``captureVersion: 2`` client's declaration, on its final drain, of the end.
+         *
+         *     ``call_ended`` is an explicit application-observed close -- the browser is the
+         *     best-placed observer of a browser call's end -- and is the ONLY reason that
+         *     finalizes the call. ``capture_stopped`` / ``page_hidden`` / ``page_unloaded``
+         *     are lifecycle flushes that stopped the observer without ending the call; they
+         *     keep it provisional forever and are never treated as a close. ``timestampMs``
+         *     is the raw browser coordinate of the declaration, in the payload's clock domain.
+         */
+        CaptureEndRequest: {
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "call_ended" | "capture_stopped" | "page_hidden" | "page_unloaded";
+            /** Timestampms */
+            timestampMs: number;
+        };
+        /**
          * CaptureRequest
          * @description The versioned browser capture payload, exactly as ``drain()`` emits it.
          *
@@ -848,6 +870,8 @@ export interface components {
              * @default null
              */
             drainSequence: number | null;
+            /** @default null */
+            end: components["schemas"]["CaptureEndRequest"] | null;
             /** @default null */
             resync: components["schemas"]["CaptureResyncRequest"] | null;
             /** Sessionid */
@@ -2504,6 +2528,8 @@ export interface components {
              * @default 0
              */
             discarded_records: number;
+            /** @default null */
+            first_observation: components["schemas"]["TimePoint"] | null;
             /**
              * Journal Complete
              * @default true
