@@ -561,7 +561,7 @@ def _counter_delta(
     previous: Mapping[str, Any],
     current: Mapping[str, Any],
     key: str,
-) -> float | None | _Reset:
+) -> float | _Reset | None:
     """Delta of a cumulative counter: None if a member is absent, _RESET if it fell."""
 
     before = _number(previous, key)
