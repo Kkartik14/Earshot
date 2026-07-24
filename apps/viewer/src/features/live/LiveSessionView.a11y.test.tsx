@@ -180,6 +180,47 @@ describe("live session view", () => {
     expect(screen.queryByText(/p95 first-token\s*0/)).not.toBeInTheDocument();
   });
 
+  it("says a record was withheld by policy rather than showing a gap", () => {
+    const { source } = renderLive();
+    source.emit(
+      "open",
+      {
+        ...OPEN_PAYLOAD,
+        export_policy: {
+          destination: "live_tail",
+          denied_capture_classes: ["transcript"],
+          policy_readable: true,
+        },
+      },
+      `${JOURNAL}:1`,
+    );
+    source.emit(
+      "withheld",
+      {
+        entry: "record",
+        kind: "event",
+        destination: "live_tail",
+        denied_capture_classes: [
+          { capture_class: "transcript", reason: "export_denied_by_policy" },
+        ],
+      },
+      `${JOURNAL}:2`,
+    );
+
+    const panel = screen.getByRole("region", { name: /restricted by export policy/i });
+    expect(within(panel).getByText("1 withheld")).toBeInTheDocument();
+    expect(within(panel).getByText("transcript")).toBeInTheDocument();
+    expect(within(panel).getByText(/export denied by policy/i)).toBeInTheDocument();
+    expect(
+      within(panel).getByText(/not a complete account of the session/i),
+    ).toBeInTheDocument();
+    // The withheld slot is not counted as an admitted fact anywhere.
+    const admitted = screen.getByRole("region", { name: /admitted facts/i });
+    expect(
+      within(admitted).getByText(/No records have been admitted yet/i),
+    ).toBeInTheDocument();
+  });
+
   it("draws an unfinished operation as having no observed end", () => {
     const { source } = renderLive();
     source.emit("open", OPEN_PAYLOAD, `${JOURNAL}:1`);

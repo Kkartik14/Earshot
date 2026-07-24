@@ -278,11 +278,26 @@ free. A live request carrying an `Origin` that is not this host is refused with
 `403 EARSHOT_ORIGIN_NOT_ALLOWED` unless it authenticated with a bearer token.
 
 Events are the journal's own record kinds, verbatim and without inference: `open`,
-`record`, `operation_open`, `limit`, `exhausted`, `finalize`, plus the control events
-`replay_truncated`, `reset`, `overflow`, `end`, and a periodic `heartbeat`. Every
+`record`, `withheld`, `operation_open`, `limit`, `exhausted`, `finalize`, plus the control
+events `replay_truncated`, `reset`, `overflow`, `end`, and a periodic `heartbeat`. Every
 record-bearing event carries `id: <journal_id>:<sequence>`; control events deliberately
 carry no `id`, so they can never advance a client's resume cursor past a position it did
 not receive.
+
+A subscriber is outside the recording process, so the tail is a restricted export and
+reapplies its destination policy exactly as the exporter registry does at its own seam.
+Its destination name is `live_tail`. The `open` event's `export_policy` declares that
+name, whether the policy could be read at all, and which enabled capture classes forbid
+it. Once the session has actually retained such a class — the same _captured_ keying a
+finished bundle is governed by — the content stops: that record arrives as a `withheld`
+event at its own sequence, carrying the structural entry kind, the destination, and each
+class that refused with its reason (`export_denied_by_policy` or
+`export_destination_not_permitted`), and nothing of the record itself. Absence is
+declared rather than silent, because a stream that simply skipped the record would read
+as a session that never said anything. `limit`, `exhausted` and `finalize` keep flowing:
+they carry counters, reasons and status, never content. The check is fail-closed — a
+policy the server cannot rebuild, or a capture class this build cannot name, withholds
+everything and says `export_policy_unreadable`.
 
 What cannot be known mid-session is said on the wire rather than left absent. The `open`
 event carries `in_progress: true` and `unknown_until_close`, which enumerates session

@@ -5175,7 +5175,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A server-sent event stream of admitted journal facts in journal order. Event names are open, record, operation_open, limit, exhausted, finalize, replay_truncated, reset, overflow, heartbeat and end. Every record-bearing event carries id: <journal_id>:<sequence>, so a dropped connection resumes with Last-Event-ID. No analysis, diagnosis, or turn metric appears on this stream: derived analysis binds to the digest of a finished artifact and this session has none. */
+            /** @description A server-sent event stream of admitted journal facts in journal order. Event names are open, record, withheld, operation_open, limit, exhausted, finalize, replay_truncated, reset, overflow, heartbeat and end. Every record-bearing event carries id: <journal_id>:<sequence>, so a dropped connection resumes with Last-Event-ID. No analysis, diagnosis, or turn metric appears on this stream: derived analysis binds to the digest of a finished artifact and this session has none. This stream is an export under the destination name live_tail: a record whose capture class the policy forbids that destination arrives as a withheld event naming what refused it, never as its content and never as a silent gap. */
             200: {
                 headers: {
                     [name: string]: unknown;

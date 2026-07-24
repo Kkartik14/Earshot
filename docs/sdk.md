@@ -227,6 +227,13 @@ The SDK exporter uses the destination name `sdk_http`. A captured class whose ex
 policy denies that destination is rejected before serialization enters the outbound
 queue; `export_accepted` becomes `False`, and no network transport sees the artifact.
 
+The named destinations are `sdk_http` (the SDK exporter), `otlp` (the OTLP and
+OpenInference projections, which share one destination because they ship one document to
+one collector), `local_api` and `local_cli` (the backend's reads and the CLI's output),
+and `live_tail` (the backend's live SSE tail). A destination allowlist that omits a name
+denies it: `ExportConfig(allowed=True, destinations=("otlp",))` keeps a class out of the
+live tail as firmly as `allowed=False` does.
+
 ## Delivery modes and loss visibility
 
 The default `delivery_mode="async"` is the normal long-running-process mode.

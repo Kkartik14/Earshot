@@ -126,6 +126,21 @@ listing, cached analysis, and CLI output all enforce their named destination. Th
 SQLite projection filters denied incidents before pagination, so a cursor cannot
 encode a restricted bundle ID.
 
+The live SSE tail is one of these egress paths, not an exemption from them, and it
+enforces its own destination name `live_tail` rather than borrowing one written for the
+reviewed one-shot reads. It has no finished bundle to check, so it holds the two halves
+that answer the same question mid-session: the capture policy the journal header declares,
+and the classes the journal has actually retained so far. The keying is identical to a
+bundle's — a class restricts egress once it has been _captured_, not merely enabled — and
+the destination rule itself is the single function every seam calls. Because the recorder
+journals a newly retained class in the same frame as the mutation that retained it, the
+frame that first carries restricted content is the frame that closes the gate; nothing
+restricted precedes it. From there the record's content does not leave the process. Its
+existence still does: a `withheld` event occupies that journal slot and names the
+destination and the classes that refused, so a live view can never read as a complete
+account of a session it was only partly permitted to show. The check is fail-closed — an
+unreadable policy or an unresolvable capture class withholds rather than passes.
+
 If source evidence is removed, any derived result depending on it must be removed or
 recalculated against a new digest. An analysis keyed to one input digest is never
 silently attached to a different redacted artifact.

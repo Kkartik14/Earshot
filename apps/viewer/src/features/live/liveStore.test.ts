@@ -128,6 +128,68 @@ describe("liveStore", () => {
     });
   });
 
+  it("counts a record the export policy withheld without reconstructing it", () => {
+    const facts = reduce([
+      {
+        ...OPEN,
+        data: {
+          ...OPEN.data,
+          export_policy: {
+            destination: "live_tail",
+            denied_capture_classes: ["transcript"],
+            policy_readable: true,
+          },
+        },
+      },
+      event("withheld", 2, {
+        entry: "record",
+        kind: "event",
+        destination: "live_tail",
+        denied_capture_classes: [
+          { capture_class: "transcript", reason: "export_denied_by_policy" },
+        ],
+      }),
+      event("withheld", 3, {
+        entry: "record",
+        kind: "event",
+        destination: "live_tail",
+        denied_capture_classes: [
+          { capture_class: "transcript", reason: "export_denied_by_policy" },
+        ],
+      }),
+    ]);
+    expect(facts.restriction.destination).toBe("live_tail");
+    expect(facts.restriction.declaredClasses).toEqual(["transcript"]);
+    expect(facts.restriction.withheldRecords).toBe(2);
+    // The same refusal twice is one reason, not two.
+    expect(facts.restriction.refusals).toEqual([
+      { captureClass: "transcript", reason: "export_denied_by_policy" },
+    ]);
+    // And nothing was invented in its place: a withheld slot is not a record.
+    expect(facts.records).toEqual([]);
+    expect(facts.recordCounts).toEqual({});
+    expect(facts.asOfSequence).toBe(3);
+  });
+
+  it("treats a policy the server could not read as withholding everything", () => {
+    const facts = reduce([
+      {
+        ...OPEN,
+        data: {
+          ...OPEN.data,
+          export_policy: {
+            destination: "live_tail",
+            denied_capture_classes: [],
+            policy_readable: false,
+          },
+        },
+      },
+    ]);
+    expect(facts.restriction.policyReadable).toBe(false);
+    // A backend that says nothing about it has not declared an unreadable policy.
+    expect(reduce([OPEN]).restriction.policyReadable).toBe(true);
+  });
+
   it("records a close without claiming an artifact exists", () => {
     const facts = reduce([
       OPEN,

@@ -4,6 +4,11 @@ import { api, unwrap } from "./client";
 export const TAIL_EVENT_NAMES = [
   "open",
   "record",
+  /** A record exists at this slot and its content may not leave for this
+   *  destination. Subscribed to deliberately: an unsubscribed event name is one
+   *  the page never hears about, which would turn a governed stream back into a
+   *  silently shortened one. */
+  "withheld",
   "operation_open",
   "limit",
   "exhausted",
@@ -69,6 +74,7 @@ export function parseEventId(id: string | null | undefined): {
 const SEQUENCED: ReadonlySet<string> = new Set([
   "open",
   "record",
+  "withheld",
   "operation_open",
   "limit",
   "exhausted",

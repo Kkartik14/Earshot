@@ -223,6 +223,59 @@ export function LiveSessionBody({
         )}
       </section>
 
+      {facts.restriction.withheldRecords > 0 ||
+      facts.restriction.declaredClasses.length > 0 ||
+      !facts.restriction.policyReadable ? (
+        <section className={styles.panel} aria-label="Restricted by export policy">
+          <div className={styles.panelHead}>
+            <h2>Restricted by export policy</h2>
+            <span className={styles.note}>
+              {facts.restriction.withheldRecords} withheld
+            </span>
+          </div>
+          <p className={styles.note}>
+            This stream is an export
+            {facts.restriction.destination == null
+              ? ""
+              : ` to ${humanize(facts.restriction.destination)}`}
+            , and the capture policy forbids that destination carrying some of what this
+            session recorded. The records still exist and still occupy their journal
+            slots; their content is not here, and this view is not a complete account of
+            the session.
+          </p>
+          {facts.restriction.policyReadable ? null : (
+            <p className={styles.note}>
+              The server could not read this session&apos;s export policy and withheld
+              everything rather than guess.
+            </p>
+          )}
+          {facts.restriction.refusals.length > 0 ? (
+            <ul className={styles.limitList}>
+              {facts.restriction.refusals.map((refusal) => (
+                <li
+                  key={`${refusal.captureClass ?? "unreadable"}:${refusal.reason}`}
+                  className={styles.limitRow}
+                >
+                  <span className={styles.limitReason}>
+                    {refusal.captureClass == null
+                      ? "policy unreadable"
+                      : humanize(refusal.captureClass)}
+                  </span>
+                  <span className={styles.note}>{humanize(refusal.reason)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className={styles.note}>
+              Declared on open:{" "}
+              {facts.restriction.declaredClasses.map(humanize).join(", ")}. Nothing has
+              been withheld yet, because none of those classes has been captured on this
+              stream.
+            </p>
+          )}
+        </section>
+      ) : null}
+
       {facts.limits.length > 0 ? (
         <section className={styles.panel} aria-label="Capture limits">
           <div className={styles.panelHead}>

@@ -38,6 +38,25 @@ export interface LiveTruncation {
   availableFromSequence: number;
 }
 
+/** What this stream is not allowed to carry, and how much it has refused.
+ *
+ *  The tail is an export, so the server reapplies its destination policy before
+ *  a record leaves the process. A record it may not carry still occupies its
+ *  journal slot as a `withheld` event, and this is what keeps "restricted by
+ *  policy" distinguishable from "nothing was recorded". */
+export interface LiveRestriction {
+  /** The export destination this stream declares itself to be. */
+  destination: string | null;
+  /** Declared on `open`: enabled classes whose policy forbids that destination. */
+  declaredClasses: string[];
+  /** False when the server could not read the policy and withheld everything. */
+  policyReadable: boolean;
+  /** Records withheld so far. What was refused on this connection, not a total. */
+  withheldRecords: number;
+  /** Every class that has actually refused, with its reason, deduplicated. */
+  refusals: { captureClass: string | null; reason: string }[];
+}
+
 /** Why this stream stopped, when it has. */
 export interface LiveEnding {
   reason: string;
@@ -77,6 +96,7 @@ export interface LiveFacts {
   openOperations: LiveOpenOperation[];
   completedOperationIds: string[];
   limits: LiveLimit[];
+  restriction: LiveRestriction;
   truncation: LiveTruncation | null;
   /** True only once the journal reported its own cap; never inferred. */
   journalExhausted: boolean;
@@ -109,6 +129,13 @@ export function emptyFacts(): LiveFacts {
     openOperations: [],
     completedOperationIds: [],
     limits: [],
+    restriction: {
+      destination: null,
+      declaredClasses: [],
+      policyReadable: true,
+      withheldRecords: 0,
+      refusals: [],
+    },
     truncation: null,
     journalExhausted: false,
     closeObserved: false,
@@ -122,6 +149,10 @@ export function emptyFacts(): LiveFacts {
 const str = (value: unknown): string | null => (typeof value === "string" ? value : null);
 const num = (value: unknown): number => (typeof value === "number" ? value : 0);
 const bool = (value: unknown): boolean => value === true;
+const strings = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
 
 function record(value: unknown): Record<string, unknown> | null {
   return value != null && typeof value === "object" && !Array.isArray(value)
@@ -176,11 +207,17 @@ export function applyEvent(facts: LiveFacts, event: TailEvent): LiveFacts {
                 : [],
             };
       next.startedAtNano = startedAt == null ? null : str(startedAt.monotonic_time_nano);
-      next.unknownUntilClose = Array.isArray(event.data.unknown_until_close)
-        ? event.data.unknown_until_close.filter(
-            (item): item is string => typeof item === "string",
-          )
-        : [];
+      next.unknownUntilClose = strings(event.data.unknown_until_close);
+      const exportPolicy = record(event.data.export_policy);
+      next.restriction = {
+        ...facts.restriction,
+        destination: exportPolicy == null ? null : str(exportPolicy.destination),
+        declaredClasses:
+          exportPolicy == null ? [] : strings(exportPolicy.denied_capture_classes),
+        // Absent rather than false when the server never said: an older backend
+        // that does not declare this has not declared an unreadable policy.
+        policyReadable: exportPolicy == null || exportPolicy.policy_readable !== false,
+      };
       return next;
     }
     case "record": {
@@ -205,6 +242,33 @@ export function applyEvent(facts: LiveFacts, event: TailEvent): LiveFacts {
           );
         }
       }
+      return next;
+    }
+    case "withheld": {
+      // Counted, never reconstructed. The slot is accounted for and its content
+      // is not here, which is the whole point of the event existing.
+      const refusals = [...facts.restriction.refusals];
+      for (const denial of Array.isArray(event.data.denied_capture_classes)
+        ? event.data.denied_capture_classes
+        : []) {
+        const entry = record(denial);
+        if (entry == null) continue;
+        const captureClass = str(entry.capture_class);
+        const reason = str(entry.reason) ?? "unknown";
+        if (
+          !refusals.some(
+            (seen) => seen.captureClass === captureClass && seen.reason === reason,
+          )
+        ) {
+          refusals.push({ captureClass, reason });
+        }
+      }
+      next.restriction = {
+        ...facts.restriction,
+        destination: str(event.data.destination) ?? facts.restriction.destination,
+        withheldRecords: facts.restriction.withheldRecords + 1,
+        refusals,
+      };
       return next;
     }
     case "operation_open": {
