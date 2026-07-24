@@ -15,6 +15,7 @@ from .contract import (
     ErrorRecord,
     Evidence,
     IncidentBundle,
+    InterruptionChainProjection,
     Operation,
     QualityMeasurement,
     QualitySample,
@@ -141,6 +142,10 @@ class ExplainedTurn(ExplanationModel):
     events: tuple[ExplainedEvent, ...]
     measurements: tuple[ExplainedMeasurement, ...]
     metrics: TurnMetrics
+    # Carried verbatim from the analyzer's turn projection, exactly like ``metrics``.
+    # One entry per observed interruption episode; a turn that observed none has an
+    # empty tuple, which is an absence of evidence rather than a claim of success.
+    interruption_chains: tuple[InterruptionChainProjection, ...] = ()
 
 
 class IncidentExplanation(ExplanationModel):
@@ -428,6 +433,7 @@ def explain_incident(bundle: IncidentBundle, analysis: DerivedAnalysis) -> Incid
             ),
             measurements=_measurements(turn_measurement_samples[turn.turn_id]),
             metrics=turn.metrics,
+            interruption_chains=turn.interruption_chains,
         )
         for turn in analysis.projections.turns
     )

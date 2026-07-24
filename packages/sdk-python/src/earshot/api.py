@@ -13,7 +13,7 @@ import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 from urllib.parse import quote
 
 from fastapi import FastAPI, Query, Request
@@ -44,7 +44,9 @@ from .connectors import (
 )
 from .contract import DerivedAnalysis, IncidentBundle, IncidentBundleJson
 from .explanation import IncidentExplanation, explain_incident
+from .exporters.registry import export_incident, exporter_names, get_exporter
 from .privacy import ExportPolicyError, assert_export_allowed
+from .query import compare_incidents, detect_contradictions
 from .storage import (
     DEFAULT_PROJECT_ID,
     ArtifactCorruptionError,
@@ -54,6 +56,7 @@ from .storage import (
     IncidentStore,
     InvalidCursorError,
     StorageError,
+    StoredAnalysis,
 )
 from .validation import (
     IncidentValidationError,
@@ -184,6 +187,109 @@ class ConnectorDeliveryResponse(ApiModel):
     disposition: Literal["applied", "replayed", "ignored"]
     bundle_id: str | None
     canonical_sha256: str | None
+
+
+class ContradictionResponse(ApiModel):
+    """One evidence-linked contradiction, exactly as ``query.detect_contradictions``
+    reports it. Every field names real evidence; no source payload is surfaced."""
+
+    kind: str
+    summary: str
+    evidence_ids: list[str]
+    boundary: str | None = None
+    turn_id: str | None = None
+    subject: str | None = None
+
+
+class IncidentContradictionsResponse(ApiModel):
+    """Contradictions found in one incident, bound to the analysis that found them.
+
+    An empty ``contradictions`` list means detection ran against ``input_digest``
+    and found none. It never stands in for "analysis unavailable": that case is a
+    ``404 EARSHOT_ANALYSIS_NOT_AVAILABLE`` instead of an empty answer.
+    """
+
+    bundle_id: str
+    analyzer_version: str
+    input_digest: str
+    contradictions: list[ContradictionResponse]
+
+
+class ComparedDiagnosisResponse(ApiModel):
+    code: str
+    boundary: str
+    turn_ids: list[str]
+    diagnosis_id: str
+    evidence_ids: list[str]
+
+
+class TurnMetricDeltaResponse(ApiModel):
+    turn_id: str
+    metric: str
+    unit: str
+    known_good_value: int | float
+    incident_value: int | float
+    delta: int | float
+
+
+class TurnMetricAvailabilityChangeResponse(ApiModel):
+    """A metric whose comparability changed, reported instead of a fabricated delta."""
+
+    turn_id: str
+    metric: str
+    known_good_availability: str
+    incident_availability: str
+    comparable: bool
+
+
+class CoverageGapResponse(ApiModel):
+    signal: str
+    availability: str
+    reason: str | None = None
+
+
+class UnmatchedTurnsResponse(ApiModel):
+    only_in_incident: list[str]
+    only_in_known_good: list[str]
+
+
+class IncidentComparisonResponse(ApiModel):
+    """A structured diff of one incident against a known-good incident.
+
+    Both sides are named by bundle id and pinned by the digest their analysis was
+    derived from, so the reader can tell exactly what was compared. A latency delta
+    appears only where both sides are available in the same unit; every other case
+    is an availability change, never an invented number.
+    """
+
+    bundle_id: str
+    known_good_bundle_id: str
+    analyzer_version: str
+    input_digest: str
+    known_good_input_digest: str
+    diagnoses_added: list[ComparedDiagnosisResponse]
+    diagnoses_removed: list[ComparedDiagnosisResponse]
+    turn_metric_deltas: list[TurnMetricDeltaResponse]
+    turn_metric_availability_changes: list[TurnMetricAvailabilityChangeResponse]
+    unmatched_turns: UnmatchedTurnsResponse
+    coverage_gaps_new: list[CoverageGapResponse]
+    coverage_gaps_removed: list[CoverageGapResponse]
+    contradictions_new: list[ContradictionResponse]
+
+
+class IncidentExportResponse(ApiModel):
+    """One incident projected through a named exporter in the exporter registry.
+
+    ``format`` is the registered exporter name and ``destination`` is the export
+    destination a capture policy must permit for that projection to run, so the
+    document is always accompanied by the governance decision that released it.
+    """
+
+    bundle_id: str
+    digest: str
+    format: str
+    destination: str
+    document: dict[str, Any]
 
 
 _ERROR_RESPONSES = {
@@ -522,6 +628,28 @@ def _decode_request(payload: bytes, content_type: str, config: ApiConfig) -> Inc
             "incident does not satisfy the Earshot contract",
         ) from error
     raise ApiProblem(415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE", "unsupported incident media type")
+
+
+_ProjectionT = TypeVar("_ProjectionT")
+
+
+def _derived_projection(compute: Callable[[], _ProjectionT]) -> _ProjectionT:
+    """Run a ``query`` projection, turning an unbound analysis into a clean refusal.
+
+    The query surface refuses to answer about one incident from an analysis derived
+    from different evidence (``DerivedAnalysis.input_sha256`` mismatch) and raises.
+    That is a state conflict between the stored artifact and the stored analysis,
+    not a server fault, so it surfaces as ``409`` rather than an unhandled ``500``.
+    """
+
+    try:
+        return compute()
+    except ValueError as error:
+        raise ApiProblem(
+            409,
+            "EARSHOT_ANALYSIS_BINDING_MISMATCH",
+            "stored analysis is not derived from this incident's evidence",
+        ) from error
 
 
 def _analysis_value(value: Any) -> Any:
@@ -1303,7 +1431,7 @@ def create_app(
 
     def resolve_analysis(
         bundle_id: str, *, project_id: str
-    ) -> tuple[IncidentBundle, object, DerivedAnalysis]:
+    ) -> tuple[IncidentBundle, StoredAnalysis, DerivedAnalysis]:
         record, payload = repository.get_artifact(bundle_id, project_id=project_id)
         try:
             bundle = decode_incident_protobuf(payload)
@@ -1396,6 +1524,144 @@ def create_app(
         explanation = explain_incident(bundle, analysis)
         return JSONResponse(
             explanation.model_dump(mode="json", exclude_none=True),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/contradictions",
+        response_model=IncidentContradictionsResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def contradictions_endpoint(bundle_id: str, request: Request) -> JSONResponse:
+        bundle, stored, analysis = resolve_analysis(
+            bundle_id,
+            project_id=request.state.project_id,
+        )
+        contradictions = _derived_projection(lambda: detect_contradictions(bundle, analysis))
+        return JSONResponse(
+            {
+                "bundle_id": stored.bundle_id,
+                "analyzer_version": stored.analyzer_version,
+                "input_digest": stored.input_digest,
+                "contradictions": [item.as_dict() for item in contradictions],
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    def resolve_known_good_analysis(
+        bundle_id: str, *, project_id: str
+    ) -> tuple[IncidentBundle, StoredAnalysis, DerivedAnalysis]:
+        """Resolve the comparison baseline, naming *which* side is unavailable.
+
+        A comparison names two incidents, so the generic incident errors would leave
+        the caller unable to tell which one is missing, purged, or unanalysed. The
+        baseline keeps its own stable codes; the same non-reflective messages apply.
+        """
+
+        try:
+            return resolve_analysis(bundle_id, project_id=project_id)
+        except IncidentNotFoundError as error:
+            raise ApiProblem(
+                404,
+                "EARSHOT_KNOWN_GOOD_NOT_FOUND",
+                "known-good incident not found",
+            ) from error
+        except IncidentPurgedError as error:
+            raise ApiProblem(
+                410,
+                "EARSHOT_KNOWN_GOOD_PURGED",
+                "known-good incident was purged",
+            ) from error
+        except ApiProblem as error:
+            if error.code != "EARSHOT_ANALYSIS_NOT_AVAILABLE":
+                raise
+            raise ApiProblem(
+                404,
+                "EARSHOT_KNOWN_GOOD_ANALYSIS_NOT_AVAILABLE",
+                "analysis is not available for the known-good incident",
+            ) from error
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/comparison",
+        response_model=IncidentComparisonResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def comparison_endpoint(
+        bundle_id: str,
+        request: Request,
+        known_good_bundle_id: str = Query(min_length=1),
+    ) -> JSONResponse:
+        project_id = request.state.project_id
+        bundle, stored, analysis = resolve_analysis(bundle_id, project_id=project_id)
+        known_good, known_good_stored, known_good_analysis = resolve_known_good_analysis(
+            known_good_bundle_id,
+            project_id=project_id,
+        )
+        comparison = _derived_projection(
+            lambda: compare_incidents(
+                bundle,
+                known_good,
+                incident_analysis=analysis,
+                known_good_analysis=known_good_analysis,
+            )
+        )
+        return JSONResponse(
+            {
+                "bundle_id": stored.bundle_id,
+                "known_good_bundle_id": known_good_stored.bundle_id,
+                "analyzer_version": stored.analyzer_version,
+                "input_digest": stored.input_digest,
+                "known_good_input_digest": known_good_stored.input_digest,
+                **comparison.as_dict(),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/export",
+        response_model=IncidentExportResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    def export_endpoint(
+        bundle_id: str,
+        request: Request,
+        format: str = Query(
+            default="otlp",
+            description=(
+                "Registered exporter name. The enumerated choices are the exporter "
+                "registry's names when this document was generated; a process that "
+                "registers its own exporter can select it here by name."
+            ),
+            json_schema_extra={"enum": list(exporter_names())},
+        ),
+    ) -> JSONResponse:
+        record, payload = repository.get_artifact(bundle_id, project_id=request.state.project_id)
+        try:
+            bundle = decode_incident_protobuf(payload)
+        except IncidentCodecError as error:
+            raise ArtifactCorruptionError("stored incident cannot be decoded") from error
+        # Two gates, both fail closed: reading the incident out through this API,
+        # then the exporter's own declared destination. The projection runs through
+        # the registry rather than an exporter function so that second gate cannot
+        # be bypassed by adding a route.
+        assert_export_allowed(bundle, "local_api")
+        try:
+            registration = get_exporter(format)
+        except ValueError as error:
+            raise ApiProblem(
+                400,
+                "EARSHOT_UNKNOWN_EXPORT_FORMAT",
+                "requested export format is not a registered exporter",
+            ) from error
+        document = export_incident(bundle, format=registration.name)
+        return JSONResponse(
+            {
+                "bundle_id": record.bundle_id,
+                "digest": record.digest,
+                "format": registration.name,
+                "destination": registration.destination,
+                "document": document,
+            },
             headers={"Cache-Control": "no-store"},
         )
 
