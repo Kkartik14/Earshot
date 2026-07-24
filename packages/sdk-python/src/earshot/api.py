@@ -6,11 +6,13 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import os
+import re
 import sqlite3
 import time
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypeVar
@@ -21,7 +23,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .analysis import ANALYZER_VERSION
@@ -43,8 +45,12 @@ from .connectors import (
     RawProviderDelivery,
 )
 from .contract import DerivedAnalysis, IncidentBundle, IncidentBundleJson
+from .engines.base import BrowserClockDomain
+from .engines.device import apply_audio_graph
+from .engines.webrtc import apply_webrtc_stats
 from .explanation import IncidentExplanation, explain_incident
 from .exporters.registry import export_incident, exporter_names, get_exporter
+from .pipeline import pipeline
 from .privacy import ExportPolicyError, assert_export_allowed
 from .query import compare_incidents, detect_contradictions
 from .storage import (
@@ -292,6 +298,322 @@ class IncidentExportResponse(ApiModel):
     document: dict[str, Any]
 
 
+# ---------------------------------------------------------------------------
+# Browser capture transport (POST /v1/capture)
+# ---------------------------------------------------------------------------
+#
+# The request body is the ``CapturePayload`` the @earshot/browser capture kernel
+# drains (see ``packages/browser/src/types.ts``), so its envelope keys are the
+# browser's camelCase names while the response stays in this API's snake_case.
+#
+# The wire format carries its OWN version (``captureVersion``) independently of
+# the ``/v1`` path so the client and server can evolve the payload without a new
+# route; an unsupported version is a specific, clean client error.
+
+CAPTURE_PROTOCOL_VERSION = 1
+
+# The browser clock the payload's raw ``timestamp_ms`` readings belong to. Only a
+# monotonic browser clock is accepted: those readings are recorded in their own
+# ClockDomain, never rebased onto the server clock.
+_CAPTURE_CLOCK_KIND = "browser_monotonic"
+
+# Bounds on the individual time values, chosen so every derived nanosecond value
+# (monotonic reading, and wall origin + reading) stays inside the contract's
+# uint64 ``DecimalNano`` domain instead of overflowing during recording.
+_MAX_CAPTURE_TIMESTAMP_MS = 1e10  # ~115 days of monotonic browser uptime
+_MAX_CAPTURE_WALL_ORIGIN_MS = 1e13  # ~year 2286 in Unix milliseconds
+_MAX_CAPTURE_UNCERTAINTY_MS = 1e6
+
+# Ceilings for governed numeric stat members and audio-graph seconds. A reading
+# beyond these is not a measurement we can honour, so the member is dropped and
+# the drop is recorded as coverage rather than stored.
+_MAX_CAPTURE_STAT_NUMBER = 1e15
+_MAX_CAPTURE_SECONDS = 3600.0
+_MAX_CAPTURE_HZ = 1e7
+
+# Identifiers and labels the payload may carry. Everything the payload can place
+# in the stored incident is constrained to one of these shapes.
+_CAPTURE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
+_CAPTURE_LABEL_PATTERN = r"^[a-z][a-z0-9_.-]{0,63}$"
+_CAPTURE_TRACEPARENT_PATTERN = r"^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+_CAPTURE_STAT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+/=-]{0,127}$")
+_CAPTURE_DEVICE_HASH = re.compile(r"^dev_[0-9a-f]{8}$")
+_CAPTURE_SINK_HASH = re.compile(r"^sink_[0-9a-f]{8}$")
+
+# Closed vocabularies for the enum-valued members the engines read. These are
+# W3C enumerations, so anything outside them is not a governed reading.
+_CAPTURE_MEDIA_KINDS = frozenset({"audio", "video"})
+_CAPTURE_CONNECTION_STATES = frozenset(
+    {
+        "new",
+        "checking",
+        "connecting",
+        "connected",
+        "completed",
+        "disconnected",
+        "failed",
+        "closed",
+        "frozen",
+        "waiting",
+        "in-progress",
+        "inprogress",
+        "succeeded",
+    }
+)
+_CAPTURE_NETWORK_TYPES = frozenset(
+    {"bluetooth", "cellular", "ethernet", "wifi", "wimax", "vpn", "unknown"}
+)
+_CAPTURE_PERMISSION_STATES = frozenset({"granted", "denied", "prompt"})
+_CAPTURE_CONTEXT_STATES = frozenset({"running", "suspended", "closed", "interrupted"})
+
+# How each governed stat member is validated. A member absent from this table is
+# not governed and is dropped; there is no pass-through path.
+_CAPTURE_STAT_MEMBER_KINDS: dict[str, str] = {
+    # universal identity/keying members
+    "type": "type",
+    "id": "stat_id",
+    "kind": "media_kind",
+    "mediaType": "media_kind",
+    "timestamp": "number",
+    # inbound-rtp: loss, jitter buffer, concealment, decode/processing pipeline
+    "packetsReceived": "number",
+    "packetsLost": "number",
+    "packetsDiscarded": "number",
+    "fecPacketsReceived": "number",
+    "jitter": "number",
+    "jitterBufferDelay": "number",
+    "jitterBufferEmittedCount": "number",
+    "jitterBufferTargetDelay": "number",
+    "jitterBufferMinimumDelay": "number",
+    "jitterBufferFlushes": "number",
+    "concealedSamples": "number",
+    "silentConcealedSamples": "number",
+    "concealmentEvents": "number",
+    "insertedSamplesForDeceleration": "number",
+    "removedSamplesForAcceleration": "number",
+    "totalSamplesReceived": "number",
+    "totalProcessingDelay": "number",
+    # remote-inbound-rtp / candidate-pair
+    "roundTripTime": "number",
+    "currentRoundTripTime": "number",
+    "state": "connection_state",
+    "selected": "bool",
+    "nominated": "bool",
+    "localCandidateId": "stat_id",
+    "candidatePairId": "stat_id",
+    # transport
+    "iceState": "connection_state",
+    "dtlsState": "connection_state",
+    "connectionState": "connection_state",
+    "selectedCandidatePairId": "stat_id",
+    # local-candidate
+    "networkType": "network_type",
+    # media-playout (RTCAudioPlayoutStats): the render/playout half
+    "synthesizedSamplesDuration": "number",
+    "synthesizedSamplesEvents": "number",
+    "totalSamplesDuration": "number",
+    "totalPlayoutDelay": "number",
+    "totalSamplesCount": "number",
+}
+
+_CAPTURE_UNIVERSAL_STAT_MEMBERS = frozenset({"type", "id", "kind", "timestamp"})
+
+# The exact members each governed stat type may carry. A stat whose ``type`` is
+# absent here is dropped whole: certificates (``base64Certificate``), codecs,
+# candidates (``address``/``ip``/``port``/``url``/``usernameFragment``),
+# peer-connection, media-source and outbound-rtp are all unconsumed and can never
+# reach storage by omission.
+_CAPTURE_STAT_ALLOWLIST: dict[str, frozenset[str]] = {
+    "inbound-rtp": frozenset(
+        {
+            "mediaType",
+            "packetsReceived",
+            "packetsLost",
+            "packetsDiscarded",
+            "fecPacketsReceived",
+            "jitter",
+            "jitterBufferDelay",
+            "jitterBufferEmittedCount",
+            "jitterBufferTargetDelay",
+            "jitterBufferMinimumDelay",
+            "jitterBufferFlushes",
+            "concealedSamples",
+            "silentConcealedSamples",
+            "concealmentEvents",
+            "insertedSamplesForDeceleration",
+            "removedSamplesForAcceleration",
+            "totalSamplesReceived",
+            "totalProcessingDelay",
+        }
+    ),
+    "remote-inbound-rtp": frozenset({"roundTripTime"}),
+    "candidate-pair": frozenset(
+        {
+            "state",
+            "selected",
+            "nominated",
+            "localCandidateId",
+            "candidatePairId",
+            "currentRoundTripTime",
+            "roundTripTime",
+        }
+    ),
+    "transport": frozenset({"iceState", "dtlsState", "connectionState", "selectedCandidatePairId"}),
+    "local-candidate": frozenset({"networkType"}),
+    "media-playout": frozenset(
+        {
+            "synthesizedSamplesDuration",
+            "synthesizedSamplesEvents",
+            "totalSamplesDuration",
+            "totalPlayoutDelay",
+            "totalSamplesCount",
+        }
+    ),
+}
+
+# The audio-graph event vocabulary ``analyze_audio_graph`` dispatches on, and the
+# exact members each family may carry. Device identity only ever appears as the
+# client's opaque salted hash (``dev_…`` / ``sink_…``); a raw label or id fails
+# the hash pattern and is dropped.
+_CAPTURE_EVENT_ALLOWLIST: dict[str, dict[str, str]] = {
+    **{
+        event_type: {"state": "permission_state", "deviceHash": "device_hash"}
+        for event_type in ("permission", "permission_denied", "getusermedia")
+    },
+    **{
+        event_type: {"state": "context_state"}
+        for event_type in (
+            "audiocontext_state",
+            "statechange",
+            "audiocontext",
+            "audiocontextstatechange",
+        )
+    },
+    **{
+        event_type: {"sinkHash": "sink_hash"}
+        for event_type in ("sink_change", "sinkchange", "output_change")
+    },
+    **{
+        event_type: {"deviceHash": "device_hash", "sinkHash": "sink_hash"}
+        for event_type in ("device_change", "devicechange")
+    },
+    **{
+        event_type: {"configured_hz": "hz", "actual_hz": "hz"}
+        for event_type in ("sample_rate_mismatch", "samplerate_mismatch", "sample_rate")
+    },
+    **{
+        event_type: {}
+        for event_type in ("underrun", "glitch", "dropped_frames", "xrun", "buffer_underrun")
+    },
+    **{
+        event_type: {
+            "base_latency_s": "seconds",
+            "output_latency_s": "seconds",
+            "render_queue_s": "seconds",
+        }
+        for event_type in ("latency", "audiocontext_latency", "audio_latency")
+    },
+}
+
+
+class CaptureTraceContextRequest(ApiModel):
+    """The session's W3C trace-context: random correlation handles only."""
+
+    traceparent: str = Field(pattern=_CAPTURE_TRACEPARENT_PATTERN)
+    traceId: str = Field(pattern=r"^[0-9a-f]{32}$")
+    spanId: str = Field(pattern=r"^[0-9a-f]{16}$")
+
+
+class CaptureClockDomainRequest(ApiModel):
+    """The browser clock every ``timestamp_ms`` in this payload was read from.
+
+    Its identity is what keeps browser readings out of the server clock domain:
+    the facts derived here are recorded against ``id`` at their raw readings, and
+    no calibration to the server clock is invented.
+    """
+
+    id: str = Field(pattern=_CAPTURE_ID_PATTERN)
+    kind: Literal["browser_monotonic"]
+    unit: Literal["ms"]
+    uncertaintyMs: float = Field(ge=0.0, le=_MAX_CAPTURE_UNCERTAINTY_MS)
+    wallOriginMs: float | None = Field(default=None, ge=0.0, le=_MAX_CAPTURE_WALL_ORIGIN_MS)
+
+
+class CaptureSnapshotRequest(ApiModel):
+    """One ``RTCPeerConnection.getStats()`` snapshot: stat id -> member bag.
+
+    Members are NOT trusted as sent: the server independently allowlists them
+    (see ``_sanitize_capture_stats``) before anything reaches an engine.
+    """
+
+    timestamp_ms: float = Field(ge=0.0, le=_MAX_CAPTURE_TIMESTAMP_MS)
+    stats: dict[str, dict[str, Any]]
+
+
+class CaptureDeviceEventRequest(BaseModel):
+    """One audio-graph/device lifecycle event: ``{type, timestamp_ms, ...members}``.
+
+    Extra members are accepted by the parser and then dropped by the server
+    allowlist, so an unknown member is refused rather than stored.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str = Field(pattern=_CAPTURE_LABEL_PATTERN)
+    timestamp_ms: float = Field(ge=0.0, le=_MAX_CAPTURE_TIMESTAMP_MS)
+
+
+class CaptureCoverageRequest(ApiModel):
+    """One explicit gap the client recorded rather than dropping it silently."""
+
+    signal: str = Field(pattern=_CAPTURE_LABEL_PATTERN)
+    availability: Literal["available", "partial", "not_observed"]
+    reason: str = Field(pattern=_CAPTURE_LABEL_PATTERN)
+    droppedCount: int | None = Field(default=None, ge=0, le=2**31 - 1)
+
+
+class CaptureRequest(ApiModel):
+    """The versioned browser capture payload, exactly as ``drain()`` emits it."""
+
+    captureVersion: int = Field(ge=1, le=2**31 - 1)
+    sessionId: str = Field(pattern=_CAPTURE_ID_PATTERN)
+    clockDomain: CaptureClockDomainRequest
+    traceContext: CaptureTraceContextRequest | None = None
+    snapshots: list[CaptureSnapshotRequest] = Field(default_factory=list)
+    deviceEvents: list[CaptureDeviceEventRequest] = Field(default_factory=list)
+    coverage: list[CaptureCoverageRequest] = Field(default_factory=list)
+
+
+class CaptureAcceptedResponse(IncidentRecordResponse):
+    """The incident one capture batch became, plus what the server refused.
+
+    The ``rejected_*`` counters are the server-side allowlist's own report: they
+    say how much of the payload was dropped before it could be stored, so a
+    client can see that its batch was trimmed instead of silently reshaped.
+    """
+
+    created: bool
+    capture_version: int
+    trace_id: str | None
+    accepted_snapshots: int
+    accepted_device_events: int
+    accepted_coverage: int
+    rejected_stats: int
+    rejected_stat_members: int
+    rejected_device_events: int
+    rejected_device_members: int
+
+
+@dataclass(frozen=True, slots=True)
+class _CaptureRejections:
+    """What the server-side allowlist refused to accept from one payload."""
+
+    stats: int = 0
+    stat_members: int = 0
+    device_events: int = 0
+    device_members: int = 0
+
+
 _ERROR_RESPONSES = {
     status: {"model": ProblemResponse}
     for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 503)
@@ -350,6 +672,27 @@ _INCIDENT_REQUEST_BODY = {
 }
 
 
+_CAPTURE_REQUEST_BODY = {
+    "parameters": [
+        {
+            "name": "X-Earshot-Project-Id",
+            "in": "header",
+            "required": False,
+            "description": (
+                "SDK assertion checked against the project selected by the credential."
+            ),
+            "schema": {"type": "string", "minLength": 1, "maxLength": 64},
+        },
+    ],
+    "requestBody": {
+        "required": True,
+        "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/CaptureRequest"}},
+        },
+    },
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ApiConfig:
     host: str = "127.0.0.1"
@@ -357,6 +700,14 @@ class ApiConfig:
     max_body_bytes: int = 16 * 1024 * 1024
     max_connector_body_bytes: int = 2 * 1024 * 1024
     max_connector_deliveries_per_minute: int = 120
+    # Browser capture batches are metadata-only and drained periodically, so they
+    # are bounded far below an incident bundle. Every bound is explicit and
+    # enforced before any client value reaches an engine.
+    max_capture_body_bytes: int = 1024 * 1024
+    max_capture_snapshots: int = 512
+    max_capture_device_events: int = 512
+    max_capture_coverage: int = 64
+    max_capture_stats_per_snapshot: int = 128
     max_json_depth: int = 64
     default_page_size: int = 50
     analyzer_version: str = ANALYZER_VERSION
@@ -375,6 +726,16 @@ class ApiConfig:
             raise ValueError("max_connector_body_bytes must be positive")
         if self.max_connector_deliveries_per_minute < 1:
             raise ValueError("max_connector_deliveries_per_minute must be positive")
+        if self.max_capture_body_bytes < 1:
+            raise ValueError("max_capture_body_bytes must be positive")
+        if self.max_capture_snapshots < 1:
+            raise ValueError("max_capture_snapshots must be positive")
+        if self.max_capture_device_events < 1:
+            raise ValueError("max_capture_device_events must be positive")
+        if self.max_capture_coverage < 1:
+            raise ValueError("max_capture_coverage must be positive")
+        if self.max_capture_stats_per_snapshot < 1:
+            raise ValueError("max_capture_stats_per_snapshot must be positive")
         if self.max_json_depth < 1:
             raise ValueError("max_json_depth must be positive")
         if self.viewer_session_capacity < 1:
@@ -468,12 +829,12 @@ def _issue_dict(issue: ValidationIssue) -> dict[str, object]:
     }
 
 
-async def _read_body(request: Request, maximum: int) -> bytes:
+async def _read_body(request: Request, maximum: int, *, subject: str = "incident") -> bytes:
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:
             if int(content_length) > maximum:
-                raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", "incident body exceeds limit")
+                raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", f"{subject} body exceeds limit")
         except ValueError as error:
             raise ApiProblem(
                 400,
@@ -485,9 +846,9 @@ async def _read_body(request: Request, maximum: int) -> bytes:
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > maximum:
-            raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", "incident body exceeds limit")
+            raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", f"{subject} body exceeds limit")
     if not body:
-        raise ApiProblem(400, "EARSHOT_EMPTY_BODY", "incident body is empty")
+        raise ApiProblem(400, "EARSHOT_EMPTY_BODY", f"{subject} body is empty")
     return bytes(body)
 
 
@@ -548,7 +909,15 @@ async def _read_connector_body(request: Request, maximum: int) -> bytes:
     return bytes(body)
 
 
-def _strict_json_preflight(payload: bytes, maximum_depth: int) -> None:
+def _strict_json_preflight(payload: bytes, maximum_depth: int, *, subject: str = "incident") -> Any:
+    """Parse JSON under the strict rules the store depends on; return the value.
+
+    Duplicate object keys, non-finite constants, and over-deep nesting are all
+    refused here with stable codes so no decoder downstream has to be defensive
+    about them. The parsed value is returned so a caller that needs the raw
+    document (rather than a typed decode) does not parse it twice.
+    """
+
     class DuplicateKey(ValueError):
         pass
 
@@ -573,10 +942,10 @@ def _strict_json_preflight(payload: bytes, maximum_depth: int) -> None:
         raise ApiProblem(
             400,
             "EARSHOT_DUPLICATE_JSON_KEY",
-            "incident JSON contains a duplicate object key",
+            f"{subject} JSON contains a duplicate object key",
         ) from error
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError) as error:
-        raise ApiProblem(400, "EARSHOT_MALFORMED_JSON", "incident JSON is malformed") from error
+        raise ApiProblem(400, "EARSHOT_MALFORMED_JSON", f"{subject} JSON is malformed") from error
 
     stack: list[tuple[object, int]] = [(parsed, 1)]
     while stack:
@@ -585,12 +954,13 @@ def _strict_json_preflight(payload: bytes, maximum_depth: int) -> None:
             raise ApiProblem(
                 400,
                 "EARSHOT_JSON_TOO_DEEP",
-                "incident JSON nesting exceeds limit",
+                f"{subject} JSON nesting exceeds limit",
             )
         if isinstance(value, dict):
             stack.extend((child, depth + 1) for child in value.values())
         elif isinstance(value, list):
             stack.extend((child, depth + 1) for child in value)
+    return parsed
 
 
 def _decode_request(payload: bytes, content_type: str, config: ApiConfig) -> IncidentBundle:
@@ -628,6 +998,330 @@ def _decode_request(payload: bytes, content_type: str, config: ApiConfig) -> Inc
             "incident does not satisfy the Earshot contract",
         ) from error
     raise ApiProblem(415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE", "unsupported incident media type")
+
+
+# -- browser capture: independent server-side enforcement ----------------------
+#
+# The @earshot/browser kernel already allowlists what it copies out of
+# ``getStats()``. The server repeats that decision from scratch because the
+# client is not a trust boundary: anything can POST here. Every member below is
+# validated against a governed shape, and anything else -- a `base64Certificate`,
+# a DTLS `fingerprint`, an `usernameFragment`, a candidate `address`/`ip`/`url`,
+# a device label -- is dropped BEFORE an engine sees it, so it is never derived
+# from, never recorded, and never stored. Drops are counted and surfaced as
+# coverage; they are refusals, not silent reshaping.
+
+
+def _capture_number(value: Any, maximum: float) -> float | None:
+    """A finite, non-negative reading within ``maximum``, else ``None`` (dropped).
+
+    Booleans are not numbers here (the engines make the same distinction), and a
+    negative or non-finite reading is not a measurement we can honour: every
+    governed member in the capture vocabulary is a cumulative counter, a duration,
+    or a ratio.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0.0 or number > maximum:
+        return None
+    return number
+
+
+def _capture_enum(value: Any, allowed: frozenset[str]) -> str | None:
+    return value if isinstance(value, str) and value in allowed else None
+
+
+def _capture_stat_member(kind: str, value: Any) -> Any | None:
+    """Validate one governed stat member by its declared kind, or drop it."""
+
+    if kind == "number":
+        return _capture_number(value, _MAX_CAPTURE_STAT_NUMBER)
+    if kind == "bool":
+        return value if isinstance(value, bool) else None
+    if kind == "media_kind":
+        return _capture_enum(value, _CAPTURE_MEDIA_KINDS)
+    if kind == "connection_state":
+        return _capture_enum(value, _CAPTURE_CONNECTION_STATES)
+    if kind == "network_type":
+        return _capture_enum(value, _CAPTURE_NETWORK_TYPES)
+    if kind == "stat_id":
+        # Opaque within-report references only; they key a lookup and are never
+        # persisted, but the shape is still constrained so nothing else can ride in.
+        if isinstance(value, str) and _CAPTURE_STAT_ID.fullmatch(value):
+            return value
+        return None
+    return None
+
+
+def _sanitize_capture_stat(stat: Mapping[str, Any]) -> tuple[dict[str, Any] | None, int]:
+    """Allowlist one ``RTCStats``-shaped bag; ``None`` drops the stat whole."""
+
+    stat_type = stat.get("type")
+    if not isinstance(stat_type, str):
+        return None, 0
+    allowed = _CAPTURE_STAT_ALLOWLIST.get(stat_type)
+    if allowed is None:
+        return None, 0  # a stat type no engine consumes never reaches storage
+    members: dict[str, Any] = {"type": stat_type}
+    dropped = 0
+    for key, value in stat.items():
+        if key == "type":
+            continue
+        if key not in _CAPTURE_UNIVERSAL_STAT_MEMBERS and key not in allowed:
+            dropped += 1
+            continue
+        accepted = _capture_stat_member(_CAPTURE_STAT_MEMBER_KINDS.get(key, ""), value)
+        if accepted is None:
+            dropped += 1
+            continue
+        members[key] = accepted
+    # A stat that names a media kind we cannot read is not audio evidence: drop it
+    # whole rather than let the engine treat an unknown kind as audio.
+    for key in ("kind", "mediaType"):
+        if key in stat and key not in members:
+            return None, dropped
+    return members, dropped
+
+
+def _sanitize_capture_snapshots(
+    snapshots: list[CaptureSnapshotRequest],
+    *,
+    max_stats: int,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Return engine-ready snapshots plus (dropped stats, dropped members)."""
+
+    cleaned: list[dict[str, Any]] = []
+    dropped_stats = 0
+    dropped_members = 0
+    for snapshot in snapshots:
+        if len(snapshot.stats) > max_stats:
+            raise ApiProblem(
+                413,
+                "EARSHOT_CAPTURE_TOO_LARGE",
+                "capture snapshot exceeds the stat count limit",
+            )
+        stats: dict[str, dict[str, Any]] = {}
+        for stat_id, stat in snapshot.stats.items():
+            if not _CAPTURE_STAT_ID.fullmatch(stat_id) or not isinstance(stat, dict):
+                dropped_stats += 1
+                continue
+            members, dropped = _sanitize_capture_stat(stat)
+            dropped_members += dropped
+            if members is None:
+                dropped_stats += 1
+                continue
+            stats[stat_id] = members
+        cleaned.append({"timestamp_ms": snapshot.timestamp_ms, "stats": stats})
+    return cleaned, dropped_stats, dropped_members
+
+
+def _capture_event_member(kind: str, value: Any) -> Any | None:
+    if kind == "seconds":
+        return _capture_number(value, _MAX_CAPTURE_SECONDS)
+    if kind == "hz":
+        return _capture_number(value, _MAX_CAPTURE_HZ)
+    if kind == "permission_state":
+        return _capture_enum(value, _CAPTURE_PERMISSION_STATES)
+    if kind == "context_state":
+        return _capture_enum(value, _CAPTURE_CONTEXT_STATES)
+    if kind == "device_hash":
+        # Only the client's opaque, per-session salted hash shape. A raw label or
+        # device id cannot match it, so it is dropped rather than stored.
+        if isinstance(value, str) and _CAPTURE_DEVICE_HASH.fullmatch(value):
+            return value
+        return None
+    if kind == "sink_hash":
+        if isinstance(value, str) and _CAPTURE_SINK_HASH.fullmatch(value):
+            return value
+        return None
+    return None
+
+
+def _sanitize_capture_events(
+    events: list[CaptureDeviceEventRequest],
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Return engine-ready device events plus (dropped events, dropped members)."""
+
+    cleaned: list[dict[str, Any]] = []
+    dropped_events = 0
+    dropped_members = 0
+    for event in events:
+        event_type = event.type.lower()
+        allowed = _CAPTURE_EVENT_ALLOWLIST.get(event_type)
+        if allowed is None:
+            dropped_events += 1  # an event type no engine dispatches on
+            continue
+        payload: dict[str, Any] = {
+            "type": event_type,
+            "timestamp_ms": event.timestamp_ms,
+        }
+        for key, value in (event.model_extra or {}).items():
+            kind = allowed.get(key)
+            accepted = None if kind is None else _capture_event_member(kind, value)
+            if accepted is None:
+                dropped_members += 1
+                continue
+            payload[key] = accepted
+        cleaned.append(payload)
+    return cleaned, dropped_events, dropped_members
+
+
+def _capture_coverage_signal(signal: str) -> str:
+    """Namespace a client-declared signal so it can never mask a server one.
+
+    The browser's coverage is the browser's claim about what IT could observe.
+    Recording it under its own prefix keeps it real coverage while stopping a
+    payload from overwriting a note an engine derived server-side.
+    """
+
+    return signal if signal.startswith("browser.") else f"browser.{signal}"
+
+
+def _capture_bundle_id(project_id: str, fingerprint: Mapping[str, Any]) -> str:
+    """A bundle id derived from the sanitized batch, so a retry is not a duplicate.
+
+    The transport may re-send a batch it never learned the fate of. Deriving the
+    identity from the batch's own content means the second delivery resolves to
+    the incident the first one created instead of a second copy of the evidence.
+    """
+
+    digest = hashlib.sha256(
+        json.dumps(
+            {"project_id": project_id, **fingerprint},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"capture-{digest[:32]}"
+
+
+def _capture_issue(item: Mapping[str, Any]) -> dict[str, object]:
+    # Stable code and path only. The path is the caller's own field location and
+    # is truncated; no payload value is reflected back.
+    return {
+        "code": "EARSHOT_INVALID_CAPTURE_FIELD",
+        "path": [str(part)[:64] for part in item.get("loc", ())],
+        "message": "capture field is invalid",
+        "severity": "error",
+    }
+
+
+def _decode_capture_request(parsed: Any, config: ApiConfig) -> CaptureRequest:
+    """Decode one capture payload: version first, then bounds, then shape.
+
+    The version gate runs before anything else so a client on a newer (or older)
+    wire format gets that specific answer instead of a pile of field errors about
+    a schema it was never targeting.
+    """
+
+    if not isinstance(parsed, dict):
+        raise ApiProblem(
+            400,
+            "EARSHOT_MALFORMED_CAPTURE",
+            "capture payload must be a JSON object",
+        )
+    version = parsed.get("captureVersion")
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ApiProblem(
+            400,
+            "EARSHOT_CAPTURE_VERSION_REQUIRED",
+            "capture payload must declare an integer captureVersion",
+        )
+    if version != CAPTURE_PROTOCOL_VERSION:
+        raise ApiProblem(
+            400,
+            "EARSHOT_UNSUPPORTED_CAPTURE_VERSION",
+            (
+                "capture protocol version is not supported; this server accepts "
+                f"version {CAPTURE_PROTOCOL_VERSION}"
+            ),
+        )
+    for field, limit in (
+        ("snapshots", config.max_capture_snapshots),
+        ("deviceEvents", config.max_capture_device_events),
+        ("coverage", config.max_capture_coverage),
+    ):
+        value = parsed.get(field)
+        if isinstance(value, list) and len(value) > limit:
+            raise ApiProblem(
+                413,
+                "EARSHOT_CAPTURE_TOO_LARGE",
+                f"capture payload exceeds the {field} count limit",
+            )
+    try:
+        return CaptureRequest.model_validate(parsed)
+    except ValidationError as error:
+        raise ApiProblem(
+            422,
+            "EARSHOT_INVALID_CAPTURE",
+            "capture payload does not satisfy the capture contract",
+            issues=[_capture_issue(item) for item in error.errors()[:20]],
+        ) from error
+
+
+def _build_capture_incident(
+    capture: CaptureRequest,
+    snapshots: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+    rejections: _CaptureRejections,
+    *,
+    bundle_id: str,
+) -> IncidentBundle:
+    """Turn one sanitized capture batch into a governed incident.
+
+    The browser clock is declared as its own domain and every derived fact is
+    placed in it at its RAW browser reading -- never rebased onto the server
+    clock -- so the analyzer keeps refusing cross-clock latency until a real
+    ``ClockRelation`` is supplied.
+
+    Two honest limitations of this projection, stated rather than papered over:
+    the client's ``droppedCount`` has no field on the v1alpha1 ``Coverage``
+    record (the gap is recorded, the count is returned in the response only), and
+    the incident inherits the pipeline's ``client.render not_observed`` note
+    because a capture batch yields render-path *quality* signals, not per-turn
+    render boundaries.
+    """
+
+    clock = capture.clockDomain
+    domain = BrowserClockDomain(
+        clock_domain_id=clock.id,
+        kind=_CAPTURE_CLOCK_KIND,
+        observer="browser",
+        uncertainty_nano=int(clock.uncertaintyMs * 1_000_000),
+        wall_origin_unix_nano=(
+            None if clock.wallOriginMs is None else int(clock.wallOriginMs * 1_000_000)
+        ),
+    )
+    session = pipeline(
+        session_id=capture.sessionId,
+        bundle_id=bundle_id,
+        framework="browser_capture",
+        producer_name="earshot.capture_api",
+    )
+    with session.turn("browser-capture") as turn:
+        for note in capture.coverage:
+            turn.record_coverage(
+                _capture_coverage_signal(note.signal),
+                note.availability,
+                note.reason,
+            )
+        for signal, reason, count in (
+            ("capture.stats", "non_governed_stat_dropped", rejections.stats),
+            ("capture.stat_members", "non_governed_member_dropped", rejections.stat_members),
+            ("capture.device_events", "non_governed_event_dropped", rejections.device_events),
+            (
+                "capture.device_event_members",
+                "non_governed_member_dropped",
+                rejections.device_members,
+            ),
+        ):
+            if count > 0:
+                turn.record_coverage(signal, "partial", reason)
+        apply_webrtc_stats(turn, snapshots, clock_domain=domain)
+        apply_audio_graph(turn, events, clock_domain=domain)
+    return session.close()
 
 
 _ProjectionT = TypeVar("_ProjectionT")
@@ -775,6 +1469,14 @@ def create_app(
         components = schema.setdefault("components", {}).setdefault("schemas", {})
         components.update(definitions)
         components["IncidentBundleJson"] = incident_schema
+        # The capture body is read and validated by hand (streamed byte bound
+        # first), so its schema is published here rather than inferred from a
+        # route signature.
+        capture_schema = CaptureRequest.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        components.update(capture_schema.pop("$defs", {}))
+        components["CaptureRequest"] = capture_schema
         schema["components"].setdefault("securitySchemes", {})["BearerAuth"] = {
             "type": "http",
             "scheme": "bearer",
@@ -1253,6 +1955,130 @@ def create_app(
                 ],
             },
             headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/v1/capture",
+        response_model=CaptureAcceptedResponse,
+        status_code=201,
+        responses={200: {"model": CaptureAcceptedResponse}, **_ERROR_RESPONSES},
+        openapi_extra=_CAPTURE_REQUEST_BODY,
+    )
+    async def capture_endpoint(request: Request) -> JSONResponse:
+        """Accept one browser capture batch and store it as a governed incident.
+
+        Authentication, project scoping and CSRF are the same ``/v1`` rules every
+        other endpoint uses: the middleware has already resolved a bearer project
+        key or a viewer session, rejected a mismatched ``X-Earshot-Project-Id``,
+        and -- because this is an unsafe method -- required a CSRF token from a
+        cookie-authenticated caller.
+
+        Everything after that is fail-closed: the body is bounded while it is
+        still being streamed, the wire version is checked before the schema, the
+        collection sizes are checked before the payload is materialised, and
+        every stat/event member is re-derived from the server's own allowlist so
+        no client value reaches an engine -- or storage -- unless this server
+        governs it.
+
+        Delivery is idempotent by batch content, so a transport retry after an
+        unknown outcome resolves to the incident the first delivery created
+        (``201`` when this call created it, ``200`` when it already existed).
+        """
+
+        if _content_type(request) != "application/json":
+            raise ApiProblem(
+                415,
+                "EARSHOT_UNSUPPORTED_MEDIA_TYPE",
+                "browser capture requires application/json",
+            )
+        body = await _read_body(request, settings.max_capture_body_bytes, subject="capture")
+        parsed = _strict_json_preflight(body, settings.max_json_depth, subject="capture")
+        capture = _decode_capture_request(parsed, settings)
+        project_id = request.state.project_id
+
+        def accept() -> tuple[dict[str, object], bool, _CaptureRejections, int, int]:
+            snapshots, dropped_stats, dropped_members = _sanitize_capture_snapshots(
+                capture.snapshots,
+                max_stats=settings.max_capture_stats_per_snapshot,
+            )
+            events, dropped_events, dropped_event_members = _sanitize_capture_events(
+                capture.deviceEvents
+            )
+            rejections = _CaptureRejections(
+                stats=dropped_stats,
+                stat_members=dropped_members,
+                device_events=dropped_events,
+                device_members=dropped_event_members,
+            )
+            bundle_id = _capture_bundle_id(
+                project_id,
+                {
+                    "capture_version": capture.captureVersion,
+                    "session_id": capture.sessionId,
+                    "clock_domain": capture.clockDomain.model_dump(),
+                    "snapshots": snapshots,
+                    "device_events": events,
+                    "coverage": [note.model_dump() for note in capture.coverage],
+                },
+            )
+            try:
+                # A re-delivered batch resolves to the incident it already became
+                # rather than a second copy of the same evidence.
+                return (
+                    repository.get_record(bundle_id, project_id=project_id).as_dict(),
+                    False,
+                    rejections,
+                    len(snapshots),
+                    len(events),
+                )
+            except IncidentNotFoundError:
+                pass
+            bundle = _build_capture_incident(
+                capture,
+                snapshots,
+                events,
+                rejections,
+                bundle_id=bundle_id,
+            )
+            try:
+                result = repository.ingest(
+                    bundle,
+                    encode_incident_protobuf(bundle),
+                    project_id=project_id,
+                )
+            except IncidentConflictError:
+                # Two concurrent deliveries of the same batch: the loser sees the
+                # id already taken. Only the ingest timestamps differ, so this is
+                # the same evidence, not a conflict to report to the client.
+                record = repository.get_record(bundle_id, project_id=project_id)
+                return (record.as_dict(), False, rejections, len(snapshots), len(events))
+            return (
+                result.record.as_dict(),
+                result.created,
+                rejections,
+                len(snapshots),
+                len(events),
+            )
+
+        record, created, rejections, snapshot_count, event_count = await run_in_threadpool(accept)
+        value: dict[str, object] = dict(record)
+        value["created"] = created
+        value["capture_version"] = capture.captureVersion
+        value["trace_id"] = None if capture.traceContext is None else capture.traceContext.traceId
+        value["accepted_snapshots"] = snapshot_count
+        value["accepted_device_events"] = event_count
+        value["accepted_coverage"] = len(capture.coverage)
+        value["rejected_stats"] = rejections.stats
+        value["rejected_stat_members"] = rejections.stat_members
+        value["rejected_device_events"] = rejections.device_events
+        value["rejected_device_members"] = rejections.device_members
+        return JSONResponse(
+            value,
+            status_code=201 if created else 200,
+            headers={
+                "Location": f"/v1/incidents/{quote(str(record['bundle_id']), safe='')}",
+                "Cache-Control": "no-store",
+            },
         )
 
     async def decode_and_validate(

@@ -43,10 +43,12 @@ def test_analysis_truth_changes_have_a_new_cache_identity() -> None:
     assert ANALYZER_VERSION == "0.5.0"
 
 
-def test_diagnostic_read_surface_is_api_version_0_3() -> None:
-    # 0.3.0 adds the contradiction, comparison, and export read endpoints and the
-    # per-turn ``interruption_chains`` lane on the closed explanation contract.
-    assert API_VERSION == "0.3.0"
+def test_browser_capture_ingest_surface_is_api_version_0_4() -> None:
+    # 0.4.0 adds the authenticated, versioned browser capture endpoint
+    # (``POST /v1/capture``) that turns a @earshot/browser capture batch into a
+    # governed incident. 0.3.0 added the contradiction, comparison, and export
+    # read endpoints and the per-turn ``interruption_chains`` explanation lane.
+    assert API_VERSION == "0.4.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:
