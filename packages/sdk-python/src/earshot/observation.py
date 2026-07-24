@@ -107,8 +107,16 @@ class ObservationSink(Protocol):
         signal: str,
         availability: str,
         reason: str | None = None,
+        *,
+        dropped_count: int | None = None,
     ) -> None:
-        """Ledger what this source could or could not observe (session scope)."""
+        """Ledger what this source could or could not observe (session scope).
+
+        ``dropped_count`` is how many observations the source counted itself
+        losing in this window. A source that can count its own loss (a bounded
+        buffer that overflowed) says so here; one that cannot leaves it ``None``,
+        which claims strictly less than ``0``.
+        """
 
     def record_omission(
         self,

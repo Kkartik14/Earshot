@@ -225,3 +225,66 @@ def test_cross_clock_latency_becomes_estimated_with_a_relation() -> None:
     assert delta.confidence == "estimated"  # a calibrated cross-clock latency is never measured
     assert delta.nanoseconds == 400_000_000  # 500ms - 100ms
     assert delta.uncertainty >= 500  # the relation's own error bound is carried forward
+
+
+# -- fact-level provenance agrees with the clock domain's own declaration -------
+
+
+def test_a_browser_fact_is_not_labelled_as_observed_by_the_server() -> None:
+    # The clock domain already declares observer="browser". A fact recorded into
+    # that domain claiming observer="server" would contradict the declaration and
+    # let a client report read as a server measurement.
+    clock = BrowserClockDomain(clock_domain_id="clk_session")
+    session = earshot.pipeline(session_id="f2-observer", started_at_unix_nano=START)
+    with session.turn() as turn:
+        turn.vad(speech_start_ms=100)  # a server-observed event on the server clock
+        apply_audio_graph(
+            turn,
+            [
+                {"type": "underrun", "timestamp_ms": 700},
+                {"type": "latency", "timestamp_ms": 800, "base_latency_s": 0.005},
+            ],
+            clock_domain=clock,
+        )
+    bundle = session.close()
+
+    events = _events(bundle)
+    assert events["earshot.audio.render.stale"].evidence.observer == "browser"
+    assert events["earshot.speech.started"].evidence.observer == "server"
+    [sample] = bundle.profile.quality_samples
+    assert sample.sample_window.start.clock_domain_id == "clk_session"
+    assert sample.evidence.observer == "browser"
+    assert _domains(bundle)["clk_session"].observer == "browser"
+    assert validate_incident(bundle).ok
+
+
+def test_a_bound_trace_context_reaches_the_facts_it_was_bound_for() -> None:
+    trace_id = "a" * 32
+    span_id = "b" * 16
+    session = earshot.pipeline(
+        session_id="f2-trace",
+        started_at_unix_nano=START,
+        trace_id=trace_id,
+        span_id=span_id,
+    )
+    with session.turn() as turn:
+        turn.vad(speech_start_ms=100)
+    bundle = session.close()
+
+    [event] = bundle.profile.events
+    assert event.trace_id == trace_id
+    assert event.span_id == span_id
+    assert validate_incident(bundle).ok
+
+
+def test_an_unbound_session_claims_no_trace() -> None:
+    session = earshot.pipeline(session_id="f2-untraced", started_at_unix_nano=START)
+    with session.turn() as turn:
+        turn.vad(speech_start_ms=100)
+    bundle = session.close()
+    assert all(event.trace_id is None for event in bundle.profile.events)
+
+
+def test_half_a_trace_context_is_refused() -> None:
+    with pytest.raises(ValueError, match="supplied together"):
+        earshot.pipeline(session_id="f2-half", trace_id="a" * 32)

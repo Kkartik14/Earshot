@@ -108,8 +108,17 @@ class CollectorSink:
     def record_event(self, name: str, **kwargs: Any) -> None:
         self.calls.append(("record_event", (name,), kwargs))
 
-    def record_coverage(self, signal: str, availability: str, reason: str | None = None) -> None:
-        self.calls.append(("record_coverage", (signal, availability, reason), {}))
+    def record_coverage(
+        self,
+        signal: str,
+        availability: str,
+        reason: str | None = None,
+        *,
+        dropped_count: int | None = None,
+    ) -> None:
+        self.calls.append(
+            ("record_coverage", (signal, availability, reason), {"dropped_count": dropped_count})
+        )
 
     def record_omission(
         self,

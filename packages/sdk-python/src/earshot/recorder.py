@@ -100,6 +100,9 @@ DEFAULT_MAX_VALUE_BYTES = 64 * 1024
 _MAX_EXTRA_CLOCK_DOMAINS = 16
 _MAX_CLOCK_RELATIONS = 64
 _MAX_COUNTER = 9_223_372_036_854_775_807
+# The widest loss count a capture source can plausibly have counted, and the
+# widest one the wire contract accepts (see ``CaptureCoverageRequest``).
+_MAX_LOSS_COUNT = 2_147_483_647
 _RECORD_KINDS = (
     "adapter",
     "coverage",
@@ -112,6 +115,22 @@ _RECORD_KINDS = (
     "raw_otlp",
     "stream",
 )
+
+
+def _bounded_loss_count(value: int | None) -> int | None:
+    """A coverage loss count, or ``None`` when the value is not a usable count.
+
+    A count is a plain non-negative integer inside the governed range. A float, a
+    bool, a negative, or an implausibly large value is not a count -- the gap is
+    still recorded, but the number is dropped rather than admitted as a claim
+    about how much was lost.
+    """
+
+    if value is None or isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < 0 or value > _MAX_LOSS_COUNT:
+        return None
+    return value
 
 
 def _utf8_size_up_to(value: str, limit: int) -> tuple[int, bool]:
@@ -979,14 +998,30 @@ class IncidentRecorder:
             self._clock_relations.append(relation.model_copy(deep=True))
             self._journal_locked("clock_relation", relation)
 
-    def record_coverage(self, signal: str, availability: str, reason: str | None = None) -> None:
+    def record_coverage(
+        self,
+        signal: str,
+        availability: str,
+        reason: str | None = None,
+        *,
+        dropped_count: int | None = None,
+    ) -> None:
+        """Ledger what a source could observe, and how much it counted losing.
+
+        ``dropped_count`` is retained only when the source actually counted the
+        loss; ``None`` stays ``None`` rather than becoming a ``0`` that would
+        claim nothing was lost.
+        """
+
         safe_signal = sanitize_semantic_label(signal) or "unknown"
         safe_availability = sanitize_semantic_label(availability) or "unavailable"
         safe_reason = sanitize_semantic_label(reason)
+        safe_count = _bounded_loss_count(dropped_count)
         coverage = Coverage(
             signal=safe_signal,
             availability=safe_availability,
             reason=safe_reason,
+            dropped_count=safe_count,
         )
         estimated, _ = _structural_size_up_to(coverage, self.config.max_capture_bytes)
         handled = False
@@ -996,7 +1031,11 @@ class IncidentRecorder:
                 if existing.signal != safe_signal:
                     continue
                 handled = True
-                if existing.availability == safe_availability and existing.reason == safe_reason:
+                if (
+                    existing.availability == safe_availability
+                    and existing.reason == safe_reason
+                    and existing.dropped_count == safe_count
+                ):
                     break
                 if safe_availability == "available" and existing.availability != "available":
                     old_size, _ = _structural_size_up_to(existing, self.config.max_capture_bytes)
