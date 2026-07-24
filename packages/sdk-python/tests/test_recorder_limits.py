@@ -13,6 +13,25 @@ from earshot.validation import validate_incident
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _reset_global_sdk_configuration():
+    """Isolate the process-global SDK client this file's env-driven tests touch.
+
+    ``test_limit_configuration_and_environment_are_validated`` calls the global
+    ``earshot.init()``, which reconfigures the shared client and therefore fails
+    if an earlier test in the run left a recorder active on it. The failure is
+    order-dependent, so it surfaced only under CI's collection order. Resetting
+    the global client around every test in this file makes the file independent
+    of what ran before it — the same guard ``test_sdk.py`` already uses.
+    """
+
+    earshot.shutdown()
+    earshot.configure()
+    yield
+    earshot.shutdown()
+    earshot.configure()
+
+
 def _event(recorder: IncidentRecorder, event_id: str, **attributes: object):
     return recorder.record_event(
         "voice.fact",
