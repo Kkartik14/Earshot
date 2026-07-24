@@ -23,7 +23,7 @@ from earshot.contract import ClockDomain
 from earshot.engines import BrowserClockDomain
 from earshot.engines.device import apply_audio_graph
 from earshot.engines.webrtc import apply_webrtc_stats
-from earshot.observation import ObservationSink
+from earshot.observation import ObservationSink, SourceClockReading
 from earshot.pipeline import TurnRecorder
 from earshot.privacy import CaptureClass
 from earshot.validation import validate_incident
@@ -107,6 +107,9 @@ class CollectorSink:
 
     def record_event(self, name: str, **kwargs: Any) -> None:
         self.calls.append(("record_event", (name,), kwargs))
+
+    def record_operation(self, operation_id: str, operation_name: str, **kwargs: Any) -> None:
+        self.calls.append(("record_operation", (operation_id, operation_name), kwargs))
 
     def record_coverage(
         self,
@@ -254,6 +257,124 @@ def test_repeated_derivations_author_identical_calls() -> None:
     assert first.calls == second.calls
 
 
+# -- the foreign-clock reading is a single, source-agnostic value object -------
+
+FOREIGN = BrowserClockDomain(clock_domain_id="clk_native", wall_origin_unix_nano=START)
+FOREIGN_READING = SourceClockReading(
+    clock_domain_id="clk_native",
+    monotonic_ms=1500.0,
+    uncertainty_nano=FOREIGN.uncertainty_nano,
+    wall_origin_nano=START,
+)
+
+
+def _author_foreign_clock_facts(sink: ObservationSink) -> None:
+    """Author two foreign-clock facts, attaching one :class:`SourceClockReading`."""
+
+    sink.register_clock_domain(FOREIGN.to_contract())
+    sink.record_measurement(
+        "earshot.transport.jitter",
+        0.02,
+        unit="s",
+        source="native_stats",
+        confidence="measured",
+        source_field="native.jitter",
+        at_ms=0.0,
+        quality_kind="transport_quality",
+        source_clock=FOREIGN_READING,
+    )
+    sink.record_event(
+        "earshot.transport.route_changed",
+        at_ms=0.0,
+        source="native_stats",
+        confidence="measured",
+        source_field="native.route",
+        source_clock=FOREIGN_READING,
+    )
+
+
+def test_a_custom_sink_authors_foreign_clock_facts_with_a_source_clock_reading() -> None:
+    collector = CollectorSink()
+    _author_foreign_clock_facts(collector)
+
+    # One value object carries the whole foreign-clock reading -- no capture-source-
+    # specific keyword clump survives on the universal verbs, and any source in a
+    # non-server clock domain supplies it the same way.
+    measurement_kwargs = next(k for verb, _, k in collector.calls if verb == "record_measurement")
+    reading = measurement_kwargs["source_clock"]
+    assert isinstance(reading, SourceClockReading)
+    assert reading.clock_domain_id == "clk_native"
+    assert set(measurement_kwargs) == {
+        "unit",
+        "source",
+        "confidence",
+        "source_field",
+        "at_ms",
+        "quality_kind",
+        "source_clock",
+    }
+
+    direct = _incident_through(_author_foreign_clock_facts)
+    replayed = _incident_through(collector.replay)
+    # Same reading, same bytes: the value object is a signature change, not a
+    # behaviour one. And the facts landed in the source's declared domain.
+    assert replayed == direct
+    assert "clk_native" in direct
+
+
+# -- a non-recorder sink can author an operation it observed -------------------
+
+
+def _author_observed_operation(sink: ObservationSink) -> None:
+    sink.record_operation(
+        "op-native-batch-7",
+        "native.batch",
+        status="ok",
+        at_ms=100.0,
+        ended_at_ms=250.0,
+        source="native_collector",
+        confidence="inferred",
+        source_field="native.operation",
+    )
+
+
+def test_a_non_recorder_sink_can_author_an_observed_operation() -> None:
+    collector = CollectorSink()
+    _author_observed_operation(collector)
+
+    # The collector holds no turn, no cursor, no session, so it cannot MINT an id --
+    # it supplied its own, which is exactly what observing (not minting) needs.
+    assert not isinstance(collector, TurnRecorder)
+    verb, arguments, _ = collector.calls[0]
+    assert verb == "record_operation"
+    assert arguments == ("op-native-batch-7", "native.batch")
+
+    direct = _incident_through(_author_observed_operation)
+    replayed = _incident_through(collector.replay)
+    # Same operation, same caller-supplied id, same bytes as authoring on the real
+    # recorder: the seam supports operations without turn bookkeeping.
+    assert replayed == direct
+    assert "op-native-batch-7" in direct
+
+
+def test_an_observed_operation_never_advances_the_turn_cursor() -> None:
+    # ``record_operation`` observes; it must not move the stage cursor that a
+    # following ``record_stage`` would build on -- that cursor is the bookkeeping a
+    # collector deliberately lacks. A stage after an observed operation therefore
+    # still starts at offset zero.
+    session = earshot.pipeline(
+        session_id="op-cursor",
+        bundle_id="bundle-op-cursor",
+        clock=ManualClock(wall=START, monotonic=0),
+    )
+    with session.turn("turn-op-cursor") as turn:
+        turn.record_operation("op-observed", "observed", at_ms=100.0, ended_at_ms=400.0)
+        assert turn._cursor_ms == 0.0
+        turn.stt("deepgram", ttfb_ms=10.0)
+    bundle = session.close()
+    assert validate_incident(bundle).ok
+
+
 # -- the pipeline recorder keeps satisfying the protocol -----------------------
 
 
@@ -270,6 +391,7 @@ def test_turn_recorder_satisfies_the_observation_sink_protocol() -> None:
     assert set(members) == {
         "record_measurement",
         "record_event",
+        "record_operation",
         "record_coverage",
         "record_omission",
         "register_clock_domain",
@@ -284,7 +406,11 @@ def test_turn_recorder_satisfies_the_observation_sink_protocol() -> None:
 
 
 def test_the_protocol_excludes_pipeline_turn_bookkeeping() -> None:
-    # ``record_stage`` mints an operation id and advances the turn cursor. Leaving
-    # it out is what lets a fact-only collector implement the seam at all.
-    assert "record_stage" not in _protocol_members()
+    # The seam carries operation *observation* (``record_operation`` takes a
+    # caller-supplied id and never touches the cursor) but not operation
+    # *minting*: ``record_stage`` mints an id from the turn cursor and advances it,
+    # and leaving THAT out is what lets a fact-only collector implement the seam.
+    members = _protocol_members()
+    assert "record_operation" in members
+    assert "record_stage" not in members
     assert hasattr(TurnRecorder, "record_stage")

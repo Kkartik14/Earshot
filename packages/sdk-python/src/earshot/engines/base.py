@@ -31,7 +31,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from ..contract import ClockDomain
-from ..observation import ObservationSink
+from ..observation import ObservationSink, SourceClockReading
 
 # Default reading uncertainty (1ms) for a browser monotonic clock: browsers
 # coarsen ``performance.now()``, so browser-derived facts carry this forward as
@@ -102,6 +102,22 @@ class _AppliedClock:
     origin_ms: float
 
 
+def _reading(clock: _AppliedClock, at_ms: float) -> SourceClockReading:
+    """The source-clock reading for a fact at turn-relative ``at_ms``.
+
+    ``origin_ms + at_ms`` reconstructs the RAW browser timestamp the observation
+    carried; the domain's declared uncertainty and wall origin ride along so the
+    fact is placed in the browser's own clock domain, never on the server clock.
+    """
+
+    return SourceClockReading(
+        clock_domain_id=clock.domain.clock_domain_id,
+        monotonic_ms=clock.origin_ms + at_ms,
+        uncertainty_nano=clock.domain.uncertainty_nano,
+        wall_origin_nano=clock.domain.wall_origin_unix_nano,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class EngineMeasurement:
     """A governed scalar derived from raw telemetry, ready for the recorder.
@@ -134,10 +150,7 @@ class EngineMeasurement:
             basis=self.basis,
             at_ms=self.at_ms,
             quality_kind=self.quality_kind,
-            browser_clock_domain_id=None if clock is None else clock.domain.clock_domain_id,
-            browser_monotonic_ms=None if clock is None else clock.origin_ms + self.at_ms,
-            browser_uncertainty_nano=None if clock is None else clock.domain.uncertainty_nano,
-            browser_wall_origin_nano=None if clock is None else clock.domain.wall_origin_unix_nano,
+            source_clock=None if clock is None else _reading(clock, self.at_ms),
         )
 
 
@@ -160,10 +173,7 @@ class EngineEvent:
             source=self.source,
             confidence=self.confidence,
             source_field=self.source_field,
-            browser_clock_domain_id=None if clock is None else clock.domain.clock_domain_id,
-            browser_monotonic_ms=None if clock is None else clock.origin_ms + self.at_ms,
-            browser_uncertainty_nano=None if clock is None else clock.domain.uncertainty_nano,
-            browser_wall_origin_nano=None if clock is None else clock.domain.wall_origin_unix_nano,
+            source_clock=None if clock is None else _reading(clock, self.at_ms),
         )
 
 

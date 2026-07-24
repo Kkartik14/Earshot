@@ -46,6 +46,7 @@ from .contract import (
     TimeRange,
 )
 from .measurement_semantics import measurement_value_limitation
+from .observation import SourceClockReading
 from .privacy import CaptureClass
 from .recorder import IncidentRecorder, RecorderConfig
 from .sdk import _runtime_snapshot
@@ -358,19 +359,16 @@ class TurnRecorder:
         confidence: str = "estimated",
         source_field: str = "pipeline.event",
         attributes: Mapping[str, Any] | None = None,
-        browser_clock_domain_id: str | None = None,
-        browser_monotonic_ms: float | None = None,
-        browser_uncertainty_nano: int | None = None,
-        browser_wall_origin_nano: int | None = None,
+        source_clock: SourceClockReading | None = None,
     ) -> None:
         """Author a point event with fact-specific evidence.
 
-        A browser-derived fact (``browser_clock_domain_id`` set) is placed in that
-        browser clock domain at its RAW monotonic timestamp, never on the server
-        turn clock -- so it does not advance the server-clock turn extent and is
-        not comparable to a server event without a declared ClockRelation. Its
-        evidence names the clock domain's own observer, so the fact and the domain
-        agree about who saw it.
+        A foreign-clock fact (``source_clock`` set) is placed in that declared
+        clock domain at its RAW monotonic timestamp, never on the server turn clock
+        -- so it does not advance the server-clock turn extent and is not comparable
+        to a server event without a declared ClockRelation. Its evidence names the
+        clock domain's own observer, so the fact and the domain agree about who saw
+        it.
         """
 
         name = self._label(name, "event name")
@@ -380,13 +378,8 @@ class TurnRecorder:
         confidence = self._confidence(confidence)
         source_field = self._label(source_field, "source field")
         self._sequence += 1
-        if browser_clock_domain_id is not None:
-            time = self._browser_point(
-                browser_monotonic_ms,
-                browser_clock_domain_id,
-                browser_uncertainty_nano,
-                browser_wall_origin_nano,
-            )
+        if source_clock is not None:
+            time = self._source_point(source_clock, source_clock.monotonic_ms)
         else:
             time = self._point(offset)
         self._session.recorder.record_event(
@@ -401,11 +394,13 @@ class TurnRecorder:
                 source,
                 confidence,
                 source_field,
-                observer=self._observer(browser_clock_domain_id),
+                observer=self._observer(
+                    None if source_clock is None else source_clock.clock_domain_id
+                ),
             ),
             attributes=attributes,
         )
-        if browser_clock_domain_id is None:
+        if source_clock is None:
             self._max_ms = max(self._max_ms, offset)
 
     def record_measurement(
@@ -422,16 +417,13 @@ class TurnRecorder:
         at_ms: float | None = None,
         quality_kind: str = "provider_metric",
         attributes: Mapping[str, Any] | None = None,
-        browser_clock_domain_id: str | None = None,
-        browser_monotonic_ms: float | None = None,
-        browser_uncertainty_nano: int | None = None,
-        browser_wall_origin_nano: int | None = None,
+        source_clock: SourceClockReading | None = None,
     ) -> None:
         """Author a provider-native or standard scalar without relabeling its meaning.
 
-        A browser-derived measurement (``browser_clock_domain_id`` set) is placed
-        in that browser clock domain at its RAW monotonic timestamp, never on the
-        server turn clock, and its evidence names that domain's own observer.
+        A foreign-clock measurement (``source_clock`` set) is placed in that
+        declared clock domain at its RAW monotonic timestamp, never on the server
+        turn clock, and its evidence names that domain's own observer.
         """
 
         name = self._label(name, "measurement name")
@@ -459,13 +451,8 @@ class TurnRecorder:
         if basis is not None:
             sample_attributes["earshot.metric.basis"] = basis
         self._sequence += 1
-        if browser_clock_domain_id is not None:
-            point = self._browser_point(
-                browser_monotonic_ms,
-                browser_clock_domain_id,
-                browser_uncertainty_nano,
-                browser_wall_origin_nano,
-            )
+        if source_clock is not None:
+            point = self._source_point(source_clock, source_clock.monotonic_ms)
         else:
             point = self._point(offset)
         self._session.recorder.record_quality_sample(
@@ -479,14 +466,81 @@ class TurnRecorder:
                     source,
                     confidence,
                     source_field,
-                    observer=self._observer(browser_clock_domain_id),
+                    observer=self._observer(
+                        None if source_clock is None else source_clock.clock_domain_id
+                    ),
                 ),
                 participant_id=_AGENT,
                 attributes=sample_attributes,
             )
         )
-        if browser_clock_domain_id is None:
+        if source_clock is None:
             self._max_ms = max(self._max_ms, offset)
+
+    def record_operation(
+        self,
+        operation_id: str,
+        operation_name: str,
+        *,
+        status: str = "ok",
+        at_ms: float,
+        ended_at_ms: float | None = None,
+        participant: str | None = None,
+        source: str = "app",
+        confidence: str = "inferred",
+        source_field: str = "pipeline.operation",
+        attributes: Mapping[str, Any] | None = None,
+        source_clock: SourceClockReading | None = None,
+    ) -> None:
+        """Record an operation this source *observed*, under an id it supplies.
+
+        This is the observation counterpart to :meth:`record_stage`: it does NOT
+        mint an id from the turn cursor and does NOT advance that cursor, so a
+        collector without a turn model can author it. The operation is placed at
+        ``at_ms`` (and optional ``ended_at_ms``) on the server clock, or -- when
+        ``source_clock`` is supplied -- in that declared clock domain at its raw
+        reading, its duration preserved in the domain's own monotonic units, its
+        evidence naming the domain's own observer. A foreign-clock operation never
+        advances the server-clock turn extent, exactly as a foreign-clock event
+        does not.
+        """
+
+        operation_id = self._label(operation_id, "operation id")
+        operation_name = self._label(operation_name, "operation name")
+        status = self._label(status, "status")
+        participant_id = self._participant(participant)
+        source = self._label(source, "evidence source")
+        confidence = self._confidence(confidence)
+        source_field = self._label(source_field, "source field")
+        start = self._required_ms(at_ms, "operation offset")
+        end = self._optional_ms(ended_at_ms, "operation end offset")
+        if end is not None and end < start:
+            raise ValueError("operation end offset must not precede its start")
+        if source_clock is not None:
+            started_at = self._source_point(source_clock, source_clock.monotonic_ms)
+            ended_at = (
+                None
+                if end is None
+                else self._source_point(source_clock, source_clock.monotonic_ms + (end - start))
+            )
+            observer = self._observer(source_clock.clock_domain_id)
+        else:
+            started_at = self._point(start)
+            ended_at = None if end is None else self._point(end)
+            observer = self._observer(None)
+        self._session.recorder.record_operation(
+            operation_id=operation_id,
+            operation_name=operation_name,
+            status=status,
+            started_at=started_at,
+            ended_at=ended_at,
+            participant_id=participant_id,
+            turn_id=self._turn_id,
+            evidence=self._fact_evidence(source, confidence, source_field, observer=observer),
+            attributes=attributes,
+        )
+        if source_clock is None:
+            self._max_ms = max(self._max_ms, start if end is None else end)
 
     def record_omission(
         self,
@@ -609,7 +663,7 @@ class TurnRecorder:
             availability="available",
         )
 
-    def _observer(self, browser_clock_domain_id: str | None) -> str:
+    def _observer(self, clock_domain_id: str | None) -> str:
         """Who observed a fact: the clock domain's declared observer.
 
         A fact recorded in a foreign clock domain was not observed by this server
@@ -620,9 +674,24 @@ class TurnRecorder:
         report read as a server measurement.
         """
 
-        if browser_clock_domain_id is None:
+        if clock_domain_id is None:
             return _SERVER_OBSERVER
-        return self._session.clock_domain_observer(browser_clock_domain_id)
+        return self._session.clock_domain_observer(clock_domain_id)
+
+    def _source_point(self, reading: SourceClockReading, monotonic_ms: float) -> TimePoint:
+        """A TimePoint in a source's declared clock domain at ``monotonic_ms``.
+
+        The reading carries the domain and its uncertainty/wall origin; the raw
+        monotonic value is supplied separately so an operation can place its start
+        and end at two readings in the one domain.
+        """
+
+        return self._browser_point(
+            monotonic_ms,
+            reading.clock_domain_id,
+            reading.uncertainty_nano,
+            reading.wall_origin_nano,
+        )
 
     def register_clock_domain(self, domain: ClockDomain) -> None:
         """Declare an additional clock domain (e.g. a browser's) on the session."""
