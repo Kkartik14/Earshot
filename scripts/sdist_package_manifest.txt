@@ -18,6 +18,7 @@ packages/sdk-python/src/earshot/capture/__init__.py
 packages/sdk-python/src/earshot/capture/calls.py
 packages/sdk-python/src/earshot/capture/identity.py
 packages/sdk-python/src/earshot/capture/sanitize.py
+packages/sdk-python/src/earshot/capture/source.py
 packages/sdk-python/src/earshot/checkpoint/__init__.py
 packages/sdk-python/src/earshot/checkpoint/assembler.py
 packages/sdk-python/src/earshot/checkpoint/framing.py
