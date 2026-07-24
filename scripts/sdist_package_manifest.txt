@@ -14,6 +14,13 @@ packages/sdk-python/src/earshot/adapters/routing.py
 packages/sdk-python/src/earshot/analysis.py
 packages/sdk-python/src/earshot/api.py
 packages/sdk-python/src/earshot/browser_session.py
+packages/sdk-python/src/earshot/checkpoint/__init__.py
+packages/sdk-python/src/earshot/checkpoint/assembler.py
+packages/sdk-python/src/earshot/checkpoint/framing.py
+packages/sdk-python/src/earshot/checkpoint/keys.py
+packages/sdk-python/src/earshot/checkpoint/reader.py
+packages/sdk-python/src/earshot/checkpoint/records.py
+packages/sdk-python/src/earshot/checkpoint/writer.py
 packages/sdk-python/src/earshot/cli.py
 packages/sdk-python/src/earshot/clock.py
 packages/sdk-python/src/earshot/codec.py

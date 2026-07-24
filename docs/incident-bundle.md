@@ -54,6 +54,38 @@ may contain several OTel resources.
 
 The session has an open status vocabulary and start/end `TimePoint`s.
 
+### Recovery
+
+`manifest.recovery` is present only when the artifact was reconstructed from an SDK
+checkpoint journal rather than produced by a live `close()`. It is a typed manifest
+member, next to `finality` and `completeness`, so validation can cross-check it; an
+attribute bag could not be enforced.
+
+| Field                                  | Meaning                                                          |
+| -------------------------------------- | ---------------------------------------------------------------- |
+| `method`                               | how it was rebuilt (`checkpoint_journal`)                        |
+| `reason`                               | why (`process_terminated_before_close`)                          |
+| `close_observed`                       | the machine-checkable assertion that a close was or was not seen |
+| `journal_id`, `last_sequence`          | which journal, and how far the readable prefix reached           |
+| `last_observation`                     | the last durably observed coordinate — **not** the session's end |
+| `torn_tail_bytes`, `discarded_records` | evidence lost at a known boundary                                |
+| `journal_complete`                     | false when the journal reached its cap before the session ended  |
+| `recoverer`                            | the producer that performed the recovery                         |
+
+There is deliberately no "recovered at" timestamp: two recoveries of the same journal
+must produce the same bytes under the same `bundle_id`, or content-addressed ingest
+would reject the second as a conflict.
+
+When `close_observed` is false the artifact must also report `finality="provisional"`,
+`completeness="incomplete"`, `session.status="interrupted"`, **no** `session.ended_at`,
+and `recorder.session_close` coverage as unavailable. Claiming otherwise is a validation
+error, so a recovered artifact cannot pass as a cleanly closed one. Recovering a journal
+that does contain the recorder's finalize record reproduces the closed artifact byte for
+byte and therefore carries no recovery declaration at all.
+
+`manifest.recovery` requires contract version `0.2.0` or newer; a bundle claiming
+`0.1.0` while carrying one is rejected.
+
 ### Participants and audio streams
 
 Participants use opaque IDs and open roles (`user`, `agent`, `human_operator`,
@@ -168,6 +200,13 @@ Validation issues have stable codes and paths and never need to echo source valu
 - Media references mislabeled as metadata and error messages mislabeled as metadata.
 - An operation/event/quality record naming a participant who does not own its stream.
 - Non-finite numbers, bad hashes, reversed byte ranges, or embedded `heard_at` claims.
+- A non-final artifact with no `manifest.recovery`
+  (`EARSHOT_RECOVERY_DECLARATION_REQUIRED`).
+- A recovery that never observed a close while claiming `finality="final"`,
+  `completeness="complete"`, or `session.status="completed"`, or a damaged journal
+  claiming it did observe one (`EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY`).
+- A session end time on a session whose close was never observed
+  (`EARSHOT_RECOVERY_SESSION_END_FABRICATED`).
 
 ## Required valid cases
 

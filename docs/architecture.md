@@ -11,6 +11,9 @@ voice runtime / application
   -> existing OTel + framework observer facts
   -> Earshot capture-policy filter
   -> Earshot profile enrichment (no second trace root)
+  -> optional append-only checkpoint journal (one per open conversation)
+       -> `earshot recover`: replay -> the same incident bundle, declared provisional
+          when no close was observed
   -> immutable incident bundle
        -> local ingest: validation -> content-addressed storage -> SQLite index
        -> deterministic analysis: graph -> projections -> evidence-linked diagnosis

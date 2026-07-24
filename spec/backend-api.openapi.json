@@ -501,14 +501,25 @@
           "producer": {
             "$ref": "#/components/schemas/Producer"
           },
+          "recovery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecoveryRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "schema_version": {
-            "default": "0.1.0",
+            "default": "0.2.0",
             "minLength": 1,
             "title": "Schema Version",
             "type": "string"
           },
           "semantic_profile_version": {
-            "default": "0.1.0",
+            "default": "0.2.0",
             "minLength": 1,
             "title": "Semantic Profile Version",
             "type": "string"
@@ -4637,6 +4648,83 @@
           "measurements"
         ],
         "title": "QualitySample",
+        "type": "object"
+      },
+      "RecoveryRecord": {
+        "additionalProperties": true,
+        "description": "How this artifact was reconstructed, and what that costs its completeness.\n\nA recovered incident has to be structurally unable to pass as a cleanly\nclosed one, so the declaration is a typed manifest member rather than an\nattribute. Attribute bags are a weak channel: their keys need a privacy\nallowlist, and validation cannot cross-check an open bag against\n``finality``, ``completeness``, ``session.status``, and coverage \u2014 which is\nexactly what makes the declaration enforceable here.\n\nThere is deliberately no \"recovered at\" timestamp. Two recoveries of the\nsame journal must produce the same bytes under the same ``bundle_id``, or\ncontent-addressed ingest would reject the second as a conflict. When\nrecovery ran is an operational fact for the CLI and the diagnostic channel,\nnot evidence.",
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "close_observed": {
+            "title": "Close Observed",
+            "type": "boolean"
+          },
+          "discarded_records": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Discarded Records",
+            "type": "integer"
+          },
+          "journal_complete": {
+            "default": true,
+            "title": "Journal Complete",
+            "type": "boolean"
+          },
+          "journal_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Journal Id",
+            "type": "string"
+          },
+          "last_observation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimePoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "last_sequence": {
+            "minimum": 0,
+            "title": "Last Sequence",
+            "type": "integer"
+          },
+          "method": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Method",
+            "type": "string"
+          },
+          "reason": {
+            "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+            "title": "Reason",
+            "type": "string"
+          },
+          "recoverer": {
+            "$ref": "#/components/schemas/Producer"
+          },
+          "torn_tail_bytes": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Torn Tail Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "method",
+          "reason",
+          "close_observed",
+          "journal_id",
+          "last_sequence",
+          "recoverer"
+        ],
+        "title": "RecoveryRecord",
         "type": "object"
       },
       "RedactionRecord": {

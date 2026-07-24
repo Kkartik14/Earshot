@@ -150,9 +150,10 @@ At close, truncation sets manifest `completeness="incomplete"` and emits one agg
 the one-shot `recorder.capture_truncated` diagnostic contains no captured value and runs
 outside recorder locks with callback exceptions contained.
 
-These caps bound open-recorder memory only. They are not crash recovery: even in durable
-delivery mode, persistence still begins after final close, so a process crash before
-close loses the unfinished conversation.
+These caps bound open-recorder memory only; they are not crash recovery. With
+checkpointing disabled — the default — persistence begins after final close even in
+durable delivery mode, so a process crash before close loses the unfinished
+conversation. Setting `checkpoint_dir` changes that: see [Crash recovery](#crash-recovery).
 
 ## Capture policy
 
@@ -255,10 +256,7 @@ and appear as abandoned pressure; recover them by reopening the same private dir
 with their original endpoint and project identity.
 
 Durability begins only after a recorder closes and its canonical incident is atomically
-committed to the spool. An open conversation still lives in process memory; a crash,
-forced termination, or out-of-memory failure before close loses that unfinished
-evidence. Durable incremental recorder journaling/checkpoint recovery is not implemented
-in this alpha.
+committed to the spool, unless checkpointing is enabled; see [Crash recovery](#crash-recovery).
 
 `status()` reports lifecycle state, accepted/sent/dropped/failed/rejected/retried and
 overflow counts, pending count, queued and in-flight bytes, byte high-water mark, oldest
@@ -292,6 +290,44 @@ flush explicitly.
   selected by the credential so configuration cannot silently route to another tenant;
 - retries 408, 429, and 5xx responses with bounded jitter and `Retry-After`; and
 - classifies other 4xx responses as permanent.
+
+## Crash recovery
+
+Durability begins as soon as a fact is admitted, when checkpointing is enabled. Setting
+`checkpoint_dir` (or `EARSHOT_CHECKPOINT_DIR`) opens one append-only, owner-private
+journal per conversation and writes every admitted, already-privacy-filtered record to it
+in admission order. Each record is a self-delimiting, CRC-protected frame, optionally
+envelope-encrypted with AES-256-GCM under the same key precedence as the spool
+(`checkpoint_key`, `EARSHOT_CHECKPOINT_KEY`, `EARSHOT_CHECKPOINT_KEY_FILE`, then the
+spool key). Because each append reaches the kernel before the call returns, **a process
+crash, forced termination, or out-of-memory kill loses no admitted evidence**; only a
+host-level failure (kernel panic or power loss) can lose work, bounded by the fsync
+window (`checkpoint_fsync_mode`, `interval` at 250 ms by default; `always` and `never`
+are the other modes). The journal is bounded and never rotates: on reaching its cap
+(`checkpoint_max_bytes`) it records the reason and stops rather than silently dropping
+facts.
+
+`earshot recover --checkpoint-dir DIR` reconstructs an incident from a journal, and
+`earshot checkpoints list DIR` identifies the journals a directory holds. If the journal
+contains the recorder's finalize record, the reconstructed artifact is byte-identical to
+the one `close()` produced, so re-ingesting it deduplicates instead of conflicting. If it
+does not, the artifact is explicitly **provisional**: `manifest.finality` is
+`provisional`, `manifest.completeness` is `incomplete`, `session.status` is `interrupted`,
+`session.ended_at` is absent because the real end was never observed, `manifest.recovery`
+records the method, reason, journal identity, last durable observation, and any torn
+trailing bytes, and coverage records `recorder.session_close` as unavailable. Validation
+enforces this: a recovered incident that claims a clean close is rejected, so a
+provisional artifact can never be mistaken for a final one. Operations that started but
+were never observed to finish appear with no end time and status `unknown`, and the
+analyzer reports their durations as unavailable rather than as zero.
+
+Checkpointing is off by default. The explicit directory is the storage opt-in, must be
+owner-private, and holds only the same capture classes the configured policy already
+admits — enabling checkpointing never widens what earshot retains. One checkpoint
+directory belongs to one client process, exactly like the spool. On a clean close the
+journal is removed once the incident reaches a durable successor; a journal left behind
+by a crash between finalize and cleanup recovers to a byte-identical duplicate, which
+content-addressed ingest deduplicates.
 
 ## Capture seam: `ObservationSink`
 

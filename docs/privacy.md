@@ -128,6 +128,17 @@ snapshots, and backups may retain old blocks. Deployments requiring a stronger c
 must encrypt artifacts with disposable per-tenant or per-retention-domain keys and
 govern snapshots/backups separately.
 
+The SDK's optional checkpoint directory (`checkpoint_dir` / `EARSHOT_CHECKPOINT_DIR`) is
+a second at-rest surface with the same discipline as the durable spool: off by default,
+an explicit owner-private `0700` directory holding `0600` files, symlinks refused, and
+optional AES-256-GCM envelope encryption with the same key precedence and the same
+crypto-shredding semantics (an encrypted journal with no key is unreadable, never
+half-decoded). A journal only ever holds capture classes the configured policy already
+admits, so enabling checkpointing never widens what earshot retains, and it holds no
+separate content channel of its own. A journal is removed once its incident reaches a
+durable successor; anything left behind by a crash is a recoverable artifact and is
+subject to the same erasure obligations as the spool.
+
 ## Conformance secret sentinel
 
 Tests inject unique sentinel secrets into governed sensitive source categories and
@@ -138,6 +149,7 @@ they do not occur in:
 - raw OTLP chunks;
 - SQLite/index files;
 - content-addressed filenames;
+- checkpoint journal (`.eck`) bytes and filenames;
 - analysis output;
 - API/CLI errors; or
 - logs and exporter diagnostics.
