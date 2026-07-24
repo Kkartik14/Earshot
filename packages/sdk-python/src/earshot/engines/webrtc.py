@@ -14,6 +14,12 @@ The engine emits the exact governed names the T2 rules consume:
   ``earshot.transport.reconnecting``, which fires ``transport.reconnect``.
 * a selected-candidate-pair or local-candidate ``networkType`` change emits an
   ``earshot.transport.route_changed`` event.
+* the W3C ``media-playout`` (``RTCAudioPlayoutStats``) counters become
+  ``playout_delay`` and ``synthesized_samples_ratio``; synthesized playout
+  samples -- audio the output device had to invent because the render queue ran
+  dry -- emit ``earshot.audio.render.stale``, which fires ``audio.stale_playback``.
+  This is the render half of capture-to-render: it is measured at the playout
+  device, not inferred from a transport counter.
 
 Two W3C-mandated disciplines hold throughout: a member absent from a snapshot is
 *unknown* (no measurement, never a zero), and a counter that moved backwards is a
@@ -48,15 +54,27 @@ _JITTER = "jitter"
 _ROUND_TRIP_TIME = "round_trip_time"
 _JITTER_BUFFER_DELAY = "jitter_buffer_delay"
 _CONCEALMENT = "concealment_ratio"
+# Render-path scalars. ``processing_delay`` is the W3C ``totalProcessingDelay``
+# averaged over the samples the jitter buffer emitted in the interval -- the
+# packet-received-to-decoded time. (The per-frame ``totalDecodeTime`` counter is
+# video-only in webrtc-stats, so audio decode time alone is never claimed here.)
+_PROCESSING_DELAY = "processing_delay"
+_PLAYOUT_DELAY = "playout_delay"
+_SYNTHESIZED_RATIO = "synthesized_samples_ratio"
 
 # Event names the transport-boundary rules consume.
 _RECONNECTING = "earshot.transport.reconnecting"
 _ROUTE_CHANGED = "earshot.transport.route_changed"
+# The same governed stale-render event the device engine emits (see
+# ``engines/device.py``); ``audio.stale_playback`` reads it by name.
+_RENDER_STALE = "earshot.audio.render.stale"
 
 # Coverage signals for dropped intervals (counter resets).
 _COV_PACKET_LOSS = "webrtc.packet_loss"
 _COV_JITTER_BUFFER = "webrtc.jitter_buffer"
 _COV_CONCEALMENT = "webrtc.concealment"
+_COV_PROCESSING = "webrtc.processing_delay"
+_COV_PLAYOUT = "webrtc.playout"
 
 # Normalized ICE/DTLS connection states.
 _DOWN_STATES = frozenset({"disconnected", "failed", "closed"})
@@ -154,7 +172,7 @@ def analyze_webrtc_stats(
         # --- per-pair deltas + per-snapshot instants --------------------------
         if prev_stats is not None:
             grew = _emit_deltas(
-                prev_stats, stats, at_ms, measurements, coverage, last_buffer_avg_ms
+                prev_stats, stats, at_ms, measurements, events, coverage, last_buffer_avg_ms
             )
             jitter_buffer_growth = jitter_buffer_growth or grew
         _emit_instants(stats, at_ms, measurements)
@@ -192,10 +210,11 @@ def _emit_deltas(
     curr_stats: Mapping[str, Mapping[str, Any]],
     at_ms: float,
     measurements: list[EngineMeasurement],
+    events: list[EngineEvent],
     coverage: _CoverageLedger,
     last_buffer_avg_ms: dict[str, float],
 ) -> bool:
-    """Emit loss/jitter-buffer/concealment for each inbound audio id in both snapshots."""
+    """Emit loss/jitter-buffer/concealment/playout deltas for ids in both snapshots."""
 
     prev_audio = _audio_inbound(prev_stats)
     curr_audio = _audio_inbound(curr_stats)
@@ -211,6 +230,13 @@ def _emit_deltas(
             or grew
         )
         _emit_concealment(previous, current, at_ms, measurements, coverage)
+        _emit_processing_delay(previous, current, at_ms, measurements, coverage)
+    prev_playout = _audio_playout(prev_stats)
+    curr_playout = _audio_playout(curr_stats)
+    for stat_id in sorted(prev_playout.keys() & curr_playout.keys()):
+        _emit_playout(
+            prev_playout[stat_id], curr_playout[stat_id], at_ms, measurements, events, coverage
+        )
     return grew
 
 
@@ -280,6 +306,106 @@ def _emit_concealment(
     measurements.append(
         _measurement(_CONCEALMENT, ratio, "1", at_ms, "measured", "concealedSamples")
     )
+
+
+def _emit_processing_delay(
+    previous: Mapping[str, Any],
+    current: Mapping[str, Any],
+    at_ms: float,
+    measurements: list[EngineMeasurement],
+    coverage: _CoverageLedger,
+) -> None:
+    """Average packet-received-to-decoded delay over the interval's emitted samples.
+
+    ``totalProcessingDelay`` is a cumulative sum of per-sample delays, so the only
+    honest scalar is (delta of the sum) / (delta of the samples it accumulated
+    over). ``jitterBufferEmittedCount`` is that sample count for audio -- the same
+    denominator the jitter-buffer average already uses.
+    """
+
+    processing = _counter_delta(previous, current, "totalProcessingDelay")
+    emitted = _counter_delta(previous, current, "jitterBufferEmittedCount")
+    if processing is _RESET or emitted is _RESET:
+        coverage.note(_COV_PROCESSING, "not_observed", "counter_reset")
+        return
+    if processing is None or emitted is None or emitted <= 0:
+        return  # a missing member is unknown, never a fabricated zero
+    measurements.append(
+        _measurement(
+            _PROCESSING_DELAY,
+            (processing / emitted) * _SECONDS_TO_MS,
+            "ms",
+            at_ms,
+            "measured",
+            "totalProcessingDelay",
+        )
+    )
+
+
+def _emit_playout(
+    previous: Mapping[str, Any],
+    current: Mapping[str, Any],
+    at_ms: float,
+    measurements: list[EngineMeasurement],
+    events: list[EngineEvent],
+    coverage: _CoverageLedger,
+) -> None:
+    """Derive playout delay and synthesized-sample facts from ``RTCAudioPlayoutStats``.
+
+    ``totalPlayoutDelay`` accumulates one delay per played-out sample, so the
+    interval average is (delta of the sum) / (delta of ``totalSamplesCount``).
+    ``synthesizedSamplesDuration`` grows only when the playout device had to
+    invent audio because the render queue ran dry -- an OBSERVED render underrun,
+    so it emits the same governed stale-render event a device-reported under-run
+    does. Absent members stay unknown; a counter that fell is coverage, not a
+    negative delta.
+    """
+
+    delay = _counter_delta(previous, current, "totalPlayoutDelay")
+    samples = _counter_delta(previous, current, "totalSamplesCount")
+    if delay is _RESET or samples is _RESET:
+        coverage.note(_COV_PLAYOUT, "not_observed", "counter_reset")
+    elif delay is not None and samples is not None and samples > 0:
+        measurements.append(
+            _measurement(
+                _PLAYOUT_DELAY,
+                (delay / samples) * _SECONDS_TO_MS,
+                "ms",
+                at_ms,
+                "measured",
+                "totalPlayoutDelay",
+            )
+        )
+
+    synthesized = _counter_delta(previous, current, "synthesizedSamplesDuration")
+    total = _counter_delta(previous, current, "totalSamplesDuration")
+    if synthesized is _RESET or total is _RESET:
+        coverage.note(_COV_PLAYOUT, "not_observed", "counter_reset")
+        return
+    if synthesized is None or total is None or total <= 0:
+        return
+    measurements.append(
+        _measurement(
+            _SYNTHESIZED_RATIO,
+            min(1.0, synthesized / total),
+            "1",
+            at_ms,
+            "measured",
+            "synthesizedSamplesDuration",
+        )
+    )
+    if synthesized > 0:
+        events.append(
+            EngineEvent(
+                name=_RENDER_STALE,
+                at_ms=at_ms,
+                # The synthesized audio stands in for the AGENT's rendered speech.
+                participant="agent",
+                source=_SOURCE,
+                confidence="measured",
+                source_field="synthesizedSamplesDuration",
+            )
+        )
 
 
 def _emit_instants(
@@ -517,6 +643,26 @@ def _audio_inbound(
         if _type(stat) != "inbound-rtp":
             continue
         kind = _string(stat, "kind") or _string(stat, "mediaType")
+        if kind is None or kind == "audio":
+            result[stat_id] = stat
+    return result
+
+
+def _audio_playout(
+    stats: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Mapping[str, Any]]:
+    """``media-playout`` (``RTCAudioPlayoutStats``) entries for the audio sink.
+
+    ``kind`` is ``audio`` for every playout stat the spec defines; an entry that
+    names some other kind is a future/foreign stat and is left alone rather than
+    guessed at.
+    """
+
+    result: dict[str, Mapping[str, Any]] = {}
+    for stat_id, stat in stats.items():
+        if _type(stat) != "media-playout":
+            continue
+        kind = _string(stat, "kind")
         if kind is None or kind == "audio":
             result[stat_id] = stat
     return result

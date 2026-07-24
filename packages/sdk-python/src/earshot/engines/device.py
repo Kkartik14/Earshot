@@ -13,7 +13,11 @@ into governed earshot facts the existing analyzer already diagnoses:
   ``earshot.audio.render.stale``, which fires ``audio.stale_playback``.
 * ``baseLatency`` (a deterministic context property, ``measured``) and
   ``outputLatency`` (a W3C *estimate*, ``estimated``) become governed latency
-  measurements -- the estimate is never relabelled as measured.
+  measurements -- the estimate is never relabelled as measured. A ``latency``
+  event may also carry ``render_queue_s`` -- Web Audio's
+  ``currentTime - getOutputTimestamp().contextTime``, the audio already rendered
+  by the graph but not yet played out -- which becomes an ``estimated``
+  ``audio.render_queue_delay``.
 
 As in the WebRTC engine, an absent field is *unknown* (no fact), never a zero.
 """
@@ -48,6 +52,12 @@ _RENDER_STALE = "earshot.audio.render.stale"
 # Governed latency measurement names (no T2 rule reads these).
 _BASE_LATENCY = "audio.base_latency"
 _OUTPUT_LATENCY = "audio.output_latency"
+# Audio the graph has already rendered but the output device has not yet played:
+# Web Audio's ``currentTime - getOutputTimestamp().contextTime``. It is the
+# render queue's depth in seconds, and it is an ESTIMATE -- the two readings are
+# taken at slightly different instants, and the W3C treats this difference as the
+# same estimate ``outputLatency`` reports.
+_RENDER_QUEUE = "audio.render_queue_delay"
 
 _MICROPHONE = "device.microphone"
 
@@ -241,6 +251,18 @@ def _emit_latency(
         measurements.append(
             _measurement(
                 _OUTPUT_LATENCY, output, at_ms, "estimated", "outputLatency", "web_audio_estimate"
+            )
+        )
+    render_queue = _first_number(event, ("render_queue_s", "render_queue", "renderQueueS"))
+    if render_queue is not None:
+        measurements.append(
+            _measurement(
+                _RENDER_QUEUE,
+                render_queue,
+                at_ms,
+                "estimated",
+                "getOutputTimestamp",
+                "web_audio_output_timestamp",
             )
         )
 
