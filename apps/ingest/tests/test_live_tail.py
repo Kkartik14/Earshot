@@ -28,7 +28,8 @@ from earshot.api import CHECKPOINT_MEDIA_TYPE, ApiConfig, create_app
 from earshot.checkpoint import CheckpointConfig, CheckpointWriter, assemble_incident
 from earshot.codec import PROTOBUF_MEDIA_TYPE, encode_incident_protobuf
 from earshot.live import LiveConfig, LiveSessionRegistry
-from earshot.recorder import IncidentRecorder
+from earshot.privacy import CaptureClass, CaptureGovernance, CapturePolicy, ExportConfig
+from earshot.recorder import IncidentRecorder, RecorderConfig
 from earshot.storage import IncidentStore
 
 pytestmark = pytest.mark.integration
@@ -37,9 +38,28 @@ pytestmark = pytest.mark.integration
 # not about latency stays deterministic and drives ``refresh()`` itself.
 QUIET_POLL_MS = 3_600_000
 
+# Transcript content an export policy forbids leaving the process. Asserted
+# absent from the whole stream, not merely from the record that carried it.
+SENTINEL = "earshot-restricted-transcript-sentinel"
+
 
 def _writer(directory: Path, **kwargs) -> CheckpointWriter:
     return CheckpointWriter(CheckpointConfig(checkpoint_dir=directory, **kwargs))
+
+
+def _restricted_recorder(writer: CheckpointWriter, export: ExportConfig) -> IncidentRecorder:
+    """A journalling recorder whose transcript class carries ``export``."""
+
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.TRANSCRIPT}),
+        governance={CaptureClass.TRANSCRIPT: CaptureGovernance(export=export)},
+    )
+    return IncidentRecorder(
+        session_id="s-1",
+        bundle_id="b-1",
+        checkpoint=writer,
+        config=RecorderConfig(capture_policy=policy),
+    )
 
 
 def _journal(directory: Path) -> Path:
@@ -235,6 +255,101 @@ def test_an_idle_tail_sends_a_heartbeat_instead_of_going_quiet(tmp_path: Path) -
     # a dead connection. It carries no id, so it cannot advance the resume cursor.
     assert "id" not in events[1]
     assert _data(events[1]) == {"as_of_sequence": 1, "close_observed": False}
+    writer.release()
+
+
+# ------------------------------------------------------- restricted export
+
+
+def test_a_class_forbidden_from_this_destination_never_reaches_a_subscriber(
+    tmp_path: Path,
+) -> None:
+    """The tail is an egress path, so it reapplies the destination policy.
+
+    An operator who wrote ``ExportConfig(allowed=False)`` for a class forbade
+    that content leaving the process. An authenticated subscriber is still
+    outside the process, so the tail owes the same refusal an exporter owes.
+    """
+
+    harness = _build(tmp_path)
+    writer = _writer(harness.journals)
+    recorder = _restricted_recorder(writer, ExportConfig(allowed=False, policy_id="no-egress"))
+    recorder.add_participant("caller", role="caller")
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="turn-0")
+    harness.registry.refresh()
+
+    with _serve(harness.app) as base:
+        response = _open(f"{base}/v1/live/sessions/s-1/tail")
+        events = _events(response, 3)
+        response.close()
+
+    assert SENTINEL not in json.dumps(events)
+    # The record still exists on the wire at its own sequence: a live view that
+    # silently skipped it would read as a session that never said anything.
+    journal_id = _data(events[0])["journal_id"]
+    assert events[2]["event"] == "withheld"
+    assert events[2]["id"] == f"{journal_id}:3"
+    withheld = _data(events[2])
+    assert withheld["entry"] == "record"
+    assert withheld["kind"] == "event"
+    assert withheld["destination"] == "live_tail"
+    assert withheld["denied_capture_classes"] == [
+        {"capture_class": "transcript", "reason": "export_denied_by_policy"}
+    ]
+    # And the open event said so before any fact arrived.
+    assert _data(events[0])["export_policy"] == {
+        "destination": "live_tail",
+        "denied_capture_classes": ["transcript"],
+        "policy_readable": True,
+        "note": (
+            "this stream is an export; a record is withheld once this session has "
+            "retained a capture class whose policy forbids this destination"
+        ),
+    }
+    writer.release()
+
+
+def test_a_class_that_permits_this_destination_still_streams(tmp_path: Path) -> None:
+    harness = _build(tmp_path)
+    writer = _writer(harness.journals)
+    recorder = _restricted_recorder(
+        writer, ExportConfig(allowed=True, destinations=("live_tail",), policy_id="tail-only")
+    )
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="turn-0")
+    harness.registry.refresh()
+
+    with _serve(harness.app) as base:
+        response = _open(f"{base}/v1/live/sessions/s-1/tail")
+        events = _events(response, 2)
+        response.close()
+
+    assert events[1]["event"] == "record"
+    assert _data(events[1])["value"]["attributes"] == {"transcript": SENTINEL}
+    assert _data(events[0])["export_policy"]["denied_capture_classes"] == []
+    writer.release()
+
+
+def test_a_destination_allowlist_that_omits_the_tail_withholds_the_record(
+    tmp_path: Path,
+) -> None:
+    harness = _build(tmp_path)
+    writer = _writer(harness.journals)
+    recorder = _restricted_recorder(
+        writer, ExportConfig(allowed=True, destinations=("otlp",), policy_id="otlp-only")
+    )
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="turn-0")
+    harness.registry.refresh()
+
+    with _serve(harness.app) as base:
+        response = _open(f"{base}/v1/live/sessions/s-1/tail")
+        events = _events(response, 2)
+        response.close()
+
+    assert SENTINEL not in json.dumps(events)
+    assert events[1]["event"] == "withheld"
+    assert _data(events[1])["denied_capture_classes"] == [
+        {"capture_class": "transcript", "reason": "export_destination_not_permitted"}
+    ]
     writer.release()
 
 

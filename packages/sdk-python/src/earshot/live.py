@@ -5,7 +5,7 @@ module exists to make that difference impossible to lose. It streams exactly the
 facts the checkpoint journal already holds — admitted, sanitized, in admission
 order — and it refuses to compute anything on top of them.
 
-Three properties are load-bearing:
+Four properties are load-bearing:
 
 * **Append-only, never edited.** A later frame can add information (the completed
   ``operation`` for an earlier ``operation_open``) but never rewrites an earlier
@@ -20,6 +20,12 @@ Three properties are load-bearing:
   no digest for a session still being written, so any p50/p95, diagnosis, or
   turn metric computed here would be a claim no artifact attests. The listing
   endpoint says so rather than silently omitting it.
+* **Governed like any other export.** A subscriber is outside this process, so
+  the tail is an egress path and reapplies the destination policy exactly as the
+  exporter registry does at its own seam — under its own destination name,
+  ``live_tail``. Content whose capture class the operator restricted never
+  reaches the wire; the ``withheld`` event says a fact existed there anyway,
+  because a silently shortened stream is its own dishonesty.
 
 Backpressure is lossless by construction. Every buffer is bounded; when a
 subscriber falls behind, the server closes that connection with ``overflow``
@@ -53,7 +59,15 @@ from .checkpoint.records import (
     decode_entry,
 )
 from .checkpoint.writer import DEFAULT_MAX_FRAME_BYTES
+from .privacy import CaptureClass, CapturePolicy, export_denials
 from .storage import DEFAULT_PROJECT_ID
+
+# The export destination this stream declares, and the name a capture policy's
+# ``ExportConfig.destinations`` must permit for a class's content to be tailed.
+# It is its own destination rather than a reuse of ``local_api`` because a policy
+# that admitted the reviewed, one-shot artifact reads never consented to an open
+# subscription following the same content live.
+LIVE_TAIL_DESTINATION = "live_tail"
 
 SOURCE_JOURNAL = "journal"
 SOURCE_CHECKPOINT = "checkpoint"
@@ -65,6 +79,11 @@ STATE_ABANDONED = "abandoned"
 
 EVENT_OPEN = "open"
 EVENT_RECORD = "record"
+# A fact was admitted at this sequence and its content may not leave for this
+# destination. Its own event kind rather than a ``record`` with an empty value:
+# a client that does not know the name skips it instead of rendering a fact that
+# looks empty, and one that does know it can say "restricted" rather than guess.
+EVENT_WITHHELD = "withheld"
 EVENT_LIMIT = "limit"
 EVENT_OPERATION_OPEN = "operation_open"
 EVENT_EXHAUSTED = "exhausted"
@@ -449,6 +468,82 @@ class Subscription:
         self._registry.release(self)
 
 
+class _ExportGate:
+    """The destination policy this stream re-enforces, and what it has seen.
+
+    :func:`~earshot.privacy.assert_export_allowed` governs a finished bundle by
+    the classes it *captured*. A tail has no bundle, so this holds the two halves
+    that make the same question answerable mid-session: the capture policy the
+    journal header declares, and the classes the journal has actually retained so
+    far. The recorder journals the classes a mutation newly retained in the same
+    frame as the record itself, so the frame that first carries restricted
+    content is the frame that closes the gate — nothing restricted precedes it.
+
+    Fail-closed throughout. A header whose policy will not rebuild, a class name
+    this build cannot resolve, and any error raised while deciding all withhold,
+    because a check that could not run is not a check that passed.
+    """
+
+    UNREADABLE_POLICY = "export_policy_unreadable"
+
+    def __init__(self, header: JournalOpen, destination: str) -> None:
+        self.destination = destination
+        self._policy: CapturePolicy | None = None
+        # Seeded exactly as the recorder and the assembler seed theirs: metadata
+        # is retained from the first frame, so it is never journaled as a delta.
+        self._captured: set[CaptureClass] = {CaptureClass.METADATA}
+        try:
+            self._policy = header.capture_policy()
+        except Exception:
+            self._policy = None
+
+    @property
+    def policy_readable(self) -> bool:
+        return self._policy is not None
+
+    def declared(self) -> list[str]:
+        """Enabled classes whose governance forbids this destination.
+
+        Announced on ``open`` so a subscriber learns that this session is
+        governed before the first fact arrives, rather than inferring it from a
+        stream that goes quiet. It is a declaration, not the decision: the
+        decision keys on what was actually captured, exactly as a bundle's does.
+        """
+
+        if self._policy is None:
+            return []
+        try:
+            denied = export_denials(self._policy, self._policy.enabled, self.destination)
+        except Exception:  # pragma: no cover - a rebuilt policy is already valid
+            return sorted(item.value for item in self._policy.enabled)
+        return [capture_class.value for capture_class, _ in denied]
+
+    def admit(self, entry: JournalEntry) -> tuple[dict[str, str | None], ...]:
+        """Absorb what ``entry`` retained, then say what forbids its egress."""
+
+        if isinstance(entry, JournalRecordEntry):
+            for name in entry.retained_classes:
+                try:
+                    self._captured.add(CaptureClass(name))
+                except ValueError:
+                    # A class this build cannot name is a class whose governance
+                    # it cannot read. Withhold rather than assume it is benign.
+                    self._policy = None
+        if self._policy is None:
+            return self._unreadable()
+        try:
+            denied = export_denials(self._policy, self._captured, self.destination)
+        except Exception:
+            return self._unreadable()
+        return tuple(
+            {"capture_class": capture_class.value, "reason": reason}
+            for capture_class, reason in denied
+        )
+
+    def _unreadable(self) -> tuple[dict[str, str | None], ...]:
+        return ({"capture_class": None, "reason": self.UNREADABLE_POLICY},)
+
+
 class _LiveSession:
     """One journal being followed, plus everyone following it."""
 
@@ -460,6 +555,7 @@ class _LiveSession:
         source: str,
         header: JournalOpen,
         open_event: LiveEvent,
+        export_gate: _ExportGate,
         config: LiveConfig,
         path: Path | None,
         retain_frames: bool,
@@ -472,6 +568,7 @@ class _LiveSession:
         self.journal_id = header.journal_id
         self.bundle_id = header.bundle_id
         self.open_event = open_event
+        self.export_gate = export_gate
         self.events: deque[LiveEvent] = deque()
         self.retained_bytes = 0
         self.last_sequence = 0
@@ -689,7 +786,7 @@ class LiveSessionRegistry:
                 sequence += 1
                 if sequence <= tracked.last_sequence:
                     continue
-                batch.append(_entry_event(entry, header.journal_id, sequence))
+                batch.append(_governed_entry_event(session, entry, sequence))
                 _absorb(session, entry)
             if not batch:
                 return
@@ -792,7 +889,7 @@ class LiveSessionRegistry:
                 if sequence > retained_through:
                     self._retain_frame(session, payload[offset:frame_end])
                     if sequence > 1:
-                        batch.append(_entry_event(entry, session.journal_id, sequence))
+                        batch.append(_governed_entry_event(session, entry, sequence))
                         _absorb(session, entry)
                 offset = frame_end
             if batch:
@@ -843,13 +940,17 @@ class LiveSessionRegistry:
         path: Path | None,
         retain_frames: bool,
     ) -> _LiveSession:
-        open_event = make_event(EVENT_OPEN, header.journal_id, 1, _open_payload(header, source))
+        gate = _ExportGate(header, LIVE_TAIL_DESTINATION)
+        open_event = make_event(
+            EVENT_OPEN, header.journal_id, 1, _open_payload(header, source, gate)
+        )
         session = _LiveSession(
             session_id=session_id,
             project_id=project_id,
             source=source,
             header=header,
             open_event=open_event,
+            export_gate=gate,
             config=self.config,
             path=path,
             retain_frames=retain_frames,
@@ -1073,7 +1174,7 @@ def _absorb(session: _LiveSession, entry: JournalEntry) -> None:
         session.journal_complete = False
 
 
-def _open_payload(header: JournalOpen, source: str) -> dict[str, Any]:
+def _open_payload(header: JournalOpen, source: str, gate: _ExportGate) -> dict[str, Any]:
     return {
         "journal_id": header.journal_id,
         "journal_format_version": header.journal_format_version,
@@ -1091,6 +1192,17 @@ def _open_payload(header: JournalOpen, source: str) -> dict[str, Any]:
             "policy_id": header.policy_id,
             "policy_version": header.policy_version,
             "enabled_classes": list(header.enabled_classes),
+        },
+        # Which classes this stream is not allowed to carry, said before the
+        # first fact rather than left to be inferred from what stops arriving.
+        "export_policy": {
+            "destination": gate.destination,
+            "denied_capture_classes": gate.declared(),
+            "policy_readable": gate.policy_readable,
+            "note": (
+                "this stream is an export; a record is withheld once this session has "
+                "retained a capture class whose policy forbids this destination"
+            ),
         },
         "recorder_limits": {
             "max_records": header.max_records,
@@ -1129,6 +1241,46 @@ def _record_payload(entry: JournalRecordEntry) -> dict[str, Any]:
         ],
         "retained_classes": list(entry.retained_classes),
     }
+
+
+def _withheld_payload(
+    entry: JournalEntry, denials: Sequence[dict[str, str | None]]
+) -> dict[str, Any]:
+    """State that a fact exists here and why its content is not on the wire.
+
+    Everything in it is policy metadata — the structural entry kind, the
+    destination, the classes that refused and their reason — and none of it is
+    the record. It is the same bargain ``limit`` and ``replay_truncated`` strike:
+    absence is declared, so a subscriber can never read this stream as complete.
+    """
+
+    return {
+        "entry": EVENT_RECORD if isinstance(entry, JournalRecordEntry) else EVENT_OPERATION_OPEN,
+        "kind": entry.kind if isinstance(entry, JournalRecordEntry) else None,
+        "destination": LIVE_TAIL_DESTINATION,
+        "denied_capture_classes": [dict(denial) for denial in denials],
+        "note": (
+            "a fact was admitted at this sequence and its content is not permitted "
+            "to leave this process for this destination"
+        ),
+    }
+
+
+def _governed_entry_event(session: _LiveSession, entry: JournalEntry, sequence: int) -> LiveEvent:
+    """Project one entry, withholding content this destination may not carry.
+
+    Only the entries that carry captured evidence can be withheld. ``limit``,
+    ``exhausted`` and ``finalize`` say that something was omitted or that the
+    recorder stopped; they hold counters, reasons and status rather than content,
+    and suppressing them would turn a governed stream into a silent one.
+    """
+
+    denials = session.export_gate.admit(entry)
+    if denials and isinstance(entry, (JournalRecordEntry, JournalOperationOpen)):
+        return make_event(
+            EVENT_WITHHELD, session.journal_id, sequence, _withheld_payload(entry, denials)
+        )
+    return _entry_event(entry, session.journal_id, sequence)
 
 
 def _entry_event(entry: JournalEntry, journal_id: str, sequence: int) -> LiveEvent:

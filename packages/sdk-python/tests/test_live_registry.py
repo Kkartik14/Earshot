@@ -9,6 +9,9 @@ from pathlib import Path
 import pytest
 
 from earshot.checkpoint import CheckpointConfig, CheckpointWriter
+from earshot.checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, encode_frame
+from earshot.checkpoint.records import JournalRecordEntry, encode_entry
+from earshot.checkpoint.writer import DEFAULT_MAX_FRAME_BYTES
 from earshot.live import (
     EVENT_END,
     EVENT_FINALIZE,
@@ -18,6 +21,8 @@ from earshot.live import (
     EVENT_RECORD,
     EVENT_REPLAY_TRUNCATED,
     EVENT_RESET,
+    EVENT_WITHHELD,
+    LIVE_TAIL_DESTINATION,
     UNKNOWN_UNTIL_CLOSE,
     CheckpointFramesInvalidError,
     CheckpointSequenceError,
@@ -29,9 +34,13 @@ from earshot.live import (
     TailCapacityError,
     render_sse,
 )
-from earshot.recorder import IncidentRecorder
+from earshot.privacy import CaptureClass, CaptureGovernance, CapturePolicy, ExportConfig
+from earshot.recorder import IncidentRecorder, RecorderConfig
 
 pytestmark = pytest.mark.unit
+
+# Transcript content an export policy forbids leaving the process.
+SENTINEL = "earshot-restricted-transcript-sentinel"
 
 
 def _writer(directory: Path, **kwargs) -> CheckpointWriter:
@@ -494,4 +503,131 @@ def test_the_seal_source_of_a_local_journal_is_the_journal_itself(tmp_path: Path
 
     assert kind == "journal"
     assert Path(str(source)).is_file()
+    writer.release()
+
+
+# ---------------------------------------------------- restricted egress
+
+
+def _restricted(directory: Path, export: ExportConfig, **kwargs):
+    """A journalling recorder whose transcript class carries ``export``."""
+
+    writer = _writer(directory, **kwargs)
+    policy = CapturePolicy(
+        enabled=frozenset({CaptureClass.METADATA, CaptureClass.TRANSCRIPT}),
+        governance={CaptureClass.TRANSCRIPT: CaptureGovernance(export=export)},
+    )
+    recorder = IncidentRecorder(
+        session_id="s-1",
+        bundle_id="b-1",
+        checkpoint=writer,
+        config=RecorderConfig(capture_policy=policy),
+    )
+    return writer, recorder
+
+
+def test_uploaded_frames_obey_the_same_destination_policy(tmp_path: Path) -> None:
+    """The remote path is the same egress, so it gets the same refusal."""
+
+    journals = tmp_path / "journals"
+    writer, recorder = _restricted(journals, ExportConfig(allowed=False))
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="t-0")
+
+    registry = LiveSessionRegistry()
+    registry.accept_frames("s-1", _frames(_journal_path(journals)), project_id="p")
+    events = registry.subscribe("s-1", project_id="p").drain()
+
+    assert SENTINEL not in json.dumps([_payload(event) for event in events])
+    assert _names(events) == [EVENT_OPEN, EVENT_WITHHELD]
+    writer.release()
+
+
+def test_the_record_before_a_restricted_class_is_retained_still_streams(
+    tmp_path: Path,
+) -> None:
+    """The gate closes on the frame that first carries restricted content.
+
+    A capture class is journaled as retained in the same frame as the mutation
+    that retained it, so metadata admitted earlier is not restricted evidence
+    and is not withheld — the keying is what was captured, exactly as a finished
+    bundle's is, not what the policy merely enabled.
+    """
+
+    writer, recorder = _restricted(tmp_path, ExportConfig(allowed=False))
+    recorder.add_participant("caller", role="caller")
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="t-0")
+    recorder.record_event("earshot.turn.start", turn_id="t-1")
+
+    registry = LiveSessionRegistry(journal_dir=tmp_path)
+    registry.refresh()
+    events = registry.subscribe("s-1", project_id="default").drain()
+
+    assert _names(events) == [EVENT_OPEN, EVENT_RECORD, EVENT_WITHHELD, EVENT_WITHHELD]
+    assert _payload(events[1])["kind"] == "participant"
+    # Once restricted content has been captured the whole artifact is restricted,
+    # so what follows is withheld too rather than resuming after one bad record.
+    assert [event.sequence for event in events] == [1, 2, 3, 4]
+    writer.release()
+
+
+def test_a_capture_class_this_build_cannot_name_withholds_everything(
+    tmp_path: Path,
+) -> None:
+    """A check that could not run is not a check that passed.
+
+    A journal written by a later build can retain a capture class this one has
+    no name — and therefore no governance — for. Its export policy is unreadable
+    rather than absent, so everything after it is withheld.
+    """
+
+    journals = tmp_path / "journals"
+    writer, recorder = _restricted(
+        journals, ExportConfig(allowed=True, destinations=(LIVE_TAIL_DESTINATION,))
+    )
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="t-0")
+    frames = _split_frames(_frames(_journal_path(journals)))
+
+    registry = LiveSessionRegistry()
+    registry.accept_frames("s-1", b"".join(frames), project_id="p")
+    unknown = encode_frame(
+        len(frames) + 1,
+        encode_entry(JournalRecordEntry(kind="omission", retained_classes=("class_from_2027",))),
+        max_body_bytes=DEFAULT_MAX_FRAME_BYTES,
+    )
+    replayed = encode_frame(
+        len(frames) + 2,
+        frames[-1][HEADER_SIZE:-CHECKSUM_SIZE],
+        max_body_bytes=DEFAULT_MAX_FRAME_BYTES,
+    )
+    registry.accept_frames("s-1", unknown + replayed, project_id="p")
+    events = registry.subscribe("s-1", project_id="p").drain()
+
+    assert _names(events) == [EVENT_OPEN, EVENT_RECORD, EVENT_WITHHELD, EVENT_WITHHELD]
+    assert _payload(events[-1])["denied_capture_classes"] == [
+        {"capture_class": None, "reason": "export_policy_unreadable"}
+    ]
+    # The permitted record that arrived before it is still on the wire in full.
+    assert _payload(events[1])["value"]["attributes"] == {"transcript": SENTINEL}
+    writer.release()
+
+
+def test_a_restricted_session_still_reports_its_close(tmp_path: Path) -> None:
+    """Withholding content must not withhold the shape of the session.
+
+    ``finalize`` carries status, counters and the recorder's own truncation
+    bookkeeping — never captured content — so it keeps flowing. A stream that
+    suppressed it would leave a subscriber unable to tell a governed session
+    from one that simply stopped.
+    """
+
+    writer, recorder = _restricted(tmp_path, ExportConfig(allowed=False), keep_finalized=True)
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="t-0")
+    recorder.close()
+
+    registry = LiveSessionRegistry(journal_dir=tmp_path)
+    registry.refresh()
+    events = registry.subscribe("s-1", project_id="default").drain()
+
+    assert _names(events) == [EVENT_OPEN, EVENT_WITHHELD, EVENT_FINALIZE]
+    assert SENTINEL not in json.dumps([_payload(event) for event in events])
     writer.release()
