@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..observation import ObservationSink
@@ -92,12 +92,73 @@ _GROWTH_EPSILON_MS = 1e-6
 
 
 @dataclass(frozen=True, slots=True)
+class WebRtcCarry:
+    """The cross-segment delta state that resumes :func:`analyze_webrtc_stats`.
+
+    The engine is a *stateful delta* over consecutive snapshot pairs: loss, jitter
+    buffer growth, concealment, processing and playout are each a difference
+    between two genuinely observed snapshots, and reconnect / route detection are
+    small state machines. When one continuous call is captured as several
+    separately-drained batches, analysing each batch from a clean slate silently
+    drops the interval that *spans* the boundary -- the loss / jitter /
+    concealment / playout evidence between the last snapshot of one batch and the
+    first of the next -- and a ``disconnected -> connected`` transition whose
+    endpoints fall in different batches is never reported as a reconnect (the down
+    state is forgotten at the boundary). This value is the exact, bounded state
+    needed to *resume* the delta across a boundary so that folding a series
+    through the carry in N pieces yields facts byte-identical to one single-shot
+    call.
+
+    It is a plain, serializable data value -- one snapshot plus a handful of
+    scalars, bounded by construction and never the whole series. Each field is the
+    last-observed value the next batch's first step reads:
+
+    * ``prev_stats`` -- the previous snapshot's sanitized stats: the cumulative
+      counters the loss / jitter-buffer / concealment / processing / playout
+      deltas difference the next snapshot against. Without it the boundary
+      interval is lost, which is the evidence-loss bug this carry fixes.
+    * ``prev_state`` -- the last ICE / DTLS / candidate-pair connection state, so
+      a ``down`` already seen is not re-reported as a fresh reconnect and an ``up``
+      in the next batch closes the same one.
+    * ``seen_down`` -- whether a ``down`` state is still outstanding (a recovery is
+      pending). This is what makes a boundary-spanning reconnect observable at all.
+    * ``prev_route`` -- the last-known ``(selected pair id, network type)`` so a
+      route change straddling a boundary is neither missed nor fabricated.
+    * ``last_buffer_avg_ms`` -- the per-stat jitter-buffer average, because
+      *growth* is a trend comparison between consecutive intervals, not a level.
+    * ``prev_ts_ms`` -- the last snapshot's raw timestamp, so the ordering check
+      that refuses to difference a non-monotonic step still holds across the
+      boundary instead of trusting the next batch's first snapshot blindly.
+    * ``origin_ms`` -- the call's fixed time origin (the first batch's earliest
+      reading). Every fact is stamped so ``origin_ms + at_ms`` reconstructs its raw
+      browser timestamp; carrying the origin keeps a resumed batch's coordinates
+      identical to the single-shot run instead of restarting the timeline at the
+      batch's own first reading. Fold-equivalence is exact when the first batch
+      carries the call's minimum timestamp (the real-world, time-ordered drain
+      case); a later batch that arrives with an earlier reading than the fixed
+      origin is still handled correctly within its own call but cannot move an
+      origin the earlier batches already stamped against.
+    """
+
+    prev_stats: Mapping[str, Mapping[str, Any]] | None = None
+    prev_state: str | None = None
+    seen_down: bool = False
+    prev_route: tuple[str | None, str | None] | None = None
+    last_buffer_avg_ms: Mapping[str, float] = field(default_factory=dict)
+    prev_ts_ms: float | None = None
+    origin_ms: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class WebRtcFacts:
     """Immutable, deterministic result of one ``getStats`` derivation.
 
     ``measurements``/``events``/``coverage`` are the governed facts. The booleans
     are convenience summaries of what the state machines observed, so a caller can
-    assert on the derivation without re-scanning the recorded incident.
+    assert on the derivation without re-scanning the recorded incident. ``carry``
+    is the outbound cross-segment state (see :class:`WebRtcCarry`): thread it into
+    the next :func:`analyze_webrtc_stats` call to resume a call captured as
+    several drains. It is ``None`` only for an empty single-shot derivation.
     """
 
     measurements: tuple[EngineMeasurement, ...]
@@ -107,6 +168,7 @@ class WebRtcFacts:
     reconnected: bool = False
     route_changed: bool = False
     clock: _AppliedClock | None = None
+    carry: WebRtcCarry | None = None
 
     def apply(self, sink: ObservationSink) -> None:
         """Write every derived fact onto ``sink`` (coverage, then samples, events).
@@ -122,6 +184,7 @@ def analyze_webrtc_stats(
     snapshots: Sequence[Mapping[str, Any]],
     *,
     clock_domain: BrowserClockDomain | None = None,
+    carry: WebRtcCarry | None = None,
 ) -> WebRtcFacts:
     """Derive governed facts from ordered ``{timestamp_ms, stats}`` snapshots.
 
@@ -134,6 +197,14 @@ def analyze_webrtc_stats(
     RAW browser timestamps (this batch's own origin is preserved), never rebased
     onto the server clock -- so the analyzer keeps browser and server time in
     separate domains and refuses cross-clock latency absent a ClockRelation.
+
+    ``carry`` resumes the delta engine from a previous segment of the SAME call
+    (see :class:`WebRtcCarry`). With no carry this is a single-shot derivation,
+    byte-for-byte identical to calling with the whole series at once. With a carry
+    the interval spanning the segment boundary is differenced exactly once -- at
+    the later snapshot's raw coordinate -- so a call captured as N drains yields
+    the same facts as one call. The outbound carry rides back on
+    :attr:`WebRtcFacts.carry`.
     """
 
     normalized = _normalize_snapshots(snapshots)
@@ -141,22 +212,35 @@ def analyze_webrtc_stats(
     events: list[EngineEvent] = []
     coverage = _CoverageLedger()
     if not normalized:
-        return WebRtcFacts((), (), ())
+        # An empty (or fully malformed) segment derives nothing and leaves the
+        # delta state untouched: hand the inbound carry straight back so folding
+        # an empty piece is a genuine no-op. With no inbound carry this is the
+        # historical empty result (``carry`` stays ``None``), so single-shot
+        # behaviour is unchanged.
+        return WebRtcFacts((), (), (), carry=carry)
 
-    # The batch's own origin is its EARLIEST reading, so ``base_ms + at_ms`` stays
-    # the raw browser timestamp of every observation even when the batch arrived
-    # out of order. Clamping an earlier reading forward onto the first-delivered
-    # one would report it at a coordinate the browser never observed.
-    base_ms = min(ts_ms for ts_ms, _stats in normalized)
-    last_buffer_avg_ms: dict[str, float] = {}
+    # Resume from a prior segment's carry when one was supplied. ``origin_ms`` is
+    # the call's FIXED origin (the first batch's earliest reading), carried so a
+    # resumed batch stamps facts at the same coordinates the single-shot run
+    # would; ``prev_*`` / ``seen_down`` / ``last_buffer_avg_ms`` seed the delta and
+    # the reconnect/route state machines so the boundary interval is differenced
+    # rather than dropped. Absent a carry the batch's own origin is its EARLIEST
+    # reading, so ``base_ms + at_ms`` stays the raw browser timestamp of every
+    # observation even when the batch arrived out of order.
+    resuming = carry is not None and carry.prev_stats is not None
+    if resuming and carry.origin_ms is not None:
+        base_ms = carry.origin_ms
+    else:
+        base_ms = min(ts_ms for ts_ms, _stats in normalized)
+    last_buffer_avg_ms: dict[str, float] = dict(carry.last_buffer_avg_ms) if resuming else {}
     jitter_buffer_growth = False
-    seen_down = False
+    seen_down = carry.seen_down if resuming else False
     reconnected = False
     route_changed = False
-    prev_ts_ms: float | None = None
-    prev_state: str | None = None
-    prev_route: tuple[str | None, str | None] | None = None
-    prev_stats: Mapping[str, Mapping[str, Any]] | None = None
+    prev_ts_ms: float | None = carry.prev_ts_ms if resuming else None
+    prev_state: str | None = carry.prev_state if resuming else None
+    prev_route: tuple[str | None, str | None] | None = carry.prev_route if resuming else None
+    prev_stats: Mapping[str, Mapping[str, Any]] | None = carry.prev_stats if resuming else None
 
     for ts_ms, stats in normalized:
         at_ms = ts_ms - base_ms
@@ -216,6 +300,19 @@ def analyze_webrtc_stats(
         reconnected=reconnected,
         route_changed=route_changed,
         clock=None if clock_domain is None else _AppliedClock(clock_domain, base_ms),
+        # The outbound carry captures exactly the state the next segment's first
+        # step reads. ``origin_ms`` is the fixed call origin (unchanged when
+        # resuming); ``last_buffer_avg_ms`` is copied so the carry never aliases
+        # the loop's mutable working dict.
+        carry=WebRtcCarry(
+            prev_stats=prev_stats,
+            prev_state=prev_state,
+            seen_down=seen_down,
+            prev_route=prev_route,
+            last_buffer_avg_ms=dict(last_buffer_avg_ms),
+            prev_ts_ms=prev_ts_ms,
+            origin_ms=base_ms,
+        ),
     )
 
 
@@ -224,10 +321,17 @@ def apply_webrtc_stats(
     snapshots: Sequence[Mapping[str, Any]],
     *,
     clock_domain: BrowserClockDomain | None = None,
+    carry: WebRtcCarry | None = None,
 ) -> WebRtcFacts:
-    """Derive and record ``getStats`` facts onto ``sink``; return the facts."""
+    """Derive and record ``getStats`` facts onto ``sink``; return the facts.
 
-    facts = analyze_webrtc_stats(snapshots, clock_domain=clock_domain)
+    ``carry`` resumes a call captured as several drains; the outbound carry rides
+    back on the returned :attr:`WebRtcFacts.carry` so the caller can thread it into
+    the next segment. Nothing here changes for a single-shot call (no carry in,
+    the returned carry is simply ignored).
+    """
+
+    facts = analyze_webrtc_stats(snapshots, clock_domain=clock_domain, carry=carry)
     facts.apply(sink)
     return facts
 

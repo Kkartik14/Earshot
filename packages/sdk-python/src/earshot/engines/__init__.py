@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from .base import BrowserClockDomain, EngineCoverage, EngineEvent, EngineMeasurement
 from .device import DeviceFacts, analyze_audio_graph, apply_audio_graph
-from .webrtc import WebRtcFacts, analyze_webrtc_stats, apply_webrtc_stats
+from .webrtc import WebRtcCarry, WebRtcFacts, analyze_webrtc_stats, apply_webrtc_stats
 
 __all__ = [
     "BrowserClockDomain",
@@ -32,6 +32,7 @@ __all__ = [
     "EngineCoverage",
     "EngineEvent",
     "EngineMeasurement",
+    "WebRtcCarry",
     "WebRtcFacts",
     "analyze_audio_graph",
     "analyze_webrtc_stats",
