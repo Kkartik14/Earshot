@@ -5512,6 +5512,7 @@
       },
       "TurnMetricSummaryResponse": {
         "additionalProperties": false,
+        "description": "Fleet percentiles for one metric, bounded by the population they come from.\n\nOnly ``final`` incidents are aggregated. A provisional artifact -- one\nrecovered from a crash, or sealed while its session was still open -- covers\nan unknown fraction of its conversation, so pooling its turns would move\nthese values without anything on them saying why.\n\nThat exclusion is declared rather than performed quietly: ``incident_count``\nis what the groups cover and ``withheld_incident_count`` is what they refuse,\nso an empty ``groups`` beside a non-zero ``withheld_incident_count`` reads as\n\"not aggregated\", never as \"measured zero\".",
         "properties": {
           "group_by": {
             "title": "Group By",
@@ -5524,15 +5525,38 @@
             "title": "Groups",
             "type": "array"
           },
+          "incident_count": {
+            "title": "Incident Count",
+            "type": "integer"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
           "metric": {
             "title": "Metric",
             "type": "string"
+          },
+          "withheld_incident_count": {
+            "title": "Withheld Incident Count",
+            "type": "integer"
+          },
+          "withheld_turn_count": {
+            "title": "Withheld Turn Count",
+            "type": "integer"
           }
         },
         "required": [
           "metric",
           "group_by",
-          "groups"
+          "groups",
+          "incident_count",
+          "withheld_incident_count",
+          "withheld_turn_count",
+          "limitations"
         ],
         "title": "TurnMetricSummaryResponse",
         "type": "object"
@@ -5755,7 +5779,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.5.0"
+    "version": "0.6.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -9026,6 +9050,7 @@
     },
     "/v1/metrics/turns": {
       "get": {
+        "description": "Aggregate one turn metric across this project's final incidents.\n\nThe withheld counts and the limitations travel with the numbers so that\na caller reading a percentile also reads the population it came from.",
         "operationId": "turn_metrics_endpoint_v1_metrics_turns_get",
         "parameters": [
           {

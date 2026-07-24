@@ -375,7 +375,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Turn Metrics Endpoint */
+        /**
+         * Turn Metrics Endpoint
+         * @description Aggregate one turn metric across this project's final incidents.
+         *
+         *     The withheld counts and the limitations travel with the numbers so that
+         *     a caller reading a percentile also reads the population it came from.
+         */
         get: operations["turn_metrics_endpoint_v1_metrics_turns_get"];
         put?: never;
         post?: never;
@@ -2548,14 +2554,35 @@ export interface components {
             /** Turn Count */
             turn_count: number;
         };
-        /** TurnMetricSummaryResponse */
+        /**
+         * TurnMetricSummaryResponse
+         * @description Fleet percentiles for one metric, bounded by the population they come from.
+         *
+         *     Only ``final`` incidents are aggregated. A provisional artifact -- one
+         *     recovered from a crash, or sealed while its session was still open -- covers
+         *     an unknown fraction of its conversation, so pooling its turns would move
+         *     these values without anything on them saying why.
+         *
+         *     That exclusion is declared rather than performed quietly: ``incident_count``
+         *     is what the groups cover and ``withheld_incident_count`` is what they refuse,
+         *     so an empty ``groups`` beside a non-zero ``withheld_incident_count`` reads as
+         *     "not aggregated", never as "measured zero".
+         */
         TurnMetricSummaryResponse: {
             /** Group By */
             group_by: string;
             /** Groups */
             groups: components["schemas"]["TurnMetricGroupResponse"][];
+            /** Incident Count */
+            incident_count: number;
+            /** Limitations */
+            limitations: string[];
             /** Metric */
             metric: string;
+            /** Withheld Incident Count */
+            withheld_incident_count: number;
+            /** Withheld Turn Count */
+            withheld_turn_count: number;
         };
         /** TurnMetrics */
         TurnMetrics: {

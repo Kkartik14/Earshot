@@ -147,6 +147,14 @@ availability, basis, confidence, and limitation; unlike evidence is never blende
 evidence is not converted to zero. The projection is rebuilt from canonical Incidents on
 startup.
 
+API `0.6.0` restricts the aggregation to `final` Incidents. A crash-recovered or
+operator-sealed artifact is `provisional`: it covers an unknown fraction of its
+conversation, so pooling its turns would move every percentile without saying why. The
+exclusion is declared rather than performed quietly — `incident_count` is what the groups
+cover, `withheld_incident_count` and `withheld_turn_count` are what they refused, and
+`limitations` states what these numbers structurally cannot answer. Empty `groups` beside
+a non-zero `withheld_incident_count` is a refusal to aggregate, never a measured zero.
+
 ### `GET /v1/incidents/{bundle_id}`
 
 Content negotiation returns canonical protobuf or pretty debug JSON. A strong `ETag`
