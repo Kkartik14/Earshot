@@ -764,3 +764,132 @@ def test_concurrent_delivery_of_one_batch_yields_one_incident(tmp_path) -> None:
     assert {response.status_code for response in responses} <= {200, 201}
     assert len({response.json()["bundle_id"] for response in responses}) == 1
     assert len(client.get("/v1/incidents").json()["items"]) == 1
+
+
+# -- browser provenance: trace context, observer, client-reported loss ---------
+
+
+def test_the_browser_trace_context_reaches_the_incident(tmp_path) -> None:
+    # Correlating a browser capture with the application's trace is a property of
+    # the ARTIFACT, not of the acknowledgement: an echo in the response body is
+    # gone the moment the response is.
+    _, client = app_client(tmp_path)
+    response = client.post("/v1/capture", json=payload())
+    assert response.status_code == 201
+    stored = profile(client, response.json()["bundle_id"])
+
+    events = stored["events"]
+    assert events
+    assert {event["trace_id"] for event in events} == {TRACE_ID}
+    assert {event["span_id"] for event in events} == {SPAN_ID}
+
+
+def test_a_batch_without_a_trace_context_claims_none(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    body = payload()
+    body.pop("traceContext")
+    response = client.post("/v1/capture", json=body)
+    assert response.status_code == 201
+    assert response.json()["trace_id"] is None
+    stored = profile(client, response.json()["bundle_id"])
+    assert all("trace_id" not in event for event in stored["events"])
+
+
+def test_a_traceparent_that_disagrees_with_its_ids_is_refused(tmp_path) -> None:
+    # traceparent and the structured ids are two spellings of ONE context. When
+    # they disagree the context is unknowable, so the server refuses rather than
+    # silently picking a winner and attributing evidence to the wrong trace.
+    _, client = app_client(tmp_path)
+    for trace_context in (
+        {"traceparent": f"00-{'c' * 32}-{SPAN_ID}-01", "traceId": TRACE_ID, "spanId": SPAN_ID},
+        {"traceparent": f"00-{TRACE_ID}-{'d' * 16}-01", "traceId": TRACE_ID, "spanId": SPAN_ID},
+    ):
+        response = client.post("/v1/capture", json=payload(traceContext=trace_context))
+        assert response.status_code == 422
+        assert code(response) == "EARSHOT_INCOHERENT_TRACE_CONTEXT"
+
+
+def test_browser_derived_facts_are_labelled_as_observed_by_the_browser(tmp_path) -> None:
+    # The browser observed these facts; the server only recorded them. Claiming a
+    # server observer would make a client report look like a server measurement.
+    _, client = app_client(tmp_path)
+    response = client.post("/v1/capture", json=payload())
+    stored = profile(client, response.json()["bundle_id"])
+
+    observers = {event["evidence"]["observer"] for event in stored["events"]}
+    observers |= {sample["evidence"]["observer"] for sample in stored["quality_samples"]}
+    assert observers == {"browser"}
+    # Consistent with the clock-domain-level declaration of the same observer.
+    domains = {item["clock_domain_id"]: item for item in stored["clock_domains"]}
+    assert domains[CLOCK_ID]["observer"] == "browser"
+
+
+def test_client_reported_loss_counts_survive_onto_the_artifact(tmp_path) -> None:
+    # The client counted what it lost. A number that only ever appears in the
+    # HTTP response is not evidence -- it has to reach the incident.
+    _, client = app_client(tmp_path)
+    response = client.post("/v1/capture", json=payload())
+    stored = profile(client, response.json()["bundle_id"])
+    note = next(item for item in stored["coverage"] if item["signal"] == "browser.webrtc.snapshots")
+    assert note["dropped_count"] == 3
+
+
+def test_a_coverage_note_without_a_count_asserts_none(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    response = client.post(
+        "/v1/capture",
+        json=payload(
+            coverage=[
+                {
+                    "signal": "webrtc.snapshots",
+                    "availability": "partial",
+                    "reason": "getstats_error",
+                }
+            ]
+        ),
+    )
+    stored = profile(client, response.json()["bundle_id"])
+    note = next(item for item in stored["coverage"] if item["signal"] == "browser.webrtc.snapshots")
+    assert "dropped_count" not in note
+
+
+# -- out-of-order batches ------------------------------------------------------
+
+
+def test_a_non_monotonic_snapshot_batch_is_refused(tmp_path) -> None:
+    # Normalizing [2000ms, 1000ms] used to fabricate two observations at 2000ms
+    # and difference the cumulative counters backwards. Neither is evidence, so
+    # the batch is refused with a specific error instead.
+    _, client = app_client(tmp_path)
+    body = payload()
+    body["snapshots"][0]["timestamp_ms"] = 2000
+    body["snapshots"][1]["timestamp_ms"] = 1000
+    response = client.post("/v1/capture", json=body)
+    assert response.status_code == 422
+    assert code(response) == "EARSHOT_CAPTURE_NON_MONOTONIC"
+    assert client.get("/v1/incidents").json()["items"] == []
+
+
+def test_a_non_monotonic_device_event_batch_is_refused(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    response = client.post(
+        "/v1/capture",
+        json=payload(
+            deviceEvents=[
+                {"type": "underrun", "timestamp_ms": 2000},
+                {"type": "underrun", "timestamp_ms": 1000},
+            ]
+        ),
+    )
+    assert response.status_code == 422
+    assert code(response) == "EARSHOT_CAPTURE_NON_MONOTONIC"
+
+
+def test_repeated_timestamps_are_still_accepted(tmp_path) -> None:
+    # Two observations at the same coarse browser reading are ordinary; only a
+    # reading that goes BACKWARDS is incoherent.
+    _, client = app_client(tmp_path)
+    body = payload()
+    body["snapshots"][0]["timestamp_ms"] = 1000
+    body["snapshots"][1]["timestamp_ms"] = 1000
+    assert client.post("/v1/capture", json=body).status_code == 201

@@ -17,6 +17,7 @@ import time
 import zlib
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 from urllib.parse import quote, urlsplit
@@ -632,7 +633,13 @@ _CAPTURE_EVENT_ALLOWLIST: dict[str, dict[str, str]] = {
 
 
 class CaptureTraceContextRequest(ApiModel):
-    """The session's W3C trace-context: random correlation handles only."""
+    """The session's W3C trace-context: random correlation handles only.
+
+    ``traceparent`` and the two structured ids are two spellings of ONE context,
+    so they must agree. A payload whose spellings disagree is refused rather than
+    resolved, because either choice could attribute the evidence to a trace it
+    does not belong to.
+    """
 
     traceparent: str = Field(pattern=_CAPTURE_TRACEPARENT_PATTERN)
     traceId: str = Field(pattern=r"^[0-9a-f]{32}$")
@@ -1418,7 +1425,7 @@ def _decode_capture_request(parsed: Any, config: ApiConfig) -> CaptureRequest:
                 f"capture payload exceeds the {field} count limit",
             )
     try:
-        return CaptureRequest.model_validate(parsed)
+        capture = CaptureRequest.model_validate(parsed)
     except ValidationError as error:
         raise ApiProblem(
             422,
@@ -1426,6 +1433,52 @@ def _decode_capture_request(parsed: Any, config: ApiConfig) -> CaptureRequest:
             "capture payload does not satisfy the capture contract",
             issues=[_capture_issue(item) for item in error.errors()[:20]],
         ) from error
+    if _incoherent_trace_context(capture.traceContext):
+        raise ApiProblem(
+            422,
+            "EARSHOT_INCOHERENT_TRACE_CONTEXT",
+            "capture traceparent disagrees with its trace and span identifiers",
+        )
+    for field, timestamps in (
+        ("snapshots", [snapshot.timestamp_ms for snapshot in capture.snapshots]),
+        ("deviceEvents", [event.timestamp_ms for event in capture.deviceEvents]),
+    ):
+        if _goes_backwards(timestamps):
+            raise ApiProblem(
+                422,
+                "EARSHOT_CAPTURE_NON_MONOTONIC",
+                f"capture {field} must be ordered by a non-decreasing timestamp_ms",
+            )
+    return capture
+
+
+def _incoherent_trace_context(context: CaptureTraceContextRequest | None) -> bool:
+    """Report whether a trace context contradicts itself.
+
+    ``traceparent`` already carries the trace and span ids the payload also sends
+    separately. When the two spellings disagree the session's real trace context
+    is unknowable, and picking either one would attribute this evidence to a trace
+    it may not belong to. So the disagreement is refused rather than resolved.
+    """
+
+    if context is None:
+        return False
+    _version, trace_id, span_id, _flags = context.traceparent.split("-")
+    return trace_id != context.traceId or span_id != context.spanId
+
+
+def _goes_backwards(timestamps: list[float]) -> bool:
+    """Report whether a batch's readings move backwards in its own clock.
+
+    The capture kernel appends each observation as it happens, so a batch is
+    ordered by construction. One that is not cannot be normalized without
+    inventing something: rebasing the out-of-order reading fabricates a
+    coordinate the browser never observed, and differencing cumulative counters
+    across the inversion computes a delta over a negative interval. Both are
+    fabrications, so the batch is refused whole.
+    """
+
+    return any(later < earlier for earlier, later in pairwise(timestamps))
 
 
 def _build_capture_incident(
@@ -1451,12 +1504,18 @@ def _build_capture_incident(
     a finished call. The observed slice is the incident's whole extent; no
     whole-call duration is fabricated.
 
+    The browser's trace context, when it sent one, is bound to the session, so
+    every point event derived here carries that ``trace_id``/``span_id`` on the
+    artifact itself. Correlating a capture with the application's trace is then a
+    property of the stored evidence rather than of an acknowledgement that is
+    gone as soon as the response is.
+
     Two honest limitations of this projection, stated rather than papered over:
-    the client's ``droppedCount`` has no field on the v1alpha1 ``Coverage``
-    record (the gap is recorded, the count is returned in the response only), and
-    the incident inherits the pipeline's ``client.render not_observed`` note
-    because a capture batch yields render-path *quality* signals, not per-turn
-    render boundaries.
+    the v1alpha1 ``QualitySample`` has no OTel identity members, so the trace
+    context reaches the batch's events and not its scalars; and the incident
+    inherits the pipeline's ``client.render not_observed`` note, because a
+    capture batch yields render-path *quality* signals, not per-turn render
+    boundaries.
     """
 
     clock = capture.clockDomain
@@ -1469,11 +1528,14 @@ def _build_capture_incident(
             None if clock.wallOriginMs is None else int(clock.wallOriginMs * 1_000_000)
         ),
     )
+    trace = capture.traceContext
     session = pipeline(
         session_id=capture.sessionId,
         bundle_id=bundle_id,
         framework="browser_capture",
         producer_name="earshot.capture_api",
+        trace_id=None if trace is None else trace.traceId,
+        span_id=None if trace is None else trace.spanId,
     )
     with session.turn("browser-capture") as turn:
         for note in capture.coverage:
@@ -1481,6 +1543,7 @@ def _build_capture_incident(
                 _capture_coverage_signal(note.signal),
                 note.availability,
                 note.reason,
+                dropped_count=note.droppedCount,
             )
         for signal, reason, count in (
             ("capture.stats", "non_governed_stat_dropped", rejections.stats),
@@ -2268,6 +2331,12 @@ def create_app(
                     "capture_version": capture.captureVersion,
                     "session_id": capture.sessionId,
                     "clock_domain": capture.clockDomain.model_dump(),
+                    # The trace context reaches the artifact, so two batches that
+                    # differ only by it are different evidence and must not
+                    # resolve to one incident carrying whichever arrived first.
+                    "trace_context": (
+                        None if capture.traceContext is None else capture.traceContext.model_dump()
+                    ),
                     "snapshots": snapshots,
                     "device_events": events,
                     "coverage": [note.model_dump() for note in capture.coverage],

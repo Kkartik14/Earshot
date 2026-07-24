@@ -18,7 +18,15 @@ RECOVERY_MIN_CONTRACT_VERSION = "0.2.0"
 # version is the failure mode worth avoiding, and there is no released 0.2.0
 # reader to surprise.
 MEDIA_CUSTODY_MIN_CONTRACT_VERSION = "0.2.0"
-API_VERSION = "0.8.0"
+# And again for ``Coverage.dropped_count``: 0.1.0 coverage could say a signal was
+# partial but never how many observations the source counted itself losing. An
+# artifact claiming 0.1.0 while carrying a count is asserting a member that
+# version does not have. It rides the same unreleased 0.2.0 bump for the same
+# reason media custody does -- 0.2.0 has not shipped, so there is no released
+# reader to surprise, and one version describing two shapes is the failure worth
+# avoiding.
+COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION = "0.2.0"
+API_VERSION = "0.9.0"
 ANALYZER_VERSION = "0.5.0"
 TURN_FACT_PROJECTION_VERSION = "0.1.0"
 PIPELINE_ADAPTER_VERSION = "0.3.0"

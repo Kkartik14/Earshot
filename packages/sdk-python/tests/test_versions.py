@@ -43,7 +43,14 @@ def test_analysis_truth_changes_have_a_new_cache_identity() -> None:
     assert ANALYZER_VERSION == "0.5.0"
 
 
-def test_a_live_session_belongs_to_one_project_in_api_version_0_8() -> None:
+def test_a_capture_batch_must_be_coherent_in_api_version_0_9() -> None:
+    # 0.9.0 makes ``POST /v1/capture`` refuse two payloads it used to accept and
+    # then guess at, because neither can be turned into evidence honestly:
+    # EARSHOT_INCOHERENT_TRACE_CONTEXT for a ``traceparent`` that disagrees with
+    # the trace/span ids sent beside it, and EARSHOT_CAPTURE_NON_MONOTONIC for a
+    # batch whose ``timestamp_ms`` readings move backwards. A request that used
+    # to yield 201 now yields 422, which is a client-visible change to what the
+    # endpoint accepts, so it takes a version of its own.
     # 0.8.0 gives a live session a per-project identity: it is named by
     # (project, session id) rather than by session id alone, so two projects can
     # use the same session id and neither can squat the other's. Checkpoint
@@ -66,7 +73,7 @@ def test_a_live_session_belongs_to_one_project_in_api_version_0_8() -> None:
     # seal. 0.4.0 added the authenticated browser capture endpoint
     # (``POST /v1/capture``); 0.3.0 added the contradiction, comparison, and
     # export read endpoints.
-    assert API_VERSION == "0.8.0"
+    assert API_VERSION == "0.9.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:

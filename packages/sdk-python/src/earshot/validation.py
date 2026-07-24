@@ -55,6 +55,7 @@ from .privacy import (
     sanitize_source_label,
 )
 from .versions import (
+    COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION,
     MEDIA_CUSTODY_MIN_CONTRACT_VERSION,
     RECOVERY_MIN_CONTRACT_VERSION,
     SUPPORTED_CONTRACT_VERSIONS,
@@ -1009,6 +1010,26 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                         message=(
                             f"media custody requires contract version "
                             f"{MEDIA_CUSTODY_MIN_CONTRACT_VERSION} or newer"
+                        ),
+                    )
+                )
+    if manifest.schema_version in SUPPORTED_CONTRACT_VERSIONS and _version_below(
+        manifest.schema_version, COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION
+    ):
+        # Checked independently of the chain above: an artifact can under-declare
+        # its version while using more than one member the version lacks, and
+        # each of those claims deserves its own refusal. Coverage without a count
+        # is exactly what 0.1.0 could express, so the existing corpus is
+        # untouched by the member being added.
+        for index, note in enumerate(profile.coverage):
+            if note.dropped_count is not None:
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_SCHEMA_VERSION_UNSUPPORTED",
+                        path=("profile", "coverage", index, "dropped_count"),
+                        message=(
+                            f"a coverage loss count requires contract version "
+                            f"{COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION} or newer"
                         ),
                     )
                 )

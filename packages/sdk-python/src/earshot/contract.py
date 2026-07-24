@@ -388,9 +388,22 @@ class ClockRelation(ContractModel):
 
 
 class Coverage(ContractModel):
+    """What a fact source could or could not observe for one signal.
+
+    ``dropped_count`` is how many observations the source counted itself losing
+    in this window, when it could count them — a browser capture kernel whose
+    bounded buffer overflowed knows exactly how many samples it discarded. The
+    number is evidence about the gap, so it belongs on the gap: without it a
+    reader can see *that* something was lost but never *how much*, and a count
+    that survives only in a transport acknowledgement is not part of the
+    artifact at all. ``None`` means the loss was not countable, which is not the
+    same claim as ``0`` — nothing lost.
+    """
+
     signal: NonEmptyStr
     availability: NonEmptyStr
     reason: NonEmptyStr | None = None
+    dropped_count: StrictInt | None = Field(default=None, ge=0)
     evidence: Evidence | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
 
