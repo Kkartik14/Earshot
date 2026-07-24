@@ -47,6 +47,14 @@ from .keys import (
     prepare_private_directory,
     resolve_at_rest_key,
 )
+
+# Re-exported rather than redefined: every checkpoint size bound is decided in
+# one module so the local journal and the wire cannot drift apart.
+from .limits import (
+    DEFAULT_MAX_FRAME_BYTES,
+    DEFAULT_MAX_JOURNAL_BYTES,
+    DEFAULT_MAX_JOURNAL_RECORDS,
+)
 from .records import (
     JOURNAL_FORMAT_VERSION,
     REASON_JOURNAL_FULL,
@@ -67,11 +75,6 @@ JOURNAL_SUFFIX = ".eck"
 QUARANTINE_DIRECTORY = "quarantine"
 
 DEFAULT_FSYNC_INTERVAL_MS = 250
-# One admitted record is already bounded by the recorder's capture caps; this
-# only has to stay above the largest one they can produce once encoded.
-DEFAULT_MAX_FRAME_BYTES = 32 * 1024 * 1024
-DEFAULT_MAX_JOURNAL_BYTES = 64 * 1024 * 1024
-DEFAULT_MAX_JOURNAL_RECORDS = 100_000
 
 FSYNC_MODES = ("interval", "always", "never")
 
