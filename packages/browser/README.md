@@ -20,28 +20,48 @@ diagnose on the server.
 
 ## Status
 
-**Not published, and not yet validated against a real browser.**
+**Not published. Validated on Chrome only.**
 
 - `private: true`, unpublished. Consume it from this workspace; whether it ever
   goes to npm is the maintainer's call, not this package's.
-- **The capture, bounding and delivery logic is unit-tested against mocked W3C
-  APIs and a mocked `fetch` — it has NOT been run against a real browser /
-  WebRTC / Web Audio runtime.** Every environment dependency (clock, interval
+- The capture, bounding and delivery logic is unit-tested against mocked W3C
+  APIs and a mocked `fetch`. Every environment dependency (clock, interval
   scheduler, randomness, `fetch`, and each W3C object) is injected via small
   structural interfaces (`src/types.ts`, `src/testing/fakes.ts`), which is what
-  makes the logic fully exercisable — and also what leaves the following open
-  until an on-device pass happens:
-  - that a browser's `RTCStatsReport` member names and units match the fixtures
-    here (they follow the W3C stats spec, but vendors vary);
-  - `AudioContext` `sinkchange`, `outputLatency` and `getOutputTimestamp()`
-    availability (all partially supported);
-  - `media-playout` (`RTCAudioPlayoutStats`) availability, which is not
-    implemented everywhere;
-  - the Permissions API `microphone` descriptor across browsers.
+  makes the logic fully exercisable off-device.
 
-  Where a browser turns out not to expose a signal, the kernel already records an
-  explicit coverage note for it (see **Coverage** below) rather than guessing —
-  so an unvalidated platform degrades into a stated unknown, not a wrong number.
+### What a real browser has confirmed
+
+One on-device pass has been run: **Chrome 150.0.7871.186 on macOS 26.3**, driving
+a real loopback `RTCPeerConnection` (an oscillator through a
+`MediaStreamAudioDestinationNode`, so no microphone permission) plus a real
+`AudioContext`, then delivering the result to a live `POST /v1/capture`.
+
+- `RTCStatsReport` member names and units match what this package expects — the
+  server accepted the real payload with **zero** rejected stats, stat members,
+  device events or device members, so client and server agree on the shape.
+- `media-playout` (`RTCAudioPlayoutStats`) and `getOutputTimestamp()` are both
+  available in that build and produced real readings.
+- **The allowlist holds against real host-identifying material.** That session's
+  raw `getStats()` genuinely contained `certificate.base64Certificate`, a DTLS
+  `certificate.fingerprint`, and `usernameFragment`/`port` on both local and
+  remote candidates. None of those values survived into the `CapturePayload`,
+  and the stored incident contained no forbidden key, no IPv4/IPv6 literal, and
+  no base64 certificate material.
+- The `webrtc.audio_decode_time` coverage note is correct on real Chrome: audio
+  decode time genuinely is not exposed (`totalDecodeTime` is video-only).
+
+### Still unvalidated
+
+- **Safari and Firefox** — not exercised at all; vendor stat coverage varies.
+- **`getUserMedia` and the Permissions API `microphone` descriptor** — the pass
+  used a synthesised audio source, so the real microphone-permission path is
+  still only covered by unit tests.
+- `AudioContext` `sinkchange` / `setSinkId` and `outputLatency`.
+
+Where a browser turns out not to expose a signal, the kernel records an explicit
+coverage note for it (see **Coverage** below) rather than guessing — so an
+unvalidated platform degrades into a stated unknown, not a wrong number.
 
 ## Usage
 
