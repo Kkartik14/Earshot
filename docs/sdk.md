@@ -360,6 +360,19 @@ boundary, and any failure stops the uploader permanently and degrades to local j
 only. An encrypted journal cannot be uploaded — the backend holds no key — so remote
 tailing is an explicit decision to let it read those frames.
 
+Every size bound on that path is declared once, in `earshot.checkpoint.limits`, and read
+from there by the uploader, the server's frame scan and the ingest endpoint alike. The
+journal frames records up to 32 MiB; one upload carries at most 1 MiB, which is one
+whole frame and one whole batch; the default 512 KiB batching bound decides how much
+travels per request and never how much a request may be, so a frame above it is sent
+alone rather than stranded. A frame above the 1 MiB wire bound cannot be delivered at
+all — it cannot be skipped either, because the server refuses a batch that skips a
+sequence — so the uploader states which sequence it is (`status().state ==
+"undeliverable_frame"`, with `undeliverable_sequence` and `undeliverable_bytes`), emits
+the `checkpoint.frame_undeliverable` diagnostic, and stops. It never retries what cannot
+work and never stalls without saying so. Nothing is lost: the local journal still holds
+every record and the artifact still travels through `POST /v1/incidents` or a seal.
+
 A live view is never an artifact. The stream carries only admitted journal records, and
 no analysis, diagnosis, or turn metric is derived from it: derived analysis binds to the
 digest of a finished artifact, and an open session has none. Everything unknowable

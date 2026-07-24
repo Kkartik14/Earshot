@@ -18,7 +18,7 @@ RECOVERY_MIN_CONTRACT_VERSION = "0.2.0"
 # version is the failure mode worth avoiding, and there is no released 0.2.0
 # reader to surprise.
 MEDIA_CUSTODY_MIN_CONTRACT_VERSION = "0.2.0"
-API_VERSION = "0.7.0"
+API_VERSION = "0.8.0"
 ANALYZER_VERSION = "0.5.0"
 TURN_FACT_PROJECTION_VERSION = "0.1.0"
 PIPELINE_ADAPTER_VERSION = "0.3.0"

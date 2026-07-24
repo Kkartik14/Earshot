@@ -329,9 +329,38 @@ exactly as the journal reader checks them. A batch with a torn tail is refused w
 (`400 EARSHOT_CHECKPOINT_FRAMES_INVALID`) — a torn tail is meaningful at the end of a
 crashed file, but in an upload it only means a malformed request, and accepting a prefix
 would let a client decide where the server's evidence stops. A batch that skips a
-sequence is `409 EARSHOT_CHECKPOINT_SEQUENCE_GAP`; re-sending already-accepted frames is
-idempotent. Per-project session quotas return `429 EARSHOT_LIVE_CAPACITY`. An encrypted
-journal cannot be uploaded: the server holds no key, so its header does not decode.
+sequence is `409 EARSHOT_CHECKPOINT_SEQUENCE_GAP`. Per-project session quotas return
+`429 EARSHOT_LIVE_CAPACITY`. An encrypted journal cannot be uploaded: the server holds
+no key, so its header does not decode.
+
+A live session is named by `(project, session_id)`, never by the session id alone. A
+session id is a producer's own name for its own call, so two projects may each have a
+`call-1` and neither can take the other's: whichever project uploaded first would
+otherwise own the name and make every later upload from the other a permanent `404`. A
+session id another project holds is answered exactly as an id nobody holds is, so
+existence never leaks across tenants.
+
+An upload may extend the journal and may repeat it; it may never edit it. Re-sending
+frames already accepted is idempotent and republishes nothing — the uploader restarts at
+offset zero after a process restart, so a full replay is ordinary. Re-sending a sequence
+with _different_ content is `409 EARSHOT_CHECKPOINT_DIVERGED`, compared against the
+CRC-32 each frame already carries, and a sequence the server cannot verify is refused the
+same way rather than accepted on trust. Any frame after the journal's `finalize` — in a
+later batch or after a `finalize` in the same batch — is
+`409 EARSHOT_CHECKPOINT_JOURNAL_FINALIZED`: the recorder closed, so a later frame is a
+different journal wearing this one's name. Every refusal leaves the session exactly as it
+was, because the whole batch is judged before any of it is recorded.
+
+One frame may be at most 1 MiB, which is also the largest batch and the body limit of
+this endpoint (`413 EARSHOT_BODY_TOO_LARGE` beyond it). That single number is
+`earshot.checkpoint.limits.MAX_CHECKPOINT_FRAME_BYTES`, and the uploader, the registry's
+frame scan and this endpoint all read it from there. The local journal frames records up
+to 32 MiB and keeps doing so — a transport bound must not damage the durable record — so
+a session whose journal frames a larger record (a raw OTLP passthrough is the one record
+kind that reaches this size, and the tail withholds its payload anyway) stops being
+followed live at that sequence. The uploader says which sequence and stops; the listing
+declares the bound in `limitations`; the complete session still travels through
+`POST /v1/incidents` or an operator seal.
 
 ### `POST /v1/live/sessions/{session_id}/seal`
 

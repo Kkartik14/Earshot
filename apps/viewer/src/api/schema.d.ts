@@ -4896,7 +4896,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        /** @description A contiguous run of plaintext checkpoint frames from one journal, starting at the header frame or at the sequence the server last accepted. Encrypted journals cannot be uploaded: the server holds no key. */
+        /** @description A contiguous run of plaintext checkpoint frames from one journal, starting at the header frame or at the sequence the server last accepted. Encrypted journals cannot be uploaded: the server holds no key. A session is identified by this project and this session id together, so two projects may use the same session id for their own sessions. Repeating frames already accepted is idempotent; re-sending a sequence with different content is EARSHOT_CHECKPOINT_DIVERGED, and any frame after the journal's finalize is EARSHOT_CHECKPOINT_JOURNAL_FINALIZED. One frame may be at most 1048576 bytes, which is also the largest batch. */
         requestBody: {
             content: {
                 "application/vnd.earshot.checkpoint+frames": string;

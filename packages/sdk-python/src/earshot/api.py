@@ -32,6 +32,7 @@ from starlette.concurrency import run_in_threadpool
 from .analysis import ANALYZER_VERSION
 from .browser_session import BrowserSessionStore
 from .checkpoint import AssemblyError, JournalUnreadableError, assemble_incident
+from .checkpoint.limits import MAX_CHECKPOINT_BATCH_BYTES, MAX_CHECKPOINT_FRAME_BYTES
 from .codec import (
     JSON_MEDIA_TYPE,
     PROTOBUF_MEDIA_TYPE,
@@ -67,6 +68,8 @@ from .live import (
     EVENT_HEARTBEAT,
     LIVE_LIMITATIONS,
     SOURCE_CHECKPOINT,
+    CheckpointDivergedError,
+    CheckpointFinalizedError,
     CheckpointFramesInvalidError,
     CheckpointSequenceError,
     LiveCapacityError,
@@ -811,7 +814,13 @@ _CHECKPOINT_REQUEST_BODY = {
         "description": (
             "A contiguous run of plaintext checkpoint frames from one journal, "
             "starting at the header frame or at the sequence the server last "
-            "accepted. Encrypted journals cannot be uploaded: the server holds no key."
+            "accepted. Encrypted journals cannot be uploaded: the server holds no key. "
+            "A session is identified by this project and this session id together, so "
+            "two projects may use the same session id for their own sessions. Repeating "
+            "frames already accepted is idempotent; re-sending a sequence with different "
+            "content is EARSHOT_CHECKPOINT_DIVERGED, and any frame after the journal's "
+            "finalize is EARSHOT_CHECKPOINT_JOURNAL_FINALIZED. One frame may be at most "
+            f"{MAX_CHECKPOINT_FRAME_BYTES} bytes, which is also the largest batch."
         ),
         "content": {CHECKPOINT_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
     },
@@ -854,8 +863,10 @@ class ApiConfig:
     max_capture_coverage: int = 64
     max_capture_stats_per_snapshot: int = 128
     # Checkpoint uploads are small, frequent batches from a live producer, so
-    # they are bounded far below an incident bundle and far below a capture batch.
-    max_checkpoint_body_bytes: int = 1024 * 1024
+    # they are bounded far below an incident bundle and far below a capture
+    # batch. The number is not chosen here: it is the wire bound the uploader
+    # reads from the same module, so the two ends cannot drift apart.
+    max_checkpoint_body_bytes: int = MAX_CHECKPOINT_BATCH_BYTES
     max_json_depth: int = 64
     default_page_size: int = 50
     analyzer_version: str = ANALYZER_VERSION
@@ -884,8 +895,14 @@ class ApiConfig:
             raise ValueError("max_capture_coverage must be positive")
         if self.max_capture_stats_per_snapshot < 1:
             raise ValueError("max_capture_stats_per_snapshot must be positive")
-        if self.max_checkpoint_body_bytes < 1:
-            raise ValueError("max_checkpoint_body_bytes must be positive")
+        if self.max_checkpoint_body_bytes < MAX_CHECKPOINT_FRAME_BYTES:
+            # A body bound below one maximal frame would make a frame the
+            # uploader considers deliverable permanently undeliverable, which is
+            # the incoherence this bound exists to prevent.
+            raise ValueError(
+                "max_checkpoint_body_bytes must accept one whole frame at the "
+                f"upload bound ({MAX_CHECKPOINT_FRAME_BYTES} bytes)"
+            )
         if self.max_json_depth < 1:
             raise ValueError("max_json_depth must be positive")
         if self.viewer_session_capacity < 1:
@@ -2589,12 +2606,9 @@ def create_app(
                 payload,
                 project_id=request.state.project_id,
             )
-        except SessionNotLiveError as error:
-            raise ApiProblem(
-                404,
-                "EARSHOT_SESSION_NOT_LIVE",
-                "no live session with this identifier",
-            ) from error
+        # No EARSHOT_SESSION_NOT_LIVE here: a session id is scoped to this
+        # project, so an id another project holds is answered exactly as an id
+        # nobody holds is — the sequence gap below — and never distinguished.
         except CheckpointSequenceError as error:
             raise ApiProblem(
                 409,
@@ -2605,6 +2619,26 @@ def create_app(
                         "code": "EARSHOT_CHECKPOINT_SEQUENCE_GAP",
                         "path": ["expected_sequence"],
                         "message": str(error.expected_sequence),
+                        "severity": "error",
+                    }
+                ],
+            ) from error
+        except CheckpointFinalizedError as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_CHECKPOINT_JOURNAL_FINALIZED",
+                "this journal is finalized and accepts no further frames",
+            ) from error
+        except CheckpointDivergedError as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_CHECKPOINT_DIVERGED",
+                "checkpoint batch rewrites a sequence the server already recorded",
+                issues=[
+                    {
+                        "code": "EARSHOT_CHECKPOINT_DIVERGED",
+                        "path": ["sequence"],
+                        "message": str(error.sequence),
                         "severity": "error",
                     }
                 ],
