@@ -265,6 +265,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/live/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live Sessions Endpoint
+         * @description List the conversations currently being written, and nothing more.
+         *
+         *     These are not incidents and never appear under ``/v1/incidents``. The
+         *     limitations travel with the collection so that "no analysis here" is read
+         *     as a refusal rather than as an empty result.
+         */
+        get: operations["live_sessions_endpoint_v1_live_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/live/sessions/{session_id}/checkpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Live Checkpoints Endpoint
+         * @description Accept a contiguous run of checkpoint frames from a live producer.
+         *
+         *     The buffer this feeds is never an incident and never becomes one on its
+         *     own. It expires, it is superseded when the real artifact is ingested, or
+         *     an operator seals it explicitly — because the server cannot tell a
+         *     crashed producer from a slow one.
+         */
+        post: operations["live_checkpoints_endpoint_v1_live_sessions__session_id__checkpoints_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/live/sessions/{session_id}/seal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Live Seal Endpoint
+         * @description Materialize a live buffer into an artifact, on operator command only.
+         *
+         *     Nothing else in this server turns a live session into an incident. A seal
+         *     of a journal that never reached close produces a *provisional* artifact
+         *     under a distinct bundle id, so it can never be confused with, or collide
+         *     with, the final one the producer will still send.
+         */
+        post: operations["live_seal_endpoint_v1_live_sessions__session_id__seal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/live/sessions/{session_id}/tail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live Tail Endpoint
+         * @description Stream one journal as server-sent events.
+         *
+         *     SSE rather than a WebSocket, deliberately. Every guarantee this backend
+         *     makes — refusing an unsafe runtime binding, the loopback Host check,
+         *     bearer/API-key/browser-session authentication, CSRF, project scoping —
+         *     lives in one ``@app.middleware("http")``, and Starlette does not run HTTP
+         *     middleware for WebSocket scopes. A WebSocket endpoint would have to
+         *     restate all of it, and the first drift would be a vulnerability. As an
+         *     ordinary GET this route inherits the entire stack unchanged, is covered
+         *     by the same-origin policy, and gets ``Last-Event-ID`` resume for free.
+         */
+        get: operations["live_tail_endpoint_v1_live_sessions__session_id__tail_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/metrics/turns": {
         parameters: {
             query?: never;
@@ -729,6 +832,22 @@ export interface components {
             trace_id: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /** CheckpointAcceptedResponse */
+        CheckpointAcceptedResponse: {
+            /** Accepted Records */
+            accepted_records: number;
+            /** Accepted Through */
+            accepted_through: number;
+            /** Journal Id */
+            journal_id: string;
+            /** Sealable */
+            sealable: boolean;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "stale" | "finalized" | "abandoned";
         };
         /** ClockDomain */
         ClockDomain: {
@@ -1728,6 +1847,80 @@ export interface components {
             sha256: string;
             /** Signal */
             signal: string;
+        };
+        /**
+         * LiveSealResponse
+         * @description The artifact an operator explicitly materialized from a live buffer.
+         */
+        LiveSealResponse: {
+            /** Bundle Id */
+            bundle_id: string;
+            /** Close Observed */
+            close_observed: boolean;
+            /** Completeness */
+            completeness: string;
+            /** Created */
+            created: boolean;
+            /** Finality */
+            finality: string;
+            /** Journal Complete */
+            journal_complete: boolean;
+            /** Last Sequence */
+            last_sequence: number;
+            /** Session Id */
+            session_id: string;
+            /** Torn Tail Bytes */
+            torn_tail_bytes: number;
+            /** Unfinished Operations */
+            unfinished_operations: number;
+        };
+        /** LiveSessionPageResponse */
+        LiveSessionPageResponse: {
+            /** Following Journal Directory */
+            following_journal_directory: boolean;
+            /** Items */
+            items: components["schemas"]["LiveSessionResponse"][];
+            /** Limitations */
+            limitations: string[];
+        };
+        /**
+         * LiveSessionResponse
+         * @description One conversation still being written. Deliberately not an incident.
+         *
+         *     Every field here is an observation about the *journal*, never a verdict about
+         *     the session. ``close_observed`` is the only thing that can say the producer
+         *     finished, and until it is true nothing downstream may treat this session as
+         *     complete.
+         */
+        LiveSessionResponse: {
+            /** Available From Sequence */
+            available_from_sequence: number;
+            /** Bundle Id */
+            bundle_id: string;
+            /** Close Observed */
+            close_observed: boolean;
+            /** Journal Complete */
+            journal_complete: boolean;
+            /** Journal Id */
+            journal_id: string;
+            /** Last Append Unix Nano */
+            last_append_unix_nano: string;
+            /** Last Sequence */
+            last_sequence: number;
+            /** Sealable */
+            sealable: boolean;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "journal" | "checkpoint";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "live" | "stale" | "finalized" | "abandoned";
         };
         /** MediaLocator */
         MediaLocator: {
@@ -4359,6 +4552,542 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IncidentExportResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    live_sessions_endpoint_v1_live_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveSessionPageResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    live_checkpoints_endpoint_v1_live_sessions__session_id__checkpoints_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        /** @description A contiguous run of plaintext checkpoint frames from one journal, starting at the header frame or at the sequence the server last accepted. Encrypted journals cannot be uploaded: the server holds no key. */
+        requestBody: {
+            content: {
+                "application/vnd.earshot.checkpoint+frames": string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckpointAcceptedResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    live_seal_endpoint_v1_live_sessions__session_id__seal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveSealResponse"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveSealResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Entity Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    live_tail_endpoint_v1_live_sessions__session_id__tail_get: {
+        parameters: {
+            query?: {
+                /** @description start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three. */
+                from?: string;
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A server-sent event stream of admitted journal facts in journal order. Event names are open, record, operation_open, limit, exhausted, finalize, replay_truncated, reset, overflow, heartbeat and end. Every record-bearing event carries id: <journal_id>:<sequence>, so a dropped connection resumes with Last-Event-ID. No analysis, diagnosis, or turn metric appears on this stream: derived analysis binds to the digest of a finished artifact and this session has none. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": string;
                 };
             };
             /** @description Bad Request */

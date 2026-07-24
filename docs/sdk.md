@@ -329,6 +329,32 @@ journal is removed once the incident reaches a durable successor; a journal left
 by a crash between finalize and cleanup recovers to a byte-identical duplicate, which
 content-addressed ingest deduplicates.
 
+## Watching an open conversation
+
+The same journal that makes a crash recoverable makes an open session watchable, with no
+new capture surface and nothing extra retained. `earshot serve --checkpoint-dir DIR`
+follows the journals in a directory the backend process can read and exposes them under
+`/v1/live` as a server-sent event stream; see
+[Backend API](backend-api.md#live-sessions). Following a directory is an explicit
+opt-in, the same storage decision as writing one.
+
+For a producer whose backend is elsewhere, `earshot.checkpoint.CheckpointUploader` tails
+its own journal file from a dedicated daemon thread and forwards whole frames to
+`POST /v1/live/sessions/{session_id}/checkpoints`. It only ever forwards bytes the
+journal already holds, so a slow or unreachable backend cannot add latency to a voice
+callback; batching is bounded by time and by size, a batch is always cut at a frame
+boundary, and any failure stops the uploader permanently and degrades to local journal
+only. An encrypted journal cannot be uploaded — the backend holds no key — so remote
+tailing is an explicit decision to let it read those frames.
+
+A live view is never an artifact. The stream carries only admitted journal records, and
+no analysis, diagnosis, or turn metric is derived from it: derived analysis binds to the
+digest of a finished artifact, and an open session has none. Everything unknowable
+before close — session status and end, turn membership, interruption classification, the
+privacy manifest — is enumerated on the wire rather than left absent, and an operation
+that started without being observed to end travels as its own event kind with no end and
+no duration.
+
 ## Capture seam: `ObservationSink`
 
 A capture source authors governed facts through `earshot.observation.ObservationSink`

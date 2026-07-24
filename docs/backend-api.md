@@ -237,6 +237,95 @@ alongside the `format`, the governed `destination`, and the artifact `digest`.
 Physically purges evidence and derived analysis, leaving a content-free tombstone.
 Repeated purge is idempotent; retrieval returns 410.
 
+## Live sessions
+
+`/v1/live/*` is a separate collection from `/v1/incidents` because a conversation still
+being written is a different kind of thing from an artifact. A live session is never
+listed as an incident, never carries a digest, and therefore never carries analysis: a
+`DerivedAnalysis` binds to `input_sha256`, and there is nothing to bind to yet. The
+listing states that as a limitation rather than returning an empty analysis, because
+"analysis did not run" and "analysis found nothing" are different claims.
+
+Two sources feed the same buffer. `earshot serve --checkpoint-dir DIR` (env
+`EARSHOT_CHECKPOINT_DIR`) follows the crash-recovery journals in a directory this
+process can read; `POST …/checkpoints` accepts frames uploaded by a remote producer.
+Following a directory is an explicit opt-in, the same storage decision as writing one.
+
+### `GET /v1/live/sessions`
+
+Project-scoped list of open journals: identity, `state`
+(`live` / `stale` / `finalized` / `abandoned`), the journal sequence reached, whether a
+close was observed, whether the journal is complete, and whether an operator could seal
+it. The response also carries the collection's own `limitations`.
+
+### `GET /v1/live/sessions/{session_id}/tail`
+
+`text/event-stream`. Server-sent events, not a WebSocket: every guarantee this backend
+makes — unsafe-binding refusal, the loopback `Host` check, bearer / API-key /
+browser-session authentication, CSRF, project scoping — lives in one
+`@app.middleware("http")`, and Starlette does not run HTTP middleware for WebSocket
+scopes. As an ordinary `GET`, the tail inherits that stack unchanged, is covered by the
+same-origin policy (the API sets no CORS headers), and gets `Last-Event-ID` resume for
+free. A live request carrying an `Origin` that is not this host is refused with
+`403 EARSHOT_ORIGIN_NOT_ALLOWED` unless it authenticated with a bearer token.
+
+Events are the journal's own record kinds, verbatim and without inference: `open`,
+`record`, `operation_open`, `limit`, `exhausted`, `finalize`, plus the control events
+`replay_truncated`, `reset`, `overflow`, `end`, and a periodic `heartbeat`. Every
+record-bearing event carries `id: <journal_id>:<sequence>`; control events deliberately
+carry no `id`, so they can never advance a client's resume cursor past a position it did
+not receive.
+
+What cannot be known mid-session is said on the wire rather than left absent. The `open`
+event carries `in_progress: true` and `unknown_until_close`, which enumerates session
+status and end, manifest finality and completeness, the privacy manifest, turn
+membership, turn metrics, interruption classification, derived analysis, and diagnoses.
+An operation that started and has not been observed to end arrives as its own
+`operation_open` event with `status: "unknown"`, `ended_at: null`, `duration_nano: null`
+and `end_observed: false`, so a client physically cannot render it as a completed
+`Operation`.
+
+`from=start` (default) replays the retained window, `from=live` sends only what arrives
+next, and `from=<sequence>` resumes at a position. `Last-Event-ID` overrides all three;
+when it names a different journal the server emits `reset` first, so two sessions cannot
+be spliced into one client-side timeline. Anything the replay window no longer holds is
+declared with `replay_truncated` rather than silently skipped.
+
+Backpressure is lossless by construction. Every buffer is bounded, and a subscriber that
+falls behind its per-connection queue receives `overflow` and has its stream closed
+rather than having events dropped: the durable journal still holds every record, so a
+reconnect with `Last-Event-ID` catches up exactly. Over-capacity connections are refused
+with `429 EARSHOT_TAIL_CAPACITY`, and an unknown or out-of-project session is
+`404 EARSHOT_SESSION_NOT_LIVE`.
+
+### `POST /v1/live/sessions/{session_id}/checkpoints`
+
+`Content-Type: application/vnd.earshot.checkpoint+frames`, a contiguous run of plaintext
+journal frames. Separator, length bound, CRC and strict sequence contiguity are checked
+exactly as the journal reader checks them. A batch with a torn tail is refused whole
+(`400 EARSHOT_CHECKPOINT_FRAMES_INVALID`) — a torn tail is meaningful at the end of a
+crashed file, but in an upload it only means a malformed request, and accepting a prefix
+would let a client decide where the server's evidence stops. A batch that skips a
+sequence is `409 EARSHOT_CHECKPOINT_SEQUENCE_GAP`; re-sending already-accepted frames is
+idempotent. Per-project session quotas return `429 EARSHOT_LIVE_CAPACITY`. An encrypted
+journal cannot be uploaded: the server holds no key, so its header does not decode.
+
+### `POST /v1/live/sessions/{session_id}/seal`
+
+The only path from a live buffer to an artifact, and always an operator action. The
+server never seals on its own: it cannot distinguish a crashed producer from a slow one,
+and guessing would manufacture an artifact nobody produced. Sealing a journal that
+reached close reproduces exactly what the producer will send, so it keeps its bundle id
+and content-addressed ingest deduplicates it. Sealing one that did not produces a
+_provisional_ artifact — `finality: "provisional"`, `completeness: "incomplete"`,
+`session.status: "interrupted"`, no session end, and a `manifest.recovery` declaration —
+under a distinct, deterministic bundle id derived from the sequence sealed, so the
+producer's own final artifact can still land. A session that outgrew its retained frame
+window is `409 EARSHOT_SESSION_NOT_SEALABLE` rather than being sealed short.
+
+Live buffers expire on a TTL and are dropped as soon as the real artifact is ingested
+through `POST /v1/incidents`.
+
 ## Strict request handling
 
 The server reads request bytes directly to enforce:
@@ -275,7 +364,12 @@ into the content-addressed directory. Corruption is explicit, never silently rep
 ```bash
 earshot serve --data-dir .earshot
 EARSHOT_TOKEN=... earshot serve --host 127.0.0.1 --behind-tls-proxy
+earshot serve --data-dir .earshot --checkpoint-dir .earshot/journals
 ```
+
+An event stream wants a direct connection or an SSE-aware proxy. The tail sends
+`Cache-Control: no-store` and `X-Accel-Buffering: no` and heartbeats every 15 seconds; a
+buffering proxy will still turn it into a long poll.
 
 Uvicorn access logging is off by default so bundle IDs do not enter a second retention
 domain.
