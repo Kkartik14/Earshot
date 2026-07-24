@@ -21,14 +21,18 @@ if TYPE_CHECKING:
 
 from .contract import (
     CausalLink,
+    ClockRelation,
     ContractModel,
     DerivedAnalysis,
     Evidence,
     IncidentBundle,
     IncidentProfile,
+    MediaRef,
     Operation,
     TimePoint,
     TimeRange,
+    media_custody_incoherence,
+    media_declares_custody_extensions,
 )
 from .measurement_semantics import measurement_value_limitation
 from .privacy import (
@@ -51,6 +55,7 @@ from .privacy import (
     sanitize_source_label,
 )
 from .versions import (
+    MEDIA_CUSTODY_MIN_CONTRACT_VERSION,
     RECOVERY_MIN_CONTRACT_VERSION,
     SUPPORTED_CONTRACT_VERSIONS,
     SUPPORTED_SEMANTIC_PROFILE_VERSIONS,
@@ -489,6 +494,110 @@ def _check_media_locator(
         )
 
 
+def _observation_clock_domains(profile: IncidentProfile) -> frozenset[str]:
+    """Return the clock domains the session's own observations are recorded in.
+
+    This is the target set media has to reach to be overlayable: aligning a media
+    file to a domain nothing in the incident uses would be arithmetic without a
+    reader.
+    """
+
+    domains: set[str] = set()
+    for operation in profile.operations:
+        for point in (operation.started_at, operation.ended_at):
+            if point is not None and point.clock_domain_id is not None:
+                domains.add(point.clock_domain_id)
+    for event in profile.events:
+        if event.time.clock_domain_id is not None:
+            domains.add(event.time.clock_domain_id)
+    return frozenset(domains)
+
+
+def _media_is_alignable(
+    media_domain: str,
+    observation_domains: frozenset[str],
+    relations: Iterable[ClockRelation],
+) -> bool:
+    """Report whether a declared calibration can place this media on the timeline.
+
+    Alignment reuses ``ClockRelation`` — a media file's timeline is just another
+    clock domain — so this asks exactly what the analyzer's aligner can answer:
+    is the media domain one the session already records in, or does a single
+    declared relation join it to one? Direction does not matter, because a
+    calibration is an invertible affine map and the aligner applies relations in
+    reverse. Multi-hop chains are deliberately *not* counted as alignable: the
+    aligner composes neither relations nor their uncertainties, so treating a
+    chain as aligned would promise an overlay nothing can actually compute.
+    """
+
+    if media_domain in observation_domains:
+        return True
+    return any(
+        (
+            relation.from_clock_domain_id == media_domain
+            and relation.to_clock_domain_id in observation_domains
+        )
+        or (
+            relation.to_clock_domain_id == media_domain
+            and relation.from_clock_domain_id in observation_domains
+        )
+        for relation in relations
+    )
+
+
+def _check_media_custody(
+    media: MediaRef,
+    observation_domains: frozenset[str],
+    relations: tuple[ClockRelation, ...],
+    clock_domains: Mapping[str, Any],
+    base: tuple[str | int, ...],
+    issues: list[ValidationIssue],
+) -> None:
+    """Refuse a custody claim that asserts more than its holder can back.
+
+    Earshot never reads the referenced bytes, so the only integrity it can
+    honestly publish is the one the reference itself declares. A
+    ``content_digest`` reference without a digest, or an ``opaque_handle``
+    reference that smuggles one in anyway, is a claim of verification nobody
+    performed — the same class of error as a recovered bundle claiming a clean
+    close, and refused the same structural way.
+    """
+
+    incoherence = media_custody_incoherence(media)
+    if incoherence is not None:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_MEDIA_CUSTODY_INCOHERENT",
+                path=base + ("integrity",),
+                message=incoherence,
+            )
+        )
+    if media.clock_domain_id is None:
+        return
+    if media.clock_domain_id not in clock_domains:
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_MEDIA_CLOCK_UNKNOWN",
+                path=base + ("clock_domain_id",),
+                message=f"unknown media clock domain {media.clock_domain_id!r}",
+            )
+        )
+        return
+    if not _media_is_alignable(media.clock_domain_id, observation_domains, relations):
+        # A warning, not an error: media nobody can line up with the session is
+        # still legitimate custody. It simply cannot be overlaid, and saying so
+        # is the honest outcome — the same one an uncalibrated cross-clock
+        # latency gets.
+        issues.append(
+            ValidationIssue(
+                code="EARSHOT_MEDIA_UNALIGNED",
+                path=base + ("clock_domain_id",),
+                message="no declared clock relation aligns this media with the timeline",
+                severity="warning",
+            )
+        )
+
+
 def _capture_allowed(policy: Any | None) -> bool:
     if policy is None or not policy.captured:
         return False
@@ -887,6 +996,22 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                 ),
             )
         )
+    elif _version_below(manifest.schema_version, MEDIA_CUSTODY_MIN_CONTRACT_VERSION):
+        # A digest-and-size reference is exactly what 0.1.0 could express, so the
+        # existing corpus keeps validating; anything using the custody members is
+        # claiming a contract that version does not have.
+        for index, media in enumerate(profile.media_refs):
+            if media_declares_custody_extensions(media):
+                issues.append(
+                    ValidationIssue(
+                        code="EARSHOT_SCHEMA_VERSION_UNSUPPORTED",
+                        path=("profile", "media_refs", index, "integrity"),
+                        message=(
+                            f"media custody requires contract version "
+                            f"{MEDIA_CUSTODY_MIN_CONTRACT_VERSION} or newer"
+                        ),
+                    )
+                )
     if manifest.semantic_profile_version not in SUPPORTED_SEMANTIC_PROFILE_VERSIONS:
         issues.append(
             ValidationIssue(
@@ -1701,6 +1826,9 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
                 )
             )
 
+    # Computed once, and only when there is media to align, so an incident
+    # without custody pays nothing for the custody rules.
+    observation_domains = _observation_clock_domains(profile) if profile.media_refs else frozenset()
     for index, media in enumerate(profile.media_refs):
         base = ("profile", "media_refs", index)
         _session_match(media.session_id, session_id, base + ("session_id",), issues)
@@ -1716,8 +1844,20 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
         _check_capture_class(
             media.capture_class, privacy_policies, base + ("capture_class",), issues
         )
-        if media.byte_range is not None and (
-            media.byte_range.offset + media.byte_range.length > media.size_bytes
+        _check_media_custody(
+            media,
+            observation_domains,
+            profile.clock_relations,
+            clock_domains,
+            base,
+            issues,
+        )
+        # A range is only checkable against a measured size. An opaque handle
+        # carrying one is already refused above as an incoherent custody claim.
+        if (
+            media.byte_range is not None
+            and media.size_bytes is not None
+            and media.byte_range.offset + media.byte_range.length > media.size_bytes
         ):
             issues.append(
                 ValidationIssue(

@@ -53,6 +53,7 @@ from .contract import (
     RetentionPolicy,
     Session,
     TimePoint,
+    media_custody_incoherence,
 )
 from .contract import (
     Omission as ContractOmission,
@@ -1671,7 +1672,15 @@ class IncidentRecorder:
         return sanitized
 
     def add_media_ref(self, media: MediaRef) -> bool:
-        """Attach governed media metadata; media bytes are never embedded."""
+        """Attach custody metadata for media somebody else holds.
+
+        Media bytes are never embedded, fetched, cached, or proxied: the record
+        says where the media lives, what it covers, and whether anyone measured
+        it. A credential-bearing or non-portable locator is stripped and recorded
+        as an omission rather than retained, and an integrity claim the reference
+        cannot back is refused outright at admission instead of surviving until
+        ``close()``.
+        """
 
         from .privacy import media_locator_safety
 
@@ -1697,6 +1706,9 @@ class IncidentRecorder:
             raise ValueError("media reference belongs to a different session")
         if media.capture_class != CaptureClass.AUDIO.value:
             raise ValueError("media references require the audio capture class")
+        incoherence = media_custody_incoherence(media)
+        if incoherence is not None:
+            raise ValueError(incoherence)
         if not self.config.capture_policy.allows(CaptureClass.AUDIO):
             with self._lock:
                 self._require_open()

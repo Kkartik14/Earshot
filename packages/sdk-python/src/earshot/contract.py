@@ -572,18 +572,99 @@ class MediaLocator(ContractModel):
 
 
 class MediaRef(ContractModel):
+    """A reference to media somebody else holds — never the media itself.
+
+    Earshot stores custody, not content: who holds the bytes, what they are,
+    which window of the session they cover, under what consent and retention,
+    and which clock domain their own timeline runs on. It never ingests,
+    fetches, caches, or proxies them.
+
+    ``integrity`` is the honesty discriminator that makes that distinction
+    legible instead of overloading a null:
+
+    ``content_digest``
+        Somebody measured these bytes and declared a ``sha256`` and
+        ``size_bytes`` for them. The digest is a *declaration carried by the
+        artifact*, not an earshot verification — earshot still never read the
+        bytes — but it is a checkable commitment a holder can be held to.
+    ``opaque_handle``
+        Nobody measured the bytes on this path, so the reference carries no
+        digest and no size and names the ``custodian`` who does hold them.
+        ``byte_range`` is meaningless here: you cannot range into bytes whose
+        length was never observed.
+
+    Making ``sha256``/``size_bytes`` optional is what the real custody case
+    requires. The alternative — keeping them required and letting a producer
+    fill them with something it did not compute — is exactly the dishonesty
+    this contract exists to prevent. The coherence rule is enforced by
+    :func:`media_custody_incoherence` at every boundary, not by convention.
+    """
+
     media_id: OpaqueId
     session_id: OpaqueId
     stream_id: OpaqueId
     media_kind: NonEmptyStr
     content_type: NonEmptyStr
-    sha256: Sha256
-    size_bytes: StrictInt = Field(ge=0)
+    integrity: Literal["content_digest", "opaque_handle"] = "content_digest"
+    sha256: Sha256 | None = None
+    size_bytes: StrictInt | None = Field(default=None, ge=0)
+    # Where the bytes actually live. Required for an opaque handle: a reference
+    # earshot cannot attest to is worthless unless it names who can.
+    custodian: SemanticCode | None = None
+    # The media file's own timeline, as an ordinary clock domain. Aligning it to
+    # the session reuses ``ClockRelation`` rather than inventing a second,
+    # parallel synchronization model with its own uncertainty semantics.
+    clock_domain_id: OpaqueId | None = None
+    consent: ConsentRecord | None = None
+    retention: RetentionPolicy | None = None
     time_range: TimeRange | None = None
     byte_range: ByteRange | None = None
     locator: MediaLocator | None = None
     capture_class: NormalizedCaptureClassName = "audio"
     attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+def media_custody_incoherence(media: MediaRef) -> str | None:
+    """Return why this custody claim contradicts itself, or ``None``.
+
+    One implementation of the rule, used by the recorder (which refuses the
+    record at admission) and by ``validation`` (which refuses the artifact at
+    every boundary with a stable code). Two copies of an honesty rule are two
+    chances for them to disagree, and a disagreement here would let an
+    unverifiable reference pass as a verified one.
+    """
+
+    if media.integrity == "content_digest":
+        if media.sha256 is None or media.size_bytes is None:
+            return "a content_digest media reference must carry sha256 and size_bytes"
+        return None
+    if media.sha256 is not None or media.size_bytes is not None:
+        return "an opaque_handle media reference cannot assert a digest or a size"
+    if media.custodian is None:
+        return "an opaque_handle media reference must name the custodian holding the bytes"
+    if media.byte_range is not None:
+        return "an opaque_handle media reference cannot range into unmeasured bytes"
+    return None
+
+
+def media_declares_custody_extensions(media: MediaRef) -> bool:
+    """Report whether this reference uses a member the 0.1.0 contract lacked.
+
+    A 0.1.0 ``MediaRef`` could only be a digest-and-size reference. An artifact
+    claiming 0.1.0 while using an opaque handle, a custodian, a media clock
+    domain, consent, or retention is asserting a contract it cannot express —
+    the same failure ``manifest.recovery`` has at 0.1.0.
+    """
+
+    return (
+        media.integrity != "content_digest"
+        or media.sha256 is None
+        or media.size_bytes is None
+        or media.custodian is not None
+        or media.clock_domain_id is not None
+        or media.consent is not None
+        or media.retention is not None
+    )
 
 
 class Diagnosis(AnalysisContractModel):
