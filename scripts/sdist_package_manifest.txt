@@ -35,6 +35,7 @@ packages/sdk-python/src/earshot/connectors/types.py
 packages/sdk-python/src/earshot/connectors/vapi.py
 packages/sdk-python/src/earshot/context.py
 packages/sdk-python/src/earshot/contract.py
+packages/sdk-python/src/earshot/delivery.py
 packages/sdk-python/src/earshot/engines/__init__.py
 packages/sdk-python/src/earshot/engines/base.py
 packages/sdk-python/src/earshot/engines/device.py

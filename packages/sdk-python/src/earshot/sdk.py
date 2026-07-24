@@ -24,6 +24,11 @@ from .checkpoint.writer import (
 )
 from .clock import Clock
 from .context import _conversation_scope, is_instrumentation_suppressed
+from .delivery import (
+    DeliveryContext,
+    DeliverySink,
+    default_delivery_registry,
+)
 from .exporter import (
     BoundedAsyncExporter,
     ExportDiagnostic,
@@ -45,6 +50,7 @@ from .versions import PACKAGE_VERSION
 
 if TYPE_CHECKING:  # pragma: no cover - the projection seam stays a lazy import
     from .contract import IncidentBundle
+    from .delivery import DeliveryFactory, RegisteredDelivery
     from .exporters.registry import IncidentExporter, RegisteredExporter
 
 
@@ -131,8 +137,8 @@ class _ExportRouter:
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.RLock()
         self._pid = os.getpid()
-        self._exporter: BoundedAsyncExporter | None = None
-        self._retiring: list[BoundedAsyncExporter] = []
+        self._exporter: DeliverySink | None = None
+        self._retiring: list[DeliverySink] = []
         self._history = {
             "accepted": 0,
             "sent": 0,
@@ -205,7 +211,7 @@ class _ExportRouter:
                 return False
             return exporter.submit(item)
 
-    def replace(self, exporter: BoundedAsyncExporter | None, timeout: float = 5.0) -> bool:
+    def replace(self, exporter: DeliverySink | None, timeout: float = 5.0) -> bool:
         self._ensure_pid()
         with self._lifecycle_lock:
             with self._lock:
@@ -216,7 +222,7 @@ class _ExportRouter:
             if previous is not None:
                 retiring.append(previous)
             deadline = time.monotonic() + max(0.0, timeout)
-            incomplete: list[BoundedAsyncExporter] = []
+            incomplete: list[DeliverySink] = []
             completed: list[ExporterStatus] = []
             for candidate in retiring:
                 remaining = max(0.0, deadline - time.monotonic())
@@ -240,7 +246,7 @@ class _ExportRouter:
             complete = True
             if exporter is not None:
                 complete = exporter.flush(timeout)
-            incomplete: list[BoundedAsyncExporter] = []
+            incomplete: list[DeliverySink] = []
             completed: list[ExporterStatus] = []
             for candidate in retiring:
                 remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
@@ -400,6 +406,62 @@ def _destination_fingerprint(endpoint: str | None, project_id: str) -> str | Non
     if not normalized.endswith("/v1/incidents"):
         normalized += "/v1/incidents"
     return hashlib.sha256(f"{normalized}\0{project_id}".encode()).hexdigest()
+
+
+def _build_async_delivery(context: DeliveryContext) -> DeliverySink:
+    """The ``async`` built-in: a bounded background queue.
+
+    ``BoundedAsyncExporter`` is resolved from this module's namespace rather than
+    imported into the factory, so the delivery-mode tests that substitute
+    ``sdk.BoundedAsyncExporter`` still intercept construction after the client
+    routes delivery selection through the registry.
+    """
+
+    return BoundedAsyncExporter(
+        context.transport,
+        capacity=context.queue_capacity,
+        max_queue_bytes=context.max_queue_bytes,
+        diagnostic=context.diagnostic,
+    )
+
+
+def _build_sync_delivery(context: DeliveryContext) -> DeliverySink:
+    """The ``sync`` built-in: deliver on the caller thread within a deadline."""
+
+    from .exporter import SynchronousExporter
+
+    return SynchronousExporter(
+        context.transport,
+        max_elapsed=context.sync_deadline_seconds,
+        diagnostic=context.diagnostic,
+    )
+
+
+def _build_durable_delivery(context: DeliveryContext) -> DeliverySink:
+    """The ``durable`` built-in: atomically spool to disk before returning."""
+
+    from .exporter import DurableExporter
+
+    return DurableExporter(
+        context.transport,
+        spool_dir=Path(context.spool_dir or ""),
+        destination_fingerprint=context.destination_fingerprint,
+        max_spool_items=context.max_spool_items,
+        max_spool_bytes=context.max_spool_bytes,
+        permanent_rejection_policy=context.permanent_rejection_policy,
+        diagnostic=context.diagnostic,
+    )
+
+
+# Register the built-in delivery strategies once, so a caller selects any of them
+# -- or a strategy their own process registered -- by the same ``delivery_mode``
+# name, through the same registry the projection seam uses for ``format``.
+for _mode, _factory in (
+    ("async", _build_async_delivery),
+    ("sync", _build_sync_delivery),
+    ("durable", _build_durable_delivery),
+):
+    default_delivery_registry().register(_mode, _factory, replace=True)
 
 
 class Client:
@@ -598,8 +660,12 @@ class Client:
             raise ValueError("sampling_rate must be between zero and one")
         if not sampling_seed:
             raise ValueError("sampling_seed must not be empty")
-        if delivery_mode not in {"async", "sync", "durable"}:
-            raise ValueError("delivery_mode must be async, sync, or durable")
+        registered_delivery_modes = default_delivery_registry().names()
+        if delivery_mode not in registered_delivery_modes:
+            raise ValueError(
+                "delivery_mode must be a registered delivery mode "
+                f"({', '.join(registered_delivery_modes)})"
+            )
         if sync_deadline_seconds <= 0:
             raise ValueError("sync_deadline_seconds must be positive")
         if max_spool_items < 1 or max_spool_bytes < 1:
@@ -678,34 +744,27 @@ class Client:
                 else None
             )
             if transport is None:
-                next_exporter = None
-            elif delivery_mode == "async":
-                next_exporter = BoundedAsyncExporter(
-                    transport,
-                    capacity=queue_capacity,
-                    max_queue_bytes=max_queue_bytes,
-                    diagnostic=diagnostic,
-                )
-            elif delivery_mode == "sync":
-                from .exporter import SynchronousExporter
-
-                next_exporter = SynchronousExporter(
-                    transport,
-                    max_elapsed=sync_deadline_seconds,
-                    diagnostic=diagnostic,
-                )
+                next_exporter: DeliverySink | None = None
             else:
-                from .exporter import DurableExporter
-
-                destination_fingerprint = _destination_fingerprint(endpoint, project_id)
-                next_exporter = DurableExporter(
-                    transport,
-                    spool_dir=Path(resolved_spool_dir or ""),
-                    destination_fingerprint=destination_fingerprint,
-                    max_spool_items=max_spool_items,
-                    max_spool_bytes=max_spool_bytes,
-                    permanent_rejection_policy=permanent_rejection_policy,
-                    diagnostic=diagnostic,
+                # Select delivery through the same registry the projection seam uses
+                # for ``format``: the built-in async/sync/durable factories -- and
+                # any a host registered -- are reached by name, not hard-wired here.
+                next_exporter = default_delivery_registry().build(
+                    delivery_mode,
+                    DeliveryContext(
+                        transport=transport,
+                        queue_capacity=queue_capacity,
+                        max_queue_bytes=max_queue_bytes,
+                        sync_deadline_seconds=sync_deadline_seconds,
+                        spool_dir=(
+                            None if resolved_spool_dir is None else Path(resolved_spool_dir)
+                        ),
+                        destination_fingerprint=_destination_fingerprint(endpoint, project_id),
+                        max_spool_items=max_spool_items,
+                        max_spool_bytes=max_spool_bytes,
+                        permanent_rejection_policy=permanent_rejection_policy,
+                        diagnostic=diagnostic,
+                    ),
                 )
             next_config = SdkConfig(
                 endpoint=endpoint,
@@ -926,6 +985,28 @@ class Client:
         from .exporters.registry import default_registry
 
         return default_registry().names()
+
+    def register_delivery(
+        self,
+        name: str,
+        factory: DeliveryFactory,
+        *,
+        replace: bool = False,
+    ) -> RegisteredDelivery:
+        """Register a delivery strategy so ``delivery_mode`` can select it by name.
+
+        This is the delivery counterpart to :meth:`register_exporter`: the built-in
+        ``async`` / ``sync`` / ``durable`` modes and any a host registers here are
+        selected the same first-class way, through one seam rather than a hard-wired
+        switch inside the client.
+        """
+
+        return default_delivery_registry().register(name, factory, replace=replace)
+
+    def delivery_modes(self) -> tuple[str, ...]:
+        """Every ``delivery_mode`` this client's config accepts, sorted."""
+
+        return default_delivery_registry().names()
 
     def flush(self, timeout: float | None = 5.0) -> bool:
         return self._router.flush(timeout)
@@ -1495,6 +1576,23 @@ def exporter_formats() -> tuple[str, ...]:
     """Every exporter name :func:`export` accepts, sorted."""
 
     return _client.exporter_formats()
+
+
+def register_delivery(
+    name: str,
+    factory: DeliveryFactory,
+    *,
+    replace: bool = False,
+) -> RegisteredDelivery:
+    """Register a delivery strategy so ``delivery_mode`` can select it by name."""
+
+    return _client.register_delivery(name, factory, replace=replace)
+
+
+def delivery_modes() -> tuple[str, ...]:
+    """Every ``delivery_mode`` the SDK config accepts, sorted."""
+
+    return _client.delivery_modes()
 
 
 def flush(timeout: float | None = 5.0) -> bool:
