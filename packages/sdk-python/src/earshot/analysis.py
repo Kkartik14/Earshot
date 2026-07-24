@@ -186,6 +186,14 @@ DEFAULT_SLO_RECIPE = SloRecipe()
 
 @dataclass(frozen=True)
 class Delta:
+    """One derived interval, or the exact reason there is none.
+
+    ``uncertainty`` is the propagated error bound in nanoseconds. ``None`` means
+    *unknown* -- some contributing bound was never declared -- and is reported as
+    a limitation rather than collapsed to an exact 0, which would claim a
+    precision nothing measured.
+    """
+
     availability: str
     nanoseconds: int | None
     basis: str
@@ -202,6 +210,12 @@ class Delta:
         if self.nanoseconds is not None:
             output["value"] = self.nanoseconds / 1_000_000
             output["unit"] = "ms"
+            # A known, non-zero bound travels with the value it bounds instead of
+            # being dropped on the way out. A zero bound adds nothing to the value
+            # (``confidence: measured`` already says the endpoints declared none),
+            # and an unknown one is carried as ``limitation``, never as a 0.
+            if self.uncertainty:
+                output["uncertainty"] = self.uncertainty / 1_000_000
         if self.limitation:
             output["limitation"] = self.limitation
         return output
@@ -224,20 +238,61 @@ def _shared_time_deltas(start: TimePoint, end: TimePoint) -> tuple[tuple[str, in
     )
 
 
-class _AmbiguousAlignment:
-    """Sentinel: in-window calibrations disagree beyond their combined uncertainty.
+@dataclass(frozen=True)
+class _RefusedAlignment:
+    """Sentinel: a declared calibration applies here but cannot be trusted here.
 
-    Two declared relations can both place a cross-clock instant, and when they
-    disagree by more than they claim to know, there is no honest way to pick one.
-    The aligner returns this rather than silently choosing a lexical winner, so
-    ``comparable_delta`` reports the cross-clock result as unavailable/ambiguous.
+    This is not "no calibration exists" -- one does, and refusing to apply it is a
+    finding in its own right, so each refusal carries the ``limitation`` code the
+    metric reports. The aligner returns one of these rather than silently choosing
+    a winner, guessing a number, or letting the arithmetic raise.
     """
 
-    __slots__ = ()
+    limitation: str
 
 
-_AMBIGUOUS_ALIGNMENT = _AmbiguousAlignment()
-_Alignment = tuple[int, int]
+# Two declared relations both place the instant, and they disagree by more than
+# they claim to know: there is no honest way to pick one.
+_AMBIGUOUS_ALIGNMENT = _RefusedAlignment("cross_clock_ambiguous")
+# The relation's affine slope is not strictly positive: it maps a later instant to
+# an earlier one (time reversal) or collapses every instant onto one (no inverse).
+# The contract refuses such a relation outright; this is the arithmetic saying so
+# for anything built around it.
+_DEGENERATE_ALIGNMENT = _RefusedAlignment("cross_clock_calibration_degenerate")
+# Applying the relation takes the instant outside the nanosecond domain the
+# contract can represent, so there is no coordinate to report. Refusing beats
+# returning a number no artifact could hold -- or raising ``OverflowError``.
+_UNREPRESENTABLE_ALIGNMENT = _RefusedAlignment("cross_clock_calibration_unrepresentable")
+# An alignment is ``(aligned_unix_nano, own_uncertainty_nano_or_unknown)``.
+_Alignment = tuple[int, int | None]
+
+
+def _finite_float(compute: Callable[[], float]) -> float | None:
+    """Return ``compute()`` when it is a finite float, else ``None``.
+
+    Float arithmetic over nanosecond magnitudes can overflow to infinity, and
+    converting an oversized ``int`` operand raises ``OverflowError`` outright.
+    Both are the same answer -- there is no representable value -- so both become
+    ``None`` here instead of a crash or an ``inf`` that ``round`` would reject.
+    """
+
+    try:
+        value = compute()
+    except (OverflowError, ZeroDivisionError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _representable_nano(value: int) -> int | _RefusedAlignment:
+    """Keep an aligned wall coordinate inside the contract's nanosecond domain.
+
+    ``DecimalNano`` is an unsigned 64-bit count of nanoseconds, so a coordinate
+    outside ``[0, UINT64_MAX]`` is not a time any artifact could hold. A relation
+    that maps an instant out there has not produced a coordinate, and saying so is
+    better than reporting a number no evidence could carry.
+    """
+
+    return value if 0 <= value <= UINT64_MAX else _UNREPRESENTABLE_ALIGNMENT
 
 
 class _ClockAligner:
@@ -255,16 +310,18 @@ class _ClockAligner:
             key = (relation.from_clock_domain_id, relation.to_clock_domain_id)
             self._by_pair[key].append(relation)
 
-    def align(
-        self, point: TimePoint, target_domain: str
-    ) -> _Alignment | _AmbiguousAlignment | None:
-        """Return ``(aligned_unix_nano, added_uncertainty_nano)``, ``None``, or ambiguous.
+    def align(self, point: TimePoint, target_domain: str) -> _Alignment | _RefusedAlignment | None:
+        """Return ``(aligned_unix_nano, own_uncertainty_nano)``, a refusal, or ``None``.
 
         Every declared ``point.domain -> target`` relation is applied forward and
         every ``target -> point.domain`` relation is applied in reverse (its exact
         affine inverse). Among the in-window results the alignment is decided by a
-        principled, deterministic rule; when two results disagree beyond their
-        combined uncertainty the answer is :data:`_AMBIGUOUS_ALIGNMENT`.
+        principled, deterministic rule; when the results are not decidable the answer
+        is a :class:`_RefusedAlignment` naming what stopped it. ``None`` means no
+        declared relation reaches this instant at all -- a different claim from "one
+        does and it cannot be trusted", which is why the two are distinguished. The
+        second element is ``None`` when the chosen relation declares no error bound:
+        unknown, never zero.
         """
 
         domain = point.clock_domain_id
@@ -276,88 +333,135 @@ class _ClockAligner:
         ):
             return None
         wall = int(point.source_time_unix_nano)
-        candidates: list[tuple[int, int, str]] = []
-        for relation in self._by_pair.get((domain, target_domain), ()):
-            applied = self._apply(relation, wall, forward=True)
-            if applied is not None:
-                candidates.append((applied[0], applied[1], relation.relation_id))
-        for relation in self._by_pair.get((target_domain, domain), ()):
-            applied = self._apply(relation, wall, forward=False)
-            if applied is not None:
-                candidates.append((applied[0], applied[1], relation.relation_id))
-        return self._reconcile(candidates)
+        candidates: list[tuple[int, int | None, str]] = []
+        refusals: list[_RefusedAlignment] = []
+        for forward, key in ((True, (domain, target_domain)), (False, (target_domain, domain))):
+            for relation in self._by_pair.get(key, ()):
+                applied = self._apply(relation, wall, forward=forward)
+                if isinstance(applied, _RefusedAlignment):
+                    refusals.append(applied)
+                elif applied is not None:
+                    candidates.append((applied[0], applied[1], relation.relation_id))
+        reconciled = self._reconcile(candidates)
+        if reconciled is not None:
+            return reconciled
+        # No relation produced a usable coordinate. If one was refused rather than
+        # simply out of window, report why instead of claiming none was declared.
+        if not refusals:
+            return None
+        return min(refusals, key=lambda refusal: refusal.limitation)
 
     @staticmethod
     def _reconcile(
-        candidates: list[tuple[int, int, str]],
-    ) -> _Alignment | _AmbiguousAlignment | None:
+        candidates: list[tuple[int, int | None, str]],
+    ) -> _Alignment | _RefusedAlignment | None:
         if not candidates:
             return None
+
         # Deterministic, principled selection: prefer the tightest calibration
         # (smallest own uncertainty), then the smaller aligned value, then the
-        # relation id. This is a stable serialization rule, not a quality claim.
-        ordered = sorted(candidates, key=lambda item: (item[1], item[0], item[2]))
-        # Honesty over guessing: if any two in-window calibrations place the same
-        # instant more than their combined uncertainty apart, the cross-clock
-        # alignment is not decidable from declared evidence -- refuse.
+        # relation id. A relation declaring no bound is not "tightest" -- unknown
+        # is not zero -- so it sorts after every relation that declares one. This is
+        # a stable serialization rule, not a quality claim.
+        def order(item: tuple[int, int | None, str]) -> tuple[int, int, int, str]:
+            value, uncertainty, relation_id = item
+            known = uncertainty is not None
+            return (0 if known else 1, uncertainty or 0, value, relation_id)
+
+        ordered = sorted(candidates, key=order)
+        # Honesty over guessing: two in-window calibrations that place the same
+        # instant differently must be shown to agree before either is used. They
+        # agree when their separation is within their combined bound -- which cannot
+        # be shown at all when a bound is unknown. Either way the alignment is not
+        # decidable from declared evidence, so refuse.
         for index_a in range(len(ordered)):
             value_a, uncertainty_a, _ = ordered[index_a]
             for index_b in range(index_a + 1, len(ordered)):
                 value_b, uncertainty_b, _ = ordered[index_b]
-                if abs(value_a - value_b) > uncertainty_a + uncertainty_b:
+                separation = abs(value_a - value_b)
+                if separation == 0:
+                    continue
+                if uncertainty_a is None or uncertainty_b is None:
+                    return _AMBIGUOUS_ALIGNMENT
+                if separation > uncertainty_a + uncertainty_b:
                     return _AMBIGUOUS_ALIGNMENT
         value, uncertainty, _ = ordered[0]
         return (value, uncertainty)
 
     @staticmethod
-    def _apply(relation: ClockRelation, wall: int, *, forward: bool) -> _Alignment | None:
-        aligned = _ClockAligner._map_wall(relation, wall, forward=forward)
-        if aligned is None:
-            return None
+    def _apply(
+        relation: ClockRelation, wall: int, *, forward: bool
+    ) -> _Alignment | _RefusedAlignment | None:
         # The validity window is declared in the relation's ``from`` domain. On the
         # forward path the input ``wall`` already lives there; on the inverse path
         # the ``from``-domain coordinate is the inverse's *output*, so the window
-        # must be checked against ``aligned``, not against the ``to``-domain input.
-        from_coordinate = wall if forward else aligned
+        # must be checked against the mapped value, not against the ``to``-domain
+        # input.
+        if forward and not _ClockAligner._in_window(relation, wall):
+            return None
+        aligned = _ClockAligner._map_wall(relation, wall, forward=forward)
+        if isinstance(aligned, _RefusedAlignment):
+            return aligned
+        if aligned is None or (not forward and not _ClockAligner._in_window(relation, aligned)):
+            return None
+        # An absent bound is UNKNOWN, not 0: a relation that never declared how
+        # wrong it might be cannot lend an exact precision to what it aligns.
+        uncertainty = None if relation.uncertainty_nano is None else int(relation.uncertainty_nano)
+        return (aligned, uncertainty)
+
+    @staticmethod
+    def _in_window(relation: ClockRelation, from_coordinate: int) -> bool:
         if relation.valid_from_unix_nano is not None and from_coordinate < int(
             relation.valid_from_unix_nano
         ):
-            return None
-        if relation.valid_to_unix_nano is not None and from_coordinate > int(
-            relation.valid_to_unix_nano
-        ):
-            return None
-        added_uncertainty = int(relation.uncertainty_nano or "0")
-        return (aligned, added_uncertainty)
+            return False
+        return not (
+            relation.valid_to_unix_nano is not None
+            and from_coordinate > int(relation.valid_to_unix_nano)
+        )
 
     @staticmethod
-    def _map_wall(relation: ClockRelation, wall: int, *, forward: bool) -> int | None:
-        """Map ``wall`` across the relation's affine calibration, or ``None``.
+    def _map_wall(
+        relation: ClockRelation, wall: int, *, forward: bool
+    ) -> int | _RefusedAlignment | None:
+        """Map ``wall`` across the relation's affine calibration, totally.
 
         The forward transform of a ``from``-domain instant ``t`` is
         ``f(t) = t + offset + drift * (t - reference)`` with ``drift = drift_ppm/1e6``.
         That is affine with slope ``1 + drift``; its exact inverse is
-        ``t = reference + (u - offset - reference) / (1 + drift)``. A zero slope
-        makes ``f`` non-injective (a would-be divide-by-zero), so the inverse is
-        refused rather than crashing. Small integer offsets from ``reference`` keep
-        the float arithmetic away from the ~1e18 magnitude of absolute nanoseconds.
+        ``t = reference + (u - offset - reference) / (1 + drift)``. Small integer
+        offsets from ``reference`` keep the float arithmetic away from the ~1e18
+        magnitude of absolute nanoseconds.
+
+        This function never raises. A slope that is not strictly positive is refused
+        in both directions -- forward it reverses or collapses time, inverse it is a
+        divide-by-zero -- and so is any result that leaves the representable
+        nanosecond domain. The contract already refuses such a relation at
+        construction; this keeps the arithmetic total for anything that reaches it
+        anyway, so contract-valid evidence can never make the analyzer crash.
         """
 
         offset = int(relation.offset_nano)
         drift_ppm = relation.drift_ppm
         if not drift_ppm:  # None or exactly 0.0: a pure offset; reference is irrelevant.
-            return wall + offset if forward else wall - offset
+            return _representable_nano(wall + offset if forward else wall - offset)
         drift = drift_ppm / 1e6
         slope = 1.0 + drift
+        if not math.isfinite(slope) or slope <= 0.0:
+            return _DEGENERATE_ALIGNMENT
         # A non-zero drift always carries a reference (enforced by the contract).
         reference = (
             int(relation.reference_unix_nano) if relation.reference_unix_nano is not None else wall
         )
         if forward:
-            return wall + offset + round(drift * (wall - reference))
-        if slope == 0.0 or not math.isfinite(slope):
-            return None
-        return reference + round((wall - offset - reference) / slope)
+            correction = _finite_float(lambda: drift * (wall - reference))
+            if correction is None:
+                return _UNREPRESENTABLE_ALIGNMENT
+            return _representable_nano(wall + offset + round(correction))
+        mapped = _finite_float(lambda: (wall - offset - reference) / slope)
+        if mapped is None:
+            return _UNREPRESENTABLE_ALIGNMENT
+        return _representable_nano(reference + round(mapped))
 
 
 def comparable_delta(
@@ -372,7 +476,10 @@ def comparable_delta(
     when a declared, in-window ``ClockRelation`` aligns the endpoints; the
     calibration's own uncertainty is propagated and the result is at most
     ``estimated``. Absent such a relation the latency stays ``unavailable`` rather
-    than clamped to zero.
+    than clamped to zero, and a relation that cannot be trusted (ambiguous,
+    degenerate, or leaving the representable domain) says which -- it never raises
+    and never guesses. A calibration that declares no error bound still yields the
+    value it aligns, but the result's bound is reported as unknown rather than 0.
     """
 
     if start.clock_domain_id and start.clock_domain_id == end.clock_domain_id:
@@ -417,15 +524,17 @@ def comparable_delta(
         and end.source_time_unix_nano is not None
     ):
         aligned = aligner.align(end, start.clock_domain_id)
-        if aligned is _AMBIGUOUS_ALIGNMENT:
-            # Two in-window calibrations disagree beyond their uncertainty: there is
-            # no honest single alignment, so the latency stays unavailable.
+        if isinstance(aligned, _RefusedAlignment):
+            # A calibration reaches this instant but cannot be applied honestly --
+            # the declared ones disagree, or the relation itself is degenerate or
+            # takes the instant out of the representable domain. Report which; never
+            # produce a number, and never let the arithmetic raise.
             return Delta(
                 "unavailable",
                 None,
                 "cross_clock_calibrated",
                 "unavailable",
-                "cross_clock_ambiguous",
+                aligned.limitation,
             )
         if isinstance(aligned, tuple):
             aligned_end, added_uncertainty = aligned
@@ -438,17 +547,25 @@ def comparable_delta(
                     "unavailable",
                     "calibrated_time_reversed",
                 )
-            uncertainty = (
-                int(start.uncertainty_nano or "0")
-                + int(end.uncertainty_nano or "0")
-                + added_uncertainty
-            )
+            # The relation's own bound is a term of the sum. When it is unknown the
+            # sum is unknown too: no addend can be replaced by 0 just because it was
+            # never declared. The value still stands -- only its precision is open.
+            uncertainty: int | None = None
+            limitation: str | None = "calibration_uncertainty_unknown"
+            if added_uncertainty is not None:
+                uncertainty = (
+                    int(start.uncertainty_nano or "0")
+                    + int(end.uncertainty_nano or "0")
+                    + added_uncertainty
+                )
+                limitation = None
             # A calibrated cross-clock latency is at most estimated, never measured.
             return Delta(
                 "available",
                 value,
                 "cross_clock_calibrated",
                 "estimated",
+                limitation,
                 uncertainty=uncertainty,
             )
 
@@ -1082,6 +1199,28 @@ def _first_measurement_sample(
     return None
 
 
+def _sample_absence_reason(
+    episode: _InterruptionEpisode,
+    measurement_name: str,
+    *,
+    require_true: bool,
+) -> str:
+    """Why an episode has no sample for a stage: absent, or merely not placeable.
+
+    A turn can hold the measurement without this episode owning it. When the sample
+    exists but its window could not be placed against the episode anchors, that is a
+    coverage limitation to report -- not licence to read another episode's sample as
+    this one's.
+    """
+
+    unattributable = _first_measurement_sample(
+        episode.unattributable_quality_samples, measurement_name, require_true=require_true
+    )
+    if unattributable is not None:
+        return "sample_not_attributable_to_episode"
+    return "stage_not_observed"
+
+
 def _stage_coordinate(point: TimePoint) -> tuple[str | None, str | None, str | None]:
     """Return ``(at_nano, clock_domain_id, time_basis)`` copied from real evidence.
 
@@ -1175,29 +1314,41 @@ def _tool_linked_to_interruption(
     return False
 
 
+def _tools(operations: Sequence[Operation]) -> tuple[Operation, ...]:
+    return _order_by_comparable_time(
+        (operation for operation in operations if operation.operation_name == "tool"),
+        point=lambda operation: operation.started_at,
+        identity=lambda operation: operation.operation_id,
+    )
+
+
 def _tool_outcome_stage(
-    operations: Sequence[Operation],
+    episode: _InterruptionEpisode,
     overlap_event: Event | None,
 ) -> dict:
-    """Attribute the disposition of a tool the interruption reached, if any.
+    """Attribute the disposition of a tool this interruption reached, if any.
 
-    A tool is eligible only when it satisfies both tests: it is still active at or
-    after the overlap (its end coordinate is not strictly before the overlap; when
-    the two are not comparable it is not excluded on time), AND it carries an
-    explicit ``CausalLink`` naming this interruption episode as its cause -- sharing
-    the turn is co-occurrence, not causality. Among eligible tools the earliest by
-    coordinate is chosen deterministically, and its status is recorded as the
-    outcome (ok/error/timeout/cancelled/...).
+    Only the episode's own operations are considered: a tool that ran entirely
+    inside a *later* barge-in never belonged to this one, and attributing it here
+    would invent a causal story the evidence does not tell. A tool is then eligible
+    only when it satisfies both tests: it is still active at or after the overlap
+    (its end coordinate is not strictly before the overlap; when the two are not
+    comparable it is not excluded on time), AND it carries an explicit
+    ``CausalLink`` naming this interruption episode as its cause -- sharing the turn
+    is co-occurrence, not causality. Among eligible tools the earliest by coordinate
+    is chosen deterministically, and its status is recorded as the outcome
+    (ok/error/timeout/cancelled/...). Every way of having none is a distinct
+    coverage reason, including the case where a tool exists but could not be placed
+    in any episode at all.
     """
 
-    tools = list(
-        _order_by_comparable_time(
-            (operation for operation in operations if operation.operation_name == "tool"),
-            point=lambda operation: operation.started_at,
-            identity=lambda operation: operation.operation_id,
-        )
-    )
+    operations = episode.operations
+    tools = list(_tools(operations))
     if not tools:
+        if _tools(episode.unattributable_operations):
+            return _unobserved_stage(_STAGE_TOOL_OUTCOME, "tool_not_attributable_to_episode")
+        if _tools(episode.turn_operations):
+            return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_in_episode")
         return _unobserved_stage(_STAGE_TOOL_OUTCOME, "no_tool_in_turn")
     if overlap_event is not None:
         temporally_eligible = [
@@ -1232,17 +1383,124 @@ def _tool_outcome_stage(
     )
 
 
-def _segment_interruption_episodes(events: Sequence[Event]) -> list[tuple[Event, ...]]:
-    """Partition a turn's events into one bucket per interruption episode.
+@dataclass(frozen=True)
+class _InterruptionEpisode:
+    """One interruption's own slice of the turn.
+
+    ``events``, ``operations`` and ``quality_samples`` are the records that
+    actually belong to this episode. ``unattributable_*`` are the turn's records
+    that straddle two episodes or are not comparable to the anchors at all, kept so
+    a stage can report *why* it has no evidence instead of borrowing another
+    episode's. ``turn_operations`` is the whole turn, used only to tell "this turn
+    had no such record at all" apart from "it had one, and it was not this
+    episode's".
+    """
+
+    events: tuple[Event, ...]
+    operations: tuple[Operation, ...]
+    quality_samples: tuple[QualitySample, ...]
+    unattributable_operations: tuple[Operation, ...] = ()
+    unattributable_quality_samples: tuple[QualitySample, ...] = ()
+    turn_operations: tuple[Operation, ...] = ()
+
+
+def _latest_anchor_at_or_before(anchors: Sequence[Event], point: TimePoint) -> int | None:
+    """Index of the last anchor at or before ``point``, or ``None`` if undecidable."""
+
+    assigned: int | None = None
+    for index, anchor in enumerate(anchors):
+        at_or_after = _point_at_or_after(point, anchor.time)
+        if at_or_after is True:
+            assigned = index
+        elif at_or_after is False:
+            break
+        # ``None`` (not comparable to this anchor): cannot place it here; a record
+        # comparable to no anchor is left unassigned rather than guessed.
+    return assigned
+
+
+def _interval_within_episode(
+    start: TimePoint,
+    end: TimePoint,
+    anchor: Event,
+    next_anchor: Event | None,
+) -> bool | None:
+    """Whether ``[start, end]`` overlaps the episode spanning ``[anchor, next)``.
+
+    An operation or a sampling window is an interval, not an instant: a tool that
+    began before the barge-in and was cut off by it belongs to that episode, which
+    an instant-based test would miss. ``None`` means the coordinates are not
+    comparable to the anchors, so membership is genuinely undecidable and the
+    caller must say so rather than pick an episode.
+    """
+
+    ends_at_or_after = _point_at_or_after(end, anchor.time)
+    if ends_at_or_after is False:
+        return False  # over before this episode began
+    starts_in_a_later_episode = (
+        None if next_anchor is None else _point_at_or_after(start, next_anchor.time)
+    )
+    if starts_in_a_later_episode is True:
+        return False  # had not begun when this episode ended
+    if ends_at_or_after is None or (next_anchor is not None and starts_in_a_later_episode is None):
+        return None
+    return True
+
+
+def _bucket_intervals(
+    anchors: Sequence[Event],
+    items: Sequence[_T],
+    *,
+    start: Callable[[_T], TimePoint],
+    end: Callable[[_T], TimePoint],
+) -> tuple[list[list[_T]], list[_T]]:
+    """Place each interval in the one episode it belongs to; return the rest.
+
+    An interval is a member only when it overlaps exactly one episode span. One
+    that straddles two -- a tool still running when the next barge-in began, a
+    sampling window open across both -- has no single owner the evidence can name,
+    and neither does one whose coordinates are not comparable to the anchors at all.
+    Those are returned as unattributable so a stage can report the limitation rather
+    than pick an episode. An interval overlapping no episode simply belongs to none.
+    """
+
+    buckets: list[list[_T]] = [[] for _ in anchors]
+    unattributable: list[_T] = []
+    for item in items:
+        memberships = [
+            _interval_within_episode(
+                start(item),
+                end(item),
+                anchor,
+                anchors[index + 1] if index + 1 < len(anchors) else None,
+            )
+            for index, anchor in enumerate(anchors)
+        ]
+        if any(membership is None for membership in memberships) or (memberships.count(True) > 1):
+            unattributable.append(item)
+        elif True in memberships:
+            buckets[memberships.index(True)].append(item)
+    return buckets, unattributable
+
+
+def _segment_interruption_episodes(
+    events: Sequence[Event],
+    operations: Sequence[Operation] = (),
+    quality_samples: Sequence[QualitySample] = (),
+) -> list[_InterruptionEpisode]:
+    """Partition a turn's evidence into one slice per interruption episode.
 
     An episode is anchored by an interruption trigger: each overlap detection starts
     one, and a classification (accept/ignore) starts one only when it is not the
     first classification of the current overlap-anchored episode (a native accept
     with no detection is its own episode). Every other event is assigned to the
     latest anchor at or before it, so a later episode's teardown is never spliced
-    onto an earlier episode's overlap. With a single anchor the whole turn is one
-    episode -- identical to the un-segmented projection, including cross-clock
-    events that cannot be ordered against the anchor.
+    onto an earlier episode's overlap. Operations and quality samples are intervals
+    rather than instants, so the same anchors place them by the span they overlap --
+    a sample taken during the second barge-in is not readable as the first one's
+    intent, and one straddling both is attributed to neither. With a single anchor
+    the whole turn is one episode -- identical to the un-segmented projection,
+    including cross-clock records that cannot be ordered against the anchor.
     """
 
     triggers = _order_by_comparable_time(
@@ -1275,24 +1533,46 @@ def _segment_interruption_episodes(events: Sequence[Event]) -> list[tuple[Event,
             open_has_classification = True
 
     if len(anchors) == 1:
-        # Exactly one episode: keep every event, so single-interruption turns (and
-        # their cross-clock teardown) project exactly as before segmentation.
-        return [tuple(events)]
+        # Exactly one episode: keep every record, so single-interruption turns (and
+        # their cross-clock teardown) project exactly as before segmentation. With
+        # one episode there is nothing to mis-attribute a record *to*.
+        return [
+            _InterruptionEpisode(
+                events=tuple(events),
+                operations=tuple(operations),
+                quality_samples=tuple(quality_samples),
+                turn_operations=tuple(operations),
+            )
+        ]
 
-    buckets: list[list[Event]] = [[] for _ in anchors]
+    event_buckets: list[list[Event]] = [[] for _ in anchors]
     for event in events:
-        assigned: int | None = None
-        for index, anchor in enumerate(anchors):
-            at_or_after = _point_at_or_after(event.time, anchor.time)
-            if at_or_after is True:
-                assigned = index
-            elif at_or_after is False:
-                break
-            # ``None`` (not comparable to this anchor): cannot place it here; an
-            # event comparable to no anchor is left unassigned rather than guessed.
+        assigned = _latest_anchor_at_or_before(anchors, event.time)
         if assigned is not None:
-            buckets[assigned].append(event)
-    return [tuple(bucket) for bucket in buckets]
+            event_buckets[assigned].append(event)
+    operation_buckets, unattributable_operations = _bucket_intervals(
+        anchors,
+        operations,
+        start=lambda operation: operation.started_at,
+        end=lambda operation: operation.ended_at or operation.started_at,
+    )
+    sample_buckets, unattributable_samples = _bucket_intervals(
+        anchors,
+        quality_samples,
+        start=lambda sample: sample.sample_window.start,
+        end=lambda sample: sample.sample_window.end,
+    )
+    return [
+        _InterruptionEpisode(
+            events=tuple(event_buckets[index]),
+            operations=tuple(operation_buckets[index]),
+            quality_samples=tuple(sample_buckets[index]),
+            unattributable_operations=tuple(unattributable_operations),
+            unattributable_quality_samples=tuple(unattributable_samples),
+            turn_operations=tuple(operations),
+        )
+        for index in range(len(anchors))
+    ]
 
 
 def _interruption_chains(
@@ -1304,16 +1584,14 @@ def _interruption_chains(
 ) -> list[dict]:
     """Build one ordered causal chain per interruption episode in the turn.
 
-    Each episode's chain is scoped to that episode's own events, so stages are
-    never merged across distinct interruptions. A turn that observed no interruption
-    yields no chains.
+    Each episode's chain is scoped to that episode's own events, operations and
+    quality samples, so no stage is ever built from another interruption's
+    evidence. A turn that observed no interruption yields no chains.
     """
 
     chains: list[dict] = []
-    for episode_events in _segment_interruption_episodes(events):
-        chain = _build_interruption_chain(
-            turn_id, operations, episode_events, quality_samples, aligner
-        )
+    for episode in _segment_interruption_episodes(events, operations, quality_samples):
+        chain = _build_interruption_chain(turn_id, episode, aligner)
         if chain is not None:
             chains.append(chain)
     return chains
@@ -1321,9 +1599,7 @@ def _interruption_chains(
 
 def _build_interruption_chain(
     turn_id: str,
-    operations: Sequence[Operation],
-    events: Sequence[Event],
-    quality_samples: Sequence[QualitySample],
+    episode: _InterruptionEpisode,
     aligner: _ClockAligner | None,
 ) -> dict | None:
     """Build the ordered causal chain a single interruption episode produced.
@@ -1333,6 +1609,8 @@ def _build_interruption_chain(
     signals alone (a model cancel, a render stop) never conjure one.
     """
 
+    events = episode.events
+    quality_samples = episode.quality_samples
     overlap_event = _first_named_event(events, _OVERLAP_EVENT_NAMES)
     classified_event = _first_named_event(events, _CLASSIFIED_EVENT_NAMES)
     if overlap_event is None and classified_event is None:
@@ -1383,7 +1661,14 @@ def _build_interruption_chain(
             )
         )
     else:
-        stages.append(_unobserved_stage(_STAGE_INTENT))
+        stages.append(
+            _unobserved_stage(
+                _STAGE_INTENT,
+                _sample_absence_reason(
+                    episode, _INTERRUPTION_PROBABILITY_MEASUREMENT, require_true=False
+                ),
+            )
+        )
     stages.append(_event_stage(_STAGE_CLASSIFIED, classified_event))
     stages.append(_event_stage(_STAGE_CANCELLATION_REQUESTED, cancellation_event))
     stages.append(_event_stage(_STAGE_GENERATION_STOPPED, generation_event))
@@ -1400,8 +1685,15 @@ def _build_interruption_chain(
             )
         )
     else:
-        stages.append(_unobserved_stage(_STAGE_RESUMED))
-    stages.append(_tool_outcome_stage(operations, overlap_event))
+        stages.append(
+            _unobserved_stage(
+                _STAGE_RESUMED,
+                _sample_absence_reason(
+                    episode, _INTERRUPTION_RESUMED_MEASUREMENT, require_true=True
+                ),
+            )
+        )
+    stages.append(_tool_outcome_stage(episode, overlap_event))
 
     # Barge-in effectiveness is the overlap -> render-stop latency, computed only
     # when both endpoints are observed and comparable (same clock, or a declared

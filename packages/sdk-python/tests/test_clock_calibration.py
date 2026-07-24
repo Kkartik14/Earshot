@@ -13,11 +13,13 @@ from pydantic import ValidationError
 
 from earshot.analysis import (
     _AMBIGUOUS_ALIGNMENT,
+    _DEGENERATE_ALIGNMENT,
+    _UNREPRESENTABLE_ALIGNMENT,
     _ClockAligner,
     analyze_incident,
     comparable_delta,
 )
-from earshot.contract import ClockDomain, ClockRelation, TimePoint
+from earshot.contract import MAX_CLOCK_DRIFT_PPM, ClockDomain, ClockRelation, TimePoint
 from earshot.validation import validate_incident
 from incident_factory import make_valid_bundle, point
 
@@ -372,12 +374,24 @@ def test_drift_inverse_is_the_exact_affine_inverse() -> None:
 
 def test_degenerate_drift_slope_refuses_inverse_without_crashing() -> None:
     # drift_ppm == -1e6 makes slope ``1 + (-1) == 0``: f collapses to a constant and
-    # is not invertible. The inverse must refuse (return None), never divide by zero.
-    aligner = _ClockAligner(
-        (_drift_relation(relation_id="rel-degenerate", drift_ppm=-1_000_000.0, offset_nano="0"),)
+    # is not invertible. The contract now refuses such a relation outright, so the
+    # only way to reach the arithmetic with one is to bypass validation -- and the
+    # arithmetic must still refuse it rather than divide by zero.
+    with pytest.raises(ValidationError):
+        _drift_relation(relation_id="rel-degenerate", drift_ppm=-1_000_000.0, offset_nano="0")
+    unvalidated = ClockRelation.model_construct(
+        relation_id="rel-degenerate",
+        from_clock_domain_id="A",
+        to_clock_domain_id="B",
+        offset_nano="0",
+        drift_ppm=-1_000_000.0,
+        reference_unix_nano="1000000000",
+        uncertainty_nano="0",
+        method="handshake_offset",
     )
+    aligner = _ClockAligner((unvalidated,))
     b_point = TimePoint(source_time_unix_nano="1000000500", clock_domain_id="B")
-    assert aligner.align(b_point, "A") is None
+    assert aligner.align(b_point, "A") is _DEGENERATE_ALIGNMENT
 
 
 # --- F5(b): validity bounds live in the from-domain coordinate ----------------
@@ -505,3 +519,230 @@ def test_drift_without_reference_rejected_by_contract() -> None:
         drift_ppm=0.0,
         method="handshake_offset",
     )
+
+
+# --- P1#6(a): a contract-valid drift can never make the analyzer raise --------
+
+
+def _unvalidated_relation(**overrides: object) -> ClockRelation:
+    """Build a relation the contract would reject, bypassing validation.
+
+    The point of these tests is that the arithmetic is *total*: it refuses rather
+    than raising even for a relation no validator would let through.
+    """
+
+    params: dict[str, object] = {
+        "relation_id": "rel-unvalidated",
+        "from_clock_domain_id": "B",
+        "to_clock_domain_id": "A",
+        "offset_nano": "0",
+        "reference_unix_nano": "1000000000",
+        "uncertainty_nano": "0",
+        "method": "handshake_offset",
+    }
+    params.update(overrides)
+    return ClockRelation.model_construct(**params)
+
+
+_A_POINT = TimePoint(source_time_unix_nano="2000000000", clock_domain_id="A")
+_B_POINT = TimePoint(source_time_unix_nano="3000000000", clock_domain_id="B")
+
+
+@pytest.mark.parametrize(
+    "drift_ppm",
+    [
+        1e308,  # the reviewer's crash: drift * gap overflows to inf, round() raised
+        -1e308,
+        1e300,
+        MAX_CLOCK_DRIFT_PPM,  # slope 2.0 exactly: the first value the contract refuses
+        -MAX_CLOCK_DRIFT_PPM,  # slope 0.0 exactly: non-invertible
+        -2e6,  # slope -1.0: a calibration that runs time backwards
+    ],
+)
+def test_drift_outside_the_documented_domain_is_refused_by_the_contract(
+    drift_ppm: float,
+) -> None:
+    with pytest.raises(ValidationError):
+        ClockRelation(
+            relation_id="rel-absurd-drift",
+            from_clock_domain_id="A",
+            to_clock_domain_id="B",
+            offset_nano="0",
+            drift_ppm=drift_ppm,
+            reference_unix_nano="1000000000",
+            method="handshake_offset",
+        )
+
+
+def test_drift_at_the_edge_of_the_documented_domain_is_accepted_and_applies() -> None:
+    # The bound is exclusive, so a drift just inside it is a legal calibration and
+    # must still produce a value rather than a refusal.
+    relation = ClockRelation(
+        relation_id="rel-edge-drift",
+        from_clock_domain_id="A",
+        to_clock_domain_id="B",
+        offset_nano="0",
+        drift_ppm=MAX_CLOCK_DRIFT_PPM - 1.0,
+        reference_unix_nano="1000000000",
+        uncertainty_nano="0",
+        method="handshake_offset",
+    )
+    aligned = _ClockAligner((relation,)).align(
+        TimePoint(source_time_unix_nano="2000000000", clock_domain_id="A"), "B"
+    )
+    assert isinstance(aligned, tuple)
+
+
+def test_extreme_drift_refuses_with_a_limitation_instead_of_raising() -> None:
+    # Before the fix this exact input raised
+    #   OverflowError: cannot convert float infinity to integer
+    # from ``round(drift * (wall - reference))`` in ``_ClockAligner._map_wall``.
+    # An analyzer must never crash on evidence -- it must decline to produce a value
+    # and say why.
+    aligner = _ClockAligner((_unvalidated_relation(drift_ppm=1e308),))
+    delta = comparable_delta(_A_POINT, _B_POINT, aligner)
+    assert delta.availability == "unavailable"
+    assert delta.basis == "cross_clock_calibrated"
+    assert delta.nanoseconds is None
+    assert delta.limitation == "cross_clock_calibration_unrepresentable"
+
+
+def test_alignment_leaving_the_uint64_domain_refuses_rather_than_reporting_it() -> None:
+    # A legal drift can still carry an instant past the largest nanosecond value the
+    # contract can express. That is not a coordinate, so it is not reported as one.
+    relation = _unvalidated_relation(
+        relation_id="rel-out-of-domain",
+        offset_nano=str((1 << 63) - 1),
+        drift_ppm=999_999.0,
+        reference_unix_nano="0",
+    )
+    point_b = TimePoint(source_time_unix_nano=str((1 << 64) - 1), clock_domain_id="B")
+    assert _ClockAligner((relation,)).align(point_b, "A") is _UNREPRESENTABLE_ALIGNMENT
+
+
+# --- P1#6(b): a relation that reverses time is not a calibration --------------
+
+
+def test_negative_slope_is_refused_forward_not_silently_reversed() -> None:
+    # slope 1 + (-3e6/1e6) == -2: the forward map sends a later instant to an
+    # earlier one. Applying it would produce a reversed -- and therefore fictional
+    # -- delta, so the relation is refused in both directions.
+    aligner = _ClockAligner((_unvalidated_relation(drift_ppm=-3e6),))
+    assert aligner.align(_B_POINT, "A") is _DEGENERATE_ALIGNMENT
+    delta = comparable_delta(_A_POINT, _B_POINT, aligner)
+    assert delta.availability == "unavailable"
+    assert delta.limitation == "cross_clock_calibration_degenerate"
+
+
+def test_a_usable_relation_still_wins_over_a_degenerate_sibling() -> None:
+    # Refusing a degenerate relation must not poison a declared, applicable one.
+    aligner = _ClockAligner(
+        (
+            _unvalidated_relation(relation_id="rel-degenerate", drift_ppm=-3e6),
+            ClockRelation(
+                relation_id="rel-good",
+                from_clock_domain_id="B",
+                to_clock_domain_id="A",
+                offset_nano="-500",
+                uncertainty_nano="10",
+                method="handshake_offset",
+            ),
+        )
+    )
+    aligned = aligner.align(_B_POINT, "A")
+    assert aligned == (2_999_999_500, 10)
+
+
+# --- P1#6(c): a relation's absent uncertainty is unknown, never zero ----------
+
+
+def test_relation_without_uncertainty_yields_an_unknown_bound_not_zero() -> None:
+    relation = ClockRelation(
+        relation_id="rel-no-bound",
+        from_clock_domain_id="B",
+        to_clock_domain_id="A",
+        offset_nano="0",
+        method="handshake_offset",
+    )
+    aligned = _ClockAligner((relation,)).align(_B_POINT, "A")
+    assert aligned == (3_000_000_000, None)  # unknown, not 0
+
+    delta = comparable_delta(_A_POINT, _B_POINT, _ClockAligner((relation,)))
+    assert delta.availability == "available"
+    assert delta.nanoseconds == 1_000_000_000
+    assert delta.uncertainty is None
+    assert delta.limitation == "calibration_uncertainty_unknown"
+
+
+def test_unknown_relation_bound_survives_metric_serialization() -> None:
+    # The bound must not vanish on the way out: an unknown one is named, and a known
+    # one is carried as a number in the metric's own unit.
+    relation = ClockRelation(
+        relation_id="rel-no-bound",
+        from_clock_domain_id="B",
+        to_clock_domain_id="A",
+        offset_nano="0",
+        method="handshake_offset",
+    )
+    unknown = comparable_delta(_A_POINT, _B_POINT, _ClockAligner((relation,))).as_dict()
+    assert unknown["limitation"] == "calibration_uncertainty_unknown"
+    assert "uncertainty" not in unknown
+
+    bounded = comparable_delta(
+        _A_POINT,
+        _B_POINT,
+        _ClockAligner((_pair_relation_to_a("rel-bound", 0, 2_000_000),)),
+    ).as_dict()
+    assert bounded["uncertainty"] == pytest.approx(2.0)  # 2_000_000 ns == 2 ms
+    assert bounded["unit"] == "ms"
+    assert "limitation" not in bounded
+
+
+def _pair_relation_to_a(relation_id: str, offset: int, uncertainty: int) -> ClockRelation:
+    return ClockRelation(
+        relation_id=relation_id,
+        from_clock_domain_id="B",
+        to_clock_domain_id="A",
+        offset_nano=str(offset),
+        uncertainty_nano=str(uncertainty),
+        method="handshake_offset",
+    )
+
+
+def test_relation_declaring_a_bound_is_preferred_over_one_declaring_none() -> None:
+    # Both place the instant identically, so there is no disagreement; the tie is
+    # broken toward the relation that actually declares how wrong it might be.
+    aligner = _ClockAligner(
+        (
+            ClockRelation(
+                relation_id="rel-unbounded",
+                from_clock_domain_id="B",
+                to_clock_domain_id="A",
+                offset_nano="0",
+                method="handshake_offset",
+            ),
+            _pair_relation_to_a("rel-bounded", 0, 40),
+        )
+    )
+    assert aligner.align(_B_POINT, "A") == (3_000_000_000, 40)
+
+
+def test_disagreeing_relations_with_an_unknown_bound_are_ambiguous() -> None:
+    # An unknown bound cannot show that two differing placements agree, so the
+    # alignment is not decidable -- exactly as when a known bound is too small.
+    aligner = _ClockAligner(
+        (
+            ClockRelation(
+                relation_id="rel-unbounded",
+                from_clock_domain_id="B",
+                to_clock_domain_id="A",
+                offset_nano="0",
+                method="handshake_offset",
+            ),
+            _pair_relation_to_a("rel-bounded", -9000, 10),
+        )
+    )
+    assert aligner.align(_B_POINT, "A") is _AMBIGUOUS_ALIGNMENT
+    delta = comparable_delta(_A_POINT, _B_POINT, aligner)
+    assert delta.availability == "unavailable"
+    assert delta.limitation == "cross_clock_ambiguous"

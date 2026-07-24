@@ -124,6 +124,17 @@ def _portable_schema_url(value: str) -> str:
 
 
 SchemaUrl = Annotated[str, StringConstraints(min_length=1), AfterValidator(_portable_schema_url)]
+# A clock relation is a calibration between two clocks, so its rate correction has
+# a domain. The map's slope is ``1 + drift_ppm / 1e6``: at ``drift_ppm == -1e6``
+# the slope is 0 (the map collapses every instant onto one and has no inverse),
+# below that it is negative (a later instant is mapped to an earlier one -- a
+# calibration that reverses time is not a calibration), and beyond +1e6 the second
+# clock runs at more than double the first, which is a different time base rather
+# than drift. Real oscillators drift by hundreds of ppm, so this bound is orders of
+# magnitude looser than any true calibration while keeping the affine arithmetic
+# inside the nanosecond domain the contract can represent.
+MAX_CLOCK_DRIFT_PPM = 1_000_000.0
+
 CaptureClassName = Literal[
     "metadata",
     "extension_payload",
@@ -341,9 +352,14 @@ class ClockRelation(ContractModel):
     domain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``
     is an optional linear parts-per-million rate anchored at ``reference_unix_nano``,
     so the total correction at wall time ``t`` is
-    ``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds.
+    ``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds. That
+    map's slope is ``1 + drift_ppm/1e6``, and ``drift_ppm`` is confined to
+    ``(-MAX_CLOCK_DRIFT_PPM, +MAX_CLOCK_DRIFT_PPM)`` so the slope stays strictly
+    positive and bounded: a relation may not reverse time, collapse it, or leave the
+    representable nanosecond domain.
     ``uncertainty_nano`` is the calibration's own error bound and is propagated into
-    any cross-domain latency derived through this relation. ``valid_from_unix_nano``
+    any cross-domain latency derived through this relation. It is optional, and its
+    absence means the bound is *unknown* -- never that it is zero. ``valid_from_unix_nano``
     and ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)
     where the calibration is trustworthy; timestamps outside it are not aligned.
     """
@@ -375,6 +391,16 @@ class ClockRelation(ContractModel):
             # A NaN/inf drift rate has no affine meaning and would poison every
             # cross-clock alignment it touches; a rate must be a finite number.
             raise ValueError("clock relation drift_ppm must be finite")
+        if self.drift_ppm is not None and abs(self.drift_ppm) >= MAX_CLOCK_DRIFT_PPM:
+            # Outside this domain the relation is not a calibration: the slope
+            # ``1 + drift_ppm/1e6`` is zero (non-invertible), negative (time runs
+            # backwards through it), or so large that the mapped instant leaves the
+            # nanosecond domain entirely. Refusing the absurd here is what lets the
+            # analyzer's affine arithmetic stay total for everything it accepts.
+            raise ValueError(
+                "clock relation drift_ppm must be within "
+                f"+/-{MAX_CLOCK_DRIFT_PPM:.0f} ppm (exclusive)"
+            )
         if (
             self.drift_ppm is not None
             and self.drift_ppm != 0.0
@@ -701,11 +727,21 @@ class Diagnosis(AnalysisContractModel):
 
 
 class AnalysisMetric(AnalysisContractModel):
+    """One derived quantity, or the exact reason there is none.
+
+    ``uncertainty`` is the error bound the derivation propagated, stated in the
+    same ``unit`` as ``value``. It is present only when every contributing bound
+    was known: an input whose own bound is unknown makes the result's bound
+    unknown too, and that is reported as a ``limitation`` rather than as an
+    exact zero, which would claim a precision nothing measured.
+    """
+
     availability: SemanticCode
     basis: SemanticCode
     confidence: SemanticCode
     value: StrictInt | StrictFloat | None = None
     unit: NonEmptyStr | None = None
+    uncertainty: StrictInt | StrictFloat | None = None
     limitation: SemanticCode | None = None
     evidence_ids: tuple[OpaqueId, ...] = ()
 
@@ -718,6 +754,14 @@ class AnalysisMetric(AnalysisContractModel):
                 )
         elif self.value is not None or self.unit is not None:
             raise ValueError("non-available analysis metrics cannot assert a value or unit")
+        if self.uncertainty is not None:
+            # An error bound is a bound *on a value*, expressed in that value's
+            # unit. Without the value it bounds nothing; a non-finite or negative
+            # bound bounds nothing either.
+            if self.value is None or self.unit is None:
+                raise ValueError("an analysis metric uncertainty requires a value and unit")
+            if not math.isfinite(self.uncertainty) or self.uncertainty < 0:
+                raise ValueError("an analysis metric uncertainty must be finite and non-negative")
         return self
 
 
