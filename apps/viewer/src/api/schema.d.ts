@@ -1945,7 +1945,35 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** MediaRef */
+        /**
+         * MediaRef
+         * @description A reference to media somebody else holds — never the media itself.
+         *
+         *     Earshot stores custody, not content: who holds the bytes, what they are,
+         *     which window of the session they cover, under what consent and retention,
+         *     and which clock domain their own timeline runs on. It never ingests,
+         *     fetches, caches, or proxies them.
+         *
+         *     ``integrity`` is the honesty discriminator that makes that distinction
+         *     legible instead of overloading a null:
+         *
+         *     ``content_digest``
+         *         Somebody measured these bytes and declared a ``sha256`` and
+         *         ``size_bytes`` for them. The digest is a *declaration carried by the
+         *         artifact*, not an earshot verification — earshot still never read the
+         *         bytes — but it is a checkable commitment a holder can be held to.
+         *     ``opaque_handle``
+         *         Nobody measured the bytes on this path, so the reference carries no
+         *         digest and no size and names the ``custodian`` who does hold them.
+         *         ``byte_range`` is meaningless here: you cannot range into bytes whose
+         *         length was never observed.
+         *
+         *     Making ``sha256``/``size_bytes`` optional is what the real custody case
+         *     requires. The alternative — keeping them required and letting a producer
+         *     fill them with something it did not compute — is exactly the dishonesty
+         *     this contract exists to prevent. The coherence rule is enforced by
+         *     :func:`media_custody_incoherence` at every boundary, not by convention.
+         */
         MediaRef: {
             /** Attributes */
             attributes?: {
@@ -1959,20 +1987,46 @@ export interface components {
              * @enum {string}
              */
             capture_class: "metadata" | "extension_payload" | "transcript" | "audio" | "tool_payload" | "model_payload" | "diagnostic_payload" | "identity";
+            /**
+             * Clock Domain Id
+             * @default null
+             */
+            clock_domain_id: string | null;
+            /** @default null */
+            consent: components["schemas"]["ConsentRecord"] | null;
             /** Content Type */
             content_type: string;
+            /**
+             * Custodian
+             * @default null
+             */
+            custodian: string | null;
+            /**
+             * Integrity
+             * @default content_digest
+             * @enum {string}
+             */
+            integrity: "content_digest" | "opaque_handle";
             /** @default null */
             locator: components["schemas"]["MediaLocator"] | null;
             /** Media Id */
             media_id: string;
             /** Media Kind */
             media_kind: string;
+            /** @default null */
+            retention: components["schemas"]["RetentionPolicy"] | null;
             /** Session Id */
             session_id: string;
-            /** Sha256 */
-            sha256: string;
-            /** Size Bytes */
-            size_bytes: number;
+            /**
+             * Sha256
+             * @default null
+             */
+            sha256: string | null;
+            /**
+             * Size Bytes
+             * @default null
+             */
+            size_bytes: number | null;
             /** Stream Id */
             stream_id: string;
             /** @default null */

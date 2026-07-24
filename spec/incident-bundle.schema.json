@@ -1788,6 +1788,7 @@
     },
     "MediaRef": {
       "additionalProperties": true,
+      "description": "A reference to media somebody else holds \u2014 never the media itself.\n\nEarshot stores custody, not content: who holds the bytes, what they are,\nwhich window of the session they cover, under what consent and retention,\nand which clock domain their own timeline runs on. It never ingests,\nfetches, caches, or proxies them.\n\n``integrity`` is the honesty discriminator that makes that distinction\nlegible instead of overloading a null:\n\n``content_digest``\n    Somebody measured these bytes and declared a ``sha256`` and\n    ``size_bytes`` for them. The digest is a *declaration carried by the\n    artifact*, not an earshot verification \u2014 earshot still never read the\n    bytes \u2014 but it is a checkable commitment a holder can be held to.\n``opaque_handle``\n    Nobody measured the bytes on this path, so the reference carries no\n    digest and no size and names the ``custodian`` who does hold them.\n    ``byte_range`` is meaningless here: you cannot range into bytes whose\n    length was never observed.\n\nMaking ``sha256``/``size_bytes`` optional is what the real custody case\nrequires. The alternative \u2014 keeping them required and letting a producer\nfill them with something it did not compute \u2014 is exactly the dishonesty\nthis contract exists to prevent. The coherence rule is enforced by\n:func:`media_custody_incoherence` at every boundary, not by convention.",
       "properties": {
         "attributes": {
           "additionalProperties": true,
@@ -1820,9 +1821,56 @@
           "title": "Capture Class",
           "type": "string"
         },
+        "clock_domain_id": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Clock Domain Id"
+        },
+        "consent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsentRecord"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "content_type": {
           "minLength": 1,
           "title": "Content Type",
+          "type": "string"
+        },
+        "custodian": {
+          "anyOf": [
+            {
+              "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Custodian"
+        },
+        "integrity": {
+          "default": "content_digest",
+          "enum": [
+            "content_digest",
+            "opaque_handle"
+          ],
+          "title": "Integrity",
           "type": "string"
         },
         "locator": {
@@ -1847,6 +1895,17 @@
           "title": "Media Kind",
           "type": "string"
         },
+        "retention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetentionPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "session_id": {
           "maxLength": 256,
           "minLength": 1,
@@ -1854,14 +1913,30 @@
           "type": "string"
         },
         "sha256": {
-          "pattern": "^[0-9a-f]{64}$",
-          "title": "Sha256",
-          "type": "string"
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
         },
         "size_bytes": {
-          "minimum": 0,
-          "title": "Size Bytes",
-          "type": "integer"
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Size Bytes"
         },
         "stream_id": {
           "maxLength": 256,
@@ -1886,9 +1961,7 @@
         "session_id",
         "stream_id",
         "media_kind",
-        "content_type",
-        "sha256",
-        "size_bytes"
+        "content_type"
       ],
       "title": "MediaRef",
       "type": "object"

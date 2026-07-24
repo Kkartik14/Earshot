@@ -100,8 +100,14 @@ observable through `status()`.
 - `record_quality_sample()` accepts a structured metric sample and recursively filters
   sample, evidence, resource, and measurement attributes. Measurement values may be
   numeric or boolean; raw counters are numeric only in v1alpha1.
-- `add_media_ref()` attaches external audio metadata only when the `audio` class is
-  enabled. It never embeds media bytes and removes credential-bearing locators.
+- `add_media_ref()` attaches custody metadata for externally held audio, only when the
+  `audio` class is enabled. It never embeds, fetches, caches, or proxies media bytes and
+  removes credential-bearing locators. `integrity` must match what the reference can
+  back: `content_digest` requires `sha256` and `size_bytes`; `opaque_handle` requires a
+  `custodian` and no digest, size, or byte range. An incoherent claim is refused at
+  admission. To make media overlayable, declare its timeline with
+  `register_clock_domain()` and calibrate it with `register_clock_relation()` — media
+  alignment is the ordinary cross-clock question, not a separate mechanism.
 - `add_raw_otlp_chunk()` retains exact bytes only when the `raw_otlp` class is
   enabled. This is an explicit caller-supplied path, not automatic OTLP interception.
   Callers cannot downgrade opaque OTLP bytes to metadata.

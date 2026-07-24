@@ -86,11 +86,38 @@ values. Application logging must follow the same rule.
 
 - Audio bytes are never inline in the profile.
 - Metadata-only bundles contain no audio reference or locator.
-- A portable media reference uses logical ID + digest + size + content type.
 - Locators are separately governed. Credential-shaped locators are removed by the
   recorder and rejected on untrusted import.
 - Credential-bearing locators are invalid.
 - Validators and analyzers never fetch submitted URLs (an SSRF boundary).
+
+### Custody, not content
+
+A media reference is custody metadata for media somebody else holds. Earshot never
+ingests, fetches, caches, proxies, or re-serves the bytes — not even encrypted, because
+encrypted content is still content and storing it would change what earshot is under
+consent, DSAR, retention, and breach obligations.
+
+Because earshot never reads the bytes, it cannot honestly assert a digest over them, so
+`MediaRef.integrity` says which case a reference is in:
+
+- `content_digest` — somebody measured the bytes and declared `sha256` and `size_bytes`.
+  That digest is a declaration carried by the artifact, not an earshot verification.
+- `opaque_handle` — nobody on this path measured them. The reference carries no digest
+  and no size, names the `custodian` who holds them, and cannot declare a `byte_range`
+  into a length nobody observed.
+
+Either shape may also declare `consent`, `retention`, a covered `time_range`, and the
+media's own `clock_domain_id`. Alignment to the incident timeline is an ordinary
+`ClockRelation` between that domain and the session's — there is no separate media
+synchronization model. Media no declared calibration reaches stays honestly unaligned
+(`EARSHOT_MEDIA_UNALIGNED`, a warning): unalignable custody is still legitimate custody,
+it simply cannot be overlaid.
+
+The viewer renders these facts and nothing else. It never emits a media `src`, which
+would fetch the media on render; a declared locator is offered only as a user-initiated
+link that goes directly from the reader's browser to the custodian, with the reader's own
+credentials and no referrer. No byte of media passes through earshot.
 
 ## Restricted export
 

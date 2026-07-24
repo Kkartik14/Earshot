@@ -145,9 +145,30 @@ are a trust boundary and must not carry user content.
 
 ### Media
 
-Media is always external. The bundle records a logical media ID, digest, content
-type, size, governed stream association, optional byte/time range, and an optional
-separately governed locator. Validation never fetches a locator.
+Media is always external: the bundle records custody, never content. It carries a
+logical media ID, content type, governed stream association, an optional covered time
+range, an optional custodian, consent and retention, the media's own clock domain, and
+an optional separately governed locator. Validation never fetches a locator.
+
+`integrity` states what anyone can actually attest to, because earshot never reads the
+bytes:
+
+- `content_digest` requires `sha256` and `size_bytes` — a declaration made by whoever
+  measured the media, not a verification earshot performed.
+- `opaque_handle` requires that both are absent and that `custodian` names the holder,
+  and forbids `byte_range`: you cannot range into bytes whose length was never observed.
+
+Either mix of the two is `EARSHOT_MEDIA_CUSTODY_INCOHERENT`. `sha256`/`size_bytes` are
+optional for exactly this reason; `integrity` still defaults to `content_digest`, so
+omitting them without saying `opaque_handle` is refused rather than quietly downgraded.
+A `MediaRef` using any custody member requires contract version `0.2.0` or newer.
+
+A declared `clock_domain_id` must exist in `profile.clock_domains`
+(`EARSHOT_MEDIA_CLOCK_UNKNOWN`) and is aligned to the incident timeline by an ordinary
+`ClockRelation` — media is just another clock domain, not a second synchronization
+mechanism. Media that no declared relation reaches is reported unaligned
+(`EARSHOT_MEDIA_UNALIGNED`, warning severity), because unalignable custody is still
+legitimate custody.
 
 Credential-bearing locators are invalid. A media reference is always governed by the
 `audio` capture class. A destination restriction rejects the export rather than
@@ -207,6 +228,11 @@ Validation issues have stable codes and paths and never need to echo source valu
   claiming it did observe one (`EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY`).
 - A session end time on a session whose close was never observed
   (`EARSHOT_RECOVERY_SESSION_END_FABRICATED`).
+- A media reference claiming `content_digest` without a digest, or `opaque_handle`
+  while asserting a digest, a size, a byte range, or no custodian
+  (`EARSHOT_MEDIA_CUSTODY_INCOHERENT`).
+- A media reference naming a clock domain the profile does not declare
+  (`EARSHOT_MEDIA_CLOCK_UNKNOWN`).
 
 ## Required valid cases
 
@@ -216,6 +242,7 @@ Validation issues have stable codes and paths and never need to echo source valu
 - Native speech-to-speech sessions without fake STT/LLM/TTS spans.
 - Explicit missing/not-observed coverage.
 - A measured value of zero.
+- Media custody nothing can align to the incident timeline (a warning, not an error).
 
 ## Regeneration
 
