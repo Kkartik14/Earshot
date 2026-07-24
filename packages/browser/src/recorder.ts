@@ -56,7 +56,11 @@ import {
   defaultWallOriginMs,
 } from "./env.js";
 import { makeSalt, opaqueDeviceId } from "./privacy.js";
-import { CAPTURE_PROTOCOL_VERSION } from "./protocol.js";
+import {
+  CAPTURE_PROTOCOL_VERSION,
+  CONTINUOUS_CAPTURE_VERSION,
+  type CaptureVersion,
+} from "./protocol.js";
 import {
   createTraceContext,
   injectTraceHeaders,
@@ -112,6 +116,15 @@ export interface BrowserRecorderOptions {
    * clock.
    */
   wallOriginMs?: number | null;
+  /**
+   * The capture wire version to emit (default `1`). Opt into `2` for continuous
+   * capture: every `drain()` then carries a monotonic `drainSequence` under the
+   * same stable `sessionId` and `clockDomain.id`, and the server accumulates the
+   * whole call into one journal-backed provisional artifact instead of a
+   * per-drain incident. It stays opt-in so a client can still target a server
+   * that only governs version 1.
+   */
+  captureVersion?: CaptureVersion;
 }
 
 export interface AttachPeerConnectionOptions {
@@ -204,6 +217,8 @@ export class EarshotBrowserRecorder {
   private readonly maxDeviceEvents: number;
   private readonly clockUncertaintyMs: number;
   private readonly wallOriginMs: number | null;
+  private readonly captureVersion: CaptureVersion;
+  private readonly capturerStartedAtMs: number;
 
   private snapshots: WebRtcSnapshot[] = [];
   private deviceEvents: DeviceEvent[] = [];
@@ -213,6 +228,8 @@ export class EarshotBrowserRecorder {
   private audioContext: AudioContextLike | null = null;
   private readonly teardowns: Array<() => void> = [];
   private stopped = false;
+  /** 1-based, monotonic per recorder; assigned inside `drain()` under version 2. */
+  private drainSequence = 0;
 
   constructor(options: BrowserRecorderOptions = {}) {
     this.clock = options.clock ?? defaultClock;
@@ -236,6 +253,10 @@ export class EarshotBrowserRecorder {
     );
     this.wallOriginMs =
       options.wallOriginMs === undefined ? defaultWallOriginMs() : options.wallOriginMs;
+    this.captureVersion = options.captureVersion ?? CAPTURE_PROTOCOL_VERSION;
+    // The recorder's own first clock reading (its construction), not the call
+    // start. Carried on every v2 drain so a later phase can bound the capture.
+    this.capturerStartedAtMs = this.clock();
   }
 
   // -- trace context ---------------------------------------------------------
@@ -504,7 +525,7 @@ export class EarshotBrowserRecorder {
    */
   drain(): CapturePayload {
     const payload: CapturePayload = {
-      captureVersion: CAPTURE_PROTOCOL_VERSION,
+      captureVersion: this.captureVersion,
       sessionId: this.sessionId,
       traceContext: this.trace,
       clockDomain: this.clockDomain(),
@@ -512,6 +533,13 @@ export class EarshotBrowserRecorder {
       deviceEvents: this.deviceEvents,
       coverage: this.buildCoverage(),
     };
+    if (this.captureVersion === CONTINUOUS_CAPTURE_VERSION) {
+      // A continuous drain lands at a monotonic sequence under the same stable
+      // session and clock-domain id, so the server can accumulate the call.
+      this.drainSequence += 1;
+      payload.drainSequence = this.drainSequence;
+      payload.capturerStartedAtMs = this.capturerStartedAtMs;
+    }
     this.snapshots = [];
     this.deviceEvents = [];
     this.counters = zeroCounters();

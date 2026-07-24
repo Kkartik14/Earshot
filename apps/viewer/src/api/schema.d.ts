@@ -739,6 +739,53 @@ export interface components {
             wallOriginMs: number | null;
         };
         /**
+         * CaptureContinuousResponse
+         * @description What one ``captureVersion: 2`` drain resolved to, mirroring a checkpoint ack.
+         *
+         *     A drain no longer becomes an incident, so there is no ``bundle_id`` to return
+         *     -- the growing artifact is materialized on demand by the operator seal. This
+         *     reports where the call now stands: the journal it accumulates into, the
+         *     sequence it has accepted through, and that it is a live, sealable session.
+         *     ``replayed`` is true when this drain had already been applied and this response
+         *     is an idempotent echo rather than a new application.
+         */
+        CaptureContinuousResponse: {
+            /** Accepted Coverage */
+            accepted_coverage: number;
+            /** Accepted Device Events */
+            accepted_device_events: number;
+            /** Accepted Records */
+            accepted_records: number;
+            /** Accepted Snapshots */
+            accepted_snapshots: number;
+            /** Accepted Through */
+            accepted_through: number;
+            /** Bundle Id */
+            bundle_id?: null;
+            /** Call Id */
+            call_id: string;
+            /** Capture Version */
+            capture_version: number;
+            /** Journal Id */
+            journal_id: string;
+            /** Rejected Device Events */
+            rejected_device_events: number;
+            /** Rejected Device Members */
+            rejected_device_members: number;
+            /** Rejected Stat Members */
+            rejected_stat_members: number;
+            /** Rejected Stats */
+            rejected_stats: number;
+            /** Replayed */
+            replayed: boolean;
+            /** Sealable */
+            sealable: boolean;
+            /** State */
+            state: string;
+            /** Trace Id */
+            trace_id: string | null;
+        };
+        /**
          * CaptureCoverageRequest
          * @description One explicit gap the client recorded rather than dropping it silently.
          */
@@ -776,21 +823,56 @@ export interface components {
         /**
          * CaptureRequest
          * @description The versioned browser capture payload, exactly as ``drain()`` emits it.
+         *
+         *     ``captureVersion: 1`` is a single, self-contained batch. ``captureVersion: 2``
+         *     is one drain of a continuous call: ``drainSequence`` is 1-based and monotonic
+         *     per recorder, ``capturerStartedAtMs`` is the recorder's own first clock reading
+         *     (not the call start), and ``resync`` is set only when the client permanently
+         *     gave up on earlier drains.
          */
         CaptureRequest: {
             /** Captureversion */
             captureVersion: number;
+            /**
+             * Capturerstartedatms
+             * @default null
+             */
+            capturerStartedAtMs: number | null;
             clockDomain: components["schemas"]["CaptureClockDomainRequest"];
             /** Coverage */
             coverage?: components["schemas"]["CaptureCoverageRequest"][];
             /** Deviceevents */
             deviceEvents?: components["schemas"]["CaptureDeviceEventRequest"][];
+            /**
+             * Drainsequence
+             * @default null
+             */
+            drainSequence: number | null;
+            /** @default null */
+            resync: components["schemas"]["CaptureResyncRequest"] | null;
             /** Sessionid */
             sessionId: string;
             /** Snapshots */
             snapshots?: components["schemas"]["CaptureSnapshotRequest"][];
             /** @default null */
             traceContext: components["schemas"]["CaptureTraceContextRequest"] | null;
+        };
+        /**
+         * CaptureResyncRequest
+         * @description A ``captureVersion: 2`` client's declaration that it gave up on earlier drains.
+         *
+         *     A drain that skips ahead of the sequence the server holds is refused unless
+         *     the client says, honestly, which drains it permanently lost. The range must
+         *     cover exactly the gap; the loss is then ledgered as coverage and the WebRTC
+         *     carry across it is dropped rather than estimated.
+         */
+        CaptureResyncRequest: {
+            /** Missedfromsequence */
+            missedFromSequence: number;
+            /** Missedthroughsequence */
+            missedThroughSequence: number;
+            /** Reason */
+            reason: string;
         };
         /**
          * CaptureSnapshotRequest
@@ -3344,7 +3426,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CaptureAcceptedResponse"];
+                    "application/json": components["schemas"]["CaptureAcceptedResponse"] | components["schemas"]["CaptureContinuousResponse"];
                 };
             };
             /** @description Successful Response */
@@ -3354,6 +3436,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaptureAcceptedResponse"];
+                };
+            };
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CaptureContinuousResponse"];
                 };
             };
             /** @description Bad Request */

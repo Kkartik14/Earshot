@@ -235,6 +235,20 @@ export interface CapturePayload {
   deviceEvents: DeviceEvent[];
   /** Explicit coverage gaps recorded this window (never silent loss). */
   coverage: CaptureCoverage[];
+  /**
+   * `captureVersion: 2` only. The 1-based, monotonic-per-recorder position of
+   * this drain in the call, assigned inside `drain()`. It is what lets the
+   * server accumulate a continuous call: a drain lands at a sequence, a re-sent
+   * drain resolves to the one it already applied, and a gap is refused unless
+   * declared. Absent under version 1, where each batch is its own incident.
+   */
+  drainSequence?: number;
+  /**
+   * `captureVersion: 2` only. The recorder's own first clock reading (its
+   * construction), not the call start. Carried so a later phase can bound the
+   * capture without conflating it with the observed call duration.
+   */
+  capturerStartedAtMs?: number;
 }
 
 // ---------------------------------------------------------------------------

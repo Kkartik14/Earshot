@@ -32,7 +32,11 @@ export {
   type FetchLike,
 } from "./transport.js";
 
-export { CAPTURE_PROTOCOL_VERSION } from "./protocol.js";
+export {
+  CAPTURE_PROTOCOL_VERSION,
+  CONTINUOUS_CAPTURE_VERSION,
+  type CaptureVersion,
+} from "./protocol.js";
 
 export { normalizeStatsReport } from "./webrtc.js";
 export {

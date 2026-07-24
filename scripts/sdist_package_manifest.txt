@@ -15,6 +15,8 @@ packages/sdk-python/src/earshot/analysis.py
 packages/sdk-python/src/earshot/api.py
 packages/sdk-python/src/earshot/browser_session.py
 packages/sdk-python/src/earshot/capture/__init__.py
+packages/sdk-python/src/earshot/capture/calls.py
+packages/sdk-python/src/earshot/capture/identity.py
 packages/sdk-python/src/earshot/capture/sanitize.py
 packages/sdk-python/src/earshot/checkpoint/__init__.py
 packages/sdk-python/src/earshot/checkpoint/assembler.py
@@ -23,6 +25,7 @@ packages/sdk-python/src/earshot/checkpoint/keys.py
 packages/sdk-python/src/earshot/checkpoint/limits.py
 packages/sdk-python/src/earshot/checkpoint/reader.py
 packages/sdk-python/src/earshot/checkpoint/records.py
+packages/sdk-python/src/earshot/checkpoint/server_writer.py
 packages/sdk-python/src/earshot/checkpoint/uploader.py
 packages/sdk-python/src/earshot/checkpoint/writer.py
 packages/sdk-python/src/earshot/cli.py

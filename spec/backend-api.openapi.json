@@ -845,6 +845,107 @@
         "title": "CaptureClockDomainRequest",
         "type": "object"
       },
+      "CaptureContinuousResponse": {
+        "additionalProperties": false,
+        "description": "What one ``captureVersion: 2`` drain resolved to, mirroring a checkpoint ack.\n\nA drain no longer becomes an incident, so there is no ``bundle_id`` to return\n-- the growing artifact is materialized on demand by the operator seal. This\nreports where the call now stands: the journal it accumulates into, the\nsequence it has accepted through, and that it is a live, sealable session.\n``replayed`` is true when this drain had already been applied and this response\nis an idempotent echo rather than a new application.",
+        "properties": {
+          "accepted_coverage": {
+            "title": "Accepted Coverage",
+            "type": "integer"
+          },
+          "accepted_device_events": {
+            "title": "Accepted Device Events",
+            "type": "integer"
+          },
+          "accepted_records": {
+            "title": "Accepted Records",
+            "type": "integer"
+          },
+          "accepted_snapshots": {
+            "title": "Accepted Snapshots",
+            "type": "integer"
+          },
+          "accepted_through": {
+            "title": "Accepted Through",
+            "type": "integer"
+          },
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "null"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "capture_version": {
+            "title": "Capture Version",
+            "type": "integer"
+          },
+          "journal_id": {
+            "title": "Journal Id",
+            "type": "string"
+          },
+          "rejected_device_events": {
+            "title": "Rejected Device Events",
+            "type": "integer"
+          },
+          "rejected_device_members": {
+            "title": "Rejected Device Members",
+            "type": "integer"
+          },
+          "rejected_stat_members": {
+            "title": "Rejected Stat Members",
+            "type": "integer"
+          },
+          "rejected_stats": {
+            "title": "Rejected Stats",
+            "type": "integer"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "sealable": {
+            "title": "Sealable",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          }
+        },
+        "required": [
+          "call_id",
+          "journal_id",
+          "accepted_through",
+          "accepted_records",
+          "state",
+          "sealable",
+          "capture_version",
+          "replayed",
+          "trace_id",
+          "accepted_snapshots",
+          "accepted_device_events",
+          "accepted_coverage",
+          "rejected_stats",
+          "rejected_stat_members",
+          "rejected_device_events",
+          "rejected_device_members"
+        ],
+        "title": "CaptureContinuousResponse",
+        "type": "object"
+      },
       "CaptureCoverageRequest": {
         "additionalProperties": false,
         "description": "One explicit gap the client recorded rather than dropping it silently.",
@@ -916,13 +1017,27 @@
       },
       "CaptureRequest": {
         "additionalProperties": false,
-        "description": "The versioned browser capture payload, exactly as ``drain()`` emits it.",
+        "description": "The versioned browser capture payload, exactly as ``drain()`` emits it.\n\n``captureVersion: 1`` is a single, self-contained batch. ``captureVersion: 2``\nis one drain of a continuous call: ``drainSequence`` is 1-based and monotonic\nper recorder, ``capturerStartedAtMs`` is the recorder's own first clock reading\n(not the call start), and ``resync`` is set only when the client permanently\ngave up on earlier drains.",
         "properties": {
           "captureVersion": {
             "maximum": 2147483647,
             "minimum": 1,
             "title": "Captureversion",
             "type": "integer"
+          },
+          "capturerStartedAtMs": {
+            "anyOf": [
+              {
+                "maximum": 10000000000.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Capturerstartedatms"
           },
           "clockDomain": {
             "$ref": "#/components/schemas/CaptureClockDomainRequest"
@@ -940,6 +1055,31 @@
             },
             "title": "Deviceevents",
             "type": "array"
+          },
+          "drainSequence": {
+            "anyOf": [
+              {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Drainsequence"
+          },
+          "resync": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaptureResyncRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "sessionId": {
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
@@ -971,6 +1111,36 @@
           "clockDomain"
         ],
         "title": "CaptureRequest",
+        "type": "object"
+      },
+      "CaptureResyncRequest": {
+        "additionalProperties": false,
+        "description": "A ``captureVersion: 2`` client's declaration that it gave up on earlier drains.\n\nA drain that skips ahead of the sequence the server holds is refused unless\nthe client says, honestly, which drains it permanently lost. The range must\ncover exactly the gap; the loss is then ledgered as coverage and the WebRTC\ncarry across it is dropped rather than estimated.",
+        "properties": {
+          "missedFromSequence": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "title": "Missedfromsequence",
+            "type": "integer"
+          },
+          "missedThroughSequence": {
+            "maximum": 2147483647,
+            "minimum": 1,
+            "title": "Missedthroughsequence",
+            "type": "integer"
+          },
+          "reason": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "missedFromSequence",
+          "missedThroughSequence",
+          "reason"
+        ],
+        "title": "CaptureResyncRequest",
         "type": "object"
       },
       "CaptureSnapshotRequest": {
@@ -5896,7 +6066,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6618,7 +6788,15 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CaptureAcceptedResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/CaptureAcceptedResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/CaptureContinuousResponse"
+                    }
+                  ],
+                  "title": "Response 200 Capture Endpoint V1 Capture Post"
                 }
               }
             },
@@ -6633,6 +6811,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureContinuousResponse"
+                }
+              }
+            },
+            "description": "Accepted"
           },
           "400": {
             "content": {

@@ -13,3 +13,17 @@
  * `packages/sdk-python/src/earshot/api.py` (`CAPTURE_PROTOCOL_VERSION`).
  */
 export const CAPTURE_PROTOCOL_VERSION = 1;
+
+/**
+ * The continuous-capture wire version. A recorder created with
+ * `{ captureVersion: 2 }` accumulates one call into a single journal-backed
+ * provisional artifact on the server instead of a per-drain incident: each
+ * `drain()` carries a 1-based `drainSequence` under the same continuous
+ * `sessionId` and `clockDomain.id`. It stays opt-in for now so a client can keep
+ * talking to a server that only governs version 1; the server governs both.
+ */
+export const CONTINUOUS_CAPTURE_VERSION = 2;
+
+/** The capture wire versions this client can emit. */
+export type CaptureVersion =
+  typeof CAPTURE_PROTOCOL_VERSION | typeof CONTINUOUS_CAPTURE_VERSION;

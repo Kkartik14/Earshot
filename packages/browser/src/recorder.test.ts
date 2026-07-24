@@ -49,6 +49,31 @@ describe("drain", () => {
     expect(recorder.drain().snapshots).toHaveLength(1);
     expect(recorder.drain().snapshots).toHaveLength(0); // drained -> empty
   });
+
+  it("defaults to capture version 1 with no continuous drain sequence", () => {
+    const payload = createBrowserRecorder().drain();
+    expect(payload.captureVersion).toBe(1);
+    expect(payload.drainSequence).toBeUndefined();
+    expect(payload.capturerStartedAtMs).toBeUndefined();
+  });
+
+  it("opts into continuous capture with a monotonic drain sequence", () => {
+    const clock = new FakeClock(4200);
+    const recorder = createBrowserRecorder({ captureVersion: 2, clock: clock.now });
+
+    const first = recorder.drain();
+    const second = recorder.drain();
+    const third = recorder.drain();
+
+    expect([first, second, third].map((p) => p.captureVersion)).toEqual([2, 2, 2]);
+    expect([first, second, third].map((p) => p.drainSequence)).toEqual([1, 2, 3]);
+    // The recorder's construction reading, carried on every drain unchanged.
+    expect(first.capturerStartedAtMs).toBe(4200);
+    expect(third.capturerStartedAtMs).toBe(4200);
+    // One continuous timeline: the session and clock-domain ids never change.
+    expect(new Set([first, second, third].map((p) => p.sessionId)).size).toBe(1);
+    expect(new Set([first, second, third].map((p) => p.clockDomain.id)).size).toBe(1);
+  });
 });
 
 describe("stop", () => {
