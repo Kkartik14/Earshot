@@ -5,7 +5,7 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.5.0",
+  "analyzer_version": "0.6.0",
   "input_sha256": "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0",
   "turns": [
     {
@@ -416,6 +416,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -425,6 +426,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -434,6 +436,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -443,6 +446,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -452,6 +456,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -461,6 +466,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -487,6 +493,7 @@
             "confidence": "measured",
             "value": 0.92,
             "unit": "1",
+            "uncertainty": null,
             "limitation": null,
             "evidence_ids": [
               "quality-interruption-intent"
@@ -616,6 +623,7 @@
             "confidence": "measured",
             "value": 100.0,
             "unit": "ms",
+            "uncertainty": null,
             "limitation": null,
             "evidence_ids": [
               "event-overlap",

@@ -411,7 +411,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** AnalysisMetric */
+        /**
+         * AnalysisMetric
+         * @description One derived quantity, or the exact reason there is none.
+         *
+         *     ``uncertainty`` is the error bound the derivation propagated, stated in the
+         *     same ``unit`` as ``value``. It is present only when every contributing bound
+         *     was known: an input whose own bound is unknown makes the result's bound
+         *     unknown too, and that is reported as a ``limitation`` rather than as an
+         *     exact zero, which would claim a precision nothing measured.
+         */
         AnalysisMetric: {
             /** Availability */
             availability: string;
@@ -429,6 +438,11 @@ export interface components {
              * @default null
              */
             limitation: string | null;
+            /**
+             * Uncertainty
+             * @default null
+             */
+            uncertainty: number | null;
             /**
              * Unit
              * @default null
@@ -908,9 +922,14 @@ export interface components {
          *     domain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``
          *     is an optional linear parts-per-million rate anchored at ``reference_unix_nano``,
          *     so the total correction at wall time ``t`` is
-         *     ``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds.
+         *     ``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds. That
+         *     map's slope is ``1 + drift_ppm/1e6``, and ``drift_ppm`` is confined to
+         *     ``(-MAX_CLOCK_DRIFT_PPM, +MAX_CLOCK_DRIFT_PPM)`` so the slope stays strictly
+         *     positive and bounded: a relation may not reverse time, collapse it, or leave the
+         *     representable nanosecond domain.
          *     ``uncertainty_nano`` is the calibration's own error bound and is propagated into
-         *     any cross-domain latency derived through this relation. ``valid_from_unix_nano``
+         *     any cross-domain latency derived through this relation. It is optional, and its
+         *     absence means the bound is *unknown* -- never that it is zero. ``valid_from_unix_nano``
          *     and ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)
          *     where the calibration is trustworthy; timestamps outside it are not aligned.
          */

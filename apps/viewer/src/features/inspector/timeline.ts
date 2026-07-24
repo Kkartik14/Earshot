@@ -520,8 +520,13 @@ export interface MetricRow {
   availability: string;
   basis: string;
   confidence: string;
-  /** The analyzer's reason the metric is not `available`, carried so the UI can
-   * name the obstacle instead of leaving a blank where a number would be. */
+  /** The analyzer's propagated error bound, in the metric's own unit. `null`
+   * means the analyzer could not bound it — unknown, never zero — and the
+   * `limitation` then names why. */
+  uncertainty: number | null;
+  /** The analyzer's reason the metric is not `available`, or the caveat attached
+   * to one that is, carried so the UI can name the obstacle instead of leaving a
+   * blank where a number would be. */
   limitation: string | null;
 }
 
@@ -531,6 +536,7 @@ const metricRow = (key: string, metric: AnalysisMetricLike | undefined): MetricR
   availability: metric?.availability ?? "not_observed",
   basis: metric?.basis ?? "",
   confidence: metric?.confidence ?? "unavailable",
+  uncertainty: metric?.uncertainty ?? null,
   limitation: metric?.limitation ?? null,
 });
 
@@ -887,6 +893,12 @@ const CALIBRATED_BASIS = "cross_clock_calibrated";
 const CLOCK_LIMITATION_NOTE: Record<string, string> = {
   cross_clock_domain: "two clock domains with no declared calibration between them",
   cross_clock_ambiguous: "declared calibrations disagree beyond their uncertainty",
+  cross_clock_calibration_degenerate:
+    "the declared calibration reverses or collapses time, so it was not applied",
+  cross_clock_calibration_unrepresentable:
+    "the declared calibration carries this instant outside the representable range",
+  calibration_uncertainty_unknown:
+    "estimated through a calibration that declares no error bound, so the margin is unknown",
   calibrated_time_reversed: "the calibrated interval runs backwards",
   same_domain_time_reversed: "the recorded interval runs backwards",
   timestamp_representation_unavailable: "the two facts share no timestamp representation",
@@ -899,12 +911,15 @@ export function clockComparability(
   metric: Pick<MetricRow, "availability" | "basis" | "limitation">,
 ): { state: "estimated" | "unavailable"; note: string } | null {
   if (metric.availability === "available") {
-    return metric.basis === CALIBRATED_BASIS
-      ? {
-          state: "estimated",
-          note: "estimated across clock domains through a declared calibration",
-        }
-      : null;
+    if (metric.basis !== CALIBRATED_BASIS) return null;
+    // An estimate whose calibration declares no error bound is still an estimate,
+    // but how far off it may be is unknown — which the reader must be told, rather
+    // than left to read the silence as precision.
+    const note =
+      metric.limitation === "calibration_uncertainty_unknown"
+        ? CLOCK_LIMITATION_NOTE.calibration_uncertainty_unknown
+        : "estimated across clock domains through a declared calibration";
+    return { state: "estimated", note };
   }
   const note =
     metric.limitation == null ? null : CLOCK_LIMITATION_NOTE[metric.limitation];

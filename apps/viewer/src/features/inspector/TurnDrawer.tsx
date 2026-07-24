@@ -18,8 +18,14 @@ const humanize = (s: string) => s.replace(/_/g, " ");
 function metricReadout(metric: MetricRow): { value: string; reason: string } {
   const clock = clockComparability(metric);
   if (metric.value != null) {
+    // A known error bound belongs beside the number it bounds; an unknown one is
+    // left off the number and named in the reason, never shown as ±0.
+    const bound =
+      metric.uncertainty != null && metric.uncertainty > 0
+        ? ` ± ${formatMeasurement(metric.uncertainty, "ms")}`
+        : "";
     return {
-      value: formatMeasurement(metric.value, "ms"),
+      value: `${formatMeasurement(metric.value, "ms")}${bound}`,
       reason: clock?.state === "estimated" ? `estimated · ${clock.note}` : metric.basis,
     };
   }

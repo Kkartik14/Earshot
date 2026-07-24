@@ -5,7 +5,7 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.5.0",
+  "analyzer_version": "0.6.0",
   "input_sha256": "7f86d3e28e16e2f687fc9ae95e5da88faf0bb909aecc349dc84d451241d7cb2e",
   "turns": [
     {
@@ -449,6 +449,7 @@
           "confidence": "measured",
           "value": 120.0,
           "unit": "ms",
+          "uncertainty": null,
           "limitation": null,
           "evidence_ids": [
             "event-turn-committed",
@@ -461,6 +462,7 @@
           "confidence": "measured",
           "value": 280.0,
           "unit": "ms",
+          "uncertainty": null,
           "limitation": null,
           "evidence_ids": [
             "event-turn-committed",
@@ -473,6 +475,7 @@
           "confidence": "measured",
           "value": 320.0,
           "unit": "ms",
+          "uncertainty": null,
           "limitation": null,
           "evidence_ids": [
             "event-turn-committed",
@@ -485,6 +488,7 @@
           "confidence": "measured",
           "value": 360.0,
           "unit": "ms",
+          "uncertainty": null,
           "limitation": null,
           "evidence_ids": [
             "event-turn-committed",
@@ -497,6 +501,7 @@
           "confidence": "measured",
           "value": 2070.0,
           "unit": "ms",
+          "uncertainty": null,
           "limitation": null,
           "evidence_ids": [
             "event-turn-committed",
@@ -509,6 +514,7 @@
           "confidence": "measured",
           "value": 2070.0,
           "unit": "ms",
+          "uncertainty": null,
           "limitation": null,
           "evidence_ids": [
             "event-turn-committed",

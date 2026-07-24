@@ -1321,6 +1321,56 @@ describe("interruption chains", () => {
     });
   });
 
+  it("carries a metric's propagated error bound, and unknown is not zero", () => {
+    const explanation = asExplanation({
+      bundle_id: "b",
+      session_id: "s",
+      session_status: "completed",
+      finality: "final",
+      completeness: "complete",
+      analyzer_version: "t",
+      limitations: [],
+      coverage: [],
+      omissions: [],
+      turns: [
+        {
+          turn_id: "turn-1",
+          metrics: {
+            response_latency: {
+              availability: "available",
+              basis: "cross_clock_calibrated",
+              confidence: "estimated",
+              value: 720,
+              unit: "ms",
+              uncertainty: 0.5,
+              evidence_ids: ["evt-a", "evt-b"],
+            },
+            first_token_latency: {
+              availability: "available",
+              basis: "cross_clock_calibrated",
+              confidence: "estimated",
+              value: 150,
+              unit: "ms",
+              limitation: "calibration_uncertainty_unknown",
+              evidence_ids: ["evt-a", "evt-c"],
+            },
+          },
+          operations: [],
+          events: [],
+        },
+      ],
+    });
+
+    const metrics = Object.fromEntries(
+      buildTurnDetails(explanation)[0].metrics.map((metric) => [metric.key, metric]),
+    );
+    expect(metrics.response.uncertainty).toBe(0.5);
+    // An unknown bound stays null and is named by the limitation; it is never
+    // flattened into a 0 that would claim the estimate is exact.
+    expect(metrics.first_token.uncertainty).toBeNull();
+    expect(metrics.first_token.limitation).toBe("calibration_uncertainty_unknown");
+  });
+
   it("keeps a stage coordinate that cannot be placed on the turn axis", () => {
     const explanation = asExplanation({
       bundle_id: "b",
@@ -1445,6 +1495,38 @@ describe("clockComparability", () => {
         limitation: "target_signal_not_observed",
       }),
     ).toBeNull();
+  });
+
+  it("names a calibration the analyzer refused to apply", () => {
+    expect(
+      clockComparability({
+        availability: "unavailable",
+        basis: "cross_clock_calibrated",
+        limitation: "cross_clock_calibration_degenerate",
+      })?.note,
+    ).toMatch(/reverses or collapses time/);
+    expect(
+      clockComparability({
+        availability: "unavailable",
+        basis: "cross_clock_calibrated",
+        limitation: "cross_clock_calibration_unrepresentable",
+      })?.note,
+    ).toMatch(/outside the representable range/);
+  });
+
+  it("says an estimate's margin is unknown when the calibration declares none", () => {
+    // The value stands; only its precision is open. Silence here would read as
+    // precision, so the note says the bound is unknown.
+    expect(
+      clockComparability({
+        availability: "available",
+        basis: "cross_clock_calibrated",
+        limitation: "calibration_uncertainty_unknown",
+      }),
+    ).toEqual({
+      state: "estimated",
+      note: "estimated through a calibration that declares no error bound, so the margin is unknown",
+    });
   });
 });
 

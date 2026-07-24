@@ -114,6 +114,7 @@ const turnDetail: TurnDetail = {
       availability: "available",
       basis: "provider_stage_direct",
       confidence: "measured",
+      uncertainty: null,
       limitation: null,
     },
   ],
@@ -770,6 +771,7 @@ describe("Interruption chain", () => {
         availability: "not_observed",
         basis: "interruption_barge_in",
         confidence: "unavailable",
+        uncertainty: null,
         limitation: "target_signal_not_observed",
       },
     });

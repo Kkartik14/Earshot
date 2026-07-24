@@ -5,7 +5,7 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.5.0",
+  "analyzer_version": "0.6.0",
   "input_sha256": "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa",
   "turns": [
     {
@@ -107,6 +107,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -116,6 +117,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -125,6 +127,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -134,6 +137,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -143,6 +147,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -152,6 +157,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "turn_anchor_not_observed",
           "evidence_ids": []
         },
@@ -289,6 +295,7 @@
             "confidence": "unavailable",
             "value": null,
             "unit": null,
+            "uncertainty": null,
             "limitation": "target_signal_not_observed",
             "evidence_ids": [
               "event-interruption-detected"

@@ -2,6 +2,7 @@
   "$defs": {
     "AnalysisMetric": {
       "additionalProperties": false,
+      "description": "One derived quantity, or the exact reason there is none.\n\n``uncertainty`` is the error bound the derivation propagated, stated in the\nsame ``unit`` as ``value``. It is present only when every contributing bound\nwas known: an input whose own bound is unknown makes the result's bound\nunknown too, and that is reported as a ``limitation`` rather than as an\nexact zero, which would claim a precision nothing measured.",
       "properties": {
         "availability": {
           "pattern": "^(?:[a-z][a-z0-9_.-]{0,255}|sha256:[0-9a-f]{64})$",
@@ -40,6 +41,21 @@
           ],
           "default": null,
           "title": "Limitation"
+        },
+        "uncertainty": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uncertainty"
         },
         "unit": {
           "anyOf": [
