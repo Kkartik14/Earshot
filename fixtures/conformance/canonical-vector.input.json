@@ -37,6 +37,7 @@
         "wall_origin_unix_nano": "1800000000000000000"
       }
     ],
+    "clock_relations": [],
     "coverage": [],
     "events": [
       {

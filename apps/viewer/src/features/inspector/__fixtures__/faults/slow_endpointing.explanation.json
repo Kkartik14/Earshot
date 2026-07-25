@@ -5,8 +5,8 @@
   "finality": "final",
   "completeness": "complete",
   "analyzer_name": "earshot.deterministic",
-  "analyzer_version": "0.3.2",
-  "input_sha256": "ff29b0ba0452dfd770744539ca613bbcdd331a323b96969c7e6f27fdbe5950b3",
+  "analyzer_version": "0.6.0",
+  "input_sha256": "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625",
   "turns": [
     {
       "turn_id": "turn-1",
@@ -144,6 +144,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "target_signal_not_observed",
           "evidence_ids": [
             "event-turn-committed"
@@ -155,6 +156,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "target_signal_not_observed",
           "evidence_ids": [
             "event-turn-committed"
@@ -166,6 +168,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "target_signal_not_observed",
           "evidence_ids": [
             "event-turn-committed"
@@ -177,6 +180,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "target_signal_not_observed",
           "evidence_ids": [
             "event-turn-committed"
@@ -188,6 +192,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "target_signal_not_observed",
           "evidence_ids": [
             "event-turn-committed"
@@ -199,6 +204,7 @@
           "confidence": "unavailable",
           "value": null,
           "unit": null,
+          "uncertainty": null,
           "limitation": "target_signal_not_observed",
           "evidence_ids": [
             "event-turn-committed"
@@ -215,7 +221,8 @@
           "evidence_ids": []
         },
         "provider_measurements": {}
-      }
+      },
+      "interruption_chains": []
     }
   ],
   "coverage": [],
@@ -223,7 +230,20 @@
   "limitations": [
     "render_evidence_not_observed"
   ],
-  "diagnoses": [],
+  "diagnoses": [
+    {
+      "diagnosis_id": "endpointing_slow.cbbf0363342fc44f14b6e77dac21aefcf4c7859fe20d28f1e4f3f459921a4303",
+      "code": "endpointing.slow",
+      "summary": "endpointing_slow",
+      "confidence": "inferred",
+      "evidence_ids": [
+        "op-turn"
+      ],
+      "limitations": [
+        "endpointing_latency_exceeds_slo"
+      ]
+    }
+  ],
   "unassigned_operations": [],
   "unassigned_events": [],
   "unassigned_measurements": []

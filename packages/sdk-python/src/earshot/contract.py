@@ -9,6 +9,7 @@ they can return stable, language-independent issue codes.
 
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
@@ -47,6 +48,20 @@ DecimalNano = Annotated[
     str,
     StringConstraints(pattern=r"^(0|[1-9][0-9]*)$", max_length=20),
     AfterValidator(_uint64_decimal),
+]
+
+
+def _int64_signed(value: str) -> str:
+    v = int(value)
+    if v > (1 << 63) - 1 or v < -(1 << 63):
+        raise ValueError("signed nanosecond value exceeds int64")
+    return value
+
+
+SignedDecimalNano = Annotated[
+    str,
+    StringConstraints(pattern=r"^-?(0|[1-9][0-9]*)$", max_length=21),
+    AfterValidator(_int64_signed),
 ]
 
 
@@ -109,6 +124,17 @@ def _portable_schema_url(value: str) -> str:
 
 
 SchemaUrl = Annotated[str, StringConstraints(min_length=1), AfterValidator(_portable_schema_url)]
+# A clock relation is a calibration between two clocks, so its rate correction has
+# a domain. The map's slope is ``1 + drift_ppm / 1e6``: at ``drift_ppm == -1e6``
+# the slope is 0 (the map collapses every instant onto one and has no inverse),
+# below that it is negative (a later instant is mapped to an earlier one -- a
+# calibration that reverses time is not a calibration), and beyond +1e6 the second
+# clock runs at more than double the first, which is a different time base rather
+# than drift. Real oscillators drift by hundreds of ppm, so this bound is orders of
+# magnitude looser than any true calibration while keeping the affine arithmetic
+# inside the nanosecond domain the contract can represent.
+MAX_CLOCK_DRIFT_PPM = 1_000_000.0
+
 CaptureClassName = Literal[
     "metadata",
     "extension_payload",
@@ -174,19 +200,6 @@ class Adapter(ContractModel):
     framework_version: NonEmptyStr | None = None
 
 
-class BundleManifest(ContractModel):
-    schema_version: NonEmptyStr = SCHEMA_VERSION
-    semantic_profile_version: NonEmptyStr = SEMANTIC_PROFILE_VERSION
-    bundle_id: BundleId
-    session_id: OpaqueId
-    created_at_unix_nano: DecimalNano
-    producer: Producer
-    adapters: tuple[Adapter, ...] = ()
-    finality: NonEmptyStr = "final"
-    completeness: NonEmptyStr = "complete"
-    attributes: dict[str, Any] = Field(default_factory=dict)
-
-
 class TimePoint(ContractModel):
     """A timestamp without pretending distributed clocks are globally ordered."""
 
@@ -207,6 +220,70 @@ class TimePoint(ContractModel):
         if self.monotonic_time_nano is not None and self.clock_domain_id is None:
             raise ValueError("monotonic_time_nano requires clock_domain_id")
         return self
+
+
+class RecoveryRecord(ContractModel):
+    """How this artifact was reconstructed, and what that costs its completeness.
+
+    An artifact that was not produced by a live ``close()`` has to be
+    structurally unable to pass as a cleanly closed one, so the declaration is a
+    typed manifest member rather than an attribute. Attribute bags are a weak
+    channel: their keys need a privacy allowlist, and validation cannot
+    cross-check an open bag against ``finality``, ``completeness``,
+    ``session.status``, and coverage — which is exactly what makes the
+    declaration enforceable here.
+
+    The commonest source is a checkpoint-journal replay, but not the only one: a
+    browser capture batch is a partial observation of a session still in
+    progress, so it declares recovery with ``close_observed=False`` too. The
+    ``method`` names the reconstruction source (``checkpoint_journal``,
+    ``browser_capture_batch``); the journal coordinates below are present only
+    when there actually was a journal.
+
+    There is deliberately no "recovered at" timestamp. Two reconstructions of
+    the same evidence must produce the same bytes under the same ``bundle_id``,
+    or content-addressed ingest would reject the second as a conflict. When
+    recovery ran is an operational fact for the CLI and the diagnostic channel,
+    not evidence.
+    """
+
+    method: SemanticCode
+    reason: SemanticCode
+    close_observed: StrictBool
+    # Journal coordinates, present only for a journal replay. A reconstruction
+    # with no journal — a browser capture batch, for instance — omits them
+    # rather than inventing a journal identity and sequence it never had.
+    journal_id: OpaqueId | None = None
+    last_sequence: StrictInt | None = Field(default=None, ge=0)
+    # The span of coordinates the evidence durably observed. ``last_observation``
+    # is the last such coordinate and ``first_observation`` the first, symmetric so
+    # a provisional or recovered artifact states the extent it actually saw without
+    # a consumer scanning every fact. Neither is a session boundary: the session may
+    # have begun before the first observation and run on long after the last. Both
+    # live in whatever clock domain the evidence was observed in (a browser capture
+    # journal's are browser coordinates), so a coherence check between them only
+    # holds within one domain.
+    first_observation: TimePoint | None = None
+    last_observation: TimePoint | None = None
+    torn_tail_bytes: StrictInt = Field(default=0, ge=0)
+    discarded_records: StrictInt = Field(default=0, ge=0)
+    journal_complete: StrictBool = True
+    recoverer: Producer
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+class BundleManifest(ContractModel):
+    schema_version: NonEmptyStr = SCHEMA_VERSION
+    semantic_profile_version: NonEmptyStr = SEMANTIC_PROFILE_VERSION
+    bundle_id: BundleId
+    session_id: OpaqueId
+    created_at_unix_nano: DecimalNano
+    producer: Producer
+    adapters: tuple[Adapter, ...] = ()
+    finality: NonEmptyStr = "final"
+    completeness: NonEmptyStr = "complete"
+    recovery: RecoveryRecord | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class TimeRange(ContractModel):
@@ -275,10 +352,91 @@ class Evidence(ContractModel):
     attributes: dict[str, Any] = Field(default_factory=dict)
 
 
+class ClockRelation(ContractModel):
+    """A declared calibration mapping between two clock domains.
+
+    ``offset_nano`` converts a ``from``-domain wall timestamp into the ``to``
+    domain: ``to_wall = from_wall + offset_nano`` (plus optional drift). ``drift_ppm``
+    is an optional linear parts-per-million rate anchored at ``reference_unix_nano``,
+    so the total correction at wall time ``t`` is
+    ``offset_nano + drift_ppm * (t - reference_unix_nano) / 1e6`` nanoseconds. That
+    map's slope is ``1 + drift_ppm/1e6``, and ``drift_ppm`` is confined to
+    ``(-MAX_CLOCK_DRIFT_PPM, +MAX_CLOCK_DRIFT_PPM)`` so the slope stays strictly
+    positive and bounded: a relation may not reverse time, collapse it, or leave the
+    representable nanosecond domain.
+    ``uncertainty_nano`` is the calibration's own error bound and is propagated into
+    any cross-domain latency derived through this relation. It is optional, and its
+    absence means the bound is *unknown* -- never that it is zero. ``valid_from_unix_nano``
+    and ``valid_to_unix_nano`` bound the wall-time window (in the ``from`` domain)
+    where the calibration is trustworthy; timestamps outside it are not aligned.
+    """
+
+    relation_id: OpaqueId
+    from_clock_domain_id: OpaqueId
+    to_clock_domain_id: OpaqueId
+    offset_nano: SignedDecimalNano
+    drift_ppm: StrictFloat | None = None
+    uncertainty_nano: DecimalNano | None = None
+    method: SemanticCode
+    reference_unix_nano: DecimalNano | None = None
+    valid_from_unix_nano: DecimalNano | None = None
+    valid_to_unix_nano: DecimalNano | None = None
+    evidence: Evidence | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def keeps_calibration_coherent(self) -> ClockRelation:
+        if self.from_clock_domain_id == self.to_clock_domain_id:
+            raise ValueError("a clock relation must map between two different domains")
+        if (
+            self.valid_from_unix_nano is not None
+            and self.valid_to_unix_nano is not None
+            and int(self.valid_to_unix_nano) < int(self.valid_from_unix_nano)
+        ):
+            raise ValueError("clock relation validity window ends before it begins")
+        if self.drift_ppm is not None and not math.isfinite(self.drift_ppm):
+            # A NaN/inf drift rate has no affine meaning and would poison every
+            # cross-clock alignment it touches; a rate must be a finite number.
+            raise ValueError("clock relation drift_ppm must be finite")
+        if self.drift_ppm is not None and abs(self.drift_ppm) >= MAX_CLOCK_DRIFT_PPM:
+            # Outside this domain the relation is not a calibration: the slope
+            # ``1 + drift_ppm/1e6`` is zero (non-invertible), negative (time runs
+            # backwards through it), or so large that the mapped instant leaves the
+            # nanosecond domain entirely. Refusing the absurd here is what lets the
+            # analyzer's affine arithmetic stay total for everything it accepts.
+            raise ValueError(
+                "clock relation drift_ppm must be within "
+                f"+/-{MAX_CLOCK_DRIFT_PPM:.0f} ppm (exclusive)"
+            )
+        if (
+            self.drift_ppm is not None
+            and self.drift_ppm != 0.0
+            and self.reference_unix_nano is None
+        ):
+            # Drift is a rate about an anchor instant. Without a reference the
+            # correction ``drift_ppm * (t - reference)`` is undefined, so a
+            # non-zero drift requires the reference it is measured from.
+            raise ValueError("clock relation drift_ppm requires reference_unix_nano")
+        return self
+
+
 class Coverage(ContractModel):
+    """What a fact source could or could not observe for one signal.
+
+    ``dropped_count`` is how many observations the source counted itself losing
+    in this window, when it could count them — a browser capture kernel whose
+    bounded buffer overflowed knows exactly how many samples it discarded. The
+    number is evidence about the gap, so it belongs on the gap: without it a
+    reader can see *that* something was lost but never *how much*, and a count
+    that survives only in a transport acknowledgement is not part of the
+    artifact at all. ``None`` means the loss was not countable, which is not the
+    same claim as ``0`` — nothing lost.
+    """
+
     signal: NonEmptyStr
     availability: NonEmptyStr
     reason: NonEmptyStr | None = None
+    dropped_count: StrictInt | None = Field(default=None, ge=0)
     evidence: Evidence | None = None
     attributes: dict[str, Any] = Field(default_factory=dict)
 
@@ -471,18 +629,99 @@ class MediaLocator(ContractModel):
 
 
 class MediaRef(ContractModel):
+    """A reference to media somebody else holds — never the media itself.
+
+    Earshot stores custody, not content: who holds the bytes, what they are,
+    which window of the session they cover, under what consent and retention,
+    and which clock domain their own timeline runs on. It never ingests,
+    fetches, caches, or proxies them.
+
+    ``integrity`` is the honesty discriminator that makes that distinction
+    legible instead of overloading a null:
+
+    ``content_digest``
+        Somebody measured these bytes and declared a ``sha256`` and
+        ``size_bytes`` for them. The digest is a *declaration carried by the
+        artifact*, not an earshot verification — earshot still never read the
+        bytes — but it is a checkable commitment a holder can be held to.
+    ``opaque_handle``
+        Nobody measured the bytes on this path, so the reference carries no
+        digest and no size and names the ``custodian`` who does hold them.
+        ``byte_range`` is meaningless here: you cannot range into bytes whose
+        length was never observed.
+
+    Making ``sha256``/``size_bytes`` optional is what the real custody case
+    requires. The alternative — keeping them required and letting a producer
+    fill them with something it did not compute — is exactly the dishonesty
+    this contract exists to prevent. The coherence rule is enforced by
+    :func:`media_custody_incoherence` at every boundary, not by convention.
+    """
+
     media_id: OpaqueId
     session_id: OpaqueId
     stream_id: OpaqueId
     media_kind: NonEmptyStr
     content_type: NonEmptyStr
-    sha256: Sha256
-    size_bytes: StrictInt = Field(ge=0)
+    integrity: Literal["content_digest", "opaque_handle"] = "content_digest"
+    sha256: Sha256 | None = None
+    size_bytes: StrictInt | None = Field(default=None, ge=0)
+    # Where the bytes actually live. Required for an opaque handle: a reference
+    # earshot cannot attest to is worthless unless it names who can.
+    custodian: SemanticCode | None = None
+    # The media file's own timeline, as an ordinary clock domain. Aligning it to
+    # the session reuses ``ClockRelation`` rather than inventing a second,
+    # parallel synchronization model with its own uncertainty semantics.
+    clock_domain_id: OpaqueId | None = None
+    consent: ConsentRecord | None = None
+    retention: RetentionPolicy | None = None
     time_range: TimeRange | None = None
     byte_range: ByteRange | None = None
     locator: MediaLocator | None = None
     capture_class: NormalizedCaptureClassName = "audio"
     attributes: dict[str, Any] = Field(default_factory=dict)
+
+
+def media_custody_incoherence(media: MediaRef) -> str | None:
+    """Return why this custody claim contradicts itself, or ``None``.
+
+    One implementation of the rule, used by the recorder (which refuses the
+    record at admission) and by ``validation`` (which refuses the artifact at
+    every boundary with a stable code). Two copies of an honesty rule are two
+    chances for them to disagree, and a disagreement here would let an
+    unverifiable reference pass as a verified one.
+    """
+
+    if media.integrity == "content_digest":
+        if media.sha256 is None or media.size_bytes is None:
+            return "a content_digest media reference must carry sha256 and size_bytes"
+        return None
+    if media.sha256 is not None or media.size_bytes is not None:
+        return "an opaque_handle media reference cannot assert a digest or a size"
+    if media.custodian is None:
+        return "an opaque_handle media reference must name the custodian holding the bytes"
+    if media.byte_range is not None:
+        return "an opaque_handle media reference cannot range into unmeasured bytes"
+    return None
+
+
+def media_declares_custody_extensions(media: MediaRef) -> bool:
+    """Report whether this reference uses a member the 0.1.0 contract lacked.
+
+    A 0.1.0 ``MediaRef`` could only be a digest-and-size reference. An artifact
+    claiming 0.1.0 while using an opaque handle, a custodian, a media clock
+    domain, consent, or retention is asserting a contract it cannot express —
+    the same failure ``manifest.recovery`` has at 0.1.0.
+    """
+
+    return (
+        media.integrity != "content_digest"
+        or media.sha256 is None
+        or media.size_bytes is None
+        or media.custodian is not None
+        or media.clock_domain_id is not None
+        or media.consent is not None
+        or media.retention is not None
+    )
 
 
 class Diagnosis(AnalysisContractModel):
@@ -495,11 +734,21 @@ class Diagnosis(AnalysisContractModel):
 
 
 class AnalysisMetric(AnalysisContractModel):
+    """One derived quantity, or the exact reason there is none.
+
+    ``uncertainty`` is the error bound the derivation propagated, stated in the
+    same ``unit`` as ``value``. It is present only when every contributing bound
+    was known: an input whose own bound is unknown makes the result's bound
+    unknown too, and that is reported as a ``limitation`` rather than as an
+    exact zero, which would claim a precision nothing measured.
+    """
+
     availability: SemanticCode
     basis: SemanticCode
     confidence: SemanticCode
     value: StrictInt | StrictFloat | None = None
     unit: NonEmptyStr | None = None
+    uncertainty: StrictInt | StrictFloat | None = None
     limitation: SemanticCode | None = None
     evidence_ids: tuple[OpaqueId, ...] = ()
 
@@ -512,6 +761,14 @@ class AnalysisMetric(AnalysisContractModel):
                 )
         elif self.value is not None or self.unit is not None:
             raise ValueError("non-available analysis metrics cannot assert a value or unit")
+        if self.uncertainty is not None:
+            # An error bound is a bound *on a value*, expressed in that value's
+            # unit. Without the value it bounds nothing; a non-finite or negative
+            # bound bounds nothing either.
+            if self.value is None or self.unit is None:
+                raise ValueError("an analysis metric uncertainty requires a value and unit")
+            if not math.isfinite(self.uncertainty) or self.uncertainty < 0:
+                raise ValueError("an analysis metric uncertainty must be finite and non-negative")
         return self
 
 
@@ -583,12 +840,76 @@ class InterruptionProjection(AnalysisContractModel):
     evidence_ids: tuple[OpaqueId, ...] = Field(min_length=1)
 
 
+class InterruptionStage(AnalysisContractModel):
+    """One canonical stage of a barge-in teardown, observed or not.
+
+    An observed stage cites a real event/operation/sample and carries the exact
+    coordinate that evidence recorded (never a synthesized timestamp). A stage the
+    artifact does not contain is reported as ``observed=False`` with a
+    ``coverage_reason`` and no coordinate, so absence is coverage, not fabrication.
+    ``outcome`` carries the disposition of the ``tool_outcome`` stage (the tool's
+    ok/error/timeout/cancelled status) and stays ``None`` for every other stage.
+    """
+
+    stage: SemanticCode
+    observed: StrictBool
+    at_nano: DecimalNano | None = None
+    clock_domain_id: OpaqueId | None = None
+    time_basis: SemanticCode | None = None
+    evidence_id: OpaqueId | None = None
+    coverage_reason: SemanticCode | None = None
+    outcome: SemanticCode | None = None
+
+    @model_validator(mode="after")
+    def keeps_observation_coherent(self) -> InterruptionStage:
+        if self.observed:
+            if self.evidence_id is None:
+                raise ValueError("an observed interruption stage must cite evidence")
+            if self.coverage_reason is not None:
+                raise ValueError("an observed interruption stage cannot carry a coverage reason")
+        else:
+            if any(
+                value is not None
+                for value in (
+                    self.at_nano,
+                    self.clock_domain_id,
+                    self.time_basis,
+                    self.evidence_id,
+                    self.outcome,
+                )
+            ):
+                raise ValueError(
+                    "an unobserved interruption stage cannot assert a coordinate, "
+                    "evidence, or outcome"
+                )
+            if self.coverage_reason is None:
+                raise ValueError("an unobserved interruption stage requires a coverage reason")
+        return self
+
+
+class InterruptionChainProjection(AnalysisContractModel):
+    """The ordered causal chain a single turn's interruption produced.
+
+    Every stage in the canonical vocabulary is present exactly once, marked
+    observed or not. ``effectiveness`` is the barge-in latency from the observed
+    overlap to the observed render stop, computed only when both endpoints are
+    comparable (same clock, or a declared calibration aligns them); otherwise it
+    honestly asserts no value.
+    """
+
+    turn_id: OpaqueId
+    classification: Literal["accepted", "ignored", "false", "unknown"]
+    stages: tuple[InterruptionStage, ...] = Field(min_length=1)
+    effectiveness: AnalysisMetric
+
+
 class TurnProjection(AnalysisContractModel):
     turn_id: OpaqueId
     operation_ids: tuple[OpaqueId, ...] = ()
     event_ids: tuple[OpaqueId, ...] = ()
     metrics: TurnMetrics
     interruptions: tuple[InterruptionProjection, ...] = ()
+    interruption_chains: tuple[InterruptionChainProjection, ...] = ()
 
 
 class AnalysisSummary(AnalysisContractModel):
@@ -629,6 +950,7 @@ class IncidentProfile(ContractModel):
     participants: tuple[Participant, ...] = ()
     audio_streams: tuple[AudioStream, ...] = ()
     clock_domains: tuple[ClockDomain, ...] = ()
+    clock_relations: tuple[ClockRelation, ...] = ()
     coverage: tuple[Coverage, ...] = ()
     operations: tuple[Operation, ...] = ()
     events: tuple[Event, ...] = ()

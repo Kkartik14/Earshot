@@ -1,15 +1,41 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useExplanation, useIncident } from "../../api/hooks";
+import {
+  useAnalysis,
+  useContradictions,
+  useExplanation,
+  useIncident,
+} from "../../api/hooks";
 import { EmptyState } from "../../components/EmptyState";
 import { SessionHeader } from "./SessionHeader";
-import { DiagnosesPanel, UnassignedPanel } from "./SessionFacts";
+import {
+  ClockCalibrationPanel,
+  ContradictionsPanel,
+  DiagnosesPanel,
+  UnassignedPanel,
+  contradictionsReason,
+  type ContradictionsStatus,
+} from "./SessionFacts";
+import {
+  AnalysisSummaryPanel,
+  analysisReason,
+  buildAnalysisSummary,
+  type AnalysisStatus,
+} from "./AnalysisSummary";
+import { ComparisonPanel } from "./ComparisonPanel";
+import { EvidencePanel } from "./EvidencePanel";
+import { ExportPanel } from "./ExportPanel";
+import { MediaCustodyPanel } from "./MediaCustody";
+import { RecoveryStrip } from "./RecoveryStrip";
 import { StageDrawer } from "./StageDrawer";
 import { TurnDrawer } from "./TurnDrawer";
 import { TurnTimeline, type Selection } from "./TurnTimeline";
 import styles from "./SessionInspector.module.css";
 import {
+  buildClockCalibration,
+  buildContradictions,
   buildDiagnoses,
+  buildMediaCustody,
   buildSummary,
   buildTimeline,
   buildTurnDetails,
@@ -21,6 +47,8 @@ export function SessionInspector() {
   const { bundleId } = useParams<{ bundleId: string }>();
   const incident = useIncident(bundleId);
   const explanation = useExplanation(bundleId);
+  const contradictions = useContradictions(bundleId);
+  const analysis = useAnalysis(bundleId);
   const [openTurns, setOpenTurns] = useState<Set<number>>(new Set());
   const [selection, setSelection] = useState<Selection | null>(null);
   // The control that opened the detail dialog; focus returns here on close.
@@ -68,6 +96,32 @@ export function SessionInspector() {
   const coverage = getCoverage(explained);
   const diagnoses = buildDiagnoses(explained);
   const unassigned = buildUnassigned(explained);
+  const calibration = buildClockCalibration(inc, details);
+  const mediaCustody = buildMediaCustody(inc);
+  // A detection that has not answered, or could not run, is reported as such.
+  // Only a resolved report may be read as "these are the conflicts".
+  const contradictionsStatus: ContradictionsStatus = contradictions.data
+    ? "ready"
+    : contradictions.isPending
+      ? "pending"
+      : "unavailable";
+  const contradictionsUnavailable =
+    contradictionsStatus === "unavailable"
+      ? contradictionsReason(contradictions.error)
+      : null;
+  const contradictionViews = contradictions.data
+    ? buildContradictions(explained, contradictions.data)
+    : [];
+  // The analyzer's own output binding, on the same idiom: pending and unavailable
+  // are distinct, and only a resolved response carries a binding to render.
+  const analysisStatus: AnalysisStatus = analysis.data
+    ? "ready"
+    : analysis.isPending
+      ? "pending"
+      : "unavailable";
+  const analysisView = analysis.data ? buildAnalysisSummary(analysis.data) : null;
+  const analysisUnavailable =
+    analysisStatus === "unavailable" ? analysisReason(analysis.error) : null;
 
   const openTurn = (i: number) =>
     setOpenTurns((prev) => (prev.has(i) ? prev : new Set(prev).add(i)));
@@ -97,7 +151,15 @@ export function SessionInspector() {
   return (
     <div className={styles.inspector} data-open={sel ? "" : undefined}>
       <div className={styles.main}>
+        {/* Structural, above everything: an artifact that was reconstructed
+            rather than closed must say so before any of it is read. */}
+        <RecoveryStrip incident={inc} />
         <SessionHeader summary={summary} />
+        <AnalysisSummaryPanel
+          status={analysisStatus}
+          reason={analysisUnavailable}
+          view={analysisView}
+        />
         <TurnTimeline
           timeline={timeline}
           openTurns={openTurns}
@@ -106,7 +168,23 @@ export function SessionInspector() {
           onSelectOperation={selectOperation}
         />
         <DiagnosesPanel diagnoses={diagnoses} onSelectEvidence={selectOperation} />
+        <ContradictionsPanel
+          status={contradictionsStatus}
+          reason={contradictionsUnavailable}
+          contradictions={contradictionViews}
+          onSelectEvidence={selectOperation}
+        />
+        <ClockCalibrationPanel calibration={calibration} />
+        {/* Custody sits beside the clock panel because it is the same question:
+            media is aligned by a declared ClockRelation or not at all. */}
+        <MediaCustodyPanel media={mediaCustody} />
         <UnassignedPanel facts={unassigned} />
+        {/* The explicit "what the evidence does NOT tell us": coverage gaps,
+            limitations, and omissions, each as a first-class unknown with its
+            reason — the honesty surface, before any comparison or export. */}
+        <EvidencePanel bundleId={bundleId} />
+        <ComparisonPanel bundleId={bundleId} />
+        <ExportPanel bundleId={bundleId} />
       </div>
       {sel ? (
         <div className={styles.drawerCol}>

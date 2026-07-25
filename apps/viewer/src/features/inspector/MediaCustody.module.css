@@ -1,0 +1,149 @@
+.panel {
+  padding: 8px 20px 4px;
+}
+.panelHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 0 10px;
+}
+.panelHead h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx-low);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.note {
+  font-size: 11px;
+  color: var(--tx-low);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.item {
+  border: 1px solid var(--line-soft);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 11px 13px;
+}
+.itemHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+.name {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--tx);
+}
+.kind {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--tx-low);
+  flex: 1 1 auto;
+}
+
+/* The integrity mode is the honesty discriminator, so it is badged, not buried.
+   `opaque_handle` is deliberately the muted, non-affirmative colour: nothing
+   about it should read as a verified state. */
+.integrityDigest,
+.integrityOpaque {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.integrityDigest {
+  color: var(--est);
+  background: color-mix(in oklab, var(--est) 15%, transparent);
+}
+.integrityOpaque {
+  color: var(--tx-low);
+  background: var(--track);
+  border: 1px solid var(--line);
+}
+
+.rows {
+  margin-top: 8px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, auto) 1fr;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--line-soft);
+}
+.row:first-child {
+  border-top: 0;
+}
+.label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+}
+.value {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--tx);
+}
+.detail {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--tx-low);
+}
+.dim {
+  color: var(--tx-low);
+  font-weight: 500;
+}
+
+.handoff,
+.noLocator {
+  margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--tx-low);
+}
+.link {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--acc);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 9px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.link:hover {
+  border-color: var(--acc);
+}
+.link:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+.handoffNote {
+  flex: 1 1 260px;
+}

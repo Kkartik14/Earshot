@@ -391,6 +391,24 @@ _SAFE_SOURCE_LABELS = frozenset(
         "error",
         "events.END_SPEECH.receipt",
         "events.START_SPEECH.receipt",
+        "clientContent",
+        "clientContent.turnComplete",
+        "goAway",
+        "realtimeInput",
+        "realtimeInput.activityEnd",
+        "realtimeInput.activityStart",
+        "serverContent",
+        "serverContent.generationComplete",
+        "serverContent.interrupted",
+        "serverContent.modelTurn.inlineData",
+        "serverContent.turnComplete",
+        "sessionResumptionUpdate",
+        "setupComplete",
+        "toolCall",
+        "toolCall.functionCalls",
+        "toolCallCancellation",
+        "toolCallCancellation.ids",
+        "usageMetadata",
         "eot_inference_metrics",
         "eotinferencemetrics",
         "eou_metrics",
@@ -1125,13 +1143,70 @@ class ExportPolicyError(PermissionError):
     pass
 
 
+# The two ways one class's declared export governance can forbid a destination.
+# Named because every egress seam has to say *which* one refused, and a caller
+# that streams rather than raises needs the reason as data, not as a message.
+EXPORT_DENIED_BY_POLICY = "export_denied_by_policy"
+EXPORT_DESTINATION_NOT_PERMITTED = "export_destination_not_permitted"
+
+_EXPORT_DENIAL_MESSAGES = {
+    EXPORT_DENIED_BY_POLICY: "incident export is denied by capture policy",
+    EXPORT_DESTINATION_NOT_PERMITTED: "incident export destination is not permitted",
+}
+
+
+def export_denial_reason(export: Any | None, destination: str) -> str | None:
+    """Why one class's export governance forbids ``destination``, or ``None``.
+
+    The single place the destination rule is written down. ``export`` is either
+    the configured :class:`ExportConfig` or the ``ExportPolicy`` a finished
+    bundle carries; both declare the same ``allowed`` / ``destinations`` pair, so
+    an egress seam holding either asks here instead of restating the rule. An
+    unconfigured class (``None``) forbids nothing: absence of governance is not
+    a denial, and inventing one here would silently narrow every default policy.
+    """
+
+    if export is None:
+        return None
+    if not export.allowed:
+        return EXPORT_DENIED_BY_POLICY
+    if export.destinations and destination not in export.destinations:
+        return EXPORT_DESTINATION_NOT_PERMITTED
+    return None
+
+
 def assert_export_allowed(bundle: IncidentBundle, destination: str) -> None:
     """Enforce declared per-class export restrictions."""
 
     for policy in bundle.profile.privacy.capture_classes:
-        if not policy.captured or policy.export is None:
+        if not policy.captured:
             continue
-        if not policy.export.allowed:
-            raise ExportPolicyError("incident export is denied by capture policy")
-        if policy.export.destinations and destination not in policy.export.destinations:
-            raise ExportPolicyError("incident export destination is not permitted")
+        reason = export_denial_reason(policy.export, destination)
+        if reason is not None:
+            raise ExportPolicyError(_EXPORT_DENIAL_MESSAGES[reason])
+
+
+def export_denials(
+    policy: CapturePolicy,
+    captured: Iterable[CaptureClass],
+    destination: str,
+) -> tuple[tuple[CaptureClass, str], ...]:
+    """Every captured class forbidding ``destination``, in class order, with why.
+
+    :func:`assert_export_allowed` answers this for a finished bundle, which is
+    the only shape carrying one already-resolved policy row per class. A seam
+    that must decide mid-session holds the configured :class:`CapturePolicy` and
+    the classes it has actually retained so far instead, and asks here. Both keep
+    the same keying — a class is governed only once it has been *captured*, since
+    a class that is merely enabled has restricted nothing yet — and both defer
+    the rule itself to :func:`export_denial_reason`.
+    """
+
+    denials: list[tuple[CaptureClass, str]] = []
+    for capture_class in sorted(set(captured)):
+        governance = policy.governance.get(capture_class)
+        export = None if governance is None else governance.export
+        reason = export_denial_reason(export, destination)
+        if reason is not None:
+            denials.append((capture_class, reason))
+    return tuple(denials)

@@ -31,6 +31,11 @@ class DeepgramAdapter(ProviderAdapter):
     ) -> None:
         super().__init__("deepgram", identity_key=identity_key)
         self.model = sanitize_semantic_label(optional_string(model, "model"))
+        self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
+        """Reset per-session Flux turn tracking at a session boundary."""
+
         self._flux_turn_states: dict[int, str] = {}
 
     def adapt(

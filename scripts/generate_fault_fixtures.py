@@ -1,7 +1,21 @@
-"""Generate deterministic, valid incident artifacts for the M1 fault corpus."""
+"""Generate deterministic, valid incident artifacts for the M1 fault corpus.
+
+The corpus is pinned to the *oldest* contract and semantic-profile version this
+build still reads, not to the version producers currently emit. That pin is the
+point: these artifacts are the read-side proof that the supported floor is still
+interpretable, which is what makes a version bump a migration rather than a
+break. Relabelling them on every bump would delete exactly the coverage they
+exist to provide, and would make the documented regeneration step produce a diff
+on a clean tree.
+
+So the invariant this file owes the contributor in `CONTRIBUTING.md` is: running
+it on a clean tree writes byte-identical files. `--check` is that invariant made
+executable.
+"""
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -32,11 +46,33 @@ from earshot.contract import (  # noqa: E402
     TimePoint,
     TimeRange,
 )
+from earshot.versions import (  # noqa: E402
+    SUPPORTED_CONTRACT_VERSIONS,
+    SUPPORTED_SEMANTIC_PROFILE_VERSIONS,
+)
 
 OUTPUT = ROOT / "fixtures" / "faults"
 WALL_ORIGIN = 1_800_000_000_000_000_000
 CLOCK_DOMAIN = "fault-fixture-clock"
 TRACE_ID = "a" * 32
+
+# The corpus deliberately claims the supported floor rather than the current
+# producer version; see the module docstring. Dropping 0.1.0 from the supported
+# set must not silently relabel seventeen committed artifacts, so this fails
+# closed instead: someone has to decide what the corpus covers next, and add the
+# 0.1.0 read-tolerance fixtures elsewhere if it still needs them.
+CORPUS_CONTRACT_VERSION = "0.1.0"
+CORPUS_SEMANTIC_PROFILE_VERSION = "0.1.0"
+if (
+    CORPUS_CONTRACT_VERSION not in SUPPORTED_CONTRACT_VERSIONS
+    or CORPUS_SEMANTIC_PROFILE_VERSION not in SUPPORTED_SEMANTIC_PROFILE_VERSIONS
+):
+    raise SystemExit(
+        "the fault corpus pins contract/semantic-profile "
+        f"{CORPUS_CONTRACT_VERSION}, which this build no longer reads; choose the "
+        "new floor and regenerate, or move the corpus and keep dedicated "
+        "backward-tolerance fixtures for the version being dropped"
+    )
 
 
 def point(milliseconds: int) -> TimePoint:
@@ -152,6 +188,8 @@ def profile(
             manifest=BundleManifest(
                 bundle_id=f"fault-{scenario_id}",
                 session_id="fixture-session",
+                schema_version=CORPUS_CONTRACT_VERSION,
+                semantic_profile_version=CORPUS_SEMANTIC_PROFILE_VERSION,
                 created_at_unix_nano=str(WALL_ORIGIN),
                 producer=Producer(name="earshot-fault-corpus", version="1.0.0"),
                 adapters=(
@@ -488,6 +526,108 @@ def scenarios() -> dict[str, IncidentBundle]:
                 ),
             ),
         ),
+        "full_barge_in_chain": profile(
+            "full-barge-in-chain",
+            operations=(
+                operation("op-agent", "agent", 400, 1_000, status="cancelled", span_digit="1"),
+                operation(
+                    "op-tts",
+                    "tts",
+                    500,
+                    980,
+                    status="cancelled",
+                    stream_id="stream-output",
+                    span_digit="2",
+                ),
+                operation(
+                    "op-render",
+                    "render",
+                    600,
+                    1_000,
+                    status="cancelled",
+                    stream_id="stream-output",
+                    span_digit="3",
+                ),
+                # A tool still running when the barge-in lands is cancelled with it.
+                # Its cancellation is attributed to the interruption only through an
+                # explicit causal edge to the cancelled agent turn, not co-occurrence.
+                operation(
+                    "op-tool",
+                    "tool",
+                    700,
+                    1_000,
+                    status="cancelled",
+                    span_digit="4",
+                    links=(
+                        CausalLink(
+                            relationship="cancelled_by",
+                            target_scope="internal",
+                            target_operation_id="op-agent",
+                        ),
+                    ),
+                ),
+            ),
+            events=(
+                event("event-overlap", "earshot.interruption.detected", 900),
+                event("event-accepted", "earshot.interruption.accepted", 940),
+                event(
+                    "event-model-cancelled",
+                    "earshot.model.cancelled",
+                    950,
+                    operation_id="op-agent",
+                ),
+                event(
+                    "event-response-cancelled",
+                    "earshot.response.cancelled",
+                    955,
+                    operation_id="op-agent",
+                ),
+                event(
+                    "event-audio-discarded",
+                    "earshot.audio.queued.discarded",
+                    960,
+                    operation_id="op-tts",
+                ),
+                event(
+                    "event-transport-stopped",
+                    "earshot.transport.stopped",
+                    965,
+                    operation_id="op-tts",
+                ),
+                event(
+                    "event-buffers-purged",
+                    "earshot.audio.buffer.purged",
+                    970,
+                    operation_id="op-render",
+                ),
+                event(
+                    "event-render-stopped",
+                    "earshot.audio.render.stopped",
+                    1_000,
+                    operation_id="op-render",
+                ),
+                # A resumed signal is emitted purely to exercise the recovery stage
+                # of the vocabulary; a real accepted barge-in would not also resume.
+                event("event-resumed", "earshot.interruption.resumed", 1_010),
+            ),
+            quality_samples=(
+                QualitySample(
+                    sample_id="quality-interruption-intent",
+                    session_id="fixture-session",
+                    quality_kind="interruption.intent",
+                    sample_window=TimeRange(start=point(880), end=point(900)),
+                    measurements=(
+                        QualityMeasurement(
+                            name="earshot.metric.interruption.probability",
+                            value=0.92,
+                            unit="1",
+                        ),
+                    ),
+                    evidence=evidence("livekit_metrics", "adaptive_interruption"),
+                    attributes={"earshot.turn.id": "turn-1"},
+                ),
+            ),
+        ),
         "stt_delay": cascaded_delay_profile(
             "stt-delay",
             stt=(300, 2_400),
@@ -644,6 +784,118 @@ def scenarios() -> dict[str, IncidentBundle]:
                 ),
             ),
         ),
+        "render_delay": profile(
+            "render-delay",
+            operations=(
+                operation("op-vad", "vad", 100, 300, stream_id="stream-input", span_digit="1"),
+                operation(
+                    "op-turn",
+                    "turn_detection",
+                    300,
+                    380,
+                    stream_id="stream-input",
+                    span_digit="2",
+                ),
+                operation("op-llm", "llm", 380, 520, span_digit="3"),
+                operation("op-tts", "tts", 520, 680, stream_id="stream-output", span_digit="4"),
+                operation(
+                    "op-send",
+                    "transport_send",
+                    680,
+                    720,
+                    stream_id="stream-output",
+                    span_digit="5",
+                ),
+                operation(
+                    "op-receive",
+                    "transport_receive",
+                    720,
+                    760,
+                    stream_id="stream-output",
+                    span_digit="6",
+                ),
+                # Upstream stages finish quickly; audio is not rendered until
+                # much later, isolating the delay to the render boundary.
+                operation(
+                    "op-render",
+                    "render",
+                    2_400,
+                    2_600,
+                    stream_id="stream-output",
+                    span_digit="7",
+                ),
+            ),
+            events=(
+                event("event-speech-ended", "earshot.speech.ended", 300, operation_id="op-vad"),
+                event(
+                    "event-turn-committed",
+                    "earshot.turn.committed",
+                    380,
+                    operation_id="op-turn",
+                ),
+                event(
+                    "event-first-token",
+                    "earshot.response.first_token",
+                    500,
+                    operation_id="op-llm",
+                ),
+                event(
+                    "event-first-audio",
+                    "earshot.response.first_audio_generated",
+                    660,
+                    operation_id="op-tts",
+                ),
+                event(
+                    "event-first-byte",
+                    "earshot.audio.first_byte_sent",
+                    700,
+                    operation_id="op-send",
+                ),
+                event(
+                    "event-first-packet",
+                    "earshot.audio.first_packet_received",
+                    740,
+                    operation_id="op-receive",
+                ),
+                event(
+                    "event-render-started",
+                    "earshot.audio.render.started",
+                    2_450,
+                    operation_id="op-render",
+                ),
+            ),
+        ),
+        "false_interruption": profile(
+            "false-interruption",
+            operations=(operation("op-agent", "agent", 400, 2_000, span_digit="1"),),
+            events=(
+                # Detected but never accepted: the agent kept speaking because
+                # the detector self-classified the interruption as false.
+                event("event-interruption-detected", "earshot.interruption.detected", 900),
+                event("event-interruption-ignored", "earshot.interruption.ignored", 940),
+            ),
+        ),
+        "stale_buffer_playback": profile(
+            "stale-buffer-playback",
+            operations=(
+                operation(
+                    "op-render",
+                    "render",
+                    600,
+                    1_000,
+                    stream_id="stream-output",
+                    span_digit="1",
+                ),
+            ),
+            events=(
+                event(
+                    "event-render-stale",
+                    "earshot.audio.render.stale",
+                    800,
+                    operation_id="op-render",
+                ),
+            ),
+        ),
         "privacy_opt_out": profile(
             "privacy-opt-out",
             operations=(operation("op-metadata-only", "agent", 500, 900),),
@@ -703,11 +955,31 @@ def scenarios() -> dict[str, IncidentBundle]:
     }
 
 
+def rendered() -> dict[Path, bytes]:
+    return {
+        OUTPUT / f"{scenario_id}.incident.json": encode_incident_json(bundle, indent=2) + b"\n"
+        for scenario_id, bundle in scenarios().items()
+    }
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true", help="fail if generated files drift")
+    arguments = parser.parse_args()
+    expected = rendered()
+    if arguments.check:
+        stale = [
+            str(path.relative_to(ROOT))
+            for path, payload in expected.items()
+            if not path.is_file() or path.read_bytes() != payload
+        ]
+        if stale:
+            raise SystemExit("generated fault fixture drift: " + ", ".join(sorted(stale)))
+        print("generated fault fixtures are current")
+        return
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    for scenario_id, bundle in scenarios().items():
-        path = OUTPUT / f"{scenario_id}.incident.json"
-        path.write_bytes(encode_incident_json(bundle, indent=2) + b"\n")
+    for path, payload in expected.items():
+        path.write_bytes(payload)
         print(path.relative_to(ROOT))
 
 

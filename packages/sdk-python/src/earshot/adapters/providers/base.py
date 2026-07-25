@@ -79,11 +79,30 @@ class ProviderAdapter:
         self._lock = threading.RLock()
 
     def close(self) -> None:
-        """Release replay/dedupe state so a reused adapter does not leak it."""
+        """Release all per-session state so a reused adapter never leaks it.
+
+        A single ``close()`` is the session boundary: it clears both the replay/
+        dedupe bookkeeping this base owns and every provider lifecycle field a
+        subclass declares in :meth:`_reset_session_state`. Reusing an adapter
+        across sessions without ``close()`` between them is what leaks state.
+        """
 
         with self._lock:
             self._updates.clear()
             self._native_updates.clear()
+            self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
+        """Reset per-session provider lifecycle state to its start-of-session value.
+
+        The base adapter owns no lifecycle state, so this is a no-op here. A
+        subclass that accumulates any per-session state -- response/turn maps,
+        active gesture/interruption tracking, correlation tables, pending
+        requests -- MUST declare every such field here and call this from its
+        ``__init__``. That makes this the single, hard-to-forget seam: a field
+        that is initialized here is reset at every session boundary, so new
+        state cannot silently survive into the next session.
+        """
 
     def _remember(
         self,

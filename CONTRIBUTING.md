@@ -26,9 +26,16 @@ round-trip tests together. Run:
 ```bash
 python scripts/generate_contract.py
 python scripts/generate_fault_fixtures.py
+python scripts/generate_viewer_explanation_fixtures.py
 python scripts/generate_openapi.py
 python scripts/check_semconv.py
 ```
+
+Each of these is idempotent: on a clean tree they must leave `git status` empty. The
+fault corpus in particular stays pinned to the oldest contract and semantic-profile
+version the reader accepts, because it is also the read-side backward-tolerance
+coverage; the generator preserves that pin rather than relabelling it. Each generator
+has a `--check` twin that CI runs to reject drift.
 
 Wrapper breaking changes require a schema-version decision. Semantic vocabulary is
 open, but a new normalized value still needs documentation and an adapter fixture.

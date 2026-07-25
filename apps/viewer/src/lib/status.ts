@@ -14,10 +14,19 @@ export function statusTone(status: string): Tone {
     case "in_progress":
     case "cancelled":
     case "canceled":
+    // A session the recorder never closed. Not a failure and certainly not a
+    // success: the producer stopped before it could say either.
+    case "interrupted":
       return "warn";
     default:
       return "muted";
   }
+}
+
+/** Tone for `manifest.finality`. Anything other than `final` means the producer
+ * has not had the last word, which must read as a caution rather than as normal. */
+export function finalityTone(finality: string): Tone {
+  return finality === "final" ? "good" : "warn";
 }
 
 /** The themed CSS custom property that paints a given tone. */

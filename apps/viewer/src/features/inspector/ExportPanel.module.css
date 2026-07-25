@@ -1,0 +1,160 @@
+.panel {
+  padding: 8px 20px 4px;
+}
+.panelHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 0 10px;
+}
+.panelHead h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.note {
+  font-size: 11px;
+  color: var(--tx-low);
+}
+
+.controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.fieldLabel {
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+}
+.select {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--tx);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+}
+.select:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+.run {
+  font-size: 12px;
+  color: var(--acc);
+  background: color-mix(in oklab, var(--acc) 8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--acc) 28%, transparent);
+  border-radius: 7px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+.run:hover {
+  background: color-mix(in oklab, var(--acc) 15%, transparent);
+}
+.run:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+
+.hint {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  color: var(--tx-low);
+  line-height: 1.4;
+}
+
+.result {
+  margin-top: 12px;
+}
+.resultHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.resultMeta {
+  font-size: 11px;
+  color: var(--tx-low);
+}
+.resultMeta code {
+  font-family: var(--mono);
+  color: var(--tx-mid);
+}
+.download {
+  font-size: 11.5px;
+  color: var(--acc);
+  text-decoration: none;
+  border: 1px solid color-mix(in oklab, var(--acc) 28%, transparent);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+.download:hover {
+  background: color-mix(in oklab, var(--acc) 12%, transparent);
+}
+.download:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+
+.docWrap {
+  border: 1px solid var(--line-soft);
+  background: var(--panel-2);
+  border-radius: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+.doc {
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--tx-mid);
+  white-space: pre;
+}
+
+.refusal {
+  margin-top: 12px;
+  border: 1px solid var(--line-soft);
+  border-left: 2px solid var(--crit);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 11px 13px;
+}
+.refusalHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.refusalTitle {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--tx);
+}
+.code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--tx-low);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 7px;
+}
+.refusalDetail {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--tx-mid);
+  line-height: 1.45;
+}

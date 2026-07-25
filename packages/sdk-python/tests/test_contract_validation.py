@@ -12,6 +12,7 @@ from earshot.contract import (
     BundleManifest,
     CausalLink,
     ClockDomain,
+    Coverage,
     DerivedAnalysis,
     Diagnosis,
     Event,
@@ -283,6 +284,35 @@ def test_unsupported_schema_version_is_a_semantic_error(valid_bundle: IncidentBu
     assert "EARSHOT_SCHEMA_VERSION_UNSUPPORTED" in issue_codes(
         replace_profile(valid_bundle, manifest=manifest)
     )
+
+
+def test_a_0_1_0_bundle_cannot_carry_a_coverage_loss_count(valid_bundle: IncidentBundle) -> None:
+    """0.1.0 coverage could say a signal was partial but never how much was lost."""
+
+    manifest = valid_bundle.profile.manifest.model_copy(
+        update={"schema_version": "0.1.0", "semantic_profile_version": "0.1.0"}
+    )
+    older = replace_profile(valid_bundle, manifest=manifest)
+    counted = Coverage(
+        signal="webrtc.snapshots",
+        availability="partial",
+        reason="buffer_overflow_oldest_dropped",
+        dropped_count=3,
+    )
+
+    assert "EARSHOT_SCHEMA_VERSION_UNSUPPORTED" in issue_codes(
+        replace_profile(older, coverage=(counted,))
+    )
+    # The shape 0.1.0 *could* express keeps validating untouched, so the existing
+    # 0.1.0 fixture corpus is unaffected by the member being added.
+    uncounted = counted.model_copy(update={"dropped_count": None})
+    assert validate_incident(replace_profile(older, coverage=(uncounted,))).ok
+
+
+def test_a_loss_count_is_a_non_negative_integer() -> None:
+    for value in (-1, 1.5, True):
+        with pytest.raises(ValidationError):
+            Coverage(signal="webrtc.snapshots", availability="partial", dropped_count=value)
 
 
 @pytest.mark.parametrize(

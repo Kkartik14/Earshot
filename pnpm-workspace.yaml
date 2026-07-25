@@ -1,6 +1,9 @@
 packages:
   - "packages/*"
   - "apps/*"
+  # Only example subdirectories that ship a package.json are treated as workspace
+  # projects; the Python examples alongside them are ignored (they have none).
+  - "examples/*"
 
 overrides:
   js-yaml: 4.3.0

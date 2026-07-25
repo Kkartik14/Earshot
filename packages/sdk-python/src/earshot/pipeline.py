@@ -30,27 +30,53 @@ import uuid
 import weakref
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .clock import Clock
 from .contract import (
     Adapter,
+    ClockDomain,
+    ClockRelation,
     Evidence,
     IncidentBundle,
     QualityMeasurement,
     QualitySample,
+    RecoveryRecord,
     TimePoint,
     TimeRange,
 )
 from .measurement_semantics import measurement_value_limitation
+from .observation import SourceClockReading
 from .privacy import CaptureClass
 from .recorder import IncidentRecorder, RecorderConfig
 from .sdk import _runtime_snapshot
 from .versions import PIPELINE_ADAPTER_VERSION
 
+if TYPE_CHECKING:  # pragma: no cover - a type-checker-only assertion, no runtime cost
+    from .observation import ObservationSink
+
+    def _turn_recorder_is_an_observation_sink(turn: TurnRecorder) -> ObservationSink:
+        """Fail type-checking if the capture seam drifts away from the recorder.
+
+        ``TurnRecorder`` satisfies :class:`ObservationSink` structurally -- it does
+        not inherit it -- so nothing stops the two from silently diverging except
+        this assertion. The import stays behind ``TYPE_CHECKING`` because the
+        protocol module must never import back into the pipeline.
+        """
+
+        return turn
+
+
 _MS_TO_NANO = 1_000_000
 _USER = "participant-user"
 _AGENT = "participant-agent"
+# Who observed a fact this session recorded on its own clock. A fact in a foreign
+# clock domain names that domain's observer instead (see ``TurnRecorder._observer``).
+_SERVER_OBSERVER = "server"
+# The fallback observer for a foreign clock domain the session never declared.
+# Such a fact cannot validate anyway (an undeclared domain is refused), so the
+# honest answer is that its observer is unknown -- never this server.
+_UNKNOWN_OBSERVER = "unknown"
 
 
 class _LifecycleClock:
@@ -88,6 +114,10 @@ class TurnRecorder:
     Stages are placed on the turn clock in call order. A scalar latency does not
     prove a stage interval, so stage operations are points with app-inferred
     evidence while provider-reported latencies are separate governed measurements.
+
+    This is also the server pipeline's :class:`~earshot.observation.ObservationSink`
+    -- the fact verbs below are the seam diagnostic engines and provider adapters
+    author through, and they must keep satisfying that protocol.
     """
 
     def __init__(self, session: PipelineSession, turn_id: str, turn_index: int) -> None:
@@ -329,8 +359,17 @@ class TurnRecorder:
         confidence: str = "estimated",
         source_field: str = "pipeline.event",
         attributes: Mapping[str, Any] | None = None,
+        source_clock: SourceClockReading | None = None,
     ) -> None:
-        """Author a turn-relative point event with fact-specific evidence."""
+        """Author a point event with fact-specific evidence.
+
+        A foreign-clock fact (``source_clock`` set) is placed in that declared
+        clock domain at its RAW monotonic timestamp, never on the server turn clock
+        -- so it does not advance the server-clock turn extent and is not comparable
+        to a server event without a declared ClockRelation. Its evidence names the
+        clock domain's own observer, so the fact and the domain agree about who saw
+        it.
+        """
 
         name = self._label(name, "event name")
         offset = self._required_ms(at_ms, "event offset")
@@ -339,16 +378,30 @@ class TurnRecorder:
         confidence = self._confidence(confidence)
         source_field = self._label(source_field, "source field")
         self._sequence += 1
+        if source_clock is not None:
+            time = self._source_point(source_clock, source_clock.monotonic_ms)
+        else:
+            time = self._point(offset)
         self._session.recorder.record_event(
             name,
             event_id=f"event-{self._turn_index}-{self._sequence}",
-            time=self._point(offset),
+            time=time,
             participant_id=participant_id,
             turn_id=self._turn_id,
-            evidence=self._fact_evidence(source, confidence, source_field),
+            trace_id=self._session.trace_id,
+            span_id=self._session.span_id,
+            evidence=self._fact_evidence(
+                source,
+                confidence,
+                source_field,
+                observer=self._observer(
+                    None if source_clock is None else source_clock.clock_domain_id
+                ),
+            ),
             attributes=attributes,
         )
-        self._max_ms = max(self._max_ms, offset)
+        if source_clock is None:
+            self._max_ms = max(self._max_ms, offset)
 
     def record_measurement(
         self,
@@ -364,8 +417,14 @@ class TurnRecorder:
         at_ms: float | None = None,
         quality_kind: str = "provider_metric",
         attributes: Mapping[str, Any] | None = None,
+        source_clock: SourceClockReading | None = None,
     ) -> None:
-        """Author a provider-native or standard scalar without relabeling its meaning."""
+        """Author a provider-native or standard scalar without relabeling its meaning.
+
+        A foreign-clock measurement (``source_clock`` set) is placed in that
+        declared clock domain at its RAW monotonic timestamp, never on the server
+        turn clock, and its evidence names that domain's own observer.
+        """
 
         name = self._label(name, "measurement name")
         normalized_value = self._finite_number(value, name)
@@ -392,7 +451,10 @@ class TurnRecorder:
         if basis is not None:
             sample_attributes["earshot.metric.basis"] = basis
         self._sequence += 1
-        point = self._point(offset)
+        if source_clock is not None:
+            point = self._source_point(source_clock, source_clock.monotonic_ms)
+        else:
+            point = self._point(offset)
         self._session.recorder.record_quality_sample(
             QualitySample(
                 sample_id=f"quality-{self._turn_index}-{self._sequence}",
@@ -400,12 +462,85 @@ class TurnRecorder:
                 quality_kind=quality_kind,
                 sample_window=TimeRange(start=point, end=point),
                 measurements=(QualityMeasurement(name=name, value=normalized_value, unit=unit),),
-                evidence=self._fact_evidence(source, confidence, source_field),
+                evidence=self._fact_evidence(
+                    source,
+                    confidence,
+                    source_field,
+                    observer=self._observer(
+                        None if source_clock is None else source_clock.clock_domain_id
+                    ),
+                ),
                 participant_id=_AGENT,
                 attributes=sample_attributes,
             )
         )
-        self._max_ms = max(self._max_ms, offset)
+        if source_clock is None:
+            self._max_ms = max(self._max_ms, offset)
+
+    def record_operation(
+        self,
+        operation_id: str,
+        operation_name: str,
+        *,
+        status: str = "ok",
+        at_ms: float,
+        ended_at_ms: float | None = None,
+        participant: str | None = None,
+        source: str = "app",
+        confidence: str = "inferred",
+        source_field: str = "pipeline.operation",
+        attributes: Mapping[str, Any] | None = None,
+        source_clock: SourceClockReading | None = None,
+    ) -> None:
+        """Record an operation this source *observed*, under an id it supplies.
+
+        This is the observation counterpart to :meth:`record_stage`: it does NOT
+        mint an id from the turn cursor and does NOT advance that cursor, so a
+        collector without a turn model can author it. The operation is placed at
+        ``at_ms`` (and optional ``ended_at_ms``) on the server clock, or -- when
+        ``source_clock`` is supplied -- in that declared clock domain at its raw
+        reading, its duration preserved in the domain's own monotonic units, its
+        evidence naming the domain's own observer. A foreign-clock operation never
+        advances the server-clock turn extent, exactly as a foreign-clock event
+        does not.
+        """
+
+        operation_id = self._label(operation_id, "operation id")
+        operation_name = self._label(operation_name, "operation name")
+        status = self._label(status, "status")
+        participant_id = self._participant(participant)
+        source = self._label(source, "evidence source")
+        confidence = self._confidence(confidence)
+        source_field = self._label(source_field, "source field")
+        start = self._required_ms(at_ms, "operation offset")
+        end = self._optional_ms(ended_at_ms, "operation end offset")
+        if end is not None and end < start:
+            raise ValueError("operation end offset must not precede its start")
+        if source_clock is not None:
+            started_at = self._source_point(source_clock, source_clock.monotonic_ms)
+            ended_at = (
+                None
+                if end is None
+                else self._source_point(source_clock, source_clock.monotonic_ms + (end - start))
+            )
+            observer = self._observer(source_clock.clock_domain_id)
+        else:
+            started_at = self._point(start)
+            ended_at = None if end is None else self._point(end)
+            observer = self._observer(None)
+        self._session.recorder.record_operation(
+            operation_id=operation_id,
+            operation_name=operation_name,
+            status=status,
+            started_at=started_at,
+            ended_at=ended_at,
+            participant_id=participant_id,
+            turn_id=self._turn_id,
+            evidence=self._fact_evidence(source, confidence, source_field, observer=observer),
+            attributes=attributes,
+        )
+        if source_clock is None:
+            self._max_ms = max(self._max_ms, start if end is None else end)
 
     def record_omission(
         self,
@@ -420,6 +555,32 @@ class TurnRecorder:
             field_name,
             capture_class=capture_class,
             reason=reason,
+        )
+
+    def record_coverage(
+        self,
+        signal: str,
+        availability: str,
+        reason: str | None = None,
+        *,
+        dropped_count: int | None = None,
+    ) -> None:
+        """Ledger what a fact source could or could not observe (session scope).
+
+        A diagnostic engine that drops an interval -- a stat member absent from a
+        snapshot, a non-monotonic counter reset -- records the gap here as an
+        explicit *unknown* rather than fabricating a zero or a negative delta.
+
+        ``dropped_count`` carries how many observations the source counted itself
+        losing, when it could count them; leave it ``None`` when the loss was not
+        countable, which is a different claim from ``0``.
+        """
+
+        self._session.recorder.record_coverage(
+            signal,
+            availability,
+            reason,
+            dropped_count=dropped_count,
         )
 
     # -- internals -----------------------------------------------------------
@@ -486,16 +647,56 @@ class TurnRecorder:
         return self._fact_evidence(_confidence_source(confidence), confidence, source_field)
 
     @staticmethod
-    def _fact_evidence(source: str, confidence: str, source_field: str) -> Evidence:
+    def _fact_evidence(
+        source: str,
+        confidence: str,
+        source_field: str,
+        observer: str = _SERVER_OBSERVER,
+    ) -> Evidence:
         return Evidence(
             source=source,
-            observer="server",
+            observer=observer,
             method="pipeline_capture",
             method_version=PIPELINE_ADAPTER_VERSION,
             source_field=source_field,
             confidence=confidence,
             availability="available",
         )
+
+    def _observer(self, clock_domain_id: str | None) -> str:
+        """Who observed a fact: the clock domain's declared observer.
+
+        A fact recorded in a foreign clock domain was not observed by this server
+        -- it was observed by whoever owns that clock, and the domain already
+        declares who that is. Reading the observer back off the declaration is
+        what keeps the fact-level and domain-level provenance from disagreeing:
+        a browser reading labelled ``observer="server"`` would make a client
+        report read as a server measurement.
+        """
+
+        if clock_domain_id is None:
+            return _SERVER_OBSERVER
+        return self._session.clock_domain_observer(clock_domain_id)
+
+    def _source_point(self, reading: SourceClockReading, monotonic_ms: float) -> TimePoint:
+        """A TimePoint in a source's declared clock domain at ``monotonic_ms``.
+
+        The reading carries the domain and its uncertainty/wall origin; the raw
+        monotonic value is supplied separately so an operation can place its start
+        and end at two readings in the one domain.
+        """
+
+        return self._browser_point(
+            monotonic_ms,
+            reading.clock_domain_id,
+            reading.uncertainty_nano,
+            reading.wall_origin_nano,
+        )
+
+    def register_clock_domain(self, domain: ClockDomain) -> None:
+        """Declare an additional clock domain (e.g. a browser's) on the session."""
+
+        self._session.register_clock_domain(domain)
 
     def _point(self, offset_ms: float) -> TimePoint:
         absolute_nano = self._session.turn_origin_nano(self._turn_index) + int(
@@ -506,6 +707,38 @@ class TurnRecorder:
             monotonic_time_nano=str(absolute_nano),
             clock_domain_id=self._session.clock_domain_id,
             uncertainty_nano="1000000",
+        )
+
+    def _browser_point(
+        self,
+        monotonic_ms: float | None,
+        clock_domain_id: str,
+        uncertainty_nano: int | None,
+        wall_origin_nano: int | None = None,
+    ) -> TimePoint:
+        """A TimePoint in a browser clock domain at a RAW monotonic reading.
+
+        The monotonic value is domain-local and is never aligned across domains.
+        A browser-wall ``source_time_unix_nano`` is set ONLY when the browser's
+        wall origin is known (``performance.timeOrigin``); it is the sole component
+        a declared ClockRelation can align to the server clock. Absent a relation
+        the wall value is still in a foreign domain, so cross-clock latency stays
+        honestly unavailable -- we never manufacture a server-clock timestamp.
+        """
+
+        monotonic = self._required_ms(monotonic_ms, "browser monotonic reading")
+        uncertainty = 0 if uncertainty_nano is None else int(uncertainty_nano)
+        if uncertainty < 0:
+            raise ValueError("browser uncertainty must be non-negative")
+        monotonic_nano = int(monotonic * _MS_TO_NANO)
+        source_wall = (
+            None if wall_origin_nano is None else str(int(wall_origin_nano) + monotonic_nano)
+        )
+        return TimePoint(
+            source_time_unix_nano=source_wall,
+            monotonic_time_nano=str(monotonic_nano),
+            clock_domain_id=self._label(clock_domain_id, "clock domain id"),
+            uncertainty_nano=str(uncertainty),
         )
 
     @staticmethod
@@ -562,7 +795,21 @@ class TurnRecorder:
 
 
 class PipelineSession:
-    """A provider-neutral capture session for one voice conversation."""
+    """A provider-neutral capture session for one voice conversation.
+
+    ``trace_id``/``span_id`` bind the session to an existing W3C trace context --
+    the span the observed work already belongs to. Point events recorded by this
+    session then carry that OTel identity on the contract's own ``trace_id`` /
+    ``span_id`` members, which is what makes "this capture joins the application's
+    trace" a property of the artifact instead of a claim about it. Both are
+    supplied together or not at all, exactly as the contract requires of every
+    record that carries them.
+
+    Operations deliberately do not adopt the bound context: an ``Operation`` may
+    only carry a ``trace_id`` alongside its OWN ``span_id``, and earshot did not
+    mint a span for the work it merely observed. An event, by contrast, carries
+    the span context it was emitted in -- which is exactly what the binding says.
+    """
 
     def __init__(
         self,
@@ -574,9 +821,16 @@ class PipelineSession:
         producer_name: str = "earshot.pipeline",
         config: RecorderConfig | None = None,
         clock: Clock | None = None,
+        trace_id: str | None = None,
+        span_id: str | None = None,
+        checkpoint: Any = None,
     ) -> None:
         if clock is not None and started_at_unix_nano is not None:
             raise ValueError("clock and started_at_unix_nano are mutually exclusive")
+        if (trace_id is None) != (span_id is None):
+            raise ValueError("trace_id and span_id must be supplied together")
+        self.trace_id = TurnRecorder._optional_label(trace_id, "trace id")
+        self.span_id = TurnRecorder._optional_label(span_id, "span id")
         if clock is None:
             self.start_wall_nano = (
                 started_at_unix_nano if started_at_unix_nano is not None else time.time_ns()
@@ -624,6 +878,7 @@ class PipelineSession:
                 on_close=release_runtime,
                 on_status=record_runtime_status,
                 diagnostic=runtime_diagnostic,
+                checkpoint=checkpoint,
             )
         except BaseException:
             release_runtime()
@@ -639,6 +894,7 @@ class PipelineSession:
         self._turn_ids: set[str] = set()
         self._cursor_nano = 0
         self._closed = False
+        self._clock_domain_observers: dict[str, str] = {}
 
     @property
     def session_id(self) -> str:
@@ -651,6 +907,36 @@ class PipelineSession:
     @property
     def clock_domain_id(self) -> str:
         return self.recorder.clock_domain_id
+
+    def register_clock_domain(self, domain: ClockDomain) -> None:
+        """Declare an additional clock domain (idempotent by id).
+
+        Browser-derived facts live in their own monotonic clock domain; declaring
+        it here is what keeps the analyzer honest -- a browser timestamp is never
+        silently treated as a server-clock observation.
+
+        The domain's declared observer is remembered so that facts recorded into
+        it inherit it, rather than each fact repeating (and possibly contradicting)
+        who saw it.
+        """
+
+        self.recorder.register_clock_domain(domain)
+        self._clock_domain_observers.setdefault(domain.clock_domain_id, domain.observer)
+
+    def clock_domain_observer(self, clock_domain_id: str) -> str:
+        """Who observes the named clock domain, per its own declaration."""
+
+        return self._clock_domain_observers.get(clock_domain_id, _UNKNOWN_OBSERVER)
+
+    def register_clock_relation(self, relation: ClockRelation) -> None:
+        """Declare a calibration relating two clock domains (idempotent by id).
+
+        Supplying a real client<->server calibration is what turns an otherwise
+        *unavailable* cross-clock latency into an honestly *estimated* one, via the
+        existing ClockRelation alignment path -- earshot never invents the offset.
+        """
+
+        self.recorder.register_clock_relation(relation)
 
     def turn_origin_nano(self, turn_index: int) -> int:
         return self._turn_origins_nano[turn_index]
@@ -692,6 +978,19 @@ class PipelineSession:
             self._closed = True
         return self.recorder.close(status=status)
 
+    def close_partial(self, recovery: RecoveryRecord, *, status: str) -> IncidentBundle:
+        """Finalize a session whose end was never observed as a provisional incident.
+
+        Use this instead of :meth:`close` when the recorded evidence is a partial
+        observation of a session still in progress (e.g. a browser capture batch):
+        the incident declares ``recovery`` with ``close_observed=False``, carries
+        no session end, and cannot pass as a finished call.
+        """
+
+        if not self._closed:
+            self._closed = True
+        return self.recorder.close_partial(recovery, status=status)
+
 
 def pipeline(
     session_id: str | None = None,
@@ -702,12 +1001,21 @@ def pipeline(
     producer_name: str = "earshot.pipeline",
     config: RecorderConfig | None = None,
     clock: Clock | None = None,
+    trace_id: str | None = None,
+    span_id: str | None = None,
+    checkpoint: Any = None,
 ) -> PipelineSession:
     """Start a provider-neutral pipeline capture session.
 
     Use this when you wire raw STT/LLM/TTS providers into your own pipeline. Record
     each turn's stages and barge-ins, then ``close()`` to obtain a contract-valid,
     evidence-qualified incident that analyzes like a framework-instrumented session.
+
+    Pass ``trace_id``/``span_id`` to bind the session to an existing W3C trace so
+    the recorded facts carry that OTel identity.
+
+    Pass ``checkpoint`` to journal every admitted mutation to a crash journal (or
+    the in-memory server journal the continuous-capture path accumulates into).
     """
 
     return PipelineSession(
@@ -718,4 +1026,7 @@ def pipeline(
         producer_name=producer_name,
         config=config,
         clock=clock,
+        trace_id=trace_id,
+        span_id=span_id,
+        checkpoint=checkpoint,
     )

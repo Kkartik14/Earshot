@@ -10,10 +10,15 @@ from fastapi.testclient import TestClient
 from earshot.adapters import LiveKitAdapter, PipecatAdapter
 from earshot.api import create_app
 from earshot.codec import encode_incident_protobuf
-from earshot.contract import RetentionPolicy, TimePoint
+from earshot.contract import Coverage, Producer, RecoveryRecord, RetentionPolicy, TimePoint
 from earshot.recorder import IncidentRecorder, RecorderConfig
-from earshot.storage import TURN_FACT_PROJECTION_VERSION, IncidentStore
-from incident_factory import evidence, make_valid_bundle
+from earshot.storage import (
+    TURN_FACT_PROJECTION_VERSION,
+    TURN_METRIC_LIMITATIONS,
+    IncidentStore,
+    TurnMetricSummary,
+)
+from incident_factory import evidence, make_valid_bundle, point
 
 pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parents[3]
@@ -97,6 +102,91 @@ def _with_stt_language(bundle, *, language: str = "hi-IN", probability: float = 
             )
         }
     )
+
+
+def _with_first_token_at(bundle, nano: int):
+    """Move the first-token event so bundles differ in ``first_token_ms``.
+
+    Percentiles only prove something when the population is spread out, so the
+    exclusion tests need bundles that would visibly move p50/p95/max if they
+    were pooled.
+    """
+
+    events = tuple(
+        event.model_copy(update={"time": point(nano)}) if event.event_id == "evt-token" else event
+        for event in bundle.profile.events
+    )
+    return bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"events": events})}
+    )
+
+
+def _recovered(bundle):
+    """The same bundle as a crash-recovered artifact: provisional and incomplete.
+
+    Mirrors what ``earshot.checkpoint`` produces for a session whose close was
+    never observed -- a declared ``manifest.recovery``, an unfinished session,
+    and coverage saying the close was never seen.
+    """
+
+    profile = bundle.profile
+    manifest = profile.manifest.model_copy(
+        update={
+            "finality": "provisional",
+            "completeness": "incomplete",
+            "recovery": RecoveryRecord(
+                method="checkpoint_journal",
+                reason="process_terminated_before_close",
+                close_observed=False,
+                journal_id="journal-1",
+                last_sequence=12,
+                recoverer=Producer(name="earshot", version="0.1.0"),
+            ),
+        }
+    )
+    session = profile.session.model_copy(update={"status": "interrupted", "ended_at": None})
+    coverage = (
+        *profile.coverage,
+        Coverage(
+            signal="recorder.session_close",
+            availability="unavailable",
+            reason="process_terminated_before_close",
+        ),
+    )
+    return bundle.model_copy(
+        update={
+            "profile": profile.model_copy(
+                update={"manifest": manifest, "session": session, "coverage": coverage}
+            )
+        }
+    )
+
+
+# The exact groups today's implementation produces for three final incidents at
+# 100/150/250 ms. Restricting the aggregation to final incidents must leave this
+# untouched, so it is pinned as a literal rather than recomputed by the test.
+_FINAL_ONLY_FIRST_TOKEN_GROUPS = (
+    TurnMetricSummary(
+        group="pipecat",
+        availability="available",
+        basis="first_token",
+        confidence="measured",
+        limitation=None,
+        turn_count=3,
+        available_count=3,
+        average_ms=166.66666666666666,
+        minimum_ms=100.0,
+        maximum_ms=250.0,
+        p50_ms=150.0,
+        p95_ms=250.0,
+    ),
+)
+
+
+def _ingest_spread_of_final_incidents(store) -> None:
+    for suffix, nano in (("one", 1_100_000_000), ("two", 1_150_000_000), ("three", 1_250_000_000)):
+        bundle = _with_first_token_at(make_valid_bundle(bundle_id=f"final-{suffix}"), nano)
+        store.ingest(bundle, encode_incident_protobuf(bundle))
 
 
 def test_ingest_projects_queryable_turn_facts_with_per_metric_quality(tmp_path) -> None:
@@ -350,7 +440,108 @@ def test_metrics_http_interface_returns_project_fleet_summary(tmp_path) -> None:
                 "p95_ms": 150.0,
             }
         ],
+        "incident_count": 2,
+        "withheld_incident_count": 0,
+        "withheld_turn_count": 0,
+        "limitations": list(TURN_METRIC_LIMITATIONS),
     }
+
+
+def test_fleet_summary_over_final_incidents_is_unchanged_by_the_finality_join(tmp_path) -> None:
+    """The join must cost final-only stores nothing, down to the last float."""
+
+    store = IncidentStore(tmp_path)
+    _ingest_spread_of_final_incidents(store)
+
+    fleet = store.summarize_turn_metric_fleet("first_token_ms", group_by="framework")
+
+    assert fleet.groups == _FINAL_ONLY_FIRST_TOKEN_GROUPS
+    assert store.summarize_turn_metric("first_token_ms") == _FINAL_ONLY_FIRST_TOKEN_GROUPS
+    assert fleet.incident_count == 3
+    assert fleet.withheld_incident_count == 0
+    assert fleet.withheld_turn_count == 0
+
+
+def test_a_provisional_incident_never_moves_a_fleet_percentile(tmp_path) -> None:
+    """A recovered conversation covers an unknown fraction of itself, so its
+    turns cannot be pooled -- and the aggregate has to say it dropped them."""
+
+    store = IncidentStore(tmp_path)
+    _ingest_spread_of_final_incidents(store)
+    recovered = _recovered(
+        _with_first_token_at(make_valid_bundle(bundle_id="recovered-one"), 1_290_000_000)
+    )
+    store.ingest(recovered, encode_incident_protobuf(recovered))
+
+    fleet = store.summarize_turn_metric_fleet("first_token_ms", group_by="framework")
+
+    # 290ms would have raised the maximum, p95 and average had it been pooled.
+    assert [fact.first_token_ms for fact in store.list_turn_facts()].count(290.0) == 1
+    assert fleet.groups == _FINAL_ONLY_FIRST_TOKEN_GROUPS
+    assert fleet.incident_count == 3
+    assert fleet.withheld_incident_count == 1
+    assert fleet.withheld_turn_count == 1
+
+
+def test_a_store_of_only_provisional_incidents_publishes_no_aggregate(tmp_path) -> None:
+    """No groups plus a withheld count is a refusal to aggregate. It must not be
+    readable as a fleet that measured zero."""
+
+    store = IncidentStore(tmp_path)
+    for suffix, nano in (("one", 1_100_000_000), ("two", 1_250_000_000)):
+        bundle = _recovered(
+            _with_first_token_at(make_valid_bundle(bundle_id=f"recovered-{suffix}"), nano)
+        )
+        store.ingest(bundle, encode_incident_protobuf(bundle))
+
+    fleet = store.summarize_turn_metric_fleet("first_token_ms", group_by="framework")
+
+    assert fleet.groups == ()
+    assert fleet.incident_count == 0
+    assert fleet.withheld_incident_count == 2
+    assert fleet.withheld_turn_count == 2
+
+
+def test_metrics_http_declares_the_provisional_incidents_it_withheld(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    _ingest_spread_of_final_incidents(store)
+    recovered = _recovered(
+        _with_first_token_at(make_valid_bundle(bundle_id="recovered-http"), 1_290_000_000)
+    )
+    store.ingest(recovered, encode_incident_protobuf(recovered))
+    client = TestClient(create_app(store=store))
+
+    response = client.get(
+        "/v1/metrics/turns",
+        params={"metric": "first_token_ms", "group_by": "framework"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["incident_count"] == 3
+    assert body["withheld_incident_count"] == 1
+    assert body["withheld_turn_count"] == 1
+    assert body["limitations"] == list(TURN_METRIC_LIMITATIONS)
+    assert [group["maximum_ms"] for group in body["groups"]] == [250.0]
+
+
+def test_metrics_http_never_reads_a_withheld_fleet_as_a_measured_zero(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    bundle = _recovered(make_valid_bundle(bundle_id="recovered-http-only"))
+    store.ingest(bundle, encode_incident_protobuf(bundle))
+    client = TestClient(create_app(store=store))
+
+    response = client.get(
+        "/v1/metrics/turns",
+        params={"metric": "first_token_ms", "group_by": "framework"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["groups"] == []
+    assert body["incident_count"] == 0
+    assert body["withheld_incident_count"] == 1
+    assert body["withheld_turn_count"] == 1
 
 
 def test_fleet_summary_never_mixes_evidence_confidence_strata(tmp_path) -> None:

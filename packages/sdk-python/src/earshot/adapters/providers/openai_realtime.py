@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from ...pipeline import TurnRecorder
 from ...privacy import sanitize_semantic_label
@@ -17,6 +19,31 @@ from .base import (
     safe_attributes,
 )
 
+# Hard cap on how many responses one session tracks the lifecycle of. Realtime
+# runs one response at a time, so a session that reaches this has hundreds of
+# responses whose ``response.done`` never arrived; the cap is what keeps that
+# session's memory bounded instead of proportional to its length.
+MAX_TRACKED_RESPONSES = 512
+
+COVERAGE_RESPONSE_LIFECYCLE = "openai.realtime.response_lifecycle"
+COVERAGE_REASON_CAP = "tracked_response_cap_exceeded"
+
+
+@dataclass
+class _ResponseState:
+    """Everything one ``response.created`` obliges the adapter to remember.
+
+    Held as a single record rather than as five parallel maps so that dropping a
+    response is one deletion. Parallel maps make eviction a checklist, and a
+    checklist is the kind of thing a later change forgets one line of.
+    """
+
+    started_ms: float
+    speech_stopped_ms: float | None
+    active: bool = True
+    first_audio_seen: bool = False
+    interruption_gesture: int | None = None
+
 
 class OpenAIRealtimeAdapter(ProviderAdapter):
     """Map one Realtime stream into fused ``agent`` response evidence."""
@@ -29,12 +56,21 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
     ) -> None:
         super().__init__("openai", identity_key=identity_key)
         self.model = sanitize_semantic_label(require_string(model, "model"))
+        self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
+        """Clear every per-session response/gesture map at a session boundary.
+
+        Two different unbounded growths meet here. Across sessions, a reused
+        adapter would carry the entries of responses that were still in flight
+        when the session ended, so ``close()`` resets all of them. Within one
+        session, ``_responses`` is capped by :data:`MAX_TRACKED_RESPONSES` and
+        evicts oldest-first, because ``response.done`` is the only thing that
+        retires a response and a provider is under no obligation to send one.
+        """
+
         self._speech_stopped_receipt_ms: float | None = None
-        self._response_started_ms: dict[str, float] = {}
-        self._response_speech_stopped_ms: dict[str, float | None] = {}
-        self._active_responses: set[str] = set()
-        self._first_audio_responses: set[str] = set()
-        self._response_interruption_gestures: dict[str, int] = {}
+        self._responses: OrderedDict[str, _ResponseState] = OrderedDict()
         self._accepted_interruption_gestures: set[int] = set()
         self._next_interruption_gesture = 0
 
@@ -65,6 +101,52 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
             return self._response_done(payload, receipt_ms)
         raise ValueError(f"unsupported OpenAI Realtime event type: {event_type}")
 
+    # -------------------------------------------------------- bounded state
+
+    def _evict_tracked_responses(self, turn: TurnRecorder) -> None:
+        """Bound the per-response map, and say so rather than lose it quietly.
+
+        Eviction is oldest-first: the response created longest ago is the one
+        least likely to still receive events. What it must not do is degrade the
+        *evidence*. Every later event for an evicted response now takes the same
+        path an event for a response that was never created takes, and every one
+        of those paths raises rather than guessing — so the adapter cannot emit a
+        response latency measured against a start time it no longer has, or an
+        agent stage whose duration it would have to invent. Refusing the event is
+        louder than a wrong number, and the coverage note below is what turns the
+        refusal into a declared limitation instead of an unexplained gap.
+
+        The note deliberately carries no ``dropped_count``. The recorder's
+        coverage ledger is first-write-wins for a non-``available`` signal, so a
+        count written at the first eviction would freeze at a value every later
+        eviction falsifies. An absent count claims nothing; a stale one would.
+        """
+
+        if len(self._responses) <= MAX_TRACKED_RESPONSES:
+            return
+        while len(self._responses) > MAX_TRACKED_RESPONSES:
+            _, evicted = self._responses.popitem(last=False)
+            self._retire_gesture(evicted.interruption_gesture)
+        turn.record_coverage(
+            COVERAGE_RESPONSE_LIFECYCLE,
+            "partial",
+            COVERAGE_REASON_CAP,
+        )
+
+    def _retire_gesture(self, gesture: int | None) -> None:
+        """Forget an accepted interruption once no tracked response carries it.
+
+        The accepted set exists only to keep one interruption gesture from being
+        reported twice, so it is bounded by the responses that still reference a
+        gesture -- which the cap above already bounds.
+        """
+
+        if gesture is None:
+            return
+        if any(state.interruption_gesture == gesture for state in self._responses.values()):
+            return
+        self._accepted_interruption_gestures.discard(gesture)
+
     def _speech_started(self, payload: Mapping[str, object], receipt_ms: float) -> AdapterUpdate:
         audio_start_ms = require_nonnegative_number(payload.get("audio_start_ms"), "audio_start_ms")
         event_type = "input_audio_buffer.speech_started"
@@ -76,7 +158,9 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
             attributes = safe_attributes(correlation_id, event_type)
 
             def apply_update(turn: TurnRecorder) -> None:
-                interrupted_responses = set(self._active_responses)
+                interrupted_responses = [
+                    response_id for response_id, state in self._responses.items() if state.active
+                ]
                 turn.record_event(
                     "earshot.speech.started",
                     at_ms=receipt_ms,
@@ -110,7 +194,7 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
                     gesture = self._next_interruption_gesture
                     self._next_interruption_gesture += 1
                     for response_id in interrupted_responses:
-                        self._response_interruption_gestures[response_id] = gesture
+                        self._responses[response_id].interruption_gesture = gesture
 
             return AdapterUpdate(
                 provider=self.provider,
@@ -221,11 +305,13 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
             correlation_id = self._opaque_id("response", response_id)
 
             def apply_update(turn: TurnRecorder) -> None:
-                if response_id in self._response_started_ms:
+                if response_id in self._responses:
                     raise ValueError("response was already created")
-                self._response_started_ms[response_id] = receipt_ms
-                self._response_speech_stopped_ms[response_id] = self._speech_stopped_receipt_ms
-                self._active_responses.add(response_id)
+                self._responses[response_id] = _ResponseState(
+                    started_ms=receipt_ms,
+                    speech_stopped_ms=self._speech_stopped_receipt_ms,
+                )
+                self._evict_tracked_responses(turn)
 
             return AdapterUpdate(
                 provider=self.provider,
@@ -251,17 +337,18 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
             attributes = safe_attributes(correlation_id, event_type)
 
             def apply_update(turn: TurnRecorder) -> None:
-                if response_id not in self._response_started_ms:
+                state = self._responses.get(response_id)
+                if state is None:
                     raise ValueError("audio delta references an unknown response")
-                if response_id in self._first_audio_responses:
+                if state.first_audio_seen:
                     turn.record_omission(
                         "openai.realtime.response.output_audio.delta.delta",
                         capture_class="audio",
                     )
                     return
-                if response_id not in self._active_responses:
+                if not state.active:
                     raise ValueError("audio delta references an inactive response")
-                speech_stopped_ms = self._response_speech_stopped_ms.get(response_id)
+                speech_stopped_ms = state.speech_stopped_ms
                 if speech_stopped_ms is not None and receipt_ms < speech_stopped_ms:
                     raise ValueError("first audio receipt precedes speech-stopped receipt")
                 turn.record_omission(
@@ -289,7 +376,7 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
                         at_ms=receipt_ms,
                         attributes=attributes,
                     )
-                self._first_audio_responses.add(response_id)
+                state.first_audio_seen = True
 
             return AdapterUpdate(
                 provider=self.provider,
@@ -318,9 +405,10 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
             attributes = safe_attributes(correlation_id, event_type)
 
             def apply_update(turn: TurnRecorder) -> None:
-                if response_id not in self._response_started_ms:
+                state = self._responses.get(response_id)
+                if state is None:
                     raise ValueError("audio done references an unknown response")
-                if response_id not in self._active_responses:
+                if not state.active:
                     raise ValueError("audio done references an inactive response")
                 turn.record_event(
                     "openai.realtime.output_audio.done",
@@ -368,12 +456,13 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
             attributes = safe_attributes(correlation_id, event_type)
 
             def apply_update(turn: TurnRecorder) -> None:
-                started_ms = self._response_started_ms.get(response_id)
-                if started_ms is None:
+                state = self._responses.get(response_id)
+                if state is None:
                     raise ValueError("response.done references an unknown response")
+                started_ms = state.started_ms
                 if receipt_ms < started_ms:
                     raise ValueError("response.done precedes response.created")
-                if response_id not in self._active_responses:
+                if not state.active:
                     raise ValueError("response.done references an inactive response")
                 if has_output:
                     turn.record_omission(
@@ -397,7 +486,7 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
                     source_field="response.created_to_response.done",
                     attributes=attributes,
                 )
-                gesture = self._response_interruption_gestures.get(response_id)
+                gesture = state.interruption_gesture
                 if (
                     provider_status == "cancelled"
                     and gesture is not None
@@ -413,13 +502,9 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
                         attributes=attributes,
                     )
                     self._accepted_interruption_gestures.add(gesture)
-                self._active_responses.discard(response_id)
-                self._response_interruption_gestures.pop(response_id, None)
-                if (
-                    gesture is not None
-                    and gesture not in self._response_interruption_gestures.values()
-                ):
-                    self._accepted_interruption_gestures.discard(gesture)
+                state.active = False
+                state.interruption_gesture = None
+                self._retire_gesture(gesture)
 
             return AdapterUpdate(
                 provider=self.provider,
