@@ -131,19 +131,44 @@ class _ReplayState:
         self.last_observation: TimePoint | None = None
 
     def observe(self, point: TimePoint | None) -> None:
-        """Widen the observed extent to include ``point``, in journal order.
+        """Widen the observed extent to include ``point`` by coordinate, not order.
 
-        ``last_observation`` follows the journal forward exactly as before;
-        ``first_observation`` records the earliest coordinate seen. Both track only
-        the coordinates the existing tracker already sees (events and operation
-        opens), so no fact that did not already report a coordinate starts to.
+        The extent is the span of observed time: ``first_observation`` is the
+        EARLIEST coordinate and ``last_observation`` the LATEST. Tracking the
+        first- and last-*seen* points instead assumed the journal was written in
+        coordinate order; a frame that carries an earlier coordinate than one
+        before it (an out-of-order event or coverage note) could then leave, after
+        a torn tail, a first that follows the last within one clock domain -- which
+        is exactly the incoherence :func:`validate_incident` refuses. Comparing by
+        coordinate keeps the extent coherent by construction: ``min <= max``. Cross
+        -domain points are not comparable, so they advance the extent in journal
+        order as before (the coherence rule only judges within one domain).
         """
 
         if point is None:
             return
-        if self.first_observation is None:
+        if self.first_observation is None or self._strictly_before(point, self.first_observation):
             self.first_observation = point
-        self.last_observation = point
+        if self.last_observation is None or not self._strictly_before(point, self.last_observation):
+            self.last_observation = point
+
+    @staticmethod
+    def _strictly_before(point: TimePoint, other: TimePoint) -> bool:
+        """Whether ``point`` is strictly earlier than ``other`` within one clock domain.
+
+        Returns ``False`` when the two are in different clock domains or share no
+        comparable basis -- they are then left in journal order, since the extent
+        coherence rule only compares coordinates within a single domain.
+        """
+
+        if point.clock_domain_id is None or point.clock_domain_id != other.clock_domain_id:
+            return False
+        for basis in ("monotonic_time_nano", "source_time_unix_nano", "observed_time_unix_nano"):
+            here = getattr(point, basis)
+            there = getattr(other, basis)
+            if here is not None and there is not None:
+                return int(here) < int(there)
+        return False
 
     def append(self, kind: str, record: Any, replaces_index: int | None) -> None:
         target = {

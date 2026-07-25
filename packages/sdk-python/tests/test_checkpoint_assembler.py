@@ -534,3 +534,35 @@ def test_a_suffixed_bundle_id_produces_a_distinct_artifact(tmp_path: Path) -> No
     assert suffixed.bundle.profile.manifest.bundle_id == "crashed.r2"
     assert validate_incident(suffixed.bundle).ok
     assert encode_incident_protobuf(plain.bundle) != encode_incident_protobuf(suffixed.bundle)
+
+
+def test_the_observed_extent_stays_coherent_when_the_journal_is_out_of_order() -> None:
+    """first_observation must be the earliest coordinate, not the first one seen.
+
+    A journal whose observation coordinates are not monotonic (a later frame
+    carrying an earlier coordinate) must not, after any torn tail, leave a
+    recovery extent whose first coordinate follows its last within one clock
+    domain -- the exact incoherence ``validate_incident`` refuses. Tracking the
+    extent by coordinate keeps ``first_observation <= last_observation`` for every
+    truncation, deterministically, regardless of journal order.
+    """
+
+    from earshot.checkpoint.assembler import _ReplayState
+    from earshot.contract import TimePoint
+
+    def point(monotonic: int) -> TimePoint:
+        return TimePoint(
+            monotonic_time_nano=str(monotonic), clock_domain_id="d", uncertainty_nano="0"
+        )
+
+    tracker = _ReplayState.__new__(_ReplayState)
+    tracker.first_observation = None
+    tracker.last_observation = None
+    for monotonic in (1000, 500, 1500, 700, 200):  # deliberately out of coordinate order
+        tracker.observe(point(monotonic))
+
+    assert int(tracker.first_observation.monotonic_time_nano) == 200
+    assert int(tracker.last_observation.monotonic_time_nano) == 1500
+    assert int(tracker.first_observation.monotonic_time_nano) <= int(
+        tracker.last_observation.monotonic_time_nano
+    )
