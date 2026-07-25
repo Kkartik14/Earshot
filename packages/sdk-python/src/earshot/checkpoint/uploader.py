@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import ipaddress
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -27,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+from .framing import SEPARATOR
 from .limits import (
     DEFAULT_MAX_BATCH_BYTES,
     MAX_CHECKPOINT_BATCH_BYTES,
@@ -36,6 +38,12 @@ from .limits import (
 CHECKPOINT_MEDIA_TYPE = "application/vnd.earshot.checkpoint+frames"
 
 DEFAULT_BATCH_INTERVAL_MS = 500
+
+# The delivered-offset marker sits beside the journal it tracks, so a restarted
+# uploader resumes from the last acknowledged byte instead of re-sending the whole
+# file. It is advisory and idempotent: the server dedups a replay, so a lost,
+# torn, or stale marker only costs a re-send, never a gap and never a wrong slot.
+OFFSET_SUFFIX = ".uploaded"
 
 # Following the journal, and expected to keep following it.
 STATE_READY = "ready"
@@ -165,7 +173,11 @@ class CheckpointUploader:
         self._diagnostic = diagnostic
         self._opener = urllib.request.build_opener(_RejectRedirects())
         self._lock = threading.Lock()
-        self._offset = 0
+        # The delivered offset is durable: it is persisted beside the journal after
+        # every acknowledged batch and reloaded here, so a restarted uploader
+        # continues from the last byte the backend accepted rather than from zero.
+        self._offset_path = self.journal.with_name(self.journal.name + OFFSET_SUFFIX)
+        self._offset = self._load_offset()
         self._uploaded = 0
         self._batches = 0
         self._state = STATE_READY
@@ -234,9 +246,68 @@ class CheckpointUploader:
             self._offset = plan.end
             self._uploaded += len(batch)
             self._batches += 1
+        # Persisted only after the backend acknowledged the batch, so the marker
+        # never runs ahead of what was actually delivered. A crash between the ack
+        # and this write leaves the marker one batch behind, which resends an
+        # already-accepted run -- a no-op replay on the server, never a gap.
+        self._persist_offset(plan.end)
         return True
 
     # -------------------------------------------------------------- internal
+
+    def _load_offset(self) -> int:
+        """The last acknowledged byte offset, or zero when there is nothing to trust.
+
+        A missing, unparsable, or stale marker (one pointing past the journal's end,
+        or into the middle of a frame because the journal was replaced) yields zero:
+        a full re-send that the server dedups, which is always safe, over a resume
+        into bytes this marker can no longer vouch for.
+        """
+
+        try:
+            raw = self._offset_path.read_bytes()
+        except OSError:
+            return 0
+        try:
+            offset = int(raw.decode("ascii").strip())
+        except (UnicodeDecodeError, ValueError):
+            return 0
+        if offset <= 0:
+            return 0
+        try:
+            data = self.journal.read_bytes()
+        except OSError:
+            return 0
+        # A frame boundary is a byte that starts a frame (the separator) or the end
+        # of the file. Anything else means the marker no longer names a boundary in
+        # this journal, so it is not trusted.
+        if offset > len(data):
+            return 0
+        if offset < len(data) and data[offset] != SEPARATOR:
+            return 0
+        return offset
+
+    def _persist_offset(self, offset: int) -> None:
+        """Record the delivered offset durably beside the journal. Never raises.
+
+        Written to a temporary file, fsynced, then atomically renamed, so a reader
+        only ever sees a whole prior value or a whole new one -- never a torn one.
+        Failure is swallowed: the worst outcome of an unwritten marker is a re-send
+        the server already knows how to absorb.
+        """
+
+        temporary = self._offset_path.with_name(self._offset_path.name + ".tmp")
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                os.write(descriptor, str(offset).encode("ascii"))
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            os.replace(temporary, self._offset_path)
+        except OSError:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval):
@@ -345,6 +416,7 @@ __all__ = [
     "DEFAULT_MAX_BATCH_BYTES",
     "DIAGNOSTIC_FRAME_UNDELIVERABLE",
     "DIAGNOSTIC_UPLOAD_FAILED",
+    "OFFSET_SUFFIX",
     "STATE_DEGRADED",
     "STATE_READY",
     "STATE_UNDELIVERABLE",

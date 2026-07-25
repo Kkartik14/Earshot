@@ -19,7 +19,11 @@ from earshot.checkpoint.limits import (
     MAX_CHECKPOINT_FRAME_BYTES,
 )
 from earshot.checkpoint.records import JournalRecordEntry, encode_entry
-from earshot.checkpoint.uploader import CHECKPOINT_MEDIA_TYPE, DIAGNOSTIC_FRAME_UNDELIVERABLE
+from earshot.checkpoint.uploader import (
+    CHECKPOINT_MEDIA_TYPE,
+    DIAGNOSTIC_FRAME_UNDELIVERABLE,
+    OFFSET_SUFFIX,
+)
 from earshot.live import LiveConfig, LiveSessionRegistry
 from earshot.recorder import IncidentRecorder
 
@@ -299,6 +303,108 @@ def test_a_plaintext_remote_endpoint_is_refused(tmp_path: Path) -> None:
         CheckpointUploader("http://collector.example", _journal(tmp_path), "s-1")
     with pytest.raises(ValueError, match="userinfo"):
         CheckpointUploader("https://a:b@collector.example", _journal(tmp_path), "s-1")
+    writer.release()
+
+
+# ------------------------------------------------------- durable resume offset
+
+
+def _offset_marker(journal: Path) -> Path:
+    return journal.with_name(journal.name + OFFSET_SUFFIX)
+
+
+def test_the_delivered_offset_is_persisted_beside_the_journal(tmp_path: Path) -> None:
+    """After an acknowledged batch the offset is on disk, next to the journal."""
+
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    recorder.record_event("earshot.turn.start", turn_id="turn-1")
+    journal = _journal(tmp_path)
+    uploader = CheckpointUploader("http://127.0.0.1:9/", journal, "s-1")
+    _Sink().install(uploader, "s-1")
+
+    assert uploader.flush() is True
+    marker = _offset_marker(journal)
+    assert marker.is_file()
+    assert int(marker.read_text()) == journal.stat().st_size
+    writer.release()
+
+
+def test_a_restarted_uploader_resumes_from_its_persisted_offset(tmp_path: Path) -> None:
+    """A fresh uploader continues from the last acknowledged byte, not from zero.
+
+    Restarting from zero would re-send the whole journal every time; restarting
+    from the persisted offset sends only what the backend has not seen, so the one
+    continuous session gains exactly the new frames -- no gap, no divergence.
+    """
+
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    recorder.add_participant("caller", role="caller")
+    recorder.record_event("earshot.turn.start", turn_id="turn-1")
+    journal = _journal(tmp_path)
+
+    uploader = CheckpointUploader("http://127.0.0.1:9/", journal, "s-1")
+    sink = _Sink()
+    sink.install(uploader, "s-1")
+    assert uploader.flush() is True
+    assert sum(len(batch) for batch in sink.batches) == journal.stat().st_size
+
+    # A new frame lands, then the uploader process "restarts".
+    recorder.record_event("earshot.turn.start", turn_id="turn-2")
+    resumed = CheckpointUploader("http://127.0.0.1:9/", journal, "s-1")
+    sink.install(resumed, "s-1")
+
+    assert resumed.flush() is True
+    # Every frame was delivered exactly once across the two uploaders: the resumed
+    # one sent only the new frame rather than the whole journal again.
+    assert sum(len(batch) for batch in sink.batches) == journal.stat().st_size
+    assert sink.registry.summary("s-1", project_id="p").last_sequence == 4
+    writer.release()
+
+
+def test_a_lost_offset_marker_re_sends_and_the_backend_replays_it(tmp_path: Path) -> None:
+    """A missing marker falls back to a full re-send, which the server dedups.
+
+    Losing the marker is always safe: the resend is a byte-for-byte replay the
+    live registry recognises as already held, so the session's sequence is
+    unchanged rather than divergent or duplicated.
+    """
+
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    recorder.record_event("earshot.turn.start", turn_id="turn-1")
+    journal = _journal(tmp_path)
+
+    uploader = CheckpointUploader("http://127.0.0.1:9/", journal, "s-1")
+    sink = _Sink()
+    sink.install(uploader, "s-1")
+    assert uploader.flush() is True
+    assert sink.registry.summary("s-1", project_id="p").last_sequence == 2
+
+    _offset_marker(journal).unlink()
+    resumed = CheckpointUploader("http://127.0.0.1:9/", journal, "s-1")
+    sink.install(resumed, "s-1")
+    assert resumed.flush() is True  # re-sends the whole journal from the start
+    # Idempotent: the replay changed nothing on the backend.
+    assert sink.registry.summary("s-1", project_id="p").last_sequence == 2
+    writer.release()
+
+
+def test_a_stale_offset_past_the_journal_end_is_not_trusted(tmp_path: Path) -> None:
+    """An offset pointing past the current journal resumes from zero, never mid-file."""
+
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    recorder.record_event("earshot.turn.start", turn_id="turn-1")
+    journal = _journal(tmp_path)
+    _offset_marker(journal).write_text(str(journal.stat().st_size + 10_000))
+
+    uploader = CheckpointUploader("http://127.0.0.1:9/", journal, "s-1")
+    sink = _Sink()
+    sink.install(uploader, "s-1")
+    assert uploader.flush() is True
+    assert sum(len(batch) for batch in sink.batches) == journal.stat().st_size
     writer.release()
 
 
