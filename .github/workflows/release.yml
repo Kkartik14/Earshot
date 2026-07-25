@@ -190,6 +190,7 @@ jobs:
           args=(
             "$RELEASE_TAG"
             dist/*
+            --repo "$GITHUB_REPOSITORY"
             --verify-tag
             --generate-notes
             --title "Earshot $RELEASE_VERSION"
