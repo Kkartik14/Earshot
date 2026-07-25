@@ -6,8 +6,12 @@ death loses nothing. The continuous browser-capture path has the inverse shape:
 the server is handed a telemetry drain, projects it into governed facts through a
 real recorder, and must accumulate those facts into one growing artifact without
 ever holding a mutable incident. It does that by journaling -- the append-only
-journal is the accumulator -- but the journal lives in memory in the server, not
-on the producer's disk.
+journal is the accumulator -- collecting the entries in the server rather than on
+the producer's disk. Durability is added a layer out: when the call was given a
+journal directory, the live registry writes the very frames it retains to an
+append-only ``.eck`` file (:mod:`earshot.capture.durable`), so a backend restart
+replays the call rather than losing it. This writer itself stays in memory and
+metadata-only.
 
 :class:`ServerJournalWriter` is that in-memory journal. It satisfies the exact
 surface :class:`~earshot.recorder.IncidentRecorder` calls on its checkpoint
@@ -21,9 +25,11 @@ authority, in one place, is what keeps a re-sent drain from ever minting two
 slots for the same fact.
 
 Nothing here fsyncs, encrypts, or touches a descriptor: the durable copy of a
-capture call is the live session's retained frames, and its truncation story is
-already the live session's (`frames_complete`). This writer is metadata-only and
-bounded by the same recorder caps every other journal runs under.
+capture call is the live session's retained frames -- held in memory always, and
+mirrored to disk when a journal directory is configured -- and its truncation
+story is already the live session's (`frames_complete`). This writer is
+metadata-only and bounded by the same recorder caps every other journal runs
+under.
 """
 
 from __future__ import annotations

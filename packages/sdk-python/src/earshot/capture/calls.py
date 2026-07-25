@@ -29,12 +29,14 @@ ever finalizes a call -- that is Phase 2.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import threading
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..contract import TimePoint
@@ -43,6 +45,16 @@ from ..engines.device import apply_audio_graph
 from ..engines.webrtc import WebRtcCarry, apply_webrtc_stats
 from ..observation import SourceClockReading
 from ..pipeline import PipelineSession, TurnRecorder
+from .durable import (
+    CaptureSidecar,
+    iter_sidecars,
+    journal_path,
+    max_fact_sequence,
+    read_sidecar,
+    replay_coverage,
+    sidecar_path,
+    write_sidecar,
+)
 from .identity import call_key as derive_call_key
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids importing live at module load
@@ -104,6 +116,11 @@ _IDENTITY_REASON = "client_declared_identity"
 _DRAIN_SEQUENCE_SIGNAL = "capture.drain_sequence"
 _STATS_CONTINUITY_SIGNAL = "capture.stats_continuity"
 _STATS_CONTINUITY_REASON = "carry_invalidated_by_drain_loss"
+# The boundary a backend restart falls across: the WebRTC carry (the raw snapshot
+# the delta differences against) is genuinely absent from the durable journal, so
+# it is dropped rather than guessed, and the interval spanning the restart is
+# declared lost -- exactly as a drain gap's carry loss is.
+_STATS_CONTINUITY_RESTART_REASON = "carry_lost_on_restart"
 
 # How many accepted-batch digests a call remembers, so a retried or reordered
 # drain within this window is answered from content rather than re-applied. One
@@ -255,9 +272,16 @@ class DrainOutcome:
 class CaptureCall:
     """One continuous call: its recorder, its turn, its carry, its sequencing."""
 
-    def __init__(self, drain: CaptureDrain) -> None:
+    def __init__(self, drain: CaptureDrain, *, journal_dir: Path | None = None) -> None:
         self.call_key = drain.call_key
         self.project_id = drain.project_id
+        # Where this call's durable journal and drain-sequencing ledger live, so an
+        # in-flight call survives a backend restart. ``None`` keeps the call purely
+        # in memory (its pre-durability behaviour).
+        self._journal_dir = None if journal_dir is None else Path(journal_dir)
+        self._durable_path = (
+            None if self._journal_dir is None else journal_path(self._journal_dir, self.call_key)
+        )
         self.lock = threading.Lock()
         self._domain = BrowserClockDomain(
             clock_domain_id=drain.clock_domain_id,
@@ -312,10 +336,68 @@ class CaptureCall:
         # Set once an explicit ``endCall()`` finalized the call. A later drain is
         # then refused rather than appended onto a closed journal.
         self._finalized = False
+        # True only for a call reconstructed from disk after a backend restart. The
+        # first drain that continues such a call declares the carry lost across the
+        # restart, because the raw snapshot the boundary delta needs was never in
+        # the journal and must not be fabricated.
+        self._restarted = False
 
     @property
     def finalized(self) -> bool:
         return self._finalized
+
+    @classmethod
+    def rebuild(
+        cls,
+        drain: CaptureDrain,
+        sidecar: CaptureSidecar,
+        journal_path_on_disk: Path,
+        *,
+        journal_dir: Path,
+        finalized: bool,
+    ) -> CaptureCall:
+        """Reconstruct a call from its durable ledger so a restart is resumable.
+
+        The recorder, its turn and its clock domain are rebuilt fresh from the
+        continuing drain (which carries the same stable clock-domain identity), and
+        the fresh header and clock-domain frames it re-emits are discarded because
+        they are already durable and already in the rebuilt live session. Three
+        pieces are then restored so a continuing drain resumes cleanly rather than
+        getting an ``unknown session``:
+
+        * the drain-sequencing ledger (applied sequence + digest ring) from the
+          sidecar, so the next in-sequence drain is accepted, a resent one replays,
+          and a forged one at a taken slot still conflicts;
+        * the recorder's fact-id counter, read from the journal so a post-restart
+          fact never collides with one already on disk;
+        * the recorder's coverage list, replayed from the journal so a later
+          in-place coverage supersession rewrites the right slot at seal time.
+
+        The WebRTC carry is deliberately **not** restored: the raw snapshot it
+        differences against is not in the journal, so it is dropped and the first
+        continuing drain declares ``carry_lost_on_restart`` rather than inventing an
+        interval. ``finalized`` comes from the durable journal (its finalize frame),
+        never fabricated, so a rebuilt call is provisional unless a close really was
+        observed and written before the restart.
+        """
+
+        call = cls(drain, journal_dir=journal_dir)
+        # Discard the fresh recorder's re-emitted header and clock-domain entries:
+        # both are already durable and in the rebuilt live session, so appending
+        # them again would duplicate frames.
+        call.writer.take_new()
+        call._applied = sidecar.applied
+        call._digests = OrderedDict(sorted(sidecar.digests.items()))
+        call._first_observed_ms = sidecar.first_observed_ms
+        call._last_observed_ms = sidecar.last_observed_ms
+        call._lossy = sidecar.lossy
+        call._finalized = finalized
+        call._identity_declared = True
+        call.carry = None
+        call._restarted = True
+        call.turn._sequence = max_fact_sequence(journal_path_on_disk)
+        call.session.recorder._coverage = replay_coverage(journal_path_on_disk) or []
+        return call
 
     # -- sequencing ------------------------------------------------------------
 
@@ -356,13 +438,42 @@ class CaptureCall:
             expected_sequence=self._applied + 1,
         )
 
-    def _remember(self, sequence: int, digest: str, outcome: DrainOutcome) -> None:
+    def _remember_digest(self, sequence: int, digest: str) -> None:
         self._digests[sequence] = digest
-        self._outcomes[sequence] = outcome
         while len(self._digests) > _DIGEST_RING:
             self._digests.popitem(last=False)
+
+    def _remember_outcome(self, sequence: int, outcome: DrainOutcome) -> None:
+        self._outcomes[sequence] = outcome
         while len(self._outcomes) > _DIGEST_RING:
             self._outcomes.popitem(last=False)
+
+    def _persist_sidecar(self, applied: int) -> None:
+        """Write the drain-sequencing ledger durably. A no-op without a journal dir.
+
+        Called before the drain's frames are journaled, so the ledger is never
+        behind the journal: a crash can only leave it one drain ahead, which the
+        sequencing resolves as an idempotent replay. ``finalized`` and
+        ``turn_sequence`` are stored for completeness but a rebuild reads both from
+        the journal, which is the authority on what was actually admitted.
+        """
+
+        if self._journal_dir is None:
+            return
+        write_sidecar(
+            self._journal_dir,
+            CaptureSidecar(
+                project_id=self.project_id,
+                call_key=self.call_key,
+                applied=applied,
+                digests=dict(self._digests),
+                turn_sequence=self.turn._sequence,
+                first_observed_ms=self._first_observed_ms,
+                last_observed_ms=self._last_observed_ms,
+                lossy=self._lossy,
+                finalized=self._finalized,
+            ),
+        )
 
     # -- projection ------------------------------------------------------------
 
@@ -376,15 +487,43 @@ class CaptureCall:
             # after the call finalized. Only a genuinely NEW drain is refused once
             # the call was ended: the journal is closed and accepts no more facts.
             if decision == "replay":
-                return replace(self._outcomes[drain.drain_sequence], replay=True)
+                if drain.drain_sequence in self._outcomes:
+                    return replace(self._outcomes[drain.drain_sequence], replay=True)
+                # A replay of a drain applied before a restart: its outcome was not
+                # persisted, so echo the call's current live state rather than a
+                # stored one. It is still a replay -- nothing is re-journaled.
+                return self._replay_outcome(live)
             if self._finalized:
                 raise CaptureCallClosedError(
                     "this call was ended by an explicit endCall() and accepts no more drains"
                 )
 
+            # Settle the observed span and the loss flag before anything is
+            # journaled, so the ledger persisted next reflects exactly this drain.
+            self._observe_samples(drain)
+            if decision == "apply_gap" or self._restarted or _drain_declares_loss(drain):
+                self._lossy = True
+
+            # Persist the drain-sequencing ledger BEFORE the frames it admits. A
+            # crash in the window between leaves the ledger knowing a drain the
+            # journal does not yet carry, which resumes as an idempotent replay --
+            # never as duplicated or fabricated evidence.
+            self._remember_digest(drain.drain_sequence, drain.digest())
+            self._persist_sidecar(drain.drain_sequence)
+
             if not self._identity_declared:
                 self.turn.record_coverage(_IDENTITY_SIGNAL, "partial", _IDENTITY_REASON)
                 self._identity_declared = True
+
+            if self._restarted:
+                # The interval spanning the restart cannot be differenced: the raw
+                # snapshot the carry needs was never in the journal. Declare it
+                # lost rather than estimate it, exactly as a drain gap does.
+                self.turn.record_coverage(
+                    _STATS_CONTINUITY_SIGNAL, "partial", _STATS_CONTINUITY_RESTART_REASON
+                )
+                self.carry = None
+                self._restarted = False
 
             if decision == "apply_gap":
                 assert drain.resync is not None
@@ -402,9 +541,8 @@ class CaptureCall:
                 # honestly, so the carry is dropped rather than resumed. A lost
                 # drain is lost evidence: a call that ends after one is incomplete.
                 self.carry = None
-                self._lossy = True
 
-            self._project(drain)
+            self._journal_facts(drain)
             # An observed end rides its final drain: ``call_ended`` finalizes the
             # journal at the observed coordinate; an abandon reason records how far
             # the observer saw and keeps the call provisional. This is the only
@@ -419,6 +557,7 @@ class CaptureCall:
                 project_id=self.project_id,
                 recovery_method=RECOVERY_METHOD,
                 recovery_reason=RECOVERY_REASON_SEALED,
+                durable_path=self._durable_path,
             )
             outcome = DrainOutcome(
                 call_id=self.call_key,
@@ -435,12 +574,51 @@ class CaptureCall:
             )
             if finalize:
                 self._finalized = True
+                # The close is now durably in the journal; record it in the ledger
+                # too so a rebuild that reads the sidecar agrees with the journal.
+                self._persist_sidecar(drain.drain_sequence)
             self._applied = drain.drain_sequence
-            self._remember(drain.drain_sequence, drain.digest(), outcome)
+            self._remember_outcome(drain.drain_sequence, outcome)
             return outcome
 
-    def _project(self, drain: CaptureDrain) -> None:
-        """Record this drain's governed facts onto the persistent turn."""
+    def _replay_outcome(self, live: LiveSessionRegistry) -> DrainOutcome:
+        """Echo the call's current live state for a pre-restart drain's replay.
+
+        A drain applied before a restart has no stored outcome to echo, but it is
+        still a replay: its frames are already on disk, so nothing is re-journaled.
+        The echo reports the live session as it stands now.
+        """
+
+        try:
+            summary = live.summary(self.call_key, project_id=self.project_id)
+            journal_id, accepted_through, state, sealable = (
+                summary.journal_id,
+                summary.last_sequence,
+                summary.state,
+                summary.sealable,
+            )
+        except Exception:  # pragma: no cover - the session exists whenever a call does
+            journal_id, accepted_through, state, sealable = "", self._applied, "live", False
+        return DrainOutcome(
+            call_id=self.call_key,
+            journal_id=journal_id,
+            accepted_through=accepted_through,
+            accepted_records=0,
+            state=state,
+            sealable=sealable,
+            replay=True,
+            accepted_snapshots=0,
+            accepted_device_events=0,
+            accepted_coverage=0,
+        )
+
+    def _journal_facts(self, drain: CaptureDrain) -> None:
+        """Record this drain's governed facts onto the persistent turn.
+
+        The observed span and the loss flag are already settled by the caller
+        before this journals anything, so the durable ledger it persisted reflects
+        exactly what these facts will say.
+        """
 
         for signal, availability, reason, dropped in drain.coverage:
             self.turn.record_coverage(
@@ -449,16 +627,9 @@ class CaptureCall:
                 reason,
                 dropped_count=dropped,
             )
-            # A note that counted observations it lost is loss, not mere structure.
-            if dropped is not None and dropped > 0:
-                self._lossy = True
         for signal, reason, count in drain.rejection_coverage:
             if count > 0:
                 self.turn.record_coverage(signal, "partial", reason)
-                # The server allowlist withheld non-governed members: an incomplete
-                # record of the call, so a close after it cannot present as clean.
-                self._lossy = True
-        self._observe_samples(drain)
         facts = apply_webrtc_stats(
             self.turn, drain.snapshots, clock_domain=self._domain, carry=self.carry
         )
@@ -590,6 +761,20 @@ def _namespace_client_coverage(signal: str) -> str:
     return signal if signal.startswith("browser.") else f"browser.{signal}"
 
 
+def _drain_declares_loss(drain: CaptureDrain) -> bool:
+    """Whether this drain admits it lost evidence, before any of it is journaled.
+
+    A client coverage note that counted observations it dropped, or a server
+    allowlist that withheld non-governed members, is loss rather than mere
+    structure: a call that ends after one can never present as clean. Computed up
+    front so the durable ledger persisted before journaling already records it.
+    """
+
+    if any(dropped is not None and dropped > 0 for _, _, _, dropped in drain.coverage):
+        return True
+    return any(count > 0 for _, _, count in drain.rejection_coverage)
+
+
 class CaptureCallRegistry:
     """Every continuous browser call this server is currently accumulating.
 
@@ -604,12 +789,55 @@ class CaptureCallRegistry:
         self,
         live: LiveSessionRegistry,
         *,
+        journal_dir: Path | str | None = None,
         max_calls_per_project: int = 16,
     ) -> None:
         self._live = live
+        # When set, every call journals its facts and its drain-sequencing ledger
+        # here, so an in-flight call survives a backend restart. ``None`` keeps
+        # calls purely in memory (a restart then drops them, as it did before).
+        self._journal_dir = None if journal_dir is None else Path(journal_dir)
         self._max_per_project = max_calls_per_project
         self._lock = threading.Lock()
         self._calls: dict[tuple[str, str], CaptureCall] = {}
+
+    def rebuild_from_disk(self) -> None:
+        """Restore every durable call's live session at startup.
+
+        Reads the durable ledgers written before the process died and replays each
+        call's journal back into a live session, so an in-flight call is tailable,
+        sealable, and -- crucially -- **provisional** immediately after a restart,
+        never fabricating a close. The drain-sequencing state of a call is rebuilt
+        lazily instead, on the first drain that continues it (which carries the
+        clock domain), so this only has to make the live surface whole again.
+        """
+
+        from ..live import LiveError
+
+        if self._journal_dir is None or not self._journal_dir.is_dir():
+            return
+        for ledger in iter_sidecars(self._journal_dir):
+            sidecar = read_sidecar(ledger)
+            if sidecar is None:
+                continue
+            journal = journal_path(self._journal_dir, sidecar.call_key)
+            try:
+                frames = journal.read_bytes()
+            except OSError:
+                # An orphan ledger whose journal was already sealed and removed has
+                # nothing to rebuild; drop it so ledgers do not accumulate.
+                with contextlib.suppress(OSError):
+                    ledger.unlink()
+                continue
+            with contextlib.suppress(LiveError):
+                self._live.rebuild_capture_session(
+                    sidecar.call_key,
+                    frames,
+                    journal,
+                    project_id=sidecar.project_id,
+                    recovery_method=RECOVERY_METHOD,
+                    recovery_reason=RECOVERY_REASON_SEALED,
+                )
 
     def drain(self, drain: CaptureDrain) -> DrainOutcome:
         """Accept one drain of one call. Thread-safe; drains of a call serialize."""
@@ -632,15 +860,65 @@ class CaptureCallRegistry:
                 ):
                     return call
                 self._calls.pop(key, None)
+            # Not in memory. If a durable ledger survived a restart, rebuild the
+            # call from it so a continuing drain resumes cleanly instead of a fresh
+            # call that would refuse its in-sequence drain as a gap.
+            rebuilt = self._rebuild_call(drain)
+            if rebuilt is not None:
+                self._calls[key] = rebuilt
+                return rebuilt
             self._prune_finalized(drain.project_id)
             owned = sum(1 for project, _ in self._calls if project == drain.project_id)
             if owned >= self._max_per_project:
                 raise CaptureCallCapacityError(
                     "this project is carrying as many continuous calls as it will"
                 )
-            call = CaptureCall(drain)
+            call = CaptureCall(drain, journal_dir=self._journal_dir)
             self._calls[key] = call
             return call
+
+    def _rebuild_call(self, drain: CaptureDrain) -> CaptureCall | None:
+        """Reconstruct a call from its durable ledger, or ``None`` if there is none.
+
+        Caller holds the registry lock. The live session is rebuilt from disk if a
+        restart (or an expiry) dropped it, and whether the call is already finalized
+        is read from the journal's finalize frame -- never fabricated -- so a drain
+        after a durably-observed close is still refused.
+        """
+
+        if self._journal_dir is None:
+            return None
+        from ..live import LiveError, SessionNotLiveError
+
+        sidecar = read_sidecar(sidecar_path(self._journal_dir, drain.call_key))
+        if sidecar is None:
+            return None
+        journal = journal_path(self._journal_dir, drain.call_key)
+        try:
+            frames = journal.read_bytes()
+        except OSError:
+            return None
+        if not self._live.contains(drain.call_key, project_id=drain.project_id):
+            try:
+                self._live.rebuild_capture_session(
+                    drain.call_key,
+                    frames,
+                    journal,
+                    project_id=drain.project_id,
+                    recovery_method=RECOVERY_METHOD,
+                    recovery_reason=RECOVERY_REASON_SEALED,
+                )
+            except LiveError:
+                return None
+        try:
+            finalized = self._live.summary(
+                drain.call_key, project_id=drain.project_id
+            ).close_observed
+        except SessionNotLiveError:
+            return None
+        return CaptureCall.rebuild(
+            drain, sidecar, journal, journal_dir=self._journal_dir, finalized=finalized
+        )
 
     def _prune_finalized(self, project_id: str) -> None:
         """Reclaim finalized calls whose sealed live session is already gone.
@@ -648,7 +926,9 @@ class CaptureCallRegistry:
         A finalized call is retained only long enough to refuse an in-flight late
         drain; once its live session has been sealed and dropped there is nothing
         left to append to and nothing left to refuse, so it no longer counts against
-        the project's concurrent-call budget. Caller holds the registry lock.
+        the project's concurrent-call budget. Its durable ledger is removed with it,
+        because the journal it tracked was unlinked when the session was dropped.
+        Caller holds the registry lock.
         """
 
         dead = [
@@ -660,6 +940,9 @@ class CaptureCallRegistry:
         ]
         for key in dead:
             self._calls.pop(key, None)
+            if self._journal_dir is not None:
+                with contextlib.suppress(OSError):
+                    sidecar_path(self._journal_dir, key[1]).unlink()
 
 
 __all__ = [

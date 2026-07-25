@@ -16,6 +16,7 @@ packages/sdk-python/src/earshot/api.py
 packages/sdk-python/src/earshot/browser_session.py
 packages/sdk-python/src/earshot/capture/__init__.py
 packages/sdk-python/src/earshot/capture/calls.py
+packages/sdk-python/src/earshot/capture/durable.py
 packages/sdk-python/src/earshot/capture/identity.py
 packages/sdk-python/src/earshot/capture/sanitize.py
 packages/sdk-python/src/earshot/capture/source.py

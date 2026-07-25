@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import threading
 import time
 from collections import deque
@@ -182,6 +183,33 @@ class CheckpointDivergedError(LiveError):
 
 class SessionNotSealableError(LiveError):
     """This live session cannot be materialized into an artifact."""
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Commit a directory entry (a created or removed journal name) to disk.
+
+    On POSIX an fsync of a file says nothing about the block holding its name, so
+    a host failure could leave a written journal no directory lists, or resurrect
+    a removed one. Deliberately bounded and never fatal: a platform that cannot
+    open a directory for reading (Windows, some network filesystems) silently
+    keeps the weaker file-level guarantee rather than crashing the caller -- the
+    same trade the crash journal writer makes.
+    """
+
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if directory_flag is None:
+        return
+    try:
+        descriptor = os.open(directory, os.O_RDONLY | directory_flag)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        return
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
 
 
 def _json(value: Any) -> str:
@@ -623,6 +651,13 @@ class _LiveSession:
         # double the storage for no gain.
         self.frames: bytearray | None = bytearray() if retain_frames else None
         self.frames_complete = retain_frames
+        # An append-only on-disk copy of the retained frames, when a continuous
+        # capture call asked for one. It is what survives a backend restart: the
+        # in-memory ``frames`` above are lost with the process, but this file
+        # replays back into an identical live session. ``None`` for every session
+        # that did not request durability (a tailed journal, an uploaded batch).
+        self.durable_fd: int | None = None
+        self.durable_path: Path | None = None
         # Four bytes per accepted frame — the CRC-32 the frame already carries
         # over its own body — indexed by sequence from 1. It is what makes a
         # retry that *rewrites* history distinguishable from one that merely
@@ -764,6 +799,9 @@ class LiveSessionRegistry:
             sessions = list(self._sessions.values())
             self._sessions.clear()
         for session in sessions:
+            # The process is stopping, not the call: keep the on-disk journal so
+            # the next process rebuilds the in-flight session rather than losing it.
+            self._close_durable(session, unlink=False)
             for subscriber in list(session.subscribers):
                 subscriber.finish(END_SERVER_STOPPING)
 
@@ -1009,6 +1047,7 @@ class LiveSessionRegistry:
         project_id: str,
         recovery_method: str | None = None,
         recovery_reason: str | None = None,
+        durable_path: Path | None = None,
     ) -> AcceptedCheckpoint:
         """Append server-authored journal entries to a live call. Scan-free.
 
@@ -1052,6 +1091,11 @@ class LiveSessionRegistry:
                 )
                 session.recovery_method = recovery_method
                 session.recovery_reason = recovery_reason
+                # Durability begins with the header: the file is opened before the
+                # first frame is retained, so a rebuild always has an
+                # interpretable journal or none at all, never a headerless prefix.
+                if durable_path is not None:
+                    self._open_durable(session, durable_path)
                 header_frame = encode_frame(
                     1, encode_entry(header), max_body_bytes=self.config.max_frame_bytes
                 )
@@ -1092,6 +1136,99 @@ class LiveSessionRegistry:
                 sealable=session.sealable,
             )
 
+    def rebuild_capture_session(
+        self,
+        session_id: str,
+        frames_bytes: bytes,
+        durable_path: Path,
+        *,
+        project_id: str,
+        recovery_method: str | None = None,
+        recovery_reason: str | None = None,
+    ) -> AcceptedCheckpoint:
+        """Reconstruct a durable capture call's live session from its journal file.
+
+        The file is a contiguous run of the exact frames the session retained
+        before the restart, so replaying them rebuilds an identical live buffer:
+        same header, same sequence, same checksum ledger, and the same
+        ``close_observed`` -- which stays ``False`` unless a finalize frame was
+        durably written, so a rebuild can never invent a close. A trailing torn
+        frame from the crash is dropped and the journal marked not-complete, never
+        repaired. The file is then reopened for the drains that continue the call,
+        and a mid-call seal of it names itself ``browser_capture_journal``.
+        """
+
+        if len(frames_bytes) < HEADER_SIZE:
+            raise CheckpointFramesInvalidError("durable capture journal is shorter than one frame")
+        now_nano = int(self._clock() * 1e9)
+        with self._lock:
+            existing = self._sessions.get((project_id, session_id))
+            if existing is not None:
+                return AcceptedCheckpoint(
+                    journal_id=existing.journal_id,
+                    accepted_through=existing.last_sequence,
+                    accepted_records=0,
+                    state=existing.state(self._clock()),
+                    sealable=existing.sealable,
+                )
+            scan = scan_frames(
+                frames_bytes, max_body_bytes=self.config.max_frame_bytes, first_sequence=1
+            )
+            if not scan.frames:
+                raise CheckpointFramesInvalidError("durable capture journal has no intact frames")
+            try:
+                header = decode_entry(scan.frames[0].body)
+            except JournalFormatError as error:
+                raise CheckpointFramesInvalidError(
+                    "durable capture journal has no readable header"
+                ) from error
+            if not isinstance(header, JournalOpen) or header.session_id != session_id:
+                raise CheckpointFramesInvalidError(
+                    "durable capture journal declares a different session"
+                )
+            self._enforce_quota(project_id)
+            session = self._register(
+                session_id=session_id,
+                project_id=project_id,
+                source=SOURCE_CHECKPOINT,
+                header=header,
+                path=None,
+                retain_frames=True,
+            )
+            session.recovery_method = recovery_method
+            session.recovery_reason = recovery_reason
+            offset = 0
+            for frame in scan.frames:
+                frame_end = _frame_end(frames_bytes, offset)
+                frame_bytes = frames_bytes[offset:frame_end]
+                # ``durable_fd`` is still ``None`` here, so retention is in-memory
+                # only: the bytes are already on disk and must never be rewritten.
+                self._retain_frame(session, frame_bytes)
+                session.remember_checksum(frame.sequence, frame_bytes[-CHECKSUM_SIZE:])
+                if frame.sequence > 1:
+                    try:
+                        entry = decode_entry(frame.body)
+                    except JournalFormatError as error:
+                        raise CheckpointFramesInvalidError(
+                            "durable capture journal holds a frame that is not an entry"
+                        ) from error
+                    session.append(_governed_entry_event(session, entry, frame.sequence))
+                    _absorb(session, entry)
+                offset = frame_end
+            if scan.torn_tail_bytes:
+                # A crash can tear the final frame; the intact prefix is authentic
+                # and the journal is honestly not known-complete.
+                session.journal_complete = False
+            self._reopen_durable(session, durable_path)
+            session.last_append_unix_nano = now_nano
+            return AcceptedCheckpoint(
+                journal_id=session.journal_id,
+                accepted_through=session.last_sequence,
+                accepted_records=max(0, len(scan.frames) - 1),
+                state=session.state(self._clock()),
+                sealable=session.sealable,
+            )
+
     def seal_recovery(self, session_id: str, *, project_id: str) -> tuple[str | None, str | None]:
         """How a seal of this session should name a mid-call reconstruction.
 
@@ -1113,8 +1250,23 @@ class LiveSessionRegistry:
         prefix of a journal would assemble into an artifact that looks whole and
         is silently short, so a session that outgrew the cap simply stops being
         sealable instead.
+
+        The durable copy is written first and is independent of the in-memory
+        cap: a plain ``write`` survives process death the instant it returns, so a
+        backend restart replays the whole file rather than a memory prefix.
         """
 
+        fd = session.durable_fd
+        if fd is not None:
+            try:
+                os.write(fd, frame)
+            except OSError:
+                # Durability is best-effort: a disk that refused a frame stops
+                # this session's on-disk copy (a rebuild would then see a shorter,
+                # honestly-provisional journal) but never breaks the live buffer.
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+                session.durable_fd = None
         frames = session.frames
         if frames is None:
             return
@@ -1123,6 +1275,67 @@ class LiveSessionRegistry:
             session.frames = None
             return
         frames.extend(frame)
+
+    def _open_durable(self, session: _LiveSession, durable_path: Path) -> None:
+        """Begin the on-disk copy of a capture call's retained frames.
+
+        Best-effort: a directory or descriptor the host refuses leaves the session
+        purely in memory (its pre-restart behaviour) rather than failing the drain.
+        The parent directory is fsynced so the new file's *name* is durable, the
+        same reason the crash journal fsyncs its own directory on creation.
+        """
+
+        try:
+            durable_path.parent.mkdir(parents=True, exist_ok=True)
+            with contextlib.suppress(OSError):
+                durable_path.parent.chmod(0o700)
+            fd = os.open(durable_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
+        except OSError:
+            return
+        session.durable_fd = fd
+        session.durable_path = durable_path
+        _fsync_directory(durable_path.parent)
+
+    def _reopen_durable(self, session: _LiveSession, durable_path: Path) -> None:
+        """Reopen a rebuilt call's on-disk journal for continued appends.
+
+        The file already holds every pre-restart frame; this only lets the drains
+        that continue the call after the restart extend the same file. The bytes on
+        disk are never rewritten, so the rebuilt journal stays byte-identical to
+        what the process wrote before it died.
+        """
+
+        try:
+            fd = os.open(durable_path, os.O_WRONLY | os.O_APPEND)
+        except OSError:
+            return
+        session.durable_fd = fd
+        session.durable_path = durable_path
+
+    def _close_durable(self, session: _LiveSession, *, unlink: bool) -> None:
+        """Close the on-disk copy, and remove it once the session is truly done.
+
+        A sealed, expired, or superseded session will never be rebuilt, so its
+        journal file is unlinked (and its directory entry fsynced) rather than left
+        to resurrect a session whose artifact already exists.
+        """
+
+        fd = session.durable_fd
+        session.durable_fd = None
+        if fd is not None:
+            with contextlib.suppress(OSError):
+                os.fsync(fd)
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        path = session.durable_path
+        if unlink and path is not None:
+            session.durable_path = None
+            unlinked = False
+            with contextlib.suppress(OSError):
+                path.unlink()
+                unlinked = True
+            if unlinked:
+                _fsync_directory(path.parent)
 
     def _enforce_quota(self, project_id: str) -> None:
         """Both halves of the session budget: the machine's, and this tenant's."""
@@ -1197,6 +1410,10 @@ class LiveSessionRegistry:
                 return False
             subscribers = list(session.subscribers)
             session.subscribers.clear()
+            # A dropped session is sealed, expired, or superseded; it will never be
+            # rebuilt, so its on-disk journal is removed rather than left to
+            # resurrect a session whose artifact already exists.
+            self._close_durable(session, unlink=True)
             if project_id == self._project_id:
                 for tracked in self._tracked.values():
                     if tracked.session_id == session_id:

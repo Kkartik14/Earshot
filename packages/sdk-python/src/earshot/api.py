@@ -1816,6 +1816,7 @@ def create_app(
     connector_ingestion: HostedProviderIngestion | None = None,
     web_dir: str | Path | None = None,
     live_registry: LiveSessionRegistry | None = None,
+    capture_journal_dir: str | Path | None = None,
 ) -> FastAPI:
     settings = config or ApiConfig()
     repository = store or IncidentStore(data_dir)
@@ -1837,9 +1838,19 @@ def create_app(
     # onto the same live sessions the checkpoint surface uses. Bounded per project
     # to the same budget a project's live sessions run under, so capture cannot
     # spend more of the machine than any other producer.
+    #
+    # With a durable journal directory configured, each in-flight call is written
+    # to disk, so a backend restart does not lose it: ``rebuild_from_disk`` replays
+    # every surviving call's journal back into a provisional live session, and a
+    # client that continues a call resumes cleanly rather than getting an unknown
+    # session. Without one, calls stay in memory and a restart drops them, exactly
+    # as it drops any other live session.
     capture_calls = CaptureCallRegistry(
-        live, max_calls_per_project=live.config.max_sessions_per_project
+        live,
+        journal_dir=capture_journal_dir,
+        max_calls_per_project=live.config.max_sessions_per_project,
     )
+    capture_calls.rebuild_from_disk()
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
