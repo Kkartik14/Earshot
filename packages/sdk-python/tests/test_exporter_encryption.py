@@ -136,10 +136,13 @@ def test_wrong_key_quarantines_and_never_delivers(tmp_path) -> None:
     reader = _durable(transport, tmp_path, spool_key=KEY_B, diagnostic=diagnostics.append)
     try:
         _wait_until(lambda: reader.status().abandoned == 1)
+        # The abandoned counter is bumped before the diagnostic callback fires, so
+        # wait for the diagnostic itself rather than racing the window between them.
+        _wait_until(lambda: any(d.code == "exporter.spool_corrupt" for d in diagnostics))
         assert transport.items == []
         assert list(tmp_path.glob("*.spool")) == []
         assert len(list((tmp_path / "quarantine").glob("*.corrupt"))) == 1
-        assert diagnostics[-1].code == "exporter.spool_corrupt"
+        assert any(d.code == "exporter.spool_corrupt" for d in diagnostics)
     finally:
         assert reader.shutdown()
 
