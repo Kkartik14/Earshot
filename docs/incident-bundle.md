@@ -61,16 +61,16 @@ checkpoint journal rather than produced by a live `close()`. It is a typed manif
 member, next to `finality` and `completeness`, so validation can cross-check it; an
 attribute bag could not be enforced.
 
-| Field                                  | Meaning                                                          |
-| -------------------------------------- | ---------------------------------------------------------------- |
-| `method`                               | how it was rebuilt (`checkpoint_journal`)                        |
-| `reason`                               | why (`process_terminated_before_close`)                          |
-| `close_observed`                       | the machine-checkable assertion that a close was or was not seen |
-| `journal_id`, `last_sequence`          | which journal, and how far the readable prefix reached           |
-| `last_observation`                     | the last durably observed coordinate — **not** the session's end |
-| `torn_tail_bytes`, `discarded_records` | evidence lost at a known boundary                                |
-| `journal_complete`                     | false when the journal reached its cap before the session ended  |
-| `recoverer`                            | the producer that performed the recovery                         |
+| Field                                   | Meaning                                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------------------ |
+| `method`                                | how it was rebuilt (`checkpoint_journal`)                                            |
+| `reason`                                | why (`process_terminated_before_close`)                                              |
+| `close_observed`                        | the machine-checkable assertion that a close was or was not seen                     |
+| `journal_id`, `last_sequence`           | which journal, and how far the readable prefix reached                               |
+| `first_observation`, `last_observation` | the first and last durably observed coordinates — **not** the session's start or end |
+| `torn_tail_bytes`, `discarded_records`  | evidence lost at a known boundary                                                    |
+| `journal_complete`                      | false when the journal reached its cap before the session ended                      |
+| `recoverer`                             | the producer that performed the recovery                                             |
 
 There is deliberately no "recovered at" timestamp: two recoveries of the same journal
 must produce the same bytes under the same `bundle_id`, or content-addressed ingest
@@ -232,6 +232,8 @@ Validation issues have stable codes and paths and never need to echo source valu
   claiming it did observe one (`EARSHOT_RECOVERY_DECLARATION_CONTRADICTORY`).
 - A session end time on a session whose close was never observed
   (`EARSHOT_RECOVERY_SESSION_END_FABRICATED`).
+- A recovery whose first observed coordinate follows its last within the same
+  clock domain (`EARSHOT_RECOVERY_EXTENT_INCOHERENT`).
 - A media reference claiming `content_digest` without a digest, or `opaque_handle`
   while asserting a digest, a size, a byte range, or no custodian
   (`EARSHOT_MEDIA_CUSTODY_INCOHERENT`).

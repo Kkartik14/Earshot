@@ -66,6 +66,27 @@ Process liveness. It does not imply storage is writable.
 
 Checks SQLite and object-store readiness. Returns 503 when unavailable.
 
+### `POST /v1/auth/session`
+
+Exchanges a valid bearer credential (project API key or the legacy token) for an
+expiring, HttpOnly, SameSite=Strict viewer session cookie plus an in-memory CSRF
+token, revoking any prior session cookie on the same request first. `401
+EARSHOT_UNAUTHORIZED` if the request did not authenticate by bearer credential.
+
+### `GET /v1/auth/session`
+
+Reports current viewer session status: `authenticated`, `authentication_required`,
+`project_id`, `csrf_token`, `expires_in_seconds`. Under `--trust-local-network` with
+no project key configured, answers `authenticated: false` /
+`authentication_required: false` instead of requiring a login, so the bundled
+viewer still loads.
+
+### `POST /v1/auth/logout`
+
+Revokes the caller's viewer session and clears the cookie. Requires an active
+session (not a bearer credential) plus the CSRF token; `401 EARSHOT_UNAUTHORIZED`
+otherwise.
+
 ### `POST /hooks/v1/connectors/{endpoint_id}`
 
 Accepts a bounded `application/json` Provider Delivery. The configured Connector verifies
@@ -213,6 +234,21 @@ measurement, coverage, omission, diagnosis, ownership, and evidence fields indep
 of the projection implementation. API and analyzer versions evolve independently. Pre-v1
 clients pinned to API `0.1.x` must regenerate their response types before consuming
 `0.2.x` explanations, and `0.2.x` clients must regenerate before consuming `0.3.x`.
+
+### `GET /v1/incidents/{bundle_id}/evidence/summary`
+
+Returns `EvidenceQuery(bundle, analysis).summary()`: a metadata-only, evidence-cited
+digest of what is known about the incident's turns — first abnormal boundary,
+recomputability, and a compact per-turn rollup. Built inside the same projection
+wrapper as analysis/explanation, so an analysis derived from other evidence surfaces
+as `409 EARSHOT_ANALYSIS_BINDING_MISMATCH` rather than a 500.
+
+### `GET /v1/incidents/{bundle_id}/evidence/not_observed`
+
+Returns `EvidenceQuery(bundle, analysis).not_observed()`: the coverage/omission facts
+that were explicitly not captured or not exposed, cited by boundary and turn. Absence
+here is a stated reason, never a fabricated zero. Same binding-mismatch behavior as
+`evidence/summary`.
 
 ### `GET /v1/incidents/{bundle_id}/contradictions`
 

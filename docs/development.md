@@ -198,9 +198,12 @@ server-side output evidence; client render remains explicitly unobserved.
   only through explicit caller-supplied, policy-enabled SDK input.
 - The server is single-node; Project scoping is an authorization boundary, not a
   distributed multi-organization control plane.
-- Media upload/replay, browser collection, native S2S adapters beyond the shipped
-  OpenAI Realtime event mapper, P.563 processing, and generic live OTLP receiving
-  are later milestones.
+- Browser capture (an unpublished `packages/browser` SDK plus its `/v1/capture`
+  ingest endpoint) exists but is validated on one browser only, and the viewer does
+  not yet render browser-captured sessions.
+- Media upload/replay, render collection (confirming client playback actually
+  occurred), native S2S adapters beyond the shipped OpenAI Realtime event mapper,
+  P.563 processing, and generic live OTLP receiving are later milestones.
 - Broad automatic failure explanation and incident-to-regression conversion are later
   milestones; the current analyzer provides deterministic projections and measured
   failed-operation diagnoses.

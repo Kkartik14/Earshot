@@ -6,8 +6,10 @@ Earshot is an open-source SDK, semantic profile, and local backend for recording
 happened in a voice session—across Pipecat, LiveKit, native speech-to-speech event
 streams, raw provider pipelines, and optional telephony—and turning it into a safe,
 immutable artifact that can be validated, stored, shared, and projected into a
-deterministic latency/causality analysis. Browser/mobile receive and render collection
-is not shipped yet.
+deterministic latency/causality analysis. A browser capture SDK and its ingest endpoint
+exist but are unpublished and validated on one browser only; the viewer does not yet
+render browser-captured sessions, and render collection — confirming client playback
+actually occurred — is not shipped.
 
 The core workflow:
 
@@ -17,12 +19,13 @@ The core workflow:
 Status: pre-v1 alpha. Public compatibility is limited to the versions documented for
 each release; see the [alpha compatibility policy](docs/release.md#alpha-compatibility-policy).
 
-| Maturity                                      | Surfaces                                                                                                                        |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Implemented; retained real-capture fixture    | LiveKit 1.6, Pipecat 1.5, Deepgram, Cartesia, and Sarvam adapters                                                               |
-| Implemented; synthetic conformance only       | OpenAI Realtime event mapper and ElevenLabs, Vapi, Retell, and Ringg finalized-delivery Connectors                              |
-| Implemented core                              | Contract/codecs, recorder/export, privacy validation, local API/storage, deterministic analysis/explanation, and generic viewer |
-| Planned; not available in the current release | Browser/mobile capture and render collectors, generic live OTLP receiving, media upload/replay, and regression-fixture export   |
+| Maturity                                           | Surfaces                                                                                                                                                                       |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Implemented; retained real-capture fixture         | LiveKit 1.6, Pipecat 1.5, Deepgram, Cartesia, and Sarvam adapters                                                                                                              |
+| Implemented; synthetic conformance only            | OpenAI Realtime event mapper and ElevenLabs, Vapi, Retell, and Ringg finalized-delivery Connectors                                                                             |
+| Implemented core                                   | Contract/codecs, recorder/export, privacy validation, local API/storage, deterministic analysis/explanation, and generic viewer                                                |
+| Implemented; unpublished, single-browser validated | Browser capture SDK (`packages/browser`) and its `/v1/capture` ingest endpoint                                                                                                 |
+| Planned; not available in the current release      | Viewer rendering of browser-captured sessions, render collection (confirming client playback), generic live OTLP receiving, media upload/replay, and regression-fixture export |
 
 The retained artifacts are metadata-only and privacy-scrubbed; their provenance and
 current gaps are recorded in [the capture inventory](docs/captured-fixtures.md).
@@ -47,7 +50,8 @@ current gaps are recorded in [the capture inventory](docs/captured-fixtures.md).
   storage, JSON/protobuf negotiation, fleet Turn Facts, analysis caching, corruption
   checks, and privacy purge/tombstones.
 - Signed finalized-delivery Connectors for ElevenLabs Agents (JSON and OTLP-shaped),
-  Vapi, and Retell. Provider transcript/tool/dynamic-variable bodies are not retained.
+  Vapi, Retell, and Ringg. Provider transcript/tool/dynamic-variable bodies are not
+  retained.
 - A non-root single-image deployment with a persistent `/data` volume and hardened
   Compose example.
 - Unit, property, integration, smoke, and end-to-end conformance tests.
@@ -96,7 +100,9 @@ server extra: `pip install 'earshot-observability[server]'`.
 
 Without the `bundle` step the API still runs; it just serves no UI. During UI
 development, run `pnpm --filter @earshot/viewer dev` for a hot-reloading server that
-proxies `/v1` to the backend.
+proxies `/v1` to the backend. Its default proxy target is `http://127.0.0.1:8000`, not
+the CLI's own default port 4319, so either start the backend with `--port 8000` or set
+`EARSHOT_API_URL=http://127.0.0.1:4319` before running `dev`.
 
 The Python distribution is named `earshot-observability`; the import package and
 CLI remain `earshot`. The plain PyPI distribution name `earshot` belongs to an
@@ -161,6 +167,8 @@ a system can prove a human **heard** the audio.
 | `spec/`                                | Generated JSON Schema.                                            |
 | `packages/sdk-python`                  | Contract, SDK, adapters, analysis, storage, and API.              |
 | `apps/ingest`                          | ASGI deployment entry point.                                      |
+| `apps/viewer`                          | React viewer SPA, bundled into the Python wheel.                  |
+| `packages/browser`                     | Browser-side capture SDK (unpublished; not yet viewer-rendered).  |
 | `fixtures/`                            | Shared valid/invalid/golden/fault artifacts.                      |
 | `examples/pipecat_headless`            | Roomless real STT → LLM → TTS evidence harness.                   |
 | `docs/`                                | Public, self-reproducing architecture and contract documentation. |
