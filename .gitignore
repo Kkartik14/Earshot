@@ -42,3 +42,12 @@ apps/ingest/tests/fixtures/connectors/*
 
 # Bundled viewer SPA copied into the Python package by `pnpm bundle`
 packages/sdk-python/src/earshot/web/
+
+# Per-directory agent-only context notes (see .memory/NOTES.md in each dir).
+# Not for humans, not part of the shipped docs — never commit.
+.memory/
+
+# Claude Code local session state; only .claude/skills/ ships with the repo.
+.claude/*
+!.claude/skills/
+!.claude/skills/**

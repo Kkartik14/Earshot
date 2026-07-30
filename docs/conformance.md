@@ -11,8 +11,12 @@ fixtures/
   invalid/mutations.json
   golden/pipecat_spans.json
   golden/livekit_metrics.json
+  golden/expected_semantics.json
+  golden/tool_timeout_retry.otlp.json
+  golden/webrtc_degradation.openinference.json
   conformance/canonical-vector.input.json
   conformance/canonical-vector.expected.json
+  faults/scenarios.json
   faults/*.incident.json
   faults/security_regressions.json
 ```
@@ -143,8 +147,8 @@ under the pinned Pipecat instrumentation scope.
 `packages/sdk-python/tests/adapter_conformance.py` is the reusable public-seam
 conformance harness. It is applied to every shipped adapter family:
 
-- Deepgram, Cartesia, OpenAI Realtime, and Sarvam use sanitized synthetic streaming
-  payloads through `adapt -> apply -> close`.
+- Deepgram, Cartesia, OpenAI Realtime, Gemini Live, and Sarvam use sanitized synthetic
+  streaming payloads through `adapt -> apply -> close`.
 - ElevenLabs, Vapi, Retell, and Ringg use the checked-in sanitized synthetic finalized
   Delivery builders through `HostedProviderIngestion`. These are not represented as
   captured provider deliveries; the opt-in real-delivery test retains its explicit skip

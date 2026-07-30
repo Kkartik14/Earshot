@@ -3,8 +3,8 @@
 Status: implemented pre-v1, provider-SDK-free event mappers for custom, in-app voice
 pipelines. Deepgram, Cartesia, and Sarvam have
 [privacy-scrubbed retained real captures](../captured-fixtures.md). The OpenAI Realtime
-mapper is covered by synthetic conformance only until a real provider capture is
-available.
+and Gemini Live mappers are covered by synthetic conformance only until a real provider
+capture is available for each.
 
 Use these adapters when the application owns the WebSocket or SDK loop instead of
 running LiveKit or Pipecat. They translate plain provider event dictionaries into

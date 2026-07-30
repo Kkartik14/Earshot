@@ -23,3 +23,7 @@ as a generic OTLP collector.
 Earshot gains hosted and in-app voice-agent coverage without inventing session completion.
 A future `/v1/traces` prototype must first specify project routing, deduplication,
 completion/idle timeout, late spans, crash recovery, bounded staging, and privacy.
+
+Note: Ringg was added through this same seam after this decision was recorded, alongside
+ElevenLabs, Vapi, and Retell. This ADR is left as originally decided rather than rewritten;
+see `docs/connectors.md` for the current, maintained list of implemented Connectors.
