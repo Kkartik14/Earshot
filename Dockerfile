@@ -1,5 +1,5 @@
 # 1) Build the viewer SPA (static assets served by the API in the runtime stage).
-FROM node:22-slim AS web
+FROM node:25-slim AS web
 
 WORKDIR /repo
 RUN corepack enable
