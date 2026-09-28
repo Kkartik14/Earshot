@@ -23,32 +23,32 @@ That is 6 × 2 × 2 = 24 cells. Sixteen ran against real providers; eight were
 explicitly unavailable because the corresponding API key was not present. No
 unavailable cell was replaced with a synthetic pass.
 
-| STT | LLM | TTS | Result | Evidence |
-| --- | --- | --- | --- | --- |
-| deepgram | groq | cartesia | completed | valid Earshot incident |
-| deepgram | groq | elevenlabs | timed out | `provider_http_402`, TTS |
-| deepgram | openai | cartesia | timed out | `provider_http_429`, LLM |
-| deepgram | openai | elevenlabs | timed out | `provider_http_429`, LLM |
-| cartesia STT | groq | cartesia | completed | valid Earshot incident |
-| cartesia STT | groq | elevenlabs | timed out | `provider_http_402`, TTS |
-| cartesia STT | openai | cartesia | timed out | `provider_http_429`, LLM |
-| cartesia STT | openai | elevenlabs | timed out | `provider_http_429`, LLM |
-| sarvam | groq | cartesia | completed | valid Earshot incident; 16 kHz input |
-| sarvam | groq | elevenlabs | timed out | `provider_http_402`, TTS |
-| sarvam | openai | cartesia | timed out | `provider_http_429`, LLM |
-| sarvam | openai | elevenlabs | timed out | `provider_http_429`, LLM |
-| elevenlabs STT | groq | cartesia | completed | valid Earshot incident |
-| elevenlabs STT | groq | elevenlabs | timed out | `provider_http_402`, TTS |
-| elevenlabs STT | openai | cartesia | timed out | `provider_http_429`, LLM |
-| elevenlabs STT | openai | elevenlabs | timed out | `provider_http_429`, LLM |
-| assemblyai | groq | cartesia | unavailable | missing `ASSEMBLYAI_API_KEY` |
-| assemblyai | groq | elevenlabs | unavailable | missing `ASSEMBLYAI_API_KEY` |
-| assemblyai | openai | cartesia | unavailable | missing `ASSEMBLYAI_API_KEY` |
-| assemblyai | openai | elevenlabs | unavailable | missing `ASSEMBLYAI_API_KEY` |
-| soniox | groq | cartesia | unavailable | missing `SONIOX_API_KEY` |
-| soniox | groq | elevenlabs | unavailable | missing `SONIOX_API_KEY` |
-| soniox | openai | cartesia | unavailable | missing `SONIOX_API_KEY` |
-| soniox | openai | elevenlabs | unavailable | missing `SONIOX_API_KEY` |
+| STT            | LLM    | TTS        | Result      | Evidence                             |
+| -------------- | ------ | ---------- | ----------- | ------------------------------------ |
+| deepgram       | groq   | cartesia   | completed   | valid Earshot incident               |
+| deepgram       | groq   | elevenlabs | timed out   | `provider_http_402`, TTS             |
+| deepgram       | openai | cartesia   | timed out   | `provider_http_429`, LLM             |
+| deepgram       | openai | elevenlabs | timed out   | `provider_http_429`, LLM             |
+| cartesia STT   | groq   | cartesia   | completed   | valid Earshot incident               |
+| cartesia STT   | groq   | elevenlabs | timed out   | `provider_http_402`, TTS             |
+| cartesia STT   | openai | cartesia   | timed out   | `provider_http_429`, LLM             |
+| cartesia STT   | openai | elevenlabs | timed out   | `provider_http_429`, LLM             |
+| sarvam         | groq   | cartesia   | completed   | valid Earshot incident; 16 kHz input |
+| sarvam         | groq   | elevenlabs | timed out   | `provider_http_402`, TTS             |
+| sarvam         | openai | cartesia   | timed out   | `provider_http_429`, LLM             |
+| sarvam         | openai | elevenlabs | timed out   | `provider_http_429`, LLM             |
+| elevenlabs STT | groq   | cartesia   | completed   | valid Earshot incident               |
+| elevenlabs STT | groq   | elevenlabs | timed out   | `provider_http_402`, TTS             |
+| elevenlabs STT | openai | cartesia   | timed out   | `provider_http_429`, LLM             |
+| elevenlabs STT | openai | elevenlabs | timed out   | `provider_http_429`, LLM             |
+| assemblyai     | groq   | cartesia   | unavailable | missing `ASSEMBLYAI_API_KEY`         |
+| assemblyai     | groq   | elevenlabs | unavailable | missing `ASSEMBLYAI_API_KEY`         |
+| assemblyai     | openai | cartesia   | unavailable | missing `ASSEMBLYAI_API_KEY`         |
+| assemblyai     | openai | elevenlabs | unavailable | missing `ASSEMBLYAI_API_KEY`         |
+| soniox         | groq   | cartesia   | unavailable | missing `SONIOX_API_KEY`             |
+| soniox         | groq   | elevenlabs | unavailable | missing `SONIOX_API_KEY`             |
+| soniox         | openai | cartesia   | unavailable | missing `SONIOX_API_KEY`             |
+| soniox         | openai | elevenlabs | unavailable | missing `SONIOX_API_KEY`             |
 
 Every live cell produced a valid incident, including failures. Failed cells now
 contain a metadata-only `provider_failure` operation with the provider, stage,

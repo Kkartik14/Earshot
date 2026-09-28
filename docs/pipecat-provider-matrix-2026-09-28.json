@@ -382,23 +382,10 @@
     }
   ],
   "dimensions": {
-    "llm": [
-      "groq",
-      "openai"
-    ],
-    "stt": [
-      "deepgram",
-      "cartesia",
-      "sarvam",
-      "elevenlabs",
-      "assemblyai",
-      "soniox"
-    ],
+    "llm": ["groq", "openai"],
+    "stt": ["deepgram", "cartesia", "sarvam", "elevenlabs", "assemblyai", "soniox"],
     "total_cells": 24,
-    "tts": [
-      "cartesia",
-      "elevenlabs"
-    ]
+    "tts": ["cartesia", "elevenlabs"]
   },
   "framework": "pipecat-ai==1.5.0",
   "latency_policy": {
@@ -419,58 +406,42 @@
   "unavailable": [
     {
       "cell": "assemblyai__groq__cartesia",
-      "missing_environment": [
-        "ASSEMBLYAI_API_KEY"
-      ],
+      "missing_environment": ["ASSEMBLYAI_API_KEY"],
       "status": "unavailable"
     },
     {
       "cell": "assemblyai__groq__elevenlabs",
-      "missing_environment": [
-        "ASSEMBLYAI_API_KEY"
-      ],
+      "missing_environment": ["ASSEMBLYAI_API_KEY"],
       "status": "unavailable"
     },
     {
       "cell": "assemblyai__openai__cartesia",
-      "missing_environment": [
-        "ASSEMBLYAI_API_KEY"
-      ],
+      "missing_environment": ["ASSEMBLYAI_API_KEY"],
       "status": "unavailable"
     },
     {
       "cell": "assemblyai__openai__elevenlabs",
-      "missing_environment": [
-        "ASSEMBLYAI_API_KEY"
-      ],
+      "missing_environment": ["ASSEMBLYAI_API_KEY"],
       "status": "unavailable"
     },
     {
       "cell": "soniox__groq__cartesia",
-      "missing_environment": [
-        "SONIOX_API_KEY"
-      ],
+      "missing_environment": ["SONIOX_API_KEY"],
       "status": "unavailable"
     },
     {
       "cell": "soniox__groq__elevenlabs",
-      "missing_environment": [
-        "SONIOX_API_KEY"
-      ],
+      "missing_environment": ["SONIOX_API_KEY"],
       "status": "unavailable"
     },
     {
       "cell": "soniox__openai__cartesia",
-      "missing_environment": [
-        "SONIOX_API_KEY"
-      ],
+      "missing_environment": ["SONIOX_API_KEY"],
       "status": "unavailable"
     },
     {
       "cell": "soniox__openai__elevenlabs",
-      "missing_environment": [
-        "SONIOX_API_KEY"
-      ],
+      "missing_environment": ["SONIOX_API_KEY"],
       "status": "unavailable"
     }
   ]
