@@ -1,0 +1,477 @@
+{
+  "cells": [
+    {
+      "artifact_sha256": "86e989a2e46af3cd7f3dff37526e5e74d5ccfd56393c4eca59a220a594ebd0ea",
+      "cell": "deepgram__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 828.8,
+          "min_ms": 828.8
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 109.4,
+          "min_ms": 109.4
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6386.5,
+          "min_ms": 6386.5
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "cc624bc53c2ac9efec6ff5daca3133afda1edc0adae73abf507146ec486a8b59",
+      "cell": "deepgram__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 613.2,
+          "min_ms": 613.2
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "provider_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "7aeee24b5de5957c8557b94b999318a2bbd909dc4304d31aed367054556b6fcd",
+      "cell": "deepgram__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3741.5,
+          "min_ms": 3741.5
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "9e33bd2489ff104fc2c8b7516b47ab732fac65ae885124e4a254864bd3c4f264",
+      "cell": "deepgram__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3654.6,
+          "min_ms": 3654.6
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "ef0b6417eafe5d41f02b2b15e79a5bf1c5eb1a049dabbba7d14570ec47cb1445",
+      "cell": "cartesia__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 674.4,
+          "min_ms": 674.4
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 101.9,
+          "min_ms": 101.9
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 5998.3,
+          "min_ms": 5998.3
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "74a8ea992f25ec7037478ac5feb52841d203f5d117933f26b220636b96a35c69",
+      "cell": "cartesia__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 609.6,
+          "min_ms": 609.6
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "provider_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "3f194267f6d2cfb18a51c5422b2a1ebd3b15187392dfa312808c56a5b6736aa4",
+      "cell": "cartesia__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3781.7,
+          "min_ms": 3781.7
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "6cdc52ceda0e65b984fbac6c7179a4de5da64fd422d091b7d7fb032aef3f2606",
+      "cell": "cartesia__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3672.4,
+          "min_ms": 3672.4
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "d38119dd63f46139061687a7604c33bd033edc759d86fd11e69f491e0f7b164b",
+      "cell": "sarvam__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 703.9,
+          "min_ms": 703.9
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 113.5,
+          "min_ms": 113.5
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 2174.4,
+          "min_ms": 2174.4
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "f391310840de26537d624d0f3b104b5697aa15648a1ec7e520b7f673fbc63e64",
+      "cell": "sarvam__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 671.6,
+          "min_ms": 671.6
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "provider_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "d45b66f10cf3fa1938fc4e4b85b5fcb509d315fa3944e9856508e0f249efb909",
+      "cell": "sarvam__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4684.0,
+          "min_ms": 4684.0
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "a8119e7ae6f2876e53a76ffad4cc996b01abc060086a4ce6d8e0cc9980b6dcf9",
+      "cell": "sarvam__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 6042.4,
+          "min_ms": 6042.4
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "729af43450768b18399c5aa787c38112f6d8918b84aa1accc6407f2dca2e0b6b",
+      "cell": "elevenlabs__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 713.6,
+          "min_ms": 713.6
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 103.4,
+          "min_ms": 103.4
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6245.7,
+          "min_ms": 6245.7
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "bbedd706b7ab9b2baf3d105ac1bd96971cf4cbe3ef41b017396a6cf6485b674b",
+      "cell": "elevenlabs__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 557.5,
+          "min_ms": 557.5
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "provider_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "b53749a18de568e38ee823dbb089b510817bb455f0fa78fc9b06dd8ecd6a47c8",
+      "cell": "elevenlabs__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4799.9,
+          "min_ms": 4799.9
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "4228cb08d4f02f94738ccb21218ffe792e7d7372010a8065bb3de3753ccee5ae",
+      "cell": "elevenlabs__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3904.6,
+          "min_ms": 3904.6
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "provider_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    }
+  ],
+  "dimensions": {
+    "llm": [
+      "groq",
+      "openai"
+    ],
+    "stt": [
+      "deepgram",
+      "cartesia",
+      "sarvam",
+      "elevenlabs",
+      "assemblyai",
+      "soniox"
+    ],
+    "total_cells": 24,
+    "tts": [
+      "cartesia",
+      "elevenlabs"
+    ]
+  },
+  "framework": "pipecat-ai==1.5.0",
+  "latency_policy": {
+    "observer_budget_ms": 250,
+    "reason": "Provider network latency is evidence, not Earshot observer overhead.",
+    "remote_provider_ttfb": "advisory_not_pass_fail"
+  },
+  "matrix_version": 1,
+  "provider_probes": {
+    "elevenlabs": {
+      "status_code": 402
+    },
+    "openai": {
+      "status_code": 429
+    }
+  },
+  "runner": "scripts/run_pipecat_matrix.py",
+  "unavailable": [
+    {
+      "cell": "assemblyai__groq__cartesia",
+      "missing_environment": [
+        "ASSEMBLYAI_API_KEY"
+      ],
+      "status": "unavailable"
+    },
+    {
+      "cell": "assemblyai__groq__elevenlabs",
+      "missing_environment": [
+        "ASSEMBLYAI_API_KEY"
+      ],
+      "status": "unavailable"
+    },
+    {
+      "cell": "assemblyai__openai__cartesia",
+      "missing_environment": [
+        "ASSEMBLYAI_API_KEY"
+      ],
+      "status": "unavailable"
+    },
+    {
+      "cell": "assemblyai__openai__elevenlabs",
+      "missing_environment": [
+        "ASSEMBLYAI_API_KEY"
+      ],
+      "status": "unavailable"
+    },
+    {
+      "cell": "soniox__groq__cartesia",
+      "missing_environment": [
+        "SONIOX_API_KEY"
+      ],
+      "status": "unavailable"
+    },
+    {
+      "cell": "soniox__groq__elevenlabs",
+      "missing_environment": [
+        "SONIOX_API_KEY"
+      ],
+      "status": "unavailable"
+    },
+    {
+      "cell": "soniox__openai__cartesia",
+      "missing_environment": [
+        "SONIOX_API_KEY"
+      ],
+      "status": "unavailable"
+    },
+    {
+      "cell": "soniox__openai__elevenlabs",
+      "missing_environment": [
+        "SONIOX_API_KEY"
+      ],
+      "status": "unavailable"
+    }
+  ]
+}

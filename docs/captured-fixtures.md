@@ -16,7 +16,7 @@ that gap.
 | Surface  | Source evidence                          | Captured   | Artifact                 |
 | -------- | ---------------------------------------- | ---------- | ------------------------ |
 | LiveKit  | `livekit-agents==1.6.5` session          | 2026-07-23 | `livekit.incident.json`  |
-| Pipecat  | `pipecat-ai==1.5.0` session              | 2026-07-23 | `pipecat.incident.json`  |
+| Pipecat  | `pipecat-ai==1.5.0`, Groq `gpt-oss-20b` session | 2026-09-28 | `pipecat.incident.json`  |
 | Deepgram | Listen v1 WebSocket, `nova-3`            | 2026-07-23 | `deepgram.incident.json` |
 | Cartesia | WebSocket API `2024-11-13`, `sonic-2`    | 2026-07-23 | `cartesia.incident.json` |
 | Sarvam   | Streaming STT, `saaras:v3`, `transcribe` | 2026-07-23 | `sarvam.incident.json`   |
