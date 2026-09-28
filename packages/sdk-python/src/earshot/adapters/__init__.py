@@ -7,5 +7,20 @@ without installing a voice runtime.
 
 from .livekit import LiveKitAdapter
 from .pipecat import PipecatAdapter
+from .tvic import (
+    TVICObservation,
+    TVICObservationError,
+    TVICRuntimeAdapter,
+    TVICRuntimeObservationSink,
+    ingest_tvic_observations,
+)
 
-__all__ = ["LiveKitAdapter", "PipecatAdapter"]
+__all__ = [
+    "LiveKitAdapter",
+    "PipecatAdapter",
+    "TVICObservation",
+    "TVICObservationError",
+    "TVICRuntimeAdapter",
+    "TVICRuntimeObservationSink",
+    "ingest_tvic_observations",
+]

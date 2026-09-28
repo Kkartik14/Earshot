@@ -209,6 +209,23 @@ _SAFE_PREFIXES = (
     "gen_ai.usage.",
     "earshot.metric.",
     "earshot.duration.",
+    "earshot.integration.tvic.",
+)
+_TVIC_STRING_METADATA_KEYS = frozenset(
+    {
+        "earshot.integration.tvic.epoch",
+        "earshot.integration.tvic.fact_id",
+        "earshot.integration.tvic.agent_id",
+        "earshot.integration.tvic.audio_error_code",
+        "earshot.integration.tvic.cancel_reason",
+        "earshot.integration.tvic.cause",
+        "earshot.integration.tvic.channel",
+        "earshot.integration.tvic.drop_reason",
+        "earshot.integration.tvic.error_category",
+        "earshot.integration.tvic.error_code",
+        "earshot.integration.tvic.status",
+        "earshot.integration.tvic.terminal_source",
+    }
 )
 _IJSON_INTEGER_MAX = 9_007_199_254_740_991
 _UINT64_DECIMAL_MAX = "18446744073709551615"
@@ -736,6 +753,8 @@ def metadata_value_allowed(key: str, value: Any) -> bool:
             and re.fullmatch(r"(?:0|[1-9][0-9]*)", value) is not None
             and (len(value) < 20 or (len(value) == 20 and value <= _UINT64_DECIMAL_MAX))
         )
+    if key in _TVIC_STRING_METADATA_KEYS:
+        return _safe_scalar_metadata(value)
     if key in _SEMANTIC_METADATA_KEYS:
         return isinstance(value, str) and is_safe_semantic_label(value)
     if key in _VERSION_METADATA_KEYS:

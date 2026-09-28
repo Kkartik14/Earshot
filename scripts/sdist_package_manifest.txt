@@ -11,6 +11,7 @@ packages/sdk-python/src/earshot/adapters/providers/gemini_live.py
 packages/sdk-python/src/earshot/adapters/providers/openai_realtime.py
 packages/sdk-python/src/earshot/adapters/providers/sarvam.py
 packages/sdk-python/src/earshot/adapters/routing.py
+packages/sdk-python/src/earshot/adapters/tvic.py
 packages/sdk-python/src/earshot/analysis.py
 packages/sdk-python/src/earshot/api.py
 packages/sdk-python/src/earshot/browser_session.py
