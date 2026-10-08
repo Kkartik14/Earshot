@@ -998,3 +998,110 @@ class JsonRawOtlpChunk(WireContractModel):
 class IncidentBundleJson(WireContractModel):
     profile: IncidentProfile
     raw_otlp_chunks: tuple[JsonRawOtlpChunk, ...] = ()
+
+
+HostedIdentifier = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$",
+    ),
+]
+HostedRuntimeName = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+    ),
+]
+HostedRuntimeVersion = Annotated[
+    str,
+    StringConstraints(
+        min_length=5,
+        max_length=48,
+        pattern=(
+            r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$"
+        ),
+    ),
+]
+HostedCode = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9_.-]{0,127}$"),
+]
+
+
+class HostedProducer(WireContractModel):
+    """Host-supplied runtime identity; provider and model names are excluded."""
+
+    name: HostedRuntimeName = Field(
+        description="Bounded runtime family slug; never a provider or model label."
+    )
+    version: HostedRuntimeVersion = Field(
+        description="Numeric semantic runtime release; prerelease and build labels are excluded."
+    )
+
+
+class HostedBundleManifest(WireContractModel):
+    """Hosted request manifest; the producer cannot submit an artifact ID."""
+
+    schema_version: NonEmptyStr = SCHEMA_VERSION
+    semantic_profile_version: NonEmptyStr = SEMANTIC_PROFILE_VERSION
+    session_id: HostedIdentifier
+    created_at_unix_nano: DecimalNano
+    producer: HostedProducer
+
+
+class HostedTimePoint(WireContractModel):
+    """Wall-clock source and observation times admitted by the hosted proposal."""
+
+    source_time_unix_nano: DecimalNano | None = None
+    observed_time_unix_nano: DecimalNano | None = None
+
+    @model_validator(mode="after")
+    def has_a_wall_clock_value(self) -> HostedTimePoint:
+        if self.source_time_unix_nano is None and self.observed_time_unix_nano is None:
+            raise ValueError("a hosted time point must contain a source or observation time")
+        return self
+
+
+class HostedSession(WireContractModel):
+    session_id: HostedIdentifier
+    status: HostedCode
+    started_at: HostedTimePoint
+    ended_at: HostedTimePoint | None = None
+
+
+class HostedEvent(WireContractModel):
+    event_id: HostedIdentifier
+    session_id: HostedIdentifier
+    event_name: HostedCode
+    time: HostedTimePoint
+
+
+class HostedIncidentProfile(WireContractModel):
+    """Closed metadata envelope available before runtime contract acceptance."""
+
+    manifest: HostedBundleManifest
+    session: HostedSession
+    events: tuple[HostedEvent, ...] = ()
+    runtime_session_id: HostedIdentifier | None = Field(
+        default=None,
+        description="Optional opaque TVIC correlation ID; never used as the host session ID.",
+    )
+
+    @model_validator(mode="after")
+    def keeps_hosted_session_identity_coherent(self) -> HostedIncidentProfile:
+        session_id = self.manifest.session_id
+        if self.session.session_id != session_id:
+            raise ValueError("manifest and session IDs must match")
+        if any(event.session_id != session_id for event in self.events):
+            raise ValueError("event session IDs must match the manifest")
+        return self
+
+
+class HostedIncidentBundleJson(WireContractModel):
+    """Strict hosted metadata shape; all unapproved fields are rejected."""
+
+    profile: HostedIncidentProfile

@@ -32,6 +32,52 @@ class CaptureClass(StrEnum):
     RAW_OTLP = "raw_otlp"
 
 
+class HostedCapturePolicyError(ValueError):
+    """Hosted ingestion attempted to exceed its approved metadata-only policy."""
+
+
+_HOSTED_UNAPPROVED_METADATA_KEYS = frozenset(
+    {
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.response.model",
+        "gen_ai.system",
+        "model",
+        "model_name",
+        "provider",
+        "provider_name",
+    }
+)
+
+
+def assert_hosted_metadata_only(bundle: IncidentBundle) -> None:
+    """Enforce the current hosted default until broader fields are approved."""
+
+    profile = bundle.profile
+    if bundle.raw_otlp_chunks or profile.media_refs:
+        raise HostedCapturePolicyError(
+            "hosted evidence is limited to metadata; raw OTLP and media references are disabled"
+        )
+    if any(
+        policy.capture_class != CaptureClass.METADATA.value and policy.captured
+        for policy in profile.privacy.capture_classes
+    ):
+        raise HostedCapturePolicyError("hosted evidence is limited to the metadata capture class")
+
+    pending: list[object] = [profile.model_dump(mode="python", exclude_none=True)]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if isinstance(key, str) and key.lower() in _HOSTED_UNAPPROVED_METADATA_KEYS:
+                    raise HostedCapturePolicyError(
+                        "provider and model labels require explicit hosted approval"
+                    )
+                pending.append(child)
+        elif isinstance(value, (list, tuple)):
+            pending.extend(value)
+
+
 @dataclass(frozen=True)
 class ConsentConfig:
     status: str

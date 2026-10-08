@@ -63,6 +63,12 @@ def _names(events) -> list[str]:
     return [event.name for event in events]
 
 
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_capture_journal_byte_limit_must_be_a_positive_integer(limit) -> None:
+    with pytest.raises(ValueError, match="max_capture_journal_bytes"):
+        LiveConfig(max_capture_journal_bytes=limit)
+
+
 def _payload(event) -> dict:
     return json.loads(event.payload)
 
