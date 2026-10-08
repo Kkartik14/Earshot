@@ -22,7 +22,7 @@ function Tile({ label, value, flag }: { label: string; value: string; flag?: boo
   );
 }
 
-export function FleetDashboard() {
+export function FleetDashboard({ emptyHint }: { emptyHint?: string } = {}) {
   const [metric, setMetric] = useState<MetricKey>("first_token_ms");
   const [groupBy, setGroupBy] = useState<GroupBy>("model");
   const query = useTurnMetrics(metric, groupBy);
@@ -106,7 +106,7 @@ export function FleetDashboard() {
         {query.isSuccess && groups.length === 0 ? (
           <EmptyState
             title="No turns yet"
-            hint="Ingest a voice session to populate fleet metrics."
+            hint={emptyHint ?? "Ingest a voice session to populate fleet metrics."}
           />
         ) : null}
 

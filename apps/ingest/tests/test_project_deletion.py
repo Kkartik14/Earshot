@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 
@@ -147,6 +148,58 @@ def test_project_deletion_preserves_unattributed_cas_orphans(tmp_path) -> None:
     assert store.delete_project_data("tenant-a") is True
 
     assert orphan_path.read_bytes() == b"unattributed crash-left evidence"
+
+
+def test_project_deletion_cleans_object_published_by_interrupted_ingest(
+    tmp_path, monkeypatch
+) -> None:
+    store = IncidentStore(tmp_path)
+    store.create_project("tenant-crashed-ingest", display_name="Interrupted ingest")
+    bundle = make_valid_bundle(bundle_id="interrupted-ingest-evidence")
+    payload = encode_incident_protobuf(bundle)
+    digest = hashlib.sha256(payload).hexdigest()
+    object_path = store.objects.path_for(digest)
+    original_put = store.objects.put
+
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    def crash_after_publish(value: bytes):
+        original_put(value)
+        raise SimulatedProcessCrash
+
+    monkeypatch.setattr(store.objects, "put", crash_after_publish)
+    with pytest.raises(SimulatedProcessCrash):
+        store.ingest(bundle, payload, project_id="tenant-crashed-ingest")
+    assert object_path.is_file()
+    assert store.delete_project_data("tenant-crashed-ingest") is True
+    assert not object_path.exists()
+
+
+def test_startup_cleans_object_from_interrupted_ingest(tmp_path, monkeypatch) -> None:
+    store = IncidentStore(tmp_path)
+    store.create_project("tenant-startup-recovery", display_name="Startup recovery")
+    bundle = make_valid_bundle(bundle_id="startup-recovery-evidence")
+    payload = encode_incident_protobuf(bundle)
+    object_path = store.objects.path_for(hashlib.sha256(payload).hexdigest())
+    original_put = store.objects.put
+
+    class SimulatedProcessCrash(BaseException):
+        pass
+
+    def crash_after_publish(value: bytes):
+        original_put(value)
+        raise SimulatedProcessCrash
+
+    monkeypatch.setattr(store.objects, "put", crash_after_publish)
+    with pytest.raises(SimulatedProcessCrash):
+        store.ingest(bundle, payload, project_id="tenant-startup-recovery")
+    assert object_path.is_file()
+    store.close()
+
+    reopened = IncidentStore(tmp_path)
+    assert reopened.project_lifecycle("tenant-startup-recovery") == "active"
+    assert not object_path.exists()
 
 
 def test_legacy_pending_deletion_requires_explicit_orphan_cleanup(tmp_path, monkeypatch) -> None:

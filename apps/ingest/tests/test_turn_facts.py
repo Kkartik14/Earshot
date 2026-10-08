@@ -321,7 +321,7 @@ def test_internal_narrow_turn_fact_projection_is_recreated_from_canonical_incide
     assert fact.eou_ms == 50.0
     assert fact.projection_version == TURN_FACT_PROJECTION_VERSION
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
 
 
 def test_v9_turn_facts_are_rebuilt_with_language_from_canonical_incidents(tmp_path) -> None:
@@ -340,7 +340,7 @@ def test_v9_turn_facts_are_rebuilt_with_language_from_canonical_incidents(tmp_pa
     assert fact.bundle_id == "migrated-language"
     assert fact.language == "hi-IN"
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
 
 
 def test_turn_fact_queries_are_project_scoped(tmp_path) -> None:

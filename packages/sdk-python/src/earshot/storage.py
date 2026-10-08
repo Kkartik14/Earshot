@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - Windows falls back to the process lock
 
 _INCIDENT_STORES: weakref.WeakSet[Any] = weakref.WeakSet()
 _INCIDENT_STORES_LOCK = threading.RLock()
+_LOGGER = logging.getLogger(__name__)
 
 
 def _open_advisory_lock(path: Path) -> Any:
@@ -382,7 +384,7 @@ class StoredAnalysis:
         }
 
 
-_SCHEMA_VERSION = 17
+_SCHEMA_VERSION = 18
 _MAX_CURSOR_ENCODED_CHARS = 4096
 _MAX_CURSOR_DECODED_BYTES = 512
 _SQLITE_INT64_MAX = (1 << 63) - 1
@@ -512,6 +514,17 @@ CREATE TABLE IF NOT EXISTS pending_object_deletions (
 );
 CREATE INDEX IF NOT EXISTS pending_object_deletions_project_idx
     ON pending_object_deletions(project_id, queued_at_unix_nano, object_digest);
+
+CREATE TABLE IF NOT EXISTS pending_ingests (
+    intent_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(project_id),
+    object_digest TEXT NOT NULL CHECK (length(object_digest) = 64),
+    started_at_unix_nano INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS pending_ingests_project_idx
+    ON pending_ingests(project_id, started_at_unix_nano, intent_id);
+CREATE INDEX IF NOT EXISTS pending_ingests_digest_idx
+    ON pending_ingests(object_digest);
 
 CREATE TABLE IF NOT EXISTS storage_maintenance (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
@@ -1597,6 +1610,13 @@ class IncidentStore:
 
         with self._mutation():
             self.objects.cleanup_temporary_files()
+        while True:
+            with self._mutation():
+                recovered_ingests = self._cleanup_pending_ingests_locked(
+                    limit=_STARTUP_EXPIRED_PURGE_BATCH_SIZE
+                )
+            if recovered_ingests < _STARTUP_EXPIRED_PURGE_BATCH_SIZE:
+                break
         # Honor indexed retention before decoding artifacts. Expiry cleanup uses
         # bounded lock intervals so a startup backlog does not monopolize a store
         # shared with already-running workers.
@@ -1812,6 +1832,7 @@ class IncidentStore:
                 "api_keys",
                 "turn_metrics",
                 "pending_object_deletions",
+                "pending_ingests",
                 "legacy_deletion_reviews",
             ):
                 if connection.execute(
@@ -1923,6 +1944,10 @@ class IncidentStore:
                     project_id=project_id,
                     limit=batch_size,
                 )
+                self._cleanup_pending_ingests_locked(
+                    project_id=project_id,
+                    limit=batch_size,
+                )
                 with self._connect() as connection:
                     pending = any(
                         connection.execute(
@@ -1938,6 +1963,7 @@ class IncidentStore:
                             "api_keys",
                             "turn_metrics",
                             "pending_object_deletions",
+                            "pending_ingests",
                             "legacy_deletion_reviews",
                         )
                     )
@@ -2000,6 +2026,73 @@ class IncidentStore:
                     + " ON CONFLICT(project_id, object_digest) DO NOTHING",
                     parameters,
                 )
+
+    def _cleanup_pending_ingests_locked(
+        self,
+        *,
+        project_id: str | None = None,
+        intent_id: str | None = None,
+        limit: int = 500,
+    ) -> int:
+        """Remove crash-interrupted CAS publications with recorded project ownership."""
+
+        if limit < 1:
+            raise ValueError("pending ingest cleanup limit must be positive")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if intent_id is not None:
+                if project_id is None:
+                    rows = connection.execute(
+                        "SELECT intent_id, project_id, object_digest FROM pending_ingests "
+                        "WHERE intent_id = ? LIMIT ?",
+                        (intent_id, limit),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        "SELECT intent_id, project_id, object_digest FROM pending_ingests "
+                        "WHERE project_id = ? AND intent_id = ? LIMIT ?",
+                        (project_id, intent_id, limit),
+                    ).fetchall()
+            elif project_id is None:
+                rows = connection.execute(
+                    "SELECT intent_id, project_id, object_digest FROM pending_ingests "
+                    "ORDER BY started_at_unix_nano, intent_id LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT intent_id, project_id, object_digest FROM pending_ingests "
+                    "WHERE project_id = ? ORDER BY started_at_unix_nano, intent_id LIMIT ?",
+                    (project_id, limit),
+                ).fetchall()
+
+            digests = tuple(dict.fromkeys(row["object_digest"] for row in rows))
+            referenced: set[str] = set()
+            for offset in range(0, len(digests), _SQLITE_SAFE_BIND_LIMIT):
+                batch = digests[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
+                placeholders = ",".join("?" for _ in batch)
+                referenced.update(
+                    row["object_digest"]
+                    for row in connection.execute(
+                        "SELECT DISTINCT object_digest FROM incidents "
+                        f"WHERE object_digest IN ({placeholders})",
+                        batch,
+                    ).fetchall()
+                )
+            self.objects.delete_many(
+                tuple(digest for digest in digests if digest not in referenced)
+            )
+            for offset in range(0, len(rows), _SQLITE_SAFE_BIND_LIMIT):
+                batch = rows[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
+                placeholders = ",".join("?" for _ in batch)
+                connection.execute(
+                    f"DELETE FROM pending_ingests WHERE intent_id IN ({placeholders})",
+                    tuple(row["intent_id"] for row in batch),
+                )
+            if rows:
+                self._mark_scrub_required(connection)
+            connection.commit()
+        return len(rows)
 
     def _cleanup_pending_object_deletions_locked(
         self,
@@ -3206,9 +3299,9 @@ class IncidentStore:
         export_local_cli = int(_export_allowed(bundle, "local_cli"))
 
         with self._mutation():
-            # CAS publication and index insertion are one critical section. This
-            # prevents cleanup from mistaking a just-published object for an orphan.
-            digest, object_created = self.objects.put(canonical_payload)
+            digest = _sha256(canonical_payload)
+            intent_id = uuid.uuid4().hex
+            intent_staged = False
             try:
                 with self._connect() as connection:
                     connection.execute("BEGIN IMMEDIATE")
@@ -3238,6 +3331,40 @@ class IncidentStore:
                             raise IncidentConflictError(
                                 "bundle identifier already exists with different content"
                             )
+
+                    # Persist project provenance before publishing the CAS object.
+                    # If the process stops between the filesystem link and index
+                    # commit, deletion/reconciliation can still erase the orphan.
+                    connection.execute(
+                        """
+                        INSERT INTO pending_ingests(
+                            intent_id, project_id, object_digest, started_at_unix_nano
+                        ) VALUES (?, ?, ?, ?)
+                        """,
+                        (intent_id, project_id, digest, time.time_ns()),
+                    )
+                    intent_staged = True
+                    connection.commit()
+
+                published_digest, _ = self.objects.put(canonical_payload)
+                if published_digest != digest:
+                    raise StorageError("content-addressed object digest changed during ingest")
+
+                with self._connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._require_active_project(connection, project_id)
+                    existing = connection.execute(
+                        "SELECT * FROM incidents WHERE bundle_id = ?", (manifest.bundle_id,)
+                    ).fetchone()
+                    if existing is not None:
+                        if existing["project_id"] != project_id:
+                            raise IncidentConflictError(
+                                "bundle identifier already belongs to another project"
+                            )
+                        if existing["object_digest"] != digest:
+                            raise IncidentConflictError(
+                                "bundle identifier already exists with different content"
+                            )
                         self._replace_graph_projection(connection, bundle)
                         connection.execute(
                             """
@@ -3253,6 +3380,10 @@ class IncidentStore:
                                 export_local_cli,
                                 manifest.bundle_id,
                             ),
+                        )
+                        connection.execute(
+                            "DELETE FROM pending_ingests WHERE intent_id = ?",
+                            (intent_id,),
                         )
                         connection.commit()
                         refreshed = connection.execute(
@@ -3295,22 +3426,30 @@ class IncidentStore:
                         "SELECT * FROM incidents WHERE bundle_id = ?", (manifest.bundle_id,)
                     ).fetchone()
                     assert row is not None
+                    connection.execute(
+                        "DELETE FROM pending_ingests WHERE intent_id = ?",
+                        (intent_id,),
+                    )
                     connection.commit()
                     self._harden_database_permissions()
                     return IngestResult(record=_record(row), created=True)
             except Exception:
-                if object_created:
+                if intent_staged:
+                    # Failed physical cleanup leaves the durable intent for project
+                    # deletion or startup recovery to retry.
                     try:
-                        with self._connect() as cleanup_connection:
-                            referenced = cleanup_connection.execute(
-                                "SELECT 1 FROM incidents WHERE object_digest = ? LIMIT 1",
-                                (digest,),
-                            ).fetchone()
-                        if referenced is None:
-                            self.objects.delete(digest)
-                    except (OSError, sqlite3.Error):
-                        # Reconciliation removes any crash-left unindexed CAS object.
-                        pass
+                        self._cleanup_pending_ingests_locked(
+                            project_id=project_id,
+                            intent_id=intent_id,
+                            limit=1,
+                        )
+                    except Exception as cleanup_error:
+                        _LOGGER.warning(
+                            "pending ingest cleanup failed; retry is deferred "
+                            "(intent_id=%s, error=%s)",
+                            intent_id,
+                            type(cleanup_error).__name__,
+                        )
                 raise
 
     def bundle_identity_exists(
@@ -4036,12 +4175,14 @@ class IncidentStore:
         limit: int = 1000,
         compact_when_drained: bool = False,
     ) -> int:
-        """Purge a bounded expiry batch and scrub its database pages.
+        """Purge expired evidence and retry bounded CAS cleanup journals.
 
         With ``compact_when_drained=True``, intermediate batches checkpoint and
         truncate the WAL; the full VACUUM is deferred until this batch drains the
-        current expiry backlog. SQLite compaction runs after releasing the
-        cross-process mutation lock so unrelated store operations can proceed.
+        current expiry and pending-ingest backlogs. Pending ingest cleanup removes
+        only objects with a durable project owner and no incident reference.
+        SQLite compaction runs after releasing the cross-process mutation lock so
+        unrelated store operations can proceed.
         """
 
         if limit < 1 or limit > MAX_EXPIRED_PURGE_BATCH_SIZE:
@@ -4133,7 +4274,16 @@ class IncidentStore:
         with self._mutation():
             removed = self._purge_expired_batch_locked(now, limit)
             scrub_required = self._scrub_required_locked()
-            compact = not compact_when_drained or not self._expired_bundle_ids(now, 1)
+            if compact_when_drained:
+                expired_remains = bool(self._expired_bundle_ids(now, 1))
+                with self._connect() as connection:
+                    pending_ingests_remain = (
+                        connection.execute("SELECT 1 FROM pending_ingests LIMIT 1").fetchone()
+                        is not None
+                    )
+                compact = not expired_remains and not pending_ingests_remain
+            else:
+                compact = True
         if scrub_required:
             try:
                 self._scrub_deleted_pages(compact=compact, skip_if_current=True)
@@ -4152,9 +4302,17 @@ class IncidentStore:
                 self._cleanup_pending_object_deletions_locked(limit=limit)
             except (OSError, sqlite3.Error) as error:
                 raise StorageError("artifact purge requires retry") from error
-            return 0
-        self._purge_existing_locked(bundle_ids, time.time_ns())
-        return len(bundle_ids)
+            removed = 0
+        else:
+            self._purge_existing_locked(bundle_ids, time.time_ns())
+            removed = len(bundle_ids)
+        try:
+            self._cleanup_pending_ingests_locked(
+                limit=min(limit, _STARTUP_EXPIRED_PURGE_BATCH_SIZE)
+            )
+        except (OSError, sqlite3.Error) as error:
+            raise StorageError("pending ingest cleanup requires retry") from error
+        return removed
 
     def _expired_bundle_ids(
         self,

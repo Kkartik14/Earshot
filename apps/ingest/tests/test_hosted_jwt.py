@@ -30,7 +30,10 @@ from earshot.capture.durable import (
     sidecar_path,
     write_sidecar,
 )
+from earshot.checkpoint import CheckpointConfig, CheckpointWriter
 from earshot.codec import decode_incident_protobuf, encode_incident_json
+from earshot.live import END_PROJECT_DELETED, EVENT_END, LiveConfig, LiveSessionRegistry
+from earshot.recorder import IncidentRecorder
 from earshot.storage import IncidentStore, StorageCleanupPendingError
 from incident_factory import SECRET_SENTINEL, make_valid_bundle
 
@@ -1879,6 +1882,51 @@ def test_project_deletion_requires_scope_fences_requests_and_retries_pending_cle
         headers={"Authorization": f"Bearer {_token(issuer, project_id=project_b)}"},
     )
     assert other_project.status_code == 200
+
+
+def test_project_deletion_revokes_live_tail_before_capture_cleanup(
+    tmp_path, issuer, monkeypatch
+) -> None:
+    project_id = str(uuid.uuid4())
+    store = IncidentStore(tmp_path / "data")
+    store.create_project(project_id, display_name="Live tail deletion")
+    journal_dir = tmp_path / "journals"
+    writer = CheckpointWriter(CheckpointConfig(checkpoint_dir=journal_dir))
+    recorder = IncidentRecorder(
+        session_id="session-before-delete",
+        bundle_id="bundle-before-delete",
+        checkpoint=writer,
+    )
+    recorder.record_event("earshot.turn.start", turn_id="turn-1")
+    journal = next(journal_dir.glob("*.eck"))
+    live = LiveSessionRegistry(config=LiveConfig(poll_interval_ms=3_600_000))
+    live.accept_frames("session-before-delete", journal.read_bytes(), project_id=project_id)
+    subscription = live.subscribe("session-before-delete", project_id=project_id)
+    app = create_app(store=store, config=_hosted_config(issuer), live_registry=live)
+
+    def inspect_revoked_tail(deleting_project_id: str) -> bool:
+        assert deleting_project_id == project_id
+        assert subscription.drain() == []
+        ended = subscription.terminal()
+        assert [event.name for event in ended] == [EVENT_END]
+        assert json.loads(ended[0].payload)["reason"] == END_PROJECT_DELETED
+        return True
+
+    monkeypatch.setattr(app.state.capture_calls, "drop_project", inspect_revoked_tail)
+    headers = {
+        "Authorization": (
+            f"Bearer {_token(issuer, project_id=project_id, scope='earshot:project:delete')}"
+        )
+    }
+
+    try:
+        with TestClient(app) as client:
+            response = client.delete(f"/v1/projects/{project_id}", headers=headers)
+        assert response.status_code == 200, response.text
+        assert response.json()["state"] == "deleted"
+    finally:
+        writer.release()
+        store.close()
 
 
 def test_project_deletion_defers_global_compaction_until_capture_cleanup_completes(

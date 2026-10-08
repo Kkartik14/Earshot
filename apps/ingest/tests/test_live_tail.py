@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+import earshot.live as live_module
 from earshot.api import CHECKPOINT_MEDIA_TYPE, ApiConfig, create_app
 from earshot.checkpoint import CheckpointConfig, CheckpointWriter, assemble_incident
 from earshot.checkpoint.framing import encode_frame
@@ -110,6 +111,153 @@ def _build(
     registry = LiveSessionRegistry(journal_dir=journals, config=settings)
     app = create_app(store=store, config=config, live_registry=registry, analyzer=None)
     return _Harness(store=store, registry=registry, journals=journals, app=app)
+
+
+def test_journal_refresh_cannot_publish_after_project_deletion_fence(tmp_path, monkeypatch) -> None:
+    project_id = "tenant-refresh-delete-race"
+    store = IncidentStore(tmp_path / "data")
+    store.create_project(project_id, display_name="Refresh race")
+    journals = tmp_path / "journals"
+    writer = _writer(journals)
+    recorder = IncidentRecorder(
+        session_id="session-refresh-delete-race",
+        bundle_id="bundle-refresh-delete-race",
+        checkpoint=writer,
+    )
+    recorder.record_event("earshot.turn.start", turn_id="turn-1")
+    registry = LiveSessionRegistry(
+        journal_dir=journals,
+        config=LiveConfig(poll_interval_ms=QUIET_POLL_MS),
+        project_id=project_id,
+        project_is_active=store.project_is_active,
+    )
+    app = create_app(store=store, live_registry=registry, analyzer=None)
+    original_read = live_module.JournalReader.read
+
+    def delete_during_read(reader):
+        replay = original_read(reader)
+        store.begin_project_deletion(project_id)
+        registry.stop_project_tails(project_id)
+        registry.drop_project(project_id)
+        return replay
+
+    monkeypatch.setattr(live_module.JournalReader, "read", delete_during_read)
+
+    try:
+        registry.refresh()
+        assert not registry.sessions(project_id=project_id)
+        assert not registry.contains("session-refresh-delete-race", project_id=project_id)
+    finally:
+        registry.close()
+        app.state.capture_calls.close()
+        writer.release()
+        store.close()
+
+
+def test_journal_refresh_releases_deletion_fence_between_publish_batches(
+    tmp_path,
+) -> None:
+    project_id = "tenant-refresh-batches"
+    store = IncidentStore(tmp_path / "data")
+    store.create_project(project_id, display_name="Refresh batches")
+    journals = tmp_path / "journals"
+    writer = _writer(journals)
+    recorder = IncidentRecorder(
+        session_id="session-refresh-batches",
+        bundle_id="bundle-refresh-batches",
+        checkpoint=writer,
+    )
+    event_count = 300
+    for index in range(event_count):
+        recorder.record_event("earshot.turn.start", turn_id=f"turn-{index}")
+
+    registry = LiveSessionRegistry(
+        journal_dir=journals,
+        config=LiveConfig(poll_interval_ms=QUIET_POLL_MS),
+        project_id=project_id,
+        project_is_active=store.project_is_active,
+    )
+    app = create_app(store=store, live_registry=registry, analyzer=None)
+    scope_entered = threading.Event()
+    allow_publish = threading.Event()
+    first_batch_published = threading.Event()
+    allow_refresh_to_continue = threading.Event()
+    deletion_started = threading.Event()
+    deletion_finished = threading.Event()
+    sequence_after_first_batch: list[int] = []
+    worker_errors: list[BaseException] = []
+    original_scope = store.project_access_scope
+
+    @contextlib.contextmanager
+    def controlled_scope(scoped_project_id: str) -> Iterator[None]:
+        with original_scope(scoped_project_id):
+            if not scope_entered.is_set():
+                scope_entered.set()
+                if not allow_publish.wait(timeout=5):
+                    raise TimeoutError("test did not release the first replay batch")
+            yield
+            if not first_batch_published.is_set():
+                sequence_after_first_batch.append(
+                    registry.summary("session-refresh-batches", project_id=project_id).last_sequence
+                )
+        if not first_batch_published.is_set():
+            first_batch_published.set()
+            if not allow_refresh_to_continue.wait(timeout=5):
+                raise TimeoutError("test did not release replay after project deletion")
+
+    registry.set_project_access_scope(controlled_scope)
+
+    def refresh() -> None:
+        try:
+            registry.refresh()
+        except BaseException as error:
+            worker_errors.append(error)
+
+    def delete_project() -> None:
+        deletion_started.set()
+        try:
+            store.begin_project_deletion(project_id)
+            registry.stop_project_tails(project_id)
+            registry.drop_project(project_id)
+        except BaseException as error:
+            worker_errors.append(error)
+        finally:
+            deletion_finished.set()
+
+    refresh_thread = threading.Thread(target=refresh)
+    delete_thread = threading.Thread(target=delete_project)
+    try:
+        refresh_thread.start()
+        assert scope_entered.wait(timeout=5)
+        delete_thread.start()
+        assert deletion_started.wait(timeout=5)
+        assert not deletion_finished.wait(timeout=0.05)
+
+        allow_publish.set()
+        assert first_batch_published.wait(timeout=5)
+        assert len(sequence_after_first_batch) == 1
+        # The open event is sequence 1, and the remaining journal has not yet
+        # been published when the first bounded batch releases its fence.
+        assert 1 < sequence_after_first_batch[0] < event_count + 1
+        assert deletion_finished.wait(timeout=5)
+
+        allow_refresh_to_continue.set()
+        refresh_thread.join(timeout=5)
+        assert not refresh_thread.is_alive()
+        assert not registry.sessions(project_id=project_id)
+        assert not registry.contains("session-refresh-batches", project_id=project_id)
+        assert not worker_errors
+    finally:
+        allow_publish.set()
+        allow_refresh_to_continue.set()
+        if refresh_thread.ident is not None:
+            refresh_thread.join(timeout=5)
+        if delete_thread.ident is not None:
+            delete_thread.join(timeout=5)
+        registry.close()
+        app.state.capture_calls.close()
+        writer.release()
+        store.close()
 
 
 def _free_port() -> int:

@@ -10995,13 +10995,13 @@
             }
           },
           {
-            "description": "start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three.",
+            "description": "start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three. A different journal, invalid cursor, or cursor beyond known journal state resets before replay.",
             "in": "query",
             "name": "from",
             "required": false,
             "schema": {
               "default": "start",
-              "description": "start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three.",
+              "description": "start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three. A different journal, invalid cursor, or cursor beyond known journal state resets before replay.",
               "pattern": "^(start|live|[0-9]{1,10})$",
               "title": "From",
               "type": "string"

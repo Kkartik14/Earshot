@@ -322,6 +322,42 @@ def test_purge_preserves_unattributed_cas_orphans(tmp_path, valid_bundle) -> Non
     assert orphan_path.read_bytes() == b"unattributed crash-left evidence"
 
 
+def test_retention_maintenance_retries_failed_pending_ingest_cleanup(
+    tmp_path, valid_bundle, monkeypatch, caplog
+) -> None:
+    store = IncidentStore(tmp_path)
+    payload = canonical(valid_bundle)
+    digest = hashlib.sha256(payload).hexdigest()
+    object_path = store.objects.path_for(digest)
+    original_put = store.objects.put
+    original_delete_many = store.objects.delete_many
+
+    def publish_then_fail(data: bytes):
+        original_put(data)
+        raise RuntimeError("injected failure after object publication")
+
+    def fail_cleanup(_digests: tuple[str, ...]) -> None:
+        raise OSError("injected object cleanup failure")
+
+    monkeypatch.setattr(store.objects, "put", publish_then_fail)
+    monkeypatch.setattr(store.objects, "delete_many", fail_cleanup)
+
+    with pytest.raises(RuntimeError, match="after object publication"):
+        store.ingest(valid_bundle, payload)
+
+    assert object_path.is_file()
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM pending_ingests").fetchone()[0] == 1
+    assert "pending ingest cleanup failed; retry is deferred" in caplog.text
+
+    monkeypatch.setattr(store.objects, "delete_many", original_delete_many)
+    assert store.purge_expired(limit=1) == 0
+
+    assert not object_path.exists()
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM pending_ingests").fetchone()[0] == 0
+
+
 def test_purge_unknown_incident_is_not_silently_tombstoned(tmp_path) -> None:
     store = IncidentStore(tmp_path)
     with pytest.raises(IncidentNotFoundError):
@@ -1525,7 +1561,7 @@ def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
         )
     store = IncidentStore(tmp_path)
     with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
         columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
         assert {
             "expires_at_unix_nano",
@@ -1583,7 +1619,7 @@ def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid
     assert restored.value == original.value
     assert restored.generated_at_unix_nano == original.generated_at_unix_nano
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
         column = next(
             row
             for row in connection.execute("PRAGMA table_info(analyses)")
@@ -1611,7 +1647,7 @@ def test_v14_database_migrates_scrub_state_and_listing_indexes(tmp_path) -> None
     migrated = IncidentStore(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
         assert connection.execute(
             "SELECT purge_generation, scrubbed_generation FROM storage_maintenance "
             "WHERE singleton = 1"
@@ -1640,7 +1676,7 @@ def test_v16_migration_backfills_monotonic_incident_ingest_order(tmp_path, valid
 
     migrated = IncidentStore(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
         old_sequence = connection.execute(
             "SELECT sequence FROM incident_ingest_order WHERE bundle_id = ?",
             (valid_bundle.profile.manifest.bundle_id,),
@@ -1722,7 +1758,7 @@ def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
             "default",
             123,
         )
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
 
 
 def test_rolled_back_schema_version_does_not_exempt_hashed_tombstones_from_key_recovery(
@@ -1794,7 +1830,7 @@ def test_released_v4_catalog_is_migrated_without_losing_canonical_evidence(
     assert restored == payload
     assert record.session_id == valid_bundle.profile.manifest.session_id
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -1812,7 +1848,7 @@ def test_current_v12_catalog_reopens_without_rewriting_authoritative_rows(
     assert restored == payload
     assert record == created
     with sqlite3.connect(reopened.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
 
 
 def test_v11_catalog_adds_project_lifecycle_columns(tmp_path, valid_bundle) -> None:
@@ -1835,7 +1871,7 @@ def test_v11_catalog_adds_project_lifecycle_columns(tmp_path, valid_bundle) -> N
         valid_bundle
     )
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
         columns = {row[1] for row in connection.execute("PRAGMA table_info(projects)")}
         assert {
             "lifecycle_state",
@@ -1855,7 +1891,7 @@ def test_v12_catalog_adds_project_scoped_cas_cleanup_queue(tmp_path) -> None:
     migrated = IncidentStore(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
         assert (
             connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' "
@@ -1863,6 +1899,34 @@ def test_v12_catalog_adds_project_scoped_cas_cleanup_queue(tmp_path) -> None:
             ).fetchone()
             is not None
         )
+
+
+def test_v17_catalog_adds_project_scoped_pending_ingest_journal(tmp_path) -> None:
+    store = IncidentStore(tmp_path)
+    store.close()
+    database = tmp_path / "earshot.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute("DROP INDEX pending_ingests_project_idx")
+        connection.execute("DROP INDEX pending_ingests_digest_idx")
+        connection.execute("DROP TABLE pending_ingests")
+        connection.execute("PRAGMA user_version = 17")
+
+    migrated = IncidentStore(tmp_path)
+
+    with sqlite3.connect(migrated.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_ingests'"
+            ).fetchone()
+            is not None
+        )
+        assert {row[1] for row in connection.execute("PRAGMA table_info(pending_ingests)")} == {
+            "intent_id",
+            "project_id",
+            "object_digest",
+            "started_at_unix_nano",
+        }
 
 
 def test_failed_migration_rolls_back_every_catalog_change(tmp_path) -> None:
@@ -1921,7 +1985,7 @@ def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -
             """
             CREATE TABLE future_catalog_marker (value TEXT NOT NULL);
             INSERT INTO future_catalog_marker VALUES ('keep-me');
-            PRAGMA user_version = 18;
+            PRAGMA user_version = 19;
             """
         )
 
@@ -1929,7 +1993,7 @@ def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -
         IncidentStore(tmp_path)
 
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         assert connection.execute("SELECT value FROM future_catalog_marker").fetchone()[0] == (
             "keep-me"
         )
@@ -1995,7 +2059,7 @@ def test_catalog_recovers_after_process_exit_during_a_schema_transaction(tmp_pat
 
     migrated = IncidentStore(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 17
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
 
 
 def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None:

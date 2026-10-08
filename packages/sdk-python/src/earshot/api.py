@@ -90,6 +90,7 @@ from .explanation import IncidentExplanation, explain_incident
 from .exporters.registry import export_incident, exporter_names, get_exporter
 from .live import (
     END_FINAL_ARTIFACT_STORED,
+    END_PROJECT_DELETED,
     END_SEALED,
     END_SESSION_EXPIRED,
     EVENT_HEARTBEAT,
@@ -1161,7 +1162,7 @@ async def _run_retention_cleanup(
             )
         except (StorageError, sqlite3.Error, OSError) as error:
             _LOGGER.error(
-                "expired evidence cleanup batch failed (%s)",
+                "storage maintenance cleanup batch failed (%s)",
                 type(error).__name__,
             )
             removed = 0
@@ -2230,6 +2231,7 @@ def create_app(
         project_is_active=repository.project_is_active,
     )
     live.set_project_active_check(repository.project_is_active)
+    live.set_project_access_scope(repository.project_access_scope)
     if (
         capture_journal_dir is not None
         and live.journal_dir is not None
@@ -3403,7 +3405,8 @@ def create_app(
             description=(
                 "start replays the journal from its first frame, live sends only "
                 "what arrives next, and a number resumes at that sequence. "
-                "Last-Event-ID overrides all three."
+                "Last-Event-ID overrides all three. A different journal, invalid "
+                "cursor, or cursor beyond known journal state resets before replay."
             ),
         ),
     ) -> Response:
@@ -3448,17 +3451,22 @@ def create_app(
         async def stream() -> AsyncIterator[str]:
             try:
                 while True:
-                    # Cleared before draining so an event queued during the drain
-                    # still wakes the next wait instead of being slept through.
+                    # Clear before checking lifecycle or consuming one event so
+                    # a concurrent producer still wakes the next wait.
                     wakeup.clear()
                     project_state = await run_in_threadpool(
                         repository.project_lifecycle,
                         request.state.project_id,
                     )
                     if project_state != "active":
-                        subscription.finish("project_deleted")
-                    for event in subscription.drain():
+                        subscription.finish(END_PROJECT_DELETED)
+                    event = subscription.next_event()
+                    if event is not None:
+                        if subscription.end_reason == END_PROJECT_DELETED:
+                            continue
                         yield render_sse(event)
+                        subscription.mark_delivered(event)
+                        continue
                     terminal = subscription.terminal()
                     if terminal:
                         for event in terminal:
@@ -3807,6 +3815,9 @@ def create_app(
                 headers={"Cache-Control": "no-store"},
             )
 
+        # Revoke buffered live evidence immediately after the durable fence.
+        # Capture cleanup can wait on an in-flight seal or expiry write.
+        live.stop_project_tails(project_id)
         capture_cleanup_complete = await run_in_threadpool(capture_calls.drop_project, project_id)
         live.drop_project(project_id)
         storage_cleanup_complete = await run_in_threadpool(

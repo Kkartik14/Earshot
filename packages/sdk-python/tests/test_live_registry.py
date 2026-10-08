@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
+import logging
+import sqlite3
+import threading
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -13,6 +19,7 @@ from earshot.checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, encode_frame
 from earshot.checkpoint.records import JournalRecordEntry, encode_entry
 from earshot.checkpoint.writer import DEFAULT_MAX_FRAME_BYTES
 from earshot.live import (
+    END_PROJECT_DELETED,
     EVENT_END,
     EVENT_FINALIZE,
     EVENT_OPEN,
@@ -206,6 +213,25 @@ def test_a_removed_journal_ends_the_stream(tmp_path: Path) -> None:
     assert _payload(ended[0])["close_observed"] is False
 
 
+def test_project_deletion_discards_buffered_live_evidence(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    _record(recorder, count=2)
+    registry = LiveSessionRegistry(journal_dir=tmp_path)
+    registry.refresh()
+    subscription = registry.subscribe("s-1", project_id="default")
+
+    recorder.record_event("earshot.turn.start", turn_id="turn-late")
+    registry.refresh()
+    registry.drop_project("default")
+
+    assert subscription.drain() == []
+    ended = subscription.terminal()
+    assert _names(ended) == [EVENT_END]
+    assert _payload(ended[0])["reason"] == END_PROJECT_DELETED
+    writer.release()
+
+
 def test_a_new_journal_for_the_same_session_resets_subscribers(tmp_path: Path) -> None:
     first = _writer(tmp_path)
     IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=first)
@@ -250,6 +276,187 @@ def test_last_event_id_resumes_without_gaps_or_duplicates(tmp_path: Path) -> Non
     later = [event.sequence for event in resumed if event.sequence]
     assert seen + later == list(range(1, len(seen) + len(later) + 1))
     writer.release()
+
+
+@pytest.mark.parametrize(
+    ("cursor", "reason"),
+    [
+        ("9999", "resume_cursor_ahead_of_journal"),
+        ("9" * 5000, "invalid_resume_cursor"),
+        ("²", "invalid_resume_cursor"),
+    ],
+    ids=["future", "oversized", "non-ascii-digit"],
+)
+def test_invalid_same_journal_cursor_resets_and_replays_available_history(
+    tmp_path: Path,
+    cursor: str,
+    reason: str,
+) -> None:
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    _record(recorder, count=3)
+    registry = LiveSessionRegistry(journal_dir=tmp_path)
+    registry.refresh()
+    summary = registry.summary("s-1", project_id="default")
+
+    events = registry.subscribe(
+        "s-1",
+        project_id="default",
+        last_event_id=f"{summary.journal_id}:{cursor}",
+    ).drain()
+
+    assert _names(events)[:2] == [EVENT_RESET, EVENT_OPEN]
+    assert _payload(events[0])["reason"] == reason
+    sequences = [event.sequence for event in events if event.sequence > 0]
+    assert sequences == list(range(1, summary.last_sequence + 1))
+    writer.release()
+
+
+def test_resume_cursor_ahead_of_partial_replay_skips_already_received_events(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    event_count = 300
+    for index in range(event_count):
+        recorder.record_event("earshot.turn.start", turn_id=f"turn-{index}")
+
+    registry = LiveSessionRegistry(journal_dir=tmp_path)
+    first_scope_entered = threading.Event()
+    allow_first_batch = threading.Event()
+    first_batch_published = threading.Event()
+    allow_remaining_batches = threading.Event()
+    scope_count = 0
+    worker_errors: list[BaseException] = []
+
+    @contextlib.contextmanager
+    def pause_after_first_batch(_project_id: str) -> Iterator[None]:
+        nonlocal scope_count
+        first_batch = scope_count == 0
+        scope_count += 1
+        if first_batch:
+            first_scope_entered.set()
+            if not allow_first_batch.wait(timeout=5):
+                raise TimeoutError("test did not release the first replay batch")
+        yield
+        if first_batch:
+            first_batch_published.set()
+            if not allow_remaining_batches.wait(timeout=5):
+                raise TimeoutError("test did not resume replay after subscribing")
+
+    registry.set_project_access_scope(pause_after_first_batch)
+
+    def refresh() -> None:
+        try:
+            registry.refresh()
+        except BaseException as error:
+            worker_errors.append(error)
+
+    refresh_thread = threading.Thread(target=refresh)
+    subscription = None
+    try:
+        refresh_thread.start()
+        assert first_scope_entered.wait(timeout=5)
+        allow_first_batch.set()
+        assert first_batch_published.wait(timeout=5)
+
+        partial = registry.summary("s-1", project_id="default")
+        assert partial.last_sequence < event_count + 1
+        subscription = registry.subscribe(
+            "s-1",
+            project_id="default",
+            last_event_id=f"{partial.journal_id}:{event_count}",
+        )
+        allow_remaining_batches.set()
+        refresh_thread.join(timeout=5)
+
+        assert not refresh_thread.is_alive()
+        assert not worker_errors
+        received = subscription.drain()
+        assert [event.sequence for event in received if event.sequence > 0] == [event_count + 1]
+    finally:
+        allow_first_batch.set()
+        allow_remaining_batches.set()
+        if refresh_thread.ident is not None:
+            refresh_thread.join(timeout=5)
+        if subscription is not None:
+            subscription.close()
+        registry.close()
+        writer.release()
+
+
+@pytest.mark.parametrize(
+    "failure_point",
+    ["initial_project_check", "later_batch_scope"],
+)
+def test_journal_poller_logs_and_recovers_from_transient_failure(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    failure_point: str,
+) -> None:
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    event_count = 300
+    for index in range(event_count):
+        recorder.record_event("earshot.turn.start", turn_id=f"turn-{index}")
+
+    active_check_count = 0
+    scope_count = 0
+
+    def project_is_active(_project_id: str) -> bool:
+        nonlocal active_check_count
+        active_check_count += 1
+        if failure_point == "initial_project_check" and active_check_count == 1:
+            raise sqlite3.OperationalError("transient lifecycle read failure")
+        return True
+
+    @contextlib.contextmanager
+    def fail_second_scope_once(_project_id: str) -> Iterator[None]:
+        nonlocal scope_count
+        scope_count += 1
+        if failure_point == "later_batch_scope" and scope_count == 2:
+            raise sqlite3.OperationalError("transient lock acquisition failure")
+        yield
+
+    registry = LiveSessionRegistry(
+        journal_dir=tmp_path,
+        config=LiveConfig(poll_interval_ms=10),
+        project_is_active=project_is_active,
+    )
+    registry.set_project_access_scope(fail_second_scope_once)
+    caplog.set_level(logging.INFO, logger="earshot.live")
+
+    try:
+        registry.start()
+        deadline = time.monotonic() + 5
+        last_sequence = 0
+        while time.monotonic() < deadline:
+            with contextlib.suppress(SessionNotLiveError):
+                last_sequence = registry.summary("s-1", project_id="default").last_sequence
+            if last_sequence == event_count + 1:
+                break
+            time.sleep(0.01)
+        assert registry.summary("s-1", project_id="default").last_sequence == event_count + 1
+        while time.monotonic() < deadline and not any(
+            record.name == "earshot.live" and "polling recovered" in record.getMessage()
+            for record in caplog.records
+        ):
+            time.sleep(0.01)
+        poll_failures = [
+            record
+            for record in caplog.records
+            if record.name == "earshot.live" and "polling failed" in record.getMessage()
+        ]
+        poll_recoveries = [
+            record
+            for record in caplog.records
+            if record.name == "earshot.live" and "polling recovered" in record.getMessage()
+        ]
+        assert len(poll_failures) == 1
+        assert len(poll_recoveries) == 1
+    finally:
+        registry.close()
+        writer.release()
 
 
 def test_a_foreign_last_event_id_resets_before_anything_else(tmp_path: Path) -> None:

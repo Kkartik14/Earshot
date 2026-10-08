@@ -67,6 +67,11 @@ it asks the user to choose by immutable bundle ID. The chooser links to
 `ObserveFeature` with `route={{ kind: "incident", bundleId }}` as well as mapping
 the session route.
 
+The standalone fleet empty state suggests ingesting a voice session. An embedded
+host defaults to neutral “no turn metrics” guidance because the host may not
+provide an ingestion action. Set `emptyFleetHint` on `ObserveFeature` when the
+host has a supported, user-accessible way to populate Earshot.
+
 The host owns user authentication and project authorization. Do not send
 Platform service tokens, project API keys, provider credentials, or artifact
 content to the browser. `projectId` is the canonical selected project ID.

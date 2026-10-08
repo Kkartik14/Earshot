@@ -245,14 +245,23 @@ removing data, fencing subsequent reads, writes, and retries. The built-in
 `default` project cannot be deleted. Cleanup removes Earshot incidents,
 references, analyses/projections, connector retry receipts and configuration,
 API keys, capture-call journals, and queued content objects attributable to those
-incidents. Unknown CAS orphans stay preserved for explicit maintenance. Hashed
-bundle-ID tombstones remain to prevent ID reuse.
+incidents. Project-attributed, interrupted ingest intents are also removed with their
+uncommitted CAS objects. CAS objects with no durable owner record stay preserved for
+explicit maintenance. Hashed bundle-ID tombstones remain to prevent ID reuse.
+
+Project deletion revokes each active live-tail subscription's replay backlog and
+queued events, then ends the stream with an `end` event whose reason is
+`project_deleted`. Streams on another API process observe the durable fence on their
+next lifecycle check. An SSE event already handed to the ASGI/network send path
+or dequeued for dispatch cannot be recalled and may finish in flight; this API does
+not promise that no bytes arrive after the deletion fence.
 
 `200` with `state: deleted` confirms the Earshot-owned cleanup. `202` with
 `state: deleting`, `Retry-After: 3`, and `retry_after_seconds: 3` means writes
 are fenced while storage cleanup is pending. Each request removes at most 500
 selected incident rows, then at most 500 rows from each auxiliary table in order,
-plus up to 500 queued CAS objects. Incident deletion can also cascade graph,
+plus up to 500 queued CAS objects and 500 interrupted ingest intents. Incident deletion
+can also cascade graph,
 analysis, and reference rows. Cleanup returns pending between batches. SQLite
 page compaction occurs after releasing the
 application mutation lock; a busy WAL checkpoint also remains pending. Repeat the

@@ -24,23 +24,23 @@ An ingest does the following inside that mutation boundary:
 
 1. Validate the structural, semantic, graph, privacy, and hash contract.
 2. Re-encode and compare any caller-supplied canonical payload.
-3. Write a temporary object, flush and fsync it.
-4. Atomically hard-link it to its SHA-256 path and fsync the containing directories.
-5. Begin an immediate SQLite transaction.
-6. Reject tombstone reuse or a same-ID/different-digest conflict.
-7. Insert the project-scoped incident row, graph and Turn Fact projections, earliest
-   expiry, and destination export decisions.
-8. Commit before returning `created=true`.
+3. Begin an immediate SQLite transaction, reject tombstone reuse or a same-ID/different-
+   digest conflict, then commit a project-scoped ingest intent containing the CAS digest.
+4. Write a temporary object, flush and fsync it, then atomically hard-link it to its
+   SHA-256 path and fsync the containing directories.
+5. Begin an immediate SQLite transaction and insert the project-scoped incident row,
+   graph and Turn Fact projections, earliest expiry, and destination export decisions.
+6. Remove the ingest intent in the same transaction and commit before returning
+   `created=true`.
 
 The CAS object remains inside the same cross-process critical section until the index
-commit. Cleanup therefore cannot mistake an in-flight object for an orphan. On a
-database failure, an unreferenced object is removed when the same ingest can prove it
-created that object and no committed row references it. Startup never guesses that an
-unreferenced CAS object is disposable.
+commit. If the process stops after publishing the object, the committed intent still
+proves which project owns the orphan; startup recovery or project deletion removes it
+when no incident references the digest. Truly unattributed orphans remain preserved.
 
 ## Relational projections
 
-Schema version 17 indexes:
+Schema version 18 indexes:
 
 - `projects` and `api_keys`: authorization scope, active/deleting/deleted lifecycle,
   and memory-hard credential hashes;
@@ -67,6 +67,8 @@ Schema version 17 indexes:
 - `tombstones`: only `SHA-256(bundle_id)` and the purge-operation time; and
 - `pending_object_deletions`: project-attributed CAS digests whose incident rows
   committed as deleted but whose files still require unlink; and
+- `pending_ingests`: project-attributed CAS publications not yet committed to an incident
+  index row; successful ingest removes the intent in the same catalog commit; and
 - `legacy_deletion_reviews`: pre-v13 projects already marked deleting whose earlier
   cleanup did not record per-artifact CAS ownership.
 
@@ -195,21 +197,25 @@ which lets retries prove continuity without copying those values into another re
 Data/object/temp directories are forced to mode `0700`; database, WAL/SHM, CAS objects,
 `.store.lock`, and `.compaction.lock` are `0600`. The store lock serializes mutations;
 the separate compaction lock serializes scrub and VACUUM work without holding up ordinary
-store operations. Startup removes temporary files and drains incidents expired at each
-sweep's ingest-sequence high-water mark in bounded lock intervals. Later arrivals remain
-hidden by expiry predicates for the lifespan-managed reaper. Startup verifies every
-remaining live artifact, checks index/artifact identity, rebuilds derived projections,
-and retries compaction when a durable scrub generation shows cleanup may have stopped
-after logical deletion. Older catalogs with tombstones seed one conservative scrub
-generation during migration.
+store operations. Startup removes temporary files and drains project-attributed pending
+ingest intents and incidents expired at each sweep's ingest-sequence high-water mark in
+bounded lock intervals. The lifespan-managed maintenance sweep also retries pending
+ingest cleanup left by transient unlink or catalog failures, in bounded batches; a
+failed immediate cleanup is logged with its opaque intent ID. Later arrivals remain
+hidden by expiry predicates for the lifespan-managed reaper. Startup verifies every remaining live artifact, checks
+index/artifact identity, rebuilds derived projections, and retries compaction when a
+durable scrub generation shows cleanup may have stopped after logical deletion. Older
+catalogs with tombstones seed one conservative scrub generation during migration.
 
 If CAS evidence exists while the SQLite catalog is missing, empty, corrupt, or not an
 Earshot catalog, startup fails closed and preserves every object. Restore the catalog
 from the same backup set before reopening. A valid catalog may still have a crash-left
-unreferenced object; it is preserved until an operator explicitly invokes the
-maintenance cleanup after investigating it. Known deletions are recorded in the
-project-scoped `pending_object_deletions` queue before unlink, so retry does not need a
-global scan to discover them.
+unreferenced object if it predates the project-scoped intent journal or its ownership
+record is corrupt; it is preserved until an operator explicitly invokes maintenance
+cleanup after investigating it. New ingest publications are recoverable from
+`pending_ingests`. Known artifact deletions are recorded in the project-scoped
+`pending_object_deletions` queue before unlink, so retry does not need a global scan to
+discover them.
 
 The store is single-node. Advisory locking and SQLite are not a distributed
 consensus protocol; a multi-node service should preserve these publication and erasure
@@ -237,7 +243,8 @@ The evidence-backed historical layouts are:
 - v12: project deletion without a durable per-artifact CAS cleanup queue;
 - v13: project-scoped pending CAS deletion records; and
 - v14: review markers for projects already deleting before the CAS ownership queue; and
-- v17: monotonic incident-ingest ordering for bounded startup expiry sweeps.
+- v17: monotonic incident-ingest ordering for bounded startup expiry sweeps; and
+- v18: project-scoped CAS publication intents for interrupted ingest recovery.
 
 Version numbers 5–8 were internal development markers folded into the v9 change. There
 is no independently committed or released schema for those numbers, so Earshot does not

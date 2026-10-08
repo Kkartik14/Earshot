@@ -569,9 +569,10 @@ and `end_observed: false`, so a client physically cannot render it as a complete
 
 `from=start` (default) replays the retained window, `from=live` sends only what arrives
 next, and `from=<sequence>` resumes at a position. `Last-Event-ID` overrides all three;
-when it names a different journal the server emits `reset` first, so two sessions cannot
-be spliced into one client-side timeline. Anything the replay window no longer holds is
-declared with `replay_truncated` rather than silently skipped.
+when it names a different journal, contains an invalid cursor, or advances beyond the
+known journal state, the server emits `reset` first, so two sessions or an impossible
+cursor cannot be spliced into one client-side timeline. Anything the replay window no
+longer holds is declared with `replay_truncated` rather than silently skipped.
 
 Backpressure is lossless by construction. Every buffer is bounded, and a subscriber that
 falls behind its per-connection queue receives `overflow` and has its stream closed
