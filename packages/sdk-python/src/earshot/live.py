@@ -1946,12 +1946,15 @@ class LiveSessionRegistry:
             preamble: list[LiveEvent] = []
             resumed = False
             start = 2
-            if last_event_id:
+            if last_event_id is not None:
                 journal_id, _, raw = last_event_id.partition(":")
                 cursor = int(raw) if raw.isascii() and raw.isdecimal() and len(raw) <= 20 else None
                 reset_reason: str | None = None
                 reset_note: str
-                if journal_id != session.journal_id:
+                if not last_event_id:
+                    reset_reason = "invalid_resume_cursor"
+                    reset_note = "discard the invalid cursor and replay available journal history"
+                elif journal_id != session.journal_id:
                     reset_reason = "journal_identity_changed"
                     reset_note = "discard everything received for the previous journal"
                 elif cursor is None or cursor < 1:

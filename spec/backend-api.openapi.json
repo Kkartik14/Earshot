@@ -11006,14 +11006,29 @@
               "title": "From",
               "type": "string"
             }
+          },
+          {
+            "description": "Resume after a previously delivered event ID in <journal_id>:<sequence> form. When supplied, this header takes precedence over the from query parameter.",
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Resume after a previously delivered event ID in <journal_id>:<sequence> form. When supplied, this header takes precedence over the from query parameter.",
+              "title": "Last-Event-Id"
+            }
           }
         ],
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
-              },
               "text/event-stream": {
                 "schema": {
                   "type": "string"

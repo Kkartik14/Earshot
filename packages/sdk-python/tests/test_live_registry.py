@@ -312,6 +312,28 @@ def test_invalid_same_journal_cursor_resets_and_replays_available_history(
     writer.release()
 
 
+def test_empty_last_event_id_resets_and_overrides_live_mode(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    _record(recorder, count=3)
+    registry = LiveSessionRegistry(journal_dir=tmp_path)
+    registry.refresh()
+
+    events = registry.subscribe(
+        "s-1",
+        project_id="default",
+        from_spec="live",
+        last_event_id="",
+    ).drain()
+
+    assert _names(events)[:2] == [EVENT_RESET, EVENT_OPEN]
+    assert _payload(events[0])["reason"] == "invalid_resume_cursor"
+    assert [event.sequence for event in events if event.sequence > 0] == list(
+        range(1, registry.summary("s-1", project_id="default").last_sequence + 1)
+    )
+    writer.release()
+
+
 def test_resume_cursor_ahead_of_partial_replay_skips_already_received_events(
     tmp_path: Path,
 ) -> None:

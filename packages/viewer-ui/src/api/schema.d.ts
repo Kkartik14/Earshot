@@ -6473,10 +6473,13 @@ export interface operations {
     live_tail_endpoint_v1_live_sessions__session_id__tail_get: {
         parameters: {
             query?: {
-                /** @description start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three. */
+                /** @description start replays the journal from its first frame, live sends only what arrives next, and a number resumes at that sequence. Last-Event-ID overrides all three. A different journal, invalid cursor, or cursor beyond known journal state resets before replay. */
                 from?: string;
             };
-            header?: never;
+            header?: {
+                /** @description Resume after a previously delivered event ID in <journal_id>:<sequence> form. When supplied, this header takes precedence over the from query parameter. */
+                "Last-Event-ID"?: string | null;
+            };
             path: {
                 session_id: string;
             };
@@ -6490,7 +6493,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
                     "text/event-stream": string;
                 };
             };

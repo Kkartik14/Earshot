@@ -1021,9 +1021,7 @@ HostedRuntimeVersion = Annotated[
     StringConstraints(
         min_length=5,
         max_length=48,
-        pattern=(
-            r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$"
-        ),
+        pattern=(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$"),
     ),
 ]
 HostedCode = Annotated[

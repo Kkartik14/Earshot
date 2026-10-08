@@ -4,7 +4,7 @@ import base64
 import contextlib
 import hashlib
 import os
-import select
+import selectors
 import shutil
 import sqlite3
 import subprocess
@@ -36,6 +36,12 @@ pytestmark = pytest.mark.integration
 
 def canonical(bundle) -> bytes:
     return encode_incident_protobuf(bundle)
+
+
+def _pipe_readable_within(read_fd: int, timeout: float) -> bool:
+    with selectors.DefaultSelector() as selector:
+        selector.register(read_fd, selectors.EVENT_READ)
+        return bool(selector.select(timeout))
 
 
 def analysis_value(
@@ -643,16 +649,20 @@ def test_forked_store_reopens_its_advisory_lock(tmp_path) -> None:
             if child_pid == 0:
                 os.close(read_fd)
                 try:
+                    os.write(write_fd, b"trying")
                     with store._mutation():
                         os.write(write_fd, b"entered")
                     os._exit(0)
                 except BaseException:
                     os._exit(1)
             os.close(write_fd)
-            entered_while_parent_held_lock = bool(select.select([read_fd], [], [], 0.1)[0])
+            assert _pipe_readable_within(read_fd, 3)
+            assert os.read(read_fd, len(b"trying")) == b"trying"
+            entered_while_parent_held_lock = _pipe_readable_within(read_fd, 0.1)
 
-        ready = select.select([read_fd], [], [], 3)[0]
-        assert ready, "forked storage process never acquired the released mutation lock"
+        assert _pipe_readable_within(read_fd, 3), (
+            "forked storage process never acquired the released mutation lock"
+        )
         assert os.read(read_fd, 16) == b"entered"
         _, wait_status = os.waitpid(child_pid, 0)
         assert os.waitstatus_to_exitcode(wait_status) == 0
@@ -693,7 +703,7 @@ def test_forked_in_memory_store_reports_not_ready(tmp_path) -> None:
                 os._exit(1)
 
         os.close(write_fd)
-        assert select.select([read_fd], [], [], 3)[0]
+        assert _pipe_readable_within(read_fd, 3)
         result = os.read(read_fd, 2)
         _, wait_status = os.waitpid(child_pid, 0)
     finally:
@@ -1130,18 +1140,21 @@ def test_forked_compaction_reopens_its_advisory_lock(tmp_path, valid_bundle) -> 
             if child_pid == 0:
                 os.close(read_fd)
                 try:
+                    os.write(write_fd, b"trying")
                     store._scrub_deleted_pages(skip_if_current=True)
                     os.write(write_fd, b"done")
                     os._exit(0)
                 except BaseException:
                     os._exit(1)
             os.close(write_fd)
-            entered_while_parent_held_lock = bool(select.select([read_fd], [], [], 0.1)[0])
+            assert _pipe_readable_within(read_fd, 3)
+            assert os.read(read_fd, len(b"trying")) == b"trying"
+            entered_while_parent_held_lock = _pipe_readable_within(read_fd, 0.1)
             storage_module.fcntl.flock(
                 store._compaction_lock_handle.fileno(), storage_module.fcntl.LOCK_UN
             )
 
-        assert select.select([read_fd], [], [], 3)[0]
+        assert _pipe_readable_within(read_fd, 3)
         assert os.read(read_fd, 8) == b"done"
         _, wait_status = os.waitpid(child_pid, 0)
     finally:

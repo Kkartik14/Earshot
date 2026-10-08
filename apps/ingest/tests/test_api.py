@@ -1518,7 +1518,7 @@ def test_analyzer_cannot_cache_a_diagnosis_with_dangling_evidence(tmp_path, vali
     assert code(response) == "EARSHOT_ANALYZER_CONTRACT"
 
 
-def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp_path) -> None:
+def test_openapi_exposes_wire_formats_live_tail_and_optional_loopback_auth(tmp_path) -> None:
     _, client = app_client(tmp_path)
     schema = client.get("/openapi.json").json()
     content = schema["paths"]["/v1/incidents"]["post"]["requestBody"]["content"]
@@ -1536,6 +1536,14 @@ def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp
     incident_schema = {"$ref": "#/components/schemas/IncidentBundleJson"}
     assert incident_response_content["application/json"]["schema"] == incident_schema
     assert incident_response_content[JSON_MEDIA_TYPE]["schema"] == incident_schema
+    tail_operation = schema["paths"]["/v1/live/sessions/{session_id}/tail"]["get"]
+    assert set(tail_operation["responses"]["200"]["content"]) == {"text/event-stream"}
+    last_event_id = next(
+        parameter
+        for parameter in tail_operation["parameters"]
+        if parameter["in"] == "header" and parameter["name"] == "Last-Event-ID"
+    )
+    assert last_event_id["required"] is False
     content_encoding = next(
         parameter
         for parameter in schema["paths"]["/v1/incidents"]["post"]["parameters"]

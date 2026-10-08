@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeVar
 from urllib.parse import quote, urlsplit
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Header, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -3393,6 +3393,7 @@ def create_app(
 
     @app.get(
         "/v1/live/sessions/{session_id}/tail",
+        response_class=StreamingResponse,
         responses=_TAIL_RESPONSES,
     )
     async def live_tail_endpoint(
@@ -3407,6 +3408,15 @@ def create_app(
                 "what arrives next, and a number resumes at that sequence. "
                 "Last-Event-ID overrides all three. A different journal, invalid "
                 "cursor, or cursor beyond known journal state resets before replay."
+            ),
+        ),
+        last_event_id: str | None = Header(
+            default=None,
+            alias="Last-Event-ID",
+            description=(
+                "Resume after a previously delivered event ID in "
+                "<journal_id>:<sequence> form. When supplied, this header takes "
+                "precedence over the from query parameter."
             ),
         ),
     ) -> Response:
@@ -3429,7 +3439,7 @@ def create_app(
                     session_id,
                     project_id=request.state.project_id,
                     from_spec=from_,
-                    last_event_id=request.headers.get("last-event-id"),
+                    last_event_id=last_event_id,
                 )
         except SessionNotLiveError as error:
             raise ApiProblem(
