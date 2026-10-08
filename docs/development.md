@@ -77,6 +77,8 @@ python scripts/generate_openapi.py --check
 python scripts/generate_fault_fixtures.py --check
 python scripts/check_semconv.py
 pnpm --filter @earshot/viewer bundle
+pnpm --filter @earshot/viewer-next typecheck
+pnpm --filter @earshot/viewer-next build
 python -m build --wheel --sdist --outdir /tmp/earshot-dist
 python scripts/check_wheel.py /tmp/earshot-dist/*.whl
 python scripts/check_sdist.py /tmp/earshot-dist/*.tar.gz

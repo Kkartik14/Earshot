@@ -1,0 +1,56 @@
+.panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.head h2,
+.head p {
+  margin: 0;
+}
+
+.head h2 {
+  font-size: 13px;
+}
+
+.head p,
+.note {
+  margin-top: 5px;
+  color: var(--tx-mid);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+
+.label {
+  min-width: 120px;
+  color: var(--tx-mid);
+  font-size: 11px;
+}
+
+.id {
+  overflow-wrap: anywhere;
+  color: var(--acc);
+  font: 11px var(--mono);
+}
+
+a.id:hover {
+  text-decoration-thickness: 2px;
+}

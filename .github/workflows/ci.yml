@@ -169,8 +169,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Check generated viewer API types
         run: |
-          pnpm --filter @earshot/viewer gen:api
-          git diff --exit-code -- apps/viewer/src/api/schema.d.ts
+          pnpm --filter @earshot/viewer-ui gen:api
+          git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts
       - name: Test, typecheck, build, and format
         run: |
           pnpm test

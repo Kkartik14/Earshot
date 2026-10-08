@@ -1,0 +1,23 @@
+.note {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--acc);
+  border-radius: 7px;
+  background: var(--panel);
+}
+
+.note h2,
+.note p {
+  margin: 0;
+}
+
+.note h2 {
+  font-size: 12px;
+}
+
+.note p {
+  margin-top: 7px;
+  color: var(--tx-mid);
+  font-size: 11px;
+  line-height: 1.55;
+}

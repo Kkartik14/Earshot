@@ -3,9 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "description": "Observability for voice AI agents. Bring your own stack.",
-  "packageManager": "pnpm@10.34.5",
+  "packageManager": "pnpm@12.6.0",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.19.0"
   },
   "type": "module",
   "scripts": {
@@ -21,9 +21,9 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,md,json,yaml}\""
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
-    "prettier": "^3.4.2",
-    "turbo": "^2.3.3",
-    "typescript": "^5.7.2"
+    "@types/node": "^26.6.3",
+    "prettier": "^3.9.9",
+    "turbo": "^2.11.5",
+    "typescript": "^5.9.3"
   }
 }

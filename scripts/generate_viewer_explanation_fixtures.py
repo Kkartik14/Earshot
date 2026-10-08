@@ -16,7 +16,15 @@ from earshot.explanation import explain_incident  # noqa: E402
 from earshot.validation import validate_derived_analysis, validate_explanation  # noqa: E402
 
 FAULTS = ROOT / "fixtures" / "faults"
-OUTPUT = ROOT / "apps" / "viewer" / "src" / "features" / "inspector" / "__fixtures__" / "faults"
+OUTPUT = ROOT.joinpath(
+    "packages",
+    "viewer-ui",
+    "src",
+    "features",
+    "inspector",
+    "__fixtures__",
+    "faults",
+)
 
 
 def _projection(name: str) -> dict[str, object]:
