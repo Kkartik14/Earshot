@@ -242,6 +242,13 @@ export interface CaptureEnd {
   timestampMs: number;
 }
 
+/** A declared gap between continuous (`captureVersion: 2`) drains. */
+export interface CaptureResync {
+  missedFromSequence: number;
+  missedThroughSequence: number;
+  reason: string;
+}
+
 /** The unit the client POSTs to the server, which feeds the two engines. */
 export interface CapturePayload {
   /**
@@ -275,6 +282,8 @@ export interface CapturePayload {
    * capture without conflating it with the observed call duration.
    */
   capturerStartedAtMs?: number;
+  /** `captureVersion: 2` only. A transport-declared range of lost drains. */
+  resync?: CaptureResync;
   /**
    * `captureVersion: 2` only, and only on the final drain. The observer's
    * declaration that it stopped: `end.reason === "call_ended"` ends the call (the
