@@ -8,17 +8,33 @@ The reproducible machine contract is
 bodies reference the generated incident schema; analysis responses reference
 [`spec/derived-analysis.schema.json`](../spec/derived-analysis.schema.json).
 
-Tokenless development is loopback-only and rejects non-loopback `Host` headers. Remote
-deployments must explicitly declare a trusted TLS proxy and authenticate `/v1/*` with a
-project API key, an expiring server-created viewer session, or the legacy
-default-project bearer token. API keys are exchanged once for an HttpOnly,
-SameSite=Strict viewer cookie; unsafe cookie-authenticated methods require the
-in-memory CSRF token, and logout, expiry, or issuer-key revocation invalidates the
-session. Every repository call is
-scoped from that principal; an unknown incident in another Project is indistinguishable
-from a missing incident. The request middleware checks the actual ASGI listener as well
-as declared configuration and refuses both `/v1/*` and `/hooks/v1/*` on an unexpected
-non-loopback plaintext bind.
+Tokenless development is loopback-only and rejects non-loopback `Host` headers. The
+default `operator` mode supports project API keys, expiring server-created viewer
+sessions, and the legacy default-project bearer token. API keys are exchanged once for
+an HttpOnly, SameSite=Strict viewer cookie; unsafe cookie-authenticated methods require
+the in-memory CSRF token. Every repository call is scoped from its authenticated
+principal, and an incident in another project is indistinguishable from a missing
+incident. The request middleware checks the actual ASGI listener and refuses both
+`/v1/*` and `/hooks/v1/*` on an unexpected non-loopback plaintext bind.
+
+Hosted deployments use the separate `hosted_jwt` mode. Configure
+`EARSHOT_AUTH_MODE=hosted_jwt`, `EARSHOT_JWT_ISSUER`, `EARSHOT_JWT_AUDIENCE`, and an
+HTTPS `EARSHOT_JWKS_URL`; `EARSHOT_JWKS_CA_FILE` optionally supplies a private CA.
+Hosted mode rejects `EARSHOT_TOKEN` and all operator API-key or browser-cookie
+fallbacks. The receiver verifies RS256 or ES256, `kid`, signature, exact issuer,
+one-string audience, `sub`, `project_id`, scope, `iat`, `exp`, and `jti`. Tokens may
+live for at most five minutes. Every route project ID must equal the signed claim;
+`X-Earshot-Project-Id`, when supplied, is only a matching assertion. The issuer, JWKS,
+audience, and scope vocabulary are deployment configuration. The route scopes listed
+below are Earshot's current contract proposal and must be agreed with the Platform token
+issuer before hosted acceptance.
+JWKS keys are cached for five minutes. An unknown key ID triggers at most one refresh
+per 30 seconds per process, so signing-key rotation needs an overlap window while
+instances refresh their cache.
+
+Hosted `/v1/auth/*` cookie exchange is disabled. Keep operator auth and hosted JWT auth
+as distinct deployment modes; do not mix their credentials. Health and readiness remain
+unauthenticated process checks and do not return project data.
 
 There is one explicit exception for single-machine self-hosting: `serve
 --trust-local-network` (env `EARSHOT_TRUST_LOCAL_NETWORK`). It permits an
@@ -36,9 +52,30 @@ the project selected by the bearer credential (or local default project) and ret
 `403 EARSHOT_PROJECT_MISMATCH` on disagreement. Authentication remains authoritative;
 the assertion cannot select or override a project.
 
-Bundle identifiers occupy one installation-wide namespace. Producers should use UUIDv4,
-UUIDv7, or Connector-generated collision-resistant IDs. Projects are single-organization
-authorization scopes in this alpha, not hostile SaaS tenant boundaries.
+Bundle identifiers occupy one installation-wide namespace. Standalone/operator ingest
+supplies its own collision-resistant ID. Hosted ingest omits the ID and lets Earshot
+mint one from the signed project and the stable `Idempotency-Key`; producer identifiers
+are not used as Earshot bundle IDs. Projects are single-organization authorization
+scopes in this alpha, not hostile SaaS tenant boundaries.
+
+Hosted JSON uses a closed metadata profile: bounded runtime-family slug and
+semantic release version, the
+host-assigned session ID, categorical session status and timestamps, bounded event
+IDs/types/timestamps, and an optional opaque runtime-session ID. Earshot creates the
+metadata-only privacy policy. Hosted requests reject free-form maps, unknown fields,
+operations, media, and raw OTLP; operator JSON and protobuf retain the general Incident
+contract.
+
+Hosted `/v1/incidents` writes also require all three finite per-environment allowlists:
+`EARSHOT_HOSTED_RUNTIME_NAMES`, `EARSHOT_HOSTED_SESSION_STATUSES`, and
+`EARSHOT_HOSTED_EVENT_NAMES`. Each is a comma-separated list. Their empty defaults keep
+hosted runtime-event ingestion closed with `409 EARSHOT_HOSTED_CONTRACT_NOT_ACCEPTED`
+until Platform and TVIC accept the vocabulary. Runtime versions use numeric
+`MAJOR.MINOR.PATCH` form. Browser capture has separate finite coverage and resync
+vocabularies; hosted capture IDs are replaced with stable opaque values before evidence
+is stored. The `capture-` session ID namespace is reserved for Earshot's continuous
+browser-call identity; hosted runtime artifacts using that prefix are rejected to keep
+an imported artifact from replacing a live capture journal.
 
 Provider `/hooks/*` routes are a separate trust boundary. They do not accept Earshot
 bearer credentials as provider proof and do not return Project identifiers.
@@ -104,11 +141,20 @@ Validates without persistence. Returns canonical SHA-256 plus warnings.
 ### `POST /v1/incidents`
 
 Validates, canonicalizes to protobuf, stores immutable content, and indexes the
-incident transactionally.
+incident transactionally. In operator mode, the request contains `bundle_id` and an
+optional `Idempotency-Key` must match it. In hosted JWT mode, send JSON, omit
+`profile.manifest.bundle_id` (the hosted schema does not accept this field), and provide
+an opaque stable `Idempotency-Key` for the immutable artifact submission. Earshot mints
+the bundle ID using its durable instance
+correlation key, scoped to the signed project. The host must persist the returned ID in
+its call/session mapping. Retries with the same key and canonical content return the
+same ID; a changed body under the same key returns `409`. A later immutable snapshot
+uses a new key. The correlation key is part of the Earshot backup set.
 
 - `201`: new artifact;
 - `200`: exact same bundle ID and content (idempotent retry);
-- `409`: same bundle ID with different canonical content;
+- `409`: same bundle ID/key with different canonical content;
+- `400`: hosted ID/key rules are violated;
 - `413`: configured body limit exceeded;
 - `415`: unsupported media type/encoding;
 - `422`: structural/semantic/privacy invalidity;
@@ -132,6 +178,22 @@ Every bound is explicit and enforced before the payload is materialized: a strea
 body limit, then per-collection count limits on `snapshots`, `deviceEvents`, `coverage`
 and per-snapshot stats (`413 EARSHOT_CAPTURE_TOO_LARGE`), then the schema
 (`422 EARSHOT_INVALID_CAPTURE`, field paths only, never payload values).
+Continuous `captureVersion: 2` calls also have a cumulative durable-journal byte cap
+(64 MiB by default). A drain that would exceed it returns `413
+EARSHOT_CAPTURE_JOURNAL_LIMIT`; the earlier committed journal prefix stays intact
+and visible through the live-session surface. Retrying the same oversized body
+repeats the refusal. A smaller replacement body may use the same unapplied drain
+sequence; after it is accepted, the earlier oversized body conflicts with that
+resolved sequence.
+
+Continuous drains are ordered by `drainSequence`. A skipped sequence returns
+`409 EARSHOT_CAPTURE_SEQUENCE_GAP` unless the next drain declares a `resync` range
+ending at `drainSequence - 1`; the server records only the missing range as
+`capture.drain_sequence` coverage and invalidates the WebRTC carry across it. A
+request may have committed even when its response was lost, so if the resync range
+overlaps an already-applied prefix the server clips that prefix using its durable
+sequence and counts only the still-missing suffix. Hosted capture accepts the
+finite reasons `client_buffer_overflow` and `upload_failed_payload_dropped`.
 
 Two coherence rules follow the schema, because a payload that contradicts itself
 cannot be turned into evidence without guessing. A `traceparent` that disagrees with
@@ -156,6 +218,37 @@ address, or device label cannot be stored. Refusals are counted in the response
 coverage is recorded under a `browser.` prefix so a client claim can never overwrite a
 server-derived note.
 
+Set `EARSHOT_CAPTURE_JOURNAL_DIR` to persist in-flight call journals and drain retry
+identity across a process restart. Provision the directory before starting Earshot and
+mount it on durable storage; Earshot does not create it. Durable capture requires POSIX
+process file locking. Earshot holds an exclusive lock for that directory and refuses a
+second writer. Hosted `captureVersion: 2` requests return `503` with `Retry-After` when
+the journal is absent or unavailable. Hosted retry ledgers also carry a non-secret
+fingerprint of the store's correlation key; a missing or replaced key fences hosted
+continuous capture until the matching backup is restored or the affected project is
+deleted. Operator-mode capture can remain in memory when the directory is unset.
+Live-session state and SSE fan-out are still process-local.
+
+Durable capture is bounded to `LiveConfig.max_sessions` calls server-wide (32 by
+default) and `LiveConfig.max_sessions_per_project` per project (16 by default). A
+completed call releases its durable slot after it is sealed. A `429
+EARSHOT_CAPTURE_CALL_CAPACITY` means one of those limits is full; resume an existing
+call, seal a completed call, or have the project deletion coordinator erase the
+project. Unfinalized durable calls continue to count after expiry or restart because
+their ownership and retry state remain on disk.
+
+The server keeps exact replay digests for up to 1,024 sealed capture calls by default
+(`ApiConfig.max_sealed_capture_replay_ledgers`). A ledger used by an active retry stays
+available until that drain completes. Once an older replay ledger is pruned, the
+immutable artifact store still reserves its bundle ID. A delayed retry for that ID
+returns `409 EARSHOT_CAPTURE_REPLAY_EXPIRED` and cannot recreate the call.
+
+Hosted live checkpoint frames may be accepted with `earshot:write`, but sealing a
+generic hosted checkpoint returns `409 EARSHOT_HOSTED_CONTRACT_NOT_ACCEPTED` until the
+runtime artifact contract is accepted. Hosted browser capture uses its separate,
+metadata-only contract and can be sealed; a successful seal of a finalized capture
+also releases its durable slot.
+
 Browser timestamps are recorded in the declared browser `ClockDomain` at their raw
 readings and are never rebased onto the server clock, so cross-clock latency stays
 unavailable until a real `ClockRelation` is supplied.
@@ -164,16 +257,24 @@ unavailable until a real `ClockRelation` is supplied.
 - `200`: the same batch was already ingested (delivery is idempotent by batch content,
   so a transport retry after an unknown outcome does not duplicate evidence);
 - `400`: malformed payload or unsupported `captureVersion`;
-- `413`: body or collection limit exceeded;
+- `413`: body or collection limit exceeded, or a continuous call would exceed its
+  cumulative durable-journal byte limit;
+- `429`: continuous-call capacity is full for the project or server;
 - `415`: unsupported media type;
+- `409`: a call ID whose sealed replay ledger has expired is already reserved by an
+  artifact or deletion tombstone;
 - `422`: payload fails the capture contract, contradicts its own trace context, or
   carries readings that move backwards.
+- `503`: hosted continuous capture has no usable durable journal, or an existing
+  journal exceeds the configured recovery byte cap; retry after the indicated delay
+  or after the configuration or journal state is repaired.
 
 ### `GET /v1/incidents`
 
 Stable cursor pagination, optionally filtered by `session_id`. `limit` is 1–100.
-Incidents denied for the `local_api` destination are removed in the indexed SQL query
-before pagination, including from cursor material.
+This metadata-only projection reads from the SQLite catalog; it does not load or decode
+artifact bytes. Incidents denied for the `local_api` destination and expired incidents
+are removed in the indexed SQL query before pagination, including from cursor material.
 
 ### `GET /v1/metrics/turns`
 
@@ -197,8 +298,114 @@ a non-zero `withheld_incident_count` is a refusal to aggregate, never a measured
 Content negotiation returns canonical protobuf or pretty debug JSON. A strong `ETag`
 hashes the exact selected representation, `Vary: Accept` protects caches, and
 `X-Earshot-Digest` identifies the canonical stored protobuf. Data responses use
-`Cache-Control: no-store`. Every read verifies the canonical content digest and export
-policy.
+`Cache-Control: no-store`. Artifact reads verify the canonical content digest and
+enforce the stored export policy.
+
+### Incident related-record references
+
+`GET /v1/incidents/{bundle_id}/references` lists project-scoped links to records
+owned by other services. `PUT /v1/incidents/{bundle_id}/references/{namespace}/{record_type}`
+upserts one link from `{ "external_id": "..." }`; repeating the same value is
+idempotent and preserves its original link time. Replacing it updates that time.
+`DELETE` on the same path removes the link and returns `204`. Cookie-authenticated
+`PUT` and `DELETE` requests require the viewer CSRF header.
+
+The route uses the authenticated project's scope. A bundle owned by another project
+returns the same not-found response as an ordinary incident read. Namespace and record
+type are lower-case portable identifiers; external IDs are 1–256 ASCII letters,
+digits, period, underscore, tilde, colon, or hyphen. URLs and evidence payloads do not
+belong in this table. References are mutable catalog metadata and do not alter the
+canonical bytes, digest, or derived analysis. An authorized project may delete a
+reference even when its incident's export policy denies evidence reads. Purging or
+retention expiry removes the references with the incident.
+
+### Project summary
+
+`GET /v1/projects/{project_id}/summary` returns up to 50 retained sessions with
+`session_id`, `status`, `framework`, `framework_truncated`, and
+`created_at_unix_nano`. Framework names are capped at 128 characters; the boolean
+marks legacy values that were shortened. It returns no host links, artifact bytes,
+transcript, analysis, or references. Its hosted scope is `earshot:summary:read`.
+
+The optional Platform adapter is off by default. Set
+`EARSHOT_PLATFORM_ADAPTER_ENABLED=true` (or `earshot serve --platform-adapter`) only
+with `EARSHOT_AUTH_MODE=hosted_jwt`. It exposes
+`GET /v1/platform/projects/{project_id}/observe/summary` and adapts the generic
+projection to Platform's `{summary, items}` response. A canonical lowercase Platform
+UUID is the Earshot project ID as well; there is no `platform_...` mapping. The route
+requires the JWT project claim to match its path. `x-platform-project-id`, when sent,
+is an assertion and never grants access. It returns up to 50 metadata-only rows with a
+same-origin `/observe?sessionId=...` link. Its hosted scope is also
+`earshot:summary:read`. The adapter lives under
+[`earshot.integrations.platform`](../packages/sdk-python/src/earshot/integrations/platform/adapter.py)
+and adds no Platform dependency to the generic summary service.
+
+### Hosted scope proposal
+
+In `hosted_jwt` mode, every project-data route requires the scope shown here. This
+literal vocabulary is implemented by Earshot but still needs token-issuer acceptance.
+
+| Operation                                                                  | Required scope            |
+| -------------------------------------------------------------------------- | ------------------------- |
+| List/read incidents, references, analyses, exports, live sessions, and SSE | `earshot:read`            |
+| Ingest incidents/captures/checkpoints and write references                 | `earshot:write`           |
+| Delete a reference                                                         | `earshot:delete`          |
+| Delete an immutable incident artifact                                      | `earshot:artifact:delete` |
+| Read either summary endpoint                                               | `earshot:summary:read`    |
+| Delete a project                                                           | `earshot:project:delete`  |
+
+### Hosted detail and live APIs
+
+The BFF obtains the user and project from its authenticated Platform session, mints a
+short-lived Earshot-audience token, and proxies only the routes authorized for that
+project. Earshot detail is `GET /v1/incidents/{bundle_id}`; analysis and explanation
+are separate `GET` routes below that artifact. `GET /v1/live/sessions` lists active
+sessions, and `GET /v1/live/sessions/{session_id}/tail` is an SSE stream. The BFF must
+forward `Last-Event-ID`, preserve the event stream without buffering, and cancel the
+upstream request when the browser disconnects. These routes all check the signed
+project and use `earshot:read`.
+
+Live producers can submit bounded checkpoint frames with
+`POST /v1/live/sessions/{session_id}/checkpoints` using `earshot:write`. This accepts
+Earshot's checkpoint framing contract; it is not a generic TVIC webhook or permission
+for the TVIC SDK to call Earshot directly. A stable session ID is project-scoped, and
+cross-project lookup remains indistinguishable from a missing session.
+
+The viewer package makes same-origin API requests and uses `EventSource` for SSE. A
+host must proxy both through its authenticated BFF; no service JWT belongs in browser
+JavaScript. Mount `ObserveFeature` inside one shared React Query client and provide
+`ViewerQueryScopeProvider` with the current `projectId` and an opaque `authContextId`.
+Change the auth context whenever the effective grant changes, including a user change
+within the same project. Query keys and live stores are scoped to both values, and
+cleanup removes only Earshot-owned cache entries.
+
+### Project deletion
+
+`DELETE /v1/projects/{project_id}` is available only in hosted JWT mode. It requires
+`earshot:project:delete` and an exact match with the signed project claim. It durably changes the project from `active` to
+`deleting` before removing data, which fences new writes and retries. The built-in
+`default` project cannot be deleted. Project deletion removes Earshot incidents,
+external references, analyses and projections, connector/retry receipts, connectors,
+API keys, capture-call journals, and queued CAS objects attributable to those
+incidents. An unattributed CAS orphan is preserved for explicit maintenance rather
+than guessed to belong to the deleting project. A hashed bundle-ID tombstone remains
+to prevent a purged bundle ID from being reused; the project remains as a `deleted`
+lifecycle record with no display name.
+
+`200 {"state":"deleted"}` means the Earshot-owned cleanup completed. `202
+{"state":"deleting","retry_after_seconds":3}` with `Retry-After: 3` means writes
+are fenced but cleanup is pending. Each request removes at most 500 selected incident
+rows. After incidents are gone, it can remove up to 500 rows from each auxiliary table
+in order, plus up to 500 queued CAS objects. Incident deletion can also cascade graph,
+analysis, and reference rows. Cleanup returns pending while work remains.
+SQLite page compaction runs after releasing the application mutation lock; when a WAL
+checkpoint is busy, the project stays fenced and the response remains pending. Repeat
+the same project-scoped DELETE until it returns 200. Storage or file removal failures remain pending; the caller must keep the
+host's overall deletion state incomplete. Earshot does not remove producer-owned
+checkpoint source files, backups, snapshots, or other services' records. Their owners
+must acknowledge their own deletion before Platform reports project erasure complete.
+Retention deadlines are expiries, not minimum-storage holds; explicit erasure overrides
+future expiry. Legal holds are not represented by the current API.
 
 ### `GET /v1/incidents/{bundle_id}/analysis`
 
@@ -416,11 +623,13 @@ declares the bound in `limitations`; the complete session still travels through
 
 ### `POST /v1/live/sessions/{session_id}/seal`
 
-The only path from a live buffer to an artifact, and always an operator action. The
+The path from a live buffer to an artifact, invoked by an authorized caller. The
 server never seals on its own: it cannot distinguish a crashed producer from a slow one,
-and guessing would manufacture an artifact nobody produced. Sealing a journal that
-reached close reproduces exactly what the producer will send, so it keeps its bundle id
-and content-addressed ingest deduplicates it. Sealing one that did not produces a
+and guessing would manufacture an artifact nobody produced. Hosted callers can seal
+metadata-only browser-capture sessions; generic hosted checkpoint sealing stays gated
+until the runtime artifact contract is accepted. Sealing a journal that reached close
+reproduces exactly what the producer will send, so it keeps its bundle id and
+content-addressed ingest deduplicates it. Sealing one that did not produces a
 _provisional_ artifact — `finality: "provisional"`, `completeness: "incomplete"`,
 `session.status: "interrupted"`, no session end, and a `manifest.recovery` declaration —
 under a distinct, deterministic bundle id derived from the sequence sealed, so the
@@ -429,6 +638,21 @@ window is `409 EARSHOT_SESSION_NOT_SEALABLE` rather than being sealed short.
 
 Live buffers expire on a TTL and are dropped as soon as the real artifact is ingested
 through `POST /v1/incidents`.
+
+Sealing a finalized capture can succeed even if its HTTP response is lost. The
+successful seal stores the final incident and drops the live buffer, so a repeated
+seal can then return `404 EARSHOT_SESSION_NOT_LIVE`. A host with a durable seal
+outbox should reconcile an ambiguous result by querying both
+`GET /v1/incidents?session_id=<call_id>` and `GET /v1/live/sessions` in the same
+project. A matching `finality: "final"` artifact alone does not complete the
+outbox: Earshot can ingest the artifact and then fail to persist the durable
+capture replay fence, returning `503 EARSHOT_CAPTURE_JOURNAL_UNAVAILABLE` while
+the finalized live session and its capacity reservation remain. If the call is
+still in the live list, retry the same idempotent seal even when the final
+artifact already exists. Complete the outbox only when the matching final
+artifact exists and the call is absent from the live list. If neither is
+visible, or either reconciliation read is unavailable, keep the item pending
+for repair rather than treating 404 as proof that the seal failed.
 
 ## Strict request handling
 

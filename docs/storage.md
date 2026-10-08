@@ -13,7 +13,7 @@ ingest order, retention/export decisions, and purge tombstones. The two stores f
 one persistence unit together with `instance-correlation.key` and must be backed up and
 restored together; CAS bytes alone cannot reconstruct deleted-ID tombstones or original
 ingest ordering, while a missing correlation key changes webhook Receipt and External
-Identity fingerprints.
+Identity fingerprints and the deterministic IDs Earshot mints for hosted artifacts.
 
 ## Ingest publication order
 
@@ -40,11 +40,14 @@ unreferenced CAS object is disposable.
 
 ## Relational projections
 
-Schema version 10 indexes:
+Schema version 17 indexes:
 
-- `projects` and `api_keys`: authorization scope and memory-hard credential hashes;
+- `projects` and `api_keys`: authorization scope, active/deleting/deleted lifecycle,
+  and memory-hard credential hashes;
 - `incidents`: project, identity, digest, status, finality/completeness, framework,
   creation/ingest times, earliest expiry, and destination export decisions;
+- `incident_ingest_order`: monotonic ingest sequence for finite startup expiry sweeps,
+  removed with its incident;
 - `operations`: normalized OTel identity, parentage, participant/stream/turn, source
   and monotonic boundaries, evidence summary, and capture class;
 - `causal_links`: ordered typed edges from an operation to internal/external targets;
@@ -58,8 +61,14 @@ Schema version 10 indexes:
 - `connectors`, `delivery_receipts`, and `external_identities`: provider trust
   configuration, replay/content-digest state, and instance-keyed HMAC correlation;
 - `analyses`: analyzer version + exact input digest + strict JSON output; full uint64
-  generation times are canonical decimal `TEXT`, not signed SQLite integers; and
-- `tombstones`: only `SHA-256(bundle_id)` and the purge-operation time.
+  generation times are canonical decimal `TEXT`, not signed SQLite integers;
+- `incident_external_references`: mutable Platform/Voice Labs record IDs, project and
+  incident scoped with a composite foreign key so purge/retention removes the links;
+- `tombstones`: only `SHA-256(bundle_id)` and the purge-operation time; and
+- `pending_object_deletions`: project-attributed CAS digests whose incident rows
+  committed as deleted but whose files still require unlink; and
+- `legacy_deletion_reviews`: pre-v13 projects already marked deleting whose earlier
+  cleanup did not record per-artifact CAS ownership.
 
 Foreign keys cascade graph and analysis rows when an incident is deleted. Graph rows
 and Turn Facts are derived and rebuilt on startup, which also backfills retention/export
@@ -92,24 +101,35 @@ across all captured classes. Selective in-place deletion would change the artifa
 digest, so the strictest class expires the whole bundle.
 
 `purge_expired(now, limit)` is available for explicit maintenance. Enforcement is also
-automatic:
+automatic in the running API:
 
 - during store startup;
-- before record/artifact/analysis reads; and
-- before incident listings.
+- before a direct record, artifact, or analysis read; and
+- in a lifespan-managed reaper that deletes at most one configured batch at a time.
 
-Thus an expired artifact is not served while waiting for a background scheduler.
-Bulk purge is chunked below SQLite parameter limits.
+Incident and Turn Fact listings and aggregates exclude expired rows in their catalog
+queries, so expired metadata is never returned while the reaper is between batches.
+Those reads do not start physical cleanup themselves. The reaper releases the store lock
+between batches. Each batch deletes at most the configured number of catalog rows and
+syncs only the affected CAS shards. Intermediate batches checkpoint and truncate the
+WAL; the batch that drains the current backlog performs one `VACUUM` after releasing the
+store lock. SQLite still arbitrates access to the database file during compaction. A
+durable scrub generation keeps failed compaction retryable without vacuuming on every
+idle pass. The interval and batch size are configurable with
+`EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS` (default `5`) and
+`EARSHOT_RETENTION_CLEANUP_BATCH_SIZE` (default `1000`). Bulk purge is chunked below
+SQLite's bind-parameter limit.
 
 ## Purge protocol
 
 Purge first commits logical deletion plus a payload-free, pseudonymous tombstone. It
 retains a bundle-ID digest to prevent reuse and a purge timestamp for recovery; it
-does not retain the plaintext ID or incident/session timing. Purge then unlinks
-CAS objects no longer referenced by another incident, removes other orphans, enables
-SQLite secure deletion, checkpoints/truncates WAL, vacuums the database, fsyncs files,
-and fsyncs their directory. If physical cleanup cannot complete, the durable tombstone
-remains and the operation returns a retryable storage error. Repeating purge safely
+does not retain the plaintext ID or incident/session timing. Purge then unlinks only CAS
+objects recorded by the deletion transaction and rechecks that no incident references
+them. Unattributed orphans remain for explicit maintenance. Purge enables SQLite secure
+deletion, checkpoints/truncates WAL, vacuums the database, fsyncs files, and fsyncs their
+directory. If physical cleanup cannot complete, the durable tombstone and object queue
+remain and the operation returns a retryable storage error. Repeating purge safely
 retries cleanup.
 
 This is best-effort file-level erasure. It cannot promise removal from snapshots,
@@ -117,19 +137,79 @@ backups, copy-on-write history, SSD remapped blocks, or storage-controller cache
 Cryptographic erasure requires encryption with disposable keys plus backup/snapshot
 governance.
 
+## Project deletion
+
+Project deletion persists a `deleting` lifecycle state before removing project data.
+Project writes check that state while holding the store mutation lock, so an ingest
+cannot publish after the deletion fence. The API rejects project-data reads and writes
+after the same durable state change. Each request removes at most 500 explicitly
+selected incident rows. Once no incidents remain, it removes up to 500 rows from each
+auxiliary table in order; incident deletion may also cascade additional graph, analysis,
+and reference rows. The host retries the same request; the store-wide lock is released
+between batches so other projects can continue using the shared store. When an incident
+is removed, its CAS digest is entered into a project-scoped durable cleanup queue only
+if no live incident references it. Each request unlinks at most 500 queued digests and
+rechecks references under the mutation lock. A failed unlink leaves its queue row for
+retry. Unknown crash-left CAS objects are not swept during project or incident deletion.
+
+After the project's catalog, auxiliary rows, queued CAS objects, and owned capture
+journals are gone, SQLite page compaction runs after the application mutation lock is
+released. If capture-journal cleanup is pending, global compaction is deferred and the
+project stays fenced in `deleting`; the API returns pending until every Earshot-owned
+cleanup step completes. A busy checkpoint also keeps deletion pending. SQLite's own file
+locks can still briefly serialize access during compaction. Bundle-ID hashes remain as
+tombstones, and the project row remains in `deleted` state.
+
+If file or database compaction cannot finish, the project stays fenced in `deleting`
+and the API returns a retryable pending response. Retrying the same deletion is safe.
+Earshot removes capture-call journals it owns. A checkpoint directory configured as an
+external producer source remains producer-owned and must be erased by that producer's
+owner. File-level erasure has the same backup, snapshot, and storage-device limits as
+ordinary purge.
+
+Durable browser-capture journals are paired with a project ownership sidecar. Earshot
+does not extend a durable journal if that sidecar cannot be written. During project
+erasure, unreadable sidecars and journals with no sidecar keep deletion pending because
+their project ownership cannot be proven. An operator must restore the sidecar or
+inspect and remove the unowned capture files before retrying erasure.
+
+When a live capture expires, Earshot persists that state in the sidecar before dropping
+its live view. Startup keeps the journal dormant and out of live-session quotas; an exact
+client retry reattaches it lazily. Dormant, unfinalized calls still count against the
+project's configured call limit, so restarting the service cannot bypass that bound.
+Every unsealed durable call also counts against a server-wide durable-call limit, which
+defaults to `LiveConfig.max_sessions` (32). The per-call journal byte limit defaults to
+64 MiB, so the default limit bounds accumulated unsealed journal data to 2 GiB, plus the
+small ownership sidecars. A successfully sealed call releases its journal slot after
+the artifact and sealed replay marker are durable. Up to 1,024 sealed replay sidecars
+are retained by default (`ApiConfig.max_sealed_capture_replay_ledgers`); pruning is
+oldest-first, protects ledgers used by active retries, and only removes a sealed
+sidecar after its journal is gone. The artifact store continues to reserve each bundle
+ID after its replay sidecar is pruned, so a late retry returns
+`409 EARSHOT_CAPTURE_REPLAY_EXPIRED` instead of recreating that call.
+Current sidecars retain only a digest of the call's initial trace and clock metadata,
+which lets retries prove continuity without copying those values into another record.
+
 ## Permissions and recovery
 
 Data/object/temp directories are forced to mode `0700`; database, WAL/SHM, CAS objects,
-and the shared lock are `0600`. Startup removes temporary files, verifies every live
-artifact, checks index/artifact identity, rebuilds derived projections, and repeats the
-secure scrub if tombstones show a process may have stopped between logical deletion and
-compaction.
+`.store.lock`, and `.compaction.lock` are `0600`. The store lock serializes mutations;
+the separate compaction lock serializes scrub and VACUUM work without holding up ordinary
+store operations. Startup removes temporary files and drains incidents expired at each
+sweep's ingest-sequence high-water mark in bounded lock intervals. Later arrivals remain
+hidden by expiry predicates for the lifespan-managed reaper. Startup verifies every
+remaining live artifact, checks index/artifact identity, rebuilds derived projections,
+and retries compaction when a durable scrub generation shows cleanup may have stopped
+after logical deletion. Older catalogs with tombstones seed one conservative scrub
+generation during migration.
 
 If CAS evidence exists while the SQLite catalog is missing, empty, corrupt, or not an
 Earshot catalog, startup fails closed and preserves every object. Restore the catalog
 from the same backup set before reopening. A valid catalog may still have a crash-left
 unreferenced object; it is preserved until an operator explicitly invokes the
-maintenance cleanup after investigating it.
+maintenance cleanup after investigating it. Known deletions are recorded in the
+project-scoped `pending_object_deletions` queue before unlink, so retry does not need a
+global scan to discover them.
 
 The store is single-node. Advisory locking and SQLite are not a distributed
 consensus protocol; a multi-node service should preserve these publication and erasure
@@ -151,12 +231,37 @@ The evidence-backed historical layouts are:
 - v4: the first committed catalog, with hashed unscoped tombstones and graph indexes;
 - v9: the next committed layout, adding Projects, scoped tombstones, Connectors,
   Delivery Receipts, External Identities, and wide Turn Facts; and
-- v10: the current layout, rebuilding Turn Facts with STT language as a fleet dimension.
+- v10: Turn Facts rebuilt with STT language as a fleet dimension; and
+- v11: mutable cross-product references with project and incident ownership enforced by
+  foreign keys;
+- v12: project deletion without a durable per-artifact CAS cleanup queue;
+- v13: project-scoped pending CAS deletion records; and
+- v14: review markers for projects already deleting before the CAS ownership queue; and
+- v17: monotonic incident-ingest ordering for bounded startup expiry sweeps.
 
 Version numbers 5–8 were internal development markers folded into the v9 change. There
 is no independently committed or released schema for those numbers, so Earshot does not
 invent fixture definitions for them. Structural migration still recognizes the narrow
 development-era Turn Fact projection and rebuilds it from canonical Incidents.
+
+Before upgrading, stop Earshot and make a complete backup using the procedure below.
+During migration, projects already marked `deleting` under v12 remain pending until an
+operator takes a complete backup and runs the explicit store-wide sweep below, then
+retries project deletion. The sweep removes objects unreferenced by every remaining
+incident, accepts only regular objects under real two-character hexadecimal shard
+directories, fsyncs each CAS shard, then clears the review markers. Symlinks or
+unexpected entries stop the sweep and leave the review markers in place. It is explicit because
+the old catalog no longer identifies which project owned each crash-left object.
+
+```sh
+earshot maintenance cleanup-unreferenced-objects \
+  --data-dir /path/to/earshot-data \
+  --confirm-global-object-sweep
+```
+
+This command can remove orphaned CAS objects from every project in that data directory.
+Take and verify a complete backup first. A deleting project stays fenced and its API
+continues to return pending until the sweep completes and the host retries deletion.
 
 Derived graph and Turn Fact projections are rebuilt transactionally from canonical CAS
 artifacts during startup. If any referenced artifact is missing, corrupt, or belongs to a
@@ -172,6 +277,8 @@ There is currently no online snapshot API. For a coherent backup:
 1. Stop every Earshot process using the data directory and wait for it to close.
 2. Copy the complete directory as one unit: `earshot.sqlite3` (and any WAL/SHM files),
    `objects/`, and `instance-correlation.key`.
+   Also copy the complete `EARSHOT_CAPTURE_JOURNAL_DIR` when it is configured outside
+   that directory; it contains in-flight call journals and their drain retry ledger.
 3. Restore that complete unit into an empty directory; do not combine components from
    different backup times.
 4. Open the restored directory with the same or a newer Earshot binary. Startup verifies
@@ -184,8 +291,9 @@ instruction. CAS alone cannot reconstruct ordering, tombstones, Projects, creden
 or provider replay state.
 
 `instance-correlation.key` has no supported in-place rotation seam. Delivery Receipt and
-External Identity HMACs are deliberately non-reversible, so replacing the file would
-silently break correlation and replay identity, and the original provider identifiers
+External Identity HMACs are deliberately non-reversible, and hosted bundle IDs are
+deterministic HMACs of the project and idempotency key. Replacing the file would break
+provider replay identity and hosted outbox retries, and the original provider identifiers
 are unavailable for a correct rewrite. Keep the key under the same backup and access
 controls as the catalog. A future rotation feature requires an explicit dual-key migration
 protocol at provider-ingest time; until then, use a new empty store when a new correlation

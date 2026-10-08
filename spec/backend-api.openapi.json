@@ -427,6 +427,10 @@
       "BrowserSessionResponse": {
         "additionalProperties": false,
         "properties": {
+          "auth_context_id": {
+            "title": "Auth Context Id",
+            "type": "string"
+          },
           "csrf_token": {
             "title": "Csrf Token",
             "type": "string"
@@ -442,6 +446,7 @@
         },
         "required": [
           "project_id",
+          "auth_context_id",
           "csrf_token",
           "expires_in_seconds"
         ],
@@ -451,6 +456,10 @@
       "BrowserSessionStatusResponse": {
         "additionalProperties": false,
         "properties": {
+          "auth_context_id": {
+            "title": "Auth Context Id",
+            "type": "string"
+          },
           "authenticated": {
             "title": "Authenticated",
             "type": "boolean"
@@ -490,6 +499,7 @@
           "authenticated",
           "authentication_required",
           "project_id",
+          "auth_context_id",
           "csrf_token",
           "expires_in_seconds"
         ],
@@ -868,7 +878,7 @@
       },
       "CaptureContinuousResponse": {
         "additionalProperties": false,
-        "description": "What one ``captureVersion: 2`` drain resolved to, mirroring a checkpoint ack.\n\nA drain no longer becomes an incident, so there is no ``bundle_id`` to return\n-- the growing artifact is materialized on demand by the operator seal. This\nreports where the call now stands: the journal it accumulates into, the\nsequence it has accepted through, and that it is a live, sealable session.\n``replayed`` is true when this drain had already been applied and this response\nis an idempotent echo rather than a new application.",
+        "description": "What one ``captureVersion: 2`` drain resolved to, mirroring a checkpoint ack.\n\nA drain no longer becomes an incident, so there is no ``bundle_id`` to return\n-- the growing artifact is materialized on demand by an authorized seal. This\nreports where the call now stands: the journal it accumulates into, the\nsequence it has accepted through, and that it is a live, sealable session.\n``replayed`` is true when this drain had already been applied and this response\nis an idempotent echo rather than a new application.",
         "properties": {
           "accepted_coverage": {
             "title": "Accepted Coverage",
@@ -1180,7 +1190,7 @@
       },
       "CaptureResyncRequest": {
         "additionalProperties": false,
-        "description": "A ``captureVersion: 2`` client's declaration that it gave up on earlier drains.\n\nA drain that skips ahead of the sequence the server holds is refused unless\nthe client says, honestly, which drains it permanently lost. The range must\ncover exactly the gap; the loss is then ledgered as coverage and the WebRTC\ncarry across it is dropped rather than estimated.",
+        "description": "A ``captureVersion: 2`` client's declaration that it gave up on earlier drains.\n\nA drain that skips ahead of the sequence the server holds is refused unless\nthe client says, honestly, which drains it permanently lost. The range must\nend at the drain before this one. If an earlier request committed but its\nresponse was lost, the server clips that already-applied prefix and ledgers\nonly the missing suffix as coverage; the WebRTC carry across it is dropped.",
         "properties": {
           "missedFromSequence": {
             "maximum": 2147483647,
@@ -3424,6 +3434,58 @@
         "title": "ExportPolicy",
         "type": "object"
       },
+      "ExternalReferenceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "external_id": {
+            "title": "External Id",
+            "type": "string"
+          },
+          "linked_at_unix_nano": {
+            "title": "Linked At Unix Nano",
+            "type": "string"
+          },
+          "namespace": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "title": "Namespace",
+            "type": "string"
+          },
+          "record_type": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "title": "Record Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "namespace",
+          "record_type",
+          "external_id",
+          "linked_at_unix_nano"
+        ],
+        "title": "ExternalReferenceResponse",
+        "type": "object"
+      },
+      "ExternalReferenceWriteRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "external_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}$",
+            "title": "External Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "external_id"
+        ],
+        "title": "ExternalReferenceWriteRequest",
+        "type": "object"
+      },
       "FirstAbnormalBoundaryFoundResponse": {
         "additionalProperties": false,
         "description": "The earliest boundary diagnosis, when one could be ordered honestly.",
@@ -3535,6 +3597,244 @@
           "status"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HostedBundleManifest": {
+        "additionalProperties": false,
+        "description": "Hosted request manifest; the producer cannot submit an artifact ID.",
+        "properties": {
+          "created_at_unix_nano": {
+            "maxLength": 20,
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "title": "Created At Unix Nano",
+            "type": "string"
+          },
+          "producer": {
+            "$ref": "#/components/schemas/HostedProducer"
+          },
+          "schema_version": {
+            "default": "0.2.0",
+            "minLength": 1,
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "semantic_profile_version": {
+            "default": "0.2.0",
+            "minLength": 1,
+            "title": "Semantic Profile Version",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$",
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "created_at_unix_nano",
+          "producer"
+        ],
+        "title": "HostedBundleManifest",
+        "type": "object"
+      },
+      "HostedEvent": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$",
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "title": "Event Name",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "time": {
+            "$ref": "#/components/schemas/HostedTimePoint"
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "event_name",
+          "time"
+        ],
+        "title": "HostedEvent",
+        "type": "object"
+      },
+      "HostedIncidentBundleJson": {
+        "additionalProperties": false,
+        "description": "Strict hosted metadata shape; all unapproved fields are rejected.",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/HostedIncidentProfile"
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "title": "HostedIncidentBundleJson",
+        "type": "object"
+      },
+      "HostedIncidentProfile": {
+        "additionalProperties": false,
+        "description": "Closed metadata envelope available before runtime contract acceptance.",
+        "properties": {
+          "events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HostedEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/HostedBundleManifest"
+          },
+          "runtime_session_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional opaque TVIC correlation ID; never used as the host session ID.",
+            "title": "Runtime Session Id"
+          },
+          "session": {
+            "$ref": "#/components/schemas/HostedSession"
+          }
+        },
+        "required": [
+          "manifest",
+          "session"
+        ],
+        "title": "HostedIncidentProfile",
+        "type": "object"
+      },
+      "HostedProducer": {
+        "additionalProperties": false,
+        "description": "Host-supplied runtime identity; provider and model names are excluded.",
+        "properties": {
+          "name": {
+            "description": "Bounded runtime family slug; never a provider or model label.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+            "title": "Name",
+            "type": "string"
+          },
+          "version": {
+            "description": "Numeric semantic runtime release; prerelease and build labels are excluded.",
+            "maxLength": 48,
+            "minLength": 5,
+            "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ],
+        "title": "HostedProducer",
+        "type": "object"
+      },
+      "HostedSession": {
+        "additionalProperties": false,
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostedTimePoint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "session_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/HostedTimePoint"
+          },
+          "status": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "status",
+          "started_at"
+        ],
+        "title": "HostedSession",
+        "type": "object"
+      },
+      "HostedTimePoint": {
+        "additionalProperties": false,
+        "description": "Wall-clock source and observation times admitted by the hosted proposal.",
+        "properties": {
+          "observed_time_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Observed Time Unix Nano"
+          },
+          "source_time_unix_nano": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]*)$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Time Unix Nano"
+          }
+        },
+        "title": "HostedTimePoint",
         "type": "object"
       },
       "IncidentBundleJson": {
@@ -3833,6 +4133,28 @@
           "document"
         ],
         "title": "IncidentExportResponse",
+        "type": "object"
+      },
+      "IncidentExternalReferencesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalReferenceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bundle_id",
+          "items"
+        ],
+        "title": "IncidentExternalReferencesResponse",
         "type": "object"
       },
       "IncidentPageResponse": {
@@ -4494,7 +4816,8 @@
           "source": {
             "enum": [
               "journal",
-              "checkpoint"
+              "checkpoint",
+              "capture"
             ],
             "title": "Source",
             "type": "string"
@@ -5329,6 +5652,105 @@
           "version"
         ],
         "title": "Producer",
+        "type": "object"
+      },
+      "ProjectDeletionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "retry_after_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After Seconds"
+          },
+          "state": {
+            "enum": [
+              "deleting",
+              "deleted"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "state"
+        ],
+        "title": "ProjectDeletionResponse",
+        "type": "object"
+      },
+      "ProjectSummaryItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at_unix_nano": {
+            "title": "Created At Unix Nano",
+            "type": "string"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "framework_truncated": {
+            "title": "Framework Truncated",
+            "type": "boolean"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "status",
+          "framework",
+          "framework_truncated",
+          "created_at_unix_nano"
+        ],
+        "title": "ProjectSummaryItemResponse",
+        "type": "object"
+      },
+      "ProjectSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummaryItemResponse"
+            },
+            "maxItems": 50,
+            "title": "Items",
+            "type": "array"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "items"
+        ],
+        "title": "ProjectSummaryResponse",
         "type": "object"
       },
       "QualityMeasurement": {
@@ -6542,6 +6964,11 @@
         "in": "cookie",
         "name": "earshot_session",
         "type": "apiKey"
+      },
+      "HostedServiceBearer": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -6683,7 +7110,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -6892,7 +7319,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -6912,7 +7339,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -7035,7 +7462,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -7055,7 +7482,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -7177,7 +7604,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -7197,7 +7624,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -7240,7 +7667,7 @@
     },
     "/v1/capture": {
       "post": {
-        "description": "Accept one browser capture batch and store it as a governed incident.\n\nAuthentication, project scoping and CSRF are the same ``/v1`` rules every\nother endpoint uses: the middleware has already resolved a bearer project\nkey or a viewer session, rejected a mismatched ``X-Earshot-Project-Id``,\nand -- because this is an unsafe method -- required a CSRF token from a\ncookie-authenticated caller.\n\nEverything after that is fail-closed: the body is bounded while it is\nstill being streamed, the wire version is checked before the schema, the\ncollection sizes are checked before the payload is materialised, and\nevery stat/event member is re-derived from the server's own allowlist so\nno client value reaches an engine -- or storage -- unless this server\ngoverns it.\n\nDelivery is idempotent by batch content, so a transport retry after an\nunknown outcome resolves to the incident the first delivery created\n(``201`` when this call created it, ``200`` when it already existed).",
+        "description": "Accept one browser capture batch and store it as a governed incident.\n\nAuthentication, project scoping and CSRF are the same ``/v1`` rules every\nother endpoint uses: the middleware has already resolved a bearer project\nkey or a viewer session, rejected a mismatched ``X-Earshot-Project-Id``,\nand -- because this is an unsafe method -- required a CSRF token from a\ncookie-authenticated caller.\n\nEverything after that is fail-closed: the body is bounded while it is\nstill being streamed, the wire version is checked before the schema, the\ncollection sizes are checked before the payload is materialised, and\nevery stat/event member is re-derived from the server's own allowlist so\nno client value reaches an engine -- or storage -- unless this server\ngoverns it.\n\nDelivery is idempotent by batch content, so a transport retry after an\nunknown outcome resolves to the incident the first delivery created\n(``201`` when this call created it, ``200`` when it already existed).\nA continuous call's durable journal is byte-bounded; a drain that would\nexceed that bound is refused without changing its committed prefix, which\nstays visible to live-session readers.",
         "operationId": "capture_endpoint_v1_capture_post",
         "parameters": [
           {
@@ -7372,7 +7799,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "The payload exceeds a request bound, or a continuous call's durable journal would exceed its configured byte limit."
           },
           "415": {
             "content": {
@@ -7392,7 +7819,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -7565,7 +7992,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -7585,7 +8012,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -7630,8 +8057,20 @@
         "summary": "List Endpoint"
       },
       "post": {
+        "description": "Ingest an immutable incident for the authenticated project. The session_id must not use Earshot's reserved capture- namespace.",
         "operationId": "ingest_endpoint_v1_incidents_post",
         "parameters": [
+          {
+            "description": "Required for hosted JWT ingestion. Supply the stable opaque host artifact submission ID; Earshot assigns bundle_id. In operator mode, an optional value must equal bundle_id.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "Content-Encoding",
@@ -7661,12 +8100,26 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/IncidentBundleJson"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/IncidentBundleJson"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HostedIncidentBundleJson"
+                  }
+                ]
               }
             },
             "application/vnd.earshot.incident+json": {
               "schema": {
-                "$ref": "#/components/schemas/IncidentBundleJson"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/IncidentBundleJson"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HostedIncidentBundleJson"
+                  }
+                ]
               }
             },
             "application/vnd.earshot.incident+protobuf": {
@@ -7773,7 +8226,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -7793,7 +8246,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -7843,6 +8296,17 @@
         "operationId": "validate_endpoint_v1_incidents_validate_post",
         "parameters": [
           {
+            "description": "Required for hosted JWT ingestion. Supply the stable opaque host artifact submission ID; Earshot assigns bundle_id. In operator mode, an optional value must equal bundle_id.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
             "in": "header",
             "name": "Content-Encoding",
             "required": false,
@@ -7871,12 +8335,26 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/IncidentBundleJson"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/IncidentBundleJson"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HostedIncidentBundleJson"
+                  }
+                ]
               }
             },
             "application/vnd.earshot.incident+json": {
               "schema": {
-                "$ref": "#/components/schemas/IncidentBundleJson"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/IncidentBundleJson"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HostedIncidentBundleJson"
+                  }
+                ]
               }
             },
             "application/vnd.earshot.incident+protobuf": {
@@ -7973,7 +8451,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -7993,7 +8471,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -8124,7 +8602,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -8144,7 +8622,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -8291,7 +8769,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -8311,7 +8789,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -8449,7 +8927,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -8469,7 +8947,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -8617,7 +9095,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -8637,7 +9115,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -8775,7 +9253,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -8795,7 +9273,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -8933,7 +9411,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -8953,7 +9431,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -9091,7 +9569,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -9111,7 +9589,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -9249,7 +9727,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -9269,7 +9747,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -9423,7 +9901,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -9443,7 +9921,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -9486,6 +9964,532 @@
           {}
         ],
         "summary": "Export Endpoint"
+      }
+    },
+    "/v1/incidents/{bundle_id}/references": {
+      "get": {
+        "description": "Returns project-scoped opaque references attached to an incident. References are catalog metadata and are not part of the immutable artifact.",
+        "operationId": "get_external_references_endpoint_v1_incidents__bundle_id__references_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentExternalReferencesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "List related product records"
+      }
+    },
+    "/v1/incidents/{bundle_id}/references/{namespace}/{record_type}": {
+      "delete": {
+        "description": "Removes one catalog reference without modifying the incident artifact.",
+        "operationId": "delete_external_reference_endpoint_v1_incidents__bundle_id__references__namespace___record_type__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_type",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+              "title": "Record Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Remove a related product record"
+      },
+      "put": {
+        "description": "Idempotently upserts one opaque, project-scoped reference. The external ID must be a portable identifier; URLs and evidence content are not accepted.",
+        "operationId": "set_external_reference_endpoint_v1_incidents__bundle_id__references__namespace___record_type__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bundle_id",
+            "required": true,
+            "schema": {
+              "title": "Bundle Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "record_type",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+              "title": "Record Type",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalReferenceWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalReferenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Set a related product record"
       }
     },
     "/v1/live/sessions": {
@@ -9571,7 +10575,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -9591,7 +10595,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -9742,7 +10746,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -9762,7 +10766,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -9809,7 +10813,7 @@
     },
     "/v1/live/sessions/{session_id}/seal": {
       "post": {
-        "description": "Materialize a live buffer into an artifact, on operator command only.\n\nNothing else in this server turns a live session into an incident. A seal\nof a journal that never reached close produces a *provisional* artifact\nunder a distinct bundle id, so it can never be confused with, or collide\nwith, the final one the producer will still send.",
+        "description": "Materialize a live buffer into an artifact after an authorized command.\n\nNothing else in this server turns a live session into an incident. A seal\nof a journal that never reached close produces a *provisional* artifact\nunder a distinct bundle id, so it can never be confused with, or collide\nwith, the final one the producer will still send. Hosted callers can seal\nthe metadata-only browser-capture source; generic hosted checkpoint sealing\nremains gated on the runtime artifact contract.",
         "operationId": "live_seal_endpoint_v1_live_sessions__session_id__seal_post",
         "parameters": [
           {
@@ -9911,7 +10915,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -9931,7 +10935,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -10086,7 +11090,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -10106,7 +11110,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -10274,7 +11278,7 @@
                 }
               }
             },
-            "description": "Request Entity Too Large"
+            "description": "Content Too Large"
           },
           "415": {
             "content": {
@@ -10294,7 +11298,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -10337,6 +11341,334 @@
           {}
         ],
         "summary": "Turn Metrics Endpoint"
+      }
+    },
+    "/v1/projects/{project_id}": {
+      "delete": {
+        "description": "Requires the earshot:project:delete scope. Deletion is idempotent. A 202 response means writes are fenced and cleanup is still pending; repeat the same request until state is deleted.",
+        "operationId": "delete_project_endpoint_v1_projects__project_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeletionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeletionResponse"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Delete all retained data and authorization state for a project"
+      }
+    },
+    "/v1/projects/{project_id}/summary": {
+      "get": {
+        "description": "Returns at most 50 retained session metadata records. This projection never reads artifact bytes and contains no host-specific links or labels.",
+        "operationId": "project_summary_endpoint_v1_projects__project_id__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Read a bounded metadata summary for one project"
       }
     }
   }

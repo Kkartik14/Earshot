@@ -23,13 +23,33 @@ def test_serve_honors_trusted_proxy_environment(monkeypatch) -> None:
 
 def test_serve_reports_the_active_data_path(monkeypatch, tmp_path, capsys) -> None:
     observed = {}
-    monkeypatch.setattr("earshot.api.create_app", lambda **_kwargs: object())
+    monkeypatch.setenv("EARSHOT_AUTH_MODE", "hosted_jwt")
+    monkeypatch.setenv("EARSHOT_JWT_ISSUER", "https://issuer.example.test")
+    monkeypatch.setenv("EARSHOT_JWT_AUDIENCE", "earshot-api")
+    monkeypatch.setenv("EARSHOT_JWKS_URL", "https://issuer.example.test/.well-known/jwks.json")
+    monkeypatch.setenv("EARSHOT_PLATFORM_ADAPTER_ENABLED", "true")
+    monkeypatch.setenv("EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS", "7.5")
+    monkeypatch.setenv("EARSHOT_RETENTION_CLEANUP_BATCH_SIZE", "42")
+
+    def create_app(**kwargs):
+        observed["config"] = kwargs["config"]
+        observed["enable_platform_adapter"] = kwargs["enable_platform_adapter"]
+        return object()
+
+    monkeypatch.setattr("earshot.api.create_app", create_app)
     monkeypatch.setattr("uvicorn.run", lambda _app, **kwargs: observed.update(kwargs))
 
     assert main(["serve", "--data-dir", str(tmp_path)]) == 0
 
     assert str(tmp_path.resolve()) in capsys.readouterr().err
     assert observed["host"] == "127.0.0.1"
+    assert observed["config"].auth_mode == "hosted_jwt"
+    assert observed["config"].jwt_issuer == "https://issuer.example.test"
+    assert observed["config"].jwt_audience == "earshot-api"
+    assert observed["config"].jwks_url == "https://issuer.example.test/.well-known/jwks.json"
+    assert observed["config"].retention_cleanup_interval_seconds == 7.5
+    assert observed["config"].retention_cleanup_batch_size == 42
+    assert observed["enable_platform_adapter"] is True
 
 
 def test_base_install_serve_command_explains_the_server_extra(monkeypatch, capsys) -> None:
@@ -75,6 +95,38 @@ def test_cli_ingest_list_show_and_purge_workflow(tmp_path, valid_bundle, capsys)
     assert json.loads(capsys.readouterr().out)["purged"] is True
     assert main(["show", "bundle-1", "--data-dir", str(data_dir)]) == 2
     assert "IncidentPurgedError" in capsys.readouterr().err
+
+
+def test_cli_requires_explicit_global_confirmation_for_orphan_cleanup(tmp_path, capsys) -> None:
+    from earshot.storage import IncidentStore
+
+    data_dir = tmp_path / "data"
+    store = IncidentStore(data_dir)
+    digest, _ = store.objects.put(b"unreferenced maintenance fixture")
+    orphan = store.objects.path_for(digest)
+
+    with pytest.raises(SystemExit) as missing_confirmation:
+        main(["maintenance", "cleanup-unreferenced-objects", "--data-dir", str(data_dir)])
+    assert missing_confirmation.value.code == 2
+    assert orphan.is_file()
+
+    assert (
+        main(
+            [
+                "maintenance",
+                "cleanup-unreferenced-objects",
+                "--data-dir",
+                str(data_dir),
+                "--confirm-global-object-sweep",
+            ]
+        )
+        == 0
+    )
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["scope"] == "all projects in the data directory"
+    assert result["removed_unreferenced_objects"] == 1
+    assert not orphan.exists()
 
 
 def test_cli_error_never_reflects_sensitive_invalid_input(tmp_path, valid_bundle, capsys) -> None:

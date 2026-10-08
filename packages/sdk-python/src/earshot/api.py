@@ -8,6 +8,8 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import logging
+import math
 import os
 import sqlite3
 import tempfile
@@ -17,7 +19,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Annotated, Any, Literal, TypeVar
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Query, Request
@@ -25,23 +27,31 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from .analysis import ANALYZER_VERSION
+from .auth import HostedJwksUnavailable, HostedJwtVerifier, InvalidHostedToken, validate_jwks_url
 from .browser_session import BrowserSessionStore
 from .capture import (
+    CAPTURE_CALL_ID_PREFIX,
     CaptureCallCapacityError,
     CaptureCallClosedError,
     CaptureCallRegistry,
+    CaptureCallReplayExpiredError,
     CaptureDrain,
     CaptureEnd,
+    CaptureJournalUnavailableError,
     CaptureSequenceConflictError,
     CaptureSequenceGapError,
     DrainOutcome,
     ResyncClaim,
 )
+from .capture.durable import DEFAULT_MAX_SEALED_REPLAY_LEDGERS
 from .capture.sanitize import (
+    HOSTED_CAPTURE_COVERAGE_REASONS,
+    HOSTED_CAPTURE_COVERAGE_SIGNALS,
+    HOSTED_CAPTURE_RESYNC_REASONS,
     sanitize_device_events,
     sanitize_snapshot,
 )
@@ -52,7 +62,7 @@ from .codec import (
     PROTOBUF_MEDIA_TYPE,
     IncidentCodecError,
     IncidentDepthError,
-    decode_incident_json,
+    decode_incident_json_value,
     decode_incident_protobuf,
     encode_incident_json,
     encode_incident_protobuf,
@@ -65,8 +75,10 @@ from .connectors import (
 )
 from .contract import (
     DerivedAnalysis,
+    HostedIncidentBundleJson,
     IncidentBundle,
     IncidentBundleJson,
+    PrivacyManifest,
     Producer,
     RecoveryRecord,
     TimePoint,
@@ -79,14 +91,18 @@ from .exporters.registry import export_incident, exporter_names, get_exporter
 from .live import (
     END_FINAL_ARTIFACT_STORED,
     END_SEALED,
+    END_SESSION_EXPIRED,
     EVENT_HEARTBEAT,
     LIVE_LIMITATIONS,
+    SOURCE_CAPTURE,
     SOURCE_CHECKPOINT,
     CheckpointDivergedError,
     CheckpointFinalizedError,
     CheckpointFramesInvalidError,
     CheckpointSequenceError,
+    CheckpointSourceConflictError,
     LiveCapacityError,
+    LiveCaptureJournalLimitError,
     LiveSessionRegistry,
     SessionNotLiveError,
     SessionNotSealableError,
@@ -95,10 +111,16 @@ from .live import (
     render_sse,
 )
 from .pipeline import pipeline
-from .privacy import ExportPolicyError, assert_export_allowed
+from .privacy import (
+    ExportPolicyError,
+    HostedCapturePolicyError,
+    assert_export_allowed,
+    assert_hosted_metadata_only,
+)
 from .query import EvidenceQuery, compare_incidents, detect_contradictions
 from .storage import (
     DEFAULT_PROJECT_ID,
+    MAX_EXPIRED_PURGE_BATCH_SIZE,
     TURN_METRIC_LIMITATIONS,
     ArtifactCorruptionError,
     IncidentConflictError,
@@ -106,9 +128,11 @@ from .storage import (
     IncidentPurgedError,
     IncidentStore,
     InvalidCursorError,
+    ProjectInactiveError,
     StorageError,
     StoredAnalysis,
 )
+from .summary import FRAMEWORK_NAME_MAX_LENGTH, summarize_project
 from .validation import (
     IncidentValidationError,
     ValidationIssue,
@@ -124,6 +148,7 @@ _PROJECT_HEADER = "x-earshot-project-id"
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CHECKPOINT_MEDIA_TYPE = "application/vnd.earshot.checkpoint+frames"
 SSE_MEDIA_TYPE = "text/event-stream"
+_LOGGER = logging.getLogger(__name__)
 
 
 class ApiModel(BaseModel):
@@ -161,6 +186,7 @@ class HealthResponse(ApiModel):
 
 class BrowserSessionResponse(ApiModel):
     project_id: str
+    auth_context_id: str
     csrf_token: str
     expires_in_seconds: int
 
@@ -169,6 +195,7 @@ class BrowserSessionStatusResponse(ApiModel):
     authenticated: bool
     authentication_required: bool
     project_id: str
+    auth_context_id: str
     csrf_token: str | None
     expires_in_seconds: int | None
 
@@ -206,6 +233,56 @@ class IncidentPageResponse(ApiModel):
     next_cursor: str | None
 
 
+class ProjectSummaryItemResponse(ApiModel):
+    session_id: str
+    status: str
+    framework: str | None = Field(max_length=FRAMEWORK_NAME_MAX_LENGTH)
+    framework_truncated: bool
+    created_at_unix_nano: str
+
+
+class ProjectSummaryResponse(ApiModel):
+    project_id: str
+    items: list[ProjectSummaryItemResponse] = Field(max_length=50)
+
+
+class ProjectDeletionResponse(ApiModel):
+    project_id: str
+    state: Literal["deleting", "deleted"]
+    retry_after_seconds: int | None = None
+
+
+ExternalReferenceKeyPart = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=128, pattern=r"^[a-z][a-z0-9_.-]{0,127}$"),
+]
+
+
+class ExternalReferenceKey(ApiModel):
+    namespace: ExternalReferenceKeyPart
+    record_type: ExternalReferenceKeyPart
+
+
+class ExternalReferenceWriteRequest(ApiModel):
+    external_id: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}$",
+    )
+
+
+class ExternalReferenceResponse(ApiModel):
+    namespace: ExternalReferenceKeyPart
+    record_type: ExternalReferenceKeyPart
+    external_id: str
+    linked_at_unix_nano: str
+
+
+class IncidentExternalReferencesResponse(ApiModel):
+    bundle_id: str
+    items: list[ExternalReferenceResponse]
+
+
 class LiveSessionResponse(ApiModel):
     """One conversation still being written. Deliberately not an incident.
 
@@ -218,7 +295,7 @@ class LiveSessionResponse(ApiModel):
     session_id: str
     bundle_id: str
     journal_id: str
-    source: Literal["journal", "checkpoint"]
+    source: Literal["journal", "checkpoint", "capture"]
     state: Literal["live", "stale", "finalized", "abandoned"]
     last_sequence: int
     available_from_sequence: int
@@ -674,8 +751,9 @@ class CaptureResyncRequest(ApiModel):
 
     A drain that skips ahead of the sequence the server holds is refused unless
     the client says, honestly, which drains it permanently lost. The range must
-    cover exactly the gap; the loss is then ledgered as coverage and the WebRTC
-    carry across it is dropped rather than estimated.
+    end at the drain before this one. If an earlier request committed but its
+    response was lost, the server clips that already-applied prefix and ledgers
+    only the missing suffix as coverage; the WebRTC carry across it is dropped.
     """
 
     missedFromSequence: int = Field(ge=1, le=2**31 - 1)
@@ -745,7 +823,7 @@ class CaptureContinuousResponse(ApiModel):
     """What one ``captureVersion: 2`` drain resolved to, mirroring a checkpoint ack.
 
     A drain no longer becomes an incident, so there is no ``bundle_id`` to return
-    -- the growing artifact is materialized on demand by the operator seal. This
+    -- the growing artifact is materialized on demand by an authorized seal. This
     reports where the call now stands: the journal it accumulates into, the
     sequence it has accepted through, and that it is a live, sealable session.
     ``replayed`` is true when this drain had already been applied and this response
@@ -813,6 +891,17 @@ _CONNECTOR_ERROR_RESPONSES = {
 _INCIDENT_REQUEST_BODY = {
     "parameters": [
         {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": False,
+            "description": (
+                "Required for hosted JWT ingestion. Supply the stable opaque host artifact "
+                "submission ID; Earshot assigns bundle_id. In operator mode, an optional "
+                "value must equal bundle_id."
+            ),
+            "schema": {"type": "string", "minLength": 1, "maxLength": 128},
+        },
+        {
             "name": "Content-Encoding",
             "in": "header",
             "required": False,
@@ -835,8 +924,22 @@ _INCIDENT_REQUEST_BODY = {
     "requestBody": {
         "required": True,
         "content": {
-            JSON_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/IncidentBundleJson"}},
-            "application/json": {"schema": {"$ref": "#/components/schemas/IncidentBundleJson"}},
+            JSON_MEDIA_TYPE: {
+                "schema": {
+                    "oneOf": [
+                        {"$ref": "#/components/schemas/IncidentBundleJson"},
+                        {"$ref": "#/components/schemas/HostedIncidentBundleJson"},
+                    ]
+                }
+            },
+            "application/json": {
+                "schema": {
+                    "oneOf": [
+                        {"$ref": "#/components/schemas/IncidentBundleJson"},
+                        {"$ref": "#/components/schemas/HostedIncidentBundleJson"},
+                    ]
+                }
+            },
             PROTOBUF_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}},
             "application/x-protobuf": {"schema": {"type": "string", "format": "binary"}},
         },
@@ -908,6 +1011,18 @@ _TAIL_RESPONSES: dict[int | str, dict[str, Any]] = {
 class ApiConfig:
     host: str = "127.0.0.1"
     token: str | None = None
+    # Standalone operator auth keeps API keys, local bearer tokens and browser
+    # sessions. Hosted deployments use short-lived project-scoped service JWTs.
+    auth_mode: Literal["operator", "hosted_jwt"] = "operator"
+    jwt_issuer: str | None = None
+    jwt_audience: str | None = None
+    jwks_url: str | None = None
+    jwks_ca_file: str | None = None
+    # Hosted runtime event strings are contract data, not arbitrary user codes.
+    # Keep writes closed until each environment receives the accepted allowlists.
+    hosted_runtime_names: frozenset[str] = frozenset()
+    hosted_session_statuses: frozenset[str] = frozenset()
+    hosted_event_names: frozenset[str] = frozenset()
     max_body_bytes: int = 16 * 1024 * 1024
     max_connector_body_bytes: int = 2 * 1024 * 1024
     max_connector_deliveries_per_minute: int = 120
@@ -919,6 +1034,9 @@ class ApiConfig:
     max_capture_device_events: int = 512
     max_capture_coverage: int = 64
     max_capture_stats_per_snapshot: int = 128
+    # Only a finite number of completed calls retain exact drain-replay digests.
+    # Older sealed call IDs remain reserved by the incident store.
+    max_sealed_capture_replay_ledgers: int = DEFAULT_MAX_SEALED_REPLAY_LEDGERS
     # Checkpoint uploads are small, frequent batches from a live producer, so
     # they are bounded far below an incident bundle and far below a capture
     # batch. The number is not chosen here: it is the wire bound the uploader
@@ -934,8 +1052,33 @@ class ApiConfig:
     trust_local_network: bool = False
     viewer_session_capacity: int = 256
     viewer_session_ttl_seconds: int = 8 * 60 * 60
+    retention_cleanup_interval_seconds: float = 5.0
+    retention_cleanup_batch_size: int = 1000
 
     def __post_init__(self) -> None:
+        if self.auth_mode not in {"operator", "hosted_jwt"}:
+            raise ValueError("auth_mode must be 'operator' or 'hosted_jwt'")
+        jwt_settings = (self.jwt_issuer, self.jwt_audience, self.jwks_url)
+        if self.auth_mode == "hosted_jwt":
+            if any(not value or not value.strip() for value in jwt_settings):
+                raise ValueError("hosted_jwt mode requires issuer, audience, and JWKS URL")
+            if self.token is not None:
+                raise ValueError("operator token cannot be configured in hosted_jwt mode")
+            validate_jwks_url(self.jwks_url or "")
+        elif any(value is not None for value in jwt_settings) or self.jwks_ca_file:
+            raise ValueError("JWT verifier settings require auth_mode='hosted_jwt'")
+        for field_name in (
+            "hosted_runtime_names",
+            "hosted_session_statuses",
+            "hosted_event_names",
+        ):
+            values = frozenset(getattr(self, field_name))
+            if any(
+                not isinstance(value, str) or not value or value.strip() != value
+                for value in values
+            ):
+                raise ValueError(f"{field_name} values must be non-empty strings without padding")
+            object.__setattr__(self, field_name, values)
         if self.max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
         if self.max_connector_body_bytes < 1:
@@ -952,6 +1095,12 @@ class ApiConfig:
             raise ValueError("max_capture_coverage must be positive")
         if self.max_capture_stats_per_snapshot < 1:
             raise ValueError("max_capture_stats_per_snapshot must be positive")
+        if (
+            isinstance(self.max_sealed_capture_replay_ledgers, bool)
+            or not isinstance(self.max_sealed_capture_replay_ledgers, int)
+            or self.max_sealed_capture_replay_ledgers < 1
+        ):
+            raise ValueError("max_sealed_capture_replay_ledgers must be a positive integer")
         if self.max_checkpoint_body_bytes < MAX_CHECKPOINT_FRAME_BYTES:
             # A body bound below one maximal frame would make a frame the
             # uploader considers deliverable permanently undeliverable, which is
@@ -966,12 +1115,60 @@ class ApiConfig:
             raise ValueError("viewer_session_capacity must be positive")
         if self.viewer_session_ttl_seconds < 1:
             raise ValueError("viewer_session_ttl_seconds must be positive")
+        cleanup_interval = self.retention_cleanup_interval_seconds
+        cleanup_interval_is_finite = False
+        if isinstance(cleanup_interval, (int, float)) and not isinstance(cleanup_interval, bool):
+            with contextlib.suppress(OverflowError):
+                cleanup_interval_is_finite = math.isfinite(cleanup_interval)
+        if (
+            isinstance(cleanup_interval, bool)
+            or not isinstance(cleanup_interval, (int, float))
+            or not cleanup_interval_is_finite
+            or cleanup_interval <= 0
+        ):
+            raise ValueError("retention_cleanup_interval_seconds must be positive and finite")
+        if (
+            isinstance(self.retention_cleanup_batch_size, bool)
+            or not isinstance(self.retention_cleanup_batch_size, int)
+            or not 1 <= self.retention_cleanup_batch_size <= MAX_EXPIRED_PURGE_BATCH_SIZE
+        ):
+            raise ValueError(
+                "retention_cleanup_batch_size must be an integer between 1 and "
+                f"{MAX_EXPIRED_PURGE_BATCH_SIZE}"
+            )
         if (
             not _is_loopback(self.host)
             and not self.behind_tls_proxy
             and not self.trust_local_network
         ):
             raise ValueError("a non-loopback listener requires an explicitly trusted TLS proxy")
+
+
+async def _run_retention_cleanup(
+    repository: IncidentStore,
+    settings: ApiConfig,
+    stop: asyncio.Event,
+) -> None:
+    """Reap expired evidence in bounded store-lock intervals."""
+
+    batch_size = settings.retention_cleanup_batch_size
+    while not stop.is_set():
+        try:
+            removed = await asyncio.to_thread(
+                repository.purge_expired,
+                limit=batch_size,
+                compact_when_drained=True,
+            )
+        except (StorageError, sqlite3.Error, OSError) as error:
+            _LOGGER.error(
+                "expired evidence cleanup batch failed (%s)",
+                type(error).__name__,
+            )
+            removed = 0
+
+        delay = 0.1 if removed == batch_size else settings.retention_cleanup_interval_seconds
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=delay)
 
 
 def _remote_access(settings: ApiConfig) -> bool:
@@ -989,8 +1186,47 @@ def _authentication_required(settings: ApiConfig) -> bool:
     from this one predicate so they cannot drift.
     """
     return (
-        _remote_access(settings) and not settings.trust_local_network
-    ) or settings.token is not None
+        settings.auth_mode == "hosted_jwt"
+        or (_remote_access(settings) and not settings.trust_local_network)
+        or settings.token is not None
+    )
+
+
+_HOSTED_SCOPE_BY_METHOD: dict[str, str] = {
+    "GET": "earshot:read",
+    "HEAD": "earshot:read",
+    "OPTIONS": "earshot:read",
+    "POST": "earshot:write",
+    "PUT": "earshot:write",
+    "PATCH": "earshot:write",
+    "DELETE": "earshot:delete",
+}
+
+
+def _hosted_required_scope(method: str, path: str) -> str | None:
+    """Return the least-privilege scope for one hosted project-data operation."""
+    if path.startswith("/v1/auth/"):
+        return None
+    if method.upper() == "DELETE" and path.startswith("/v1/incidents/") and path.count("/") == 3:
+        return "earshot:artifact:delete"
+    if path.endswith("/summary") and path.startswith(("/v1/projects/", "/v1/platform/projects/")):
+        return "earshot:summary:read"
+    if path.startswith("/v1/projects/") and method.upper() == "DELETE":
+        return "earshot:project:delete"
+    return _HOSTED_SCOPE_BY_METHOD.get(method.upper())
+
+
+def _unauthorized_response() -> JSONResponse:
+    return JSONResponse(
+        {
+            "error": {
+                "code": "EARSHOT_UNAUTHORIZED",
+                "message": "valid service bearer token required",
+            }
+        },
+        status_code=401,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 class ApiProblem(Exception):
@@ -1001,11 +1237,13 @@ class ApiProblem(Exception):
         message: str,
         *,
         issues: list[dict[str, object]] | None = None,
+        headers: Mapping[str, str] | None = None,
     ):
         self.status_code = status_code
         self.code = code
         self.message = message
         self.issues = issues
+        self.headers = dict(headers or {})
         super().__init__(message)
 
 
@@ -1187,12 +1425,22 @@ def _strict_json_preflight(payload: bytes, maximum_depth: int, *, subject: str =
     return parsed
 
 
-def _decode_request(payload: bytes, content_type: str, config: ApiConfig) -> IncidentBundle:
+def _decode_request(
+    payload: bytes,
+    content_type: str,
+    config: ApiConfig,
+    *,
+    parsed_json: dict[str, Any] | None = None,
+) -> IncidentBundle:
     try:
         if content_type in {JSON_MEDIA_TYPE, "application/json"}:
-            _strict_json_preflight(payload, config.max_json_depth)
-            return decode_incident_json(
-                payload,
+            value = (
+                parsed_json
+                if parsed_json is not None
+                else _strict_json_preflight(payload, config.max_json_depth)
+            )
+            return decode_incident_json_value(
+                value,
                 max_profile_depth=config.max_json_depth,
             )
         if content_type in {PROTOBUF_MEDIA_TYPE, "application/x-protobuf"}:
@@ -1222,6 +1470,119 @@ def _decode_request(payload: bytes, content_type: str, config: ApiConfig) -> Inc
             "incident does not satisfy the Earshot contract",
         ) from error
     raise ApiProblem(415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE", "unsupported incident media type")
+
+
+def _assign_hosted_bundle_id(
+    payload: bytes,
+    *,
+    config: ApiConfig,
+    repository: IncidentStore,
+    project_id: str,
+    idempotency_key: str,
+) -> dict[str, Any] | None:
+    """Validate the closed hosted envelope and inject its Earshot-minted ID."""
+
+    value = _strict_json_preflight(payload, config.max_json_depth)
+    if not isinstance(value, dict):
+        return None
+    profile = value.get("profile")
+    manifest = profile.get("manifest") if isinstance(profile, dict) else None
+    if not isinstance(manifest, dict):
+        return None
+    if "bundle_id" in manifest:
+        raise ApiProblem(
+            400,
+            "EARSHOT_HOSTED_BUNDLE_ID_FORBIDDEN",
+            "hosted ingestion must omit bundle_id; Earshot assigns it",
+        )
+    try:
+        hosted_bundle = HostedIncidentBundleJson.model_validate(value)
+    except ValidationError as error:
+        raise ApiProblem(
+            422,
+            "EARSHOT_HOSTED_METADATA_ONLY",
+            "hosted ingest accepts only the currently approved metadata fields",
+        ) from error
+    _require_hosted_runtime_contract(hosted_bundle, config)
+
+    incident_value = hosted_bundle.model_dump(mode="json", exclude_none=True)
+    profile = incident_value["profile"]
+    profile["manifest"]["bundle_id"] = repository.hosted_bundle_id(
+        project_id,
+        idempotency_key,
+    )
+    profile["manifest"]["producer"]["language"] = "unknown"
+    profile["privacy"] = PrivacyManifest(
+        policy_id="earshot.hosted.metadata-only",
+        policy_version="1",
+    ).model_dump(mode="json", exclude_none=True)
+    runtime_session_id = profile.pop("runtime_session_id", None)
+    if runtime_session_id is not None:
+        profile["attributes"] = {"session.id": runtime_session_id}
+    return incident_value
+
+
+def _require_hosted_runtime_contract(
+    bundle: HostedIncidentBundleJson,
+    config: ApiConfig,
+) -> None:
+    """Require explicit finite runtime vocabularies before hosted persistence."""
+
+    if not (
+        config.hosted_runtime_names and config.hosted_session_statuses and config.hosted_event_names
+    ):
+        raise ApiProblem(
+            409,
+            "EARSHOT_HOSTED_CONTRACT_NOT_ACCEPTED",
+            "hosted event writes await the accepted runtime vocabulary for this environment",
+        )
+    profile = bundle.profile
+    if (
+        profile.manifest.producer.name not in config.hosted_runtime_names
+        or profile.session.status not in config.hosted_session_statuses
+        or any(event.event_name not in config.hosted_event_names for event in profile.events)
+    ):
+        raise ApiProblem(
+            422,
+            "EARSHOT_HOSTED_EVENT_UNSUPPORTED",
+            "hosted event fields do not match this environment's accepted runtime vocabulary",
+        )
+
+
+def _hosted_capture_projection(
+    capture: CaptureRequest,
+    *,
+    project_id: str,
+    repository: IncidentStore,
+) -> CaptureRequest:
+    """Remove caller-chosen labels and identifiers from hosted capture evidence."""
+
+    if any(
+        note.signal not in HOSTED_CAPTURE_COVERAGE_SIGNALS
+        or note.reason not in HOSTED_CAPTURE_COVERAGE_REASONS
+        for note in capture.coverage
+    ) or (
+        capture.resync is not None and capture.resync.reason not in HOSTED_CAPTURE_RESYNC_REASONS
+    ):
+        raise ApiProblem(
+            422,
+            "EARSHOT_HOSTED_METADATA_ONLY",
+            "hosted capture contains an unsupported outcome or coverage value",
+        )
+
+    # The browser may supply stable correlation handles, but the hosted contract
+    # assigns Earshot's session and clock-domain IDs. HMAC the untrusted values
+    # with the store's private instance key so they are stable for retries and
+    # cannot carry a user, customer, or provider label into stored evidence.
+    identity = f"{project_id}\x00{capture.sessionId}\x00{capture.clockDomain.id}"
+    session_id = f"sess_{repository.fingerprint('hosted-capture-session-v1', identity)[:32]}"
+    clock_domain_id = f"clk_{repository.fingerprint('hosted-capture-clock-v1', identity)[:16]}"
+    return capture.model_copy(
+        update={
+            "sessionId": session_id,
+            "clockDomain": capture.clockDomain.model_copy(update={"id": clock_domain_id}),
+        }
+    )
 
 
 # -- browser capture: independent server-side enforcement ----------------------
@@ -1567,6 +1928,7 @@ async def _capture_continuous(
     project_id: str,
     capture_calls: CaptureCallRegistry,
     settings: ApiConfig,
+    repository: IncidentStore,
 ) -> JSONResponse:
     """Accept one ``captureVersion: 2`` drain into its continuous call.
 
@@ -1575,7 +1937,7 @@ async def _capture_continuous(
     it (idempotent by slot and content), projects it into governed facts through a
     recorder while threading the WebRTC carry across the drain boundary, journals
     those facts, and appends them to the call's live session. No per-drain
-    incident is created; the growing artifact is materialized only by an operator
+    incident is created; the growing artifact is materialized by an authorized
     seal, and stays provisional until Phase 2's observed close.
     """
 
@@ -1639,7 +2001,16 @@ async def _capture_continuous(
             resync=resync,
             end=end,
         )
-        return capture_calls.drain(drain), rejections
+        with repository.project_write_scope(project_id):
+            return (
+                capture_calls.drain(
+                    drain,
+                    bundle_identity_exists=lambda owner_project, bundle_id: (
+                        repository.bundle_identity_exists(bundle_id, project_id=owner_project)
+                    ),
+                ),
+                rejections,
+            )
 
     try:
         outcome, rejections = await run_in_threadpool(run)
@@ -1677,11 +2048,30 @@ async def _capture_continuous(
             "EARSHOT_CAPTURE_CALL_CLOSED",
             "this call was ended by an explicit endCall() and accepts no more drains",
         ) from error
+    except CaptureCallReplayExpiredError as error:
+        raise ApiProblem(
+            409,
+            "EARSHOT_CAPTURE_REPLAY_EXPIRED",
+            "the retained replay window for this completed capture call has expired",
+        ) from error
     except CaptureCallCapacityError as error:
         raise ApiProblem(
             429,
             "EARSHOT_CAPTURE_CALL_CAPACITY",
-            "this project is carrying as many continuous capture calls as it will",
+            "capture call capacity has been reached",
+        ) from error
+    except LiveCaptureJournalLimitError as error:
+        raise ApiProblem(
+            413,
+            "EARSHOT_CAPTURE_JOURNAL_LIMIT",
+            "this drain would exceed the configured per-call capture journal limit",
+        ) from error
+    except CaptureJournalUnavailableError as error:
+        raise ApiProblem(
+            503,
+            "EARSHOT_CAPTURE_JOURNAL_UNAVAILABLE",
+            "the durable capture journal is unavailable; retry the same drain",
+            headers={"Retry-After": "3"},
         ) from error
     except LiveCapacityError as error:
         raise ApiProblem(
@@ -1817,14 +2207,18 @@ def create_app(
     web_dir: str | Path | None = None,
     live_registry: LiveSessionRegistry | None = None,
     capture_journal_dir: str | Path | None = None,
+    enable_platform_adapter: bool = False,
 ) -> FastAPI:
     settings = config or ApiConfig()
     repository = store or IncidentStore(data_dir)
+    if enable_platform_adapter and settings.auth_mode != "hosted_jwt":
+        raise ValueError("Platform adapter requires auth_mode='hosted_jwt'")
     remote_access = _remote_access(settings)
     if (
         remote_access
         and not settings.trust_local_network
         and not settings.token
+        and settings.auth_mode != "hosted_jwt"
         and not repository.has_active_api_keys()
     ):
         raise ValueError("remote access requires a bearer token or an active project API key")
@@ -1832,8 +2226,17 @@ def create_app(
     # box and the live routes are always describable in the contract. Following a
     # local checkpoint directory is separate, and stays an explicit opt-in
     # because reading one is a decision about where session evidence lives.
-    live = live_registry or LiveSessionRegistry()
-    live.start()
+    live = live_registry or LiveSessionRegistry(
+        project_is_active=repository.project_is_active,
+    )
+    live.set_project_active_check(repository.project_is_active)
+    if (
+        capture_journal_dir is not None
+        and live.journal_dir is not None
+        and Path(capture_journal_dir).expanduser().resolve()
+        == Path(live.journal_dir).expanduser().resolve()
+    ):
+        raise ValueError("capture journal directory must differ from the checkpoint directory")
     # Continuous browser calls (``captureVersion: 2``) accumulate through this,
     # onto the same live sessions the checkpoint surface uses. Bounded per project
     # to the same budget a project's live sessions run under, so capture cannot
@@ -1849,18 +2252,59 @@ def create_app(
         live,
         journal_dir=capture_journal_dir,
         max_calls_per_project=live.config.max_sessions_per_project,
+        max_sealed_replay_ledgers=settings.max_sealed_capture_replay_ledgers,
+        correlation_key_id=(
+            repository.fingerprint("earshot.capture-ledger-key-id.v1", "instance")
+            if settings.auth_mode == "hosted_jwt"
+            else None
+        ),
     )
-    capture_calls.rebuild_from_disk()
+
+    def expire_capture_session(project_id: str, call_key: str) -> bool:
+        try:
+            # Expiry changes durable capture ownership, so it must serialize
+            # with the same project fence that prevents writes during deletion.
+            # Acquire this before the per-call lock, matching capture drains.
+            with repository.project_write_scope(project_id):
+                if not capture_calls.durable_configured:
+                    return live.drop_session(
+                        call_key,
+                        reason=END_SESSION_EXPIRED,
+                        project_id=project_id,
+                    )
+                return capture_calls.expire_session(project_id, call_key)
+        except ProjectInactiveError:
+            # Deletion has fenced writes and owns the removal of this live view.
+            return True
+
+    live.set_capture_expiry_handler(expire_capture_session)
+    capture_calls.rebuild_from_disk(project_is_active=repository.project_is_active)
+    # Pending capture transactions must be rolled back before the live poller can
+    # discover those files; otherwise its in-memory replay could retain frames
+    # that the transaction recovery then truncates from disk.
+    live.start()
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        """Stop following journals on shutdown, and tell subscribers why."""
+        """Run bounded retention maintenance and close live capture resources."""
 
         live.start()
+        retention_stop = asyncio.Event()
+        retention_task = asyncio.create_task(
+            _run_retention_cleanup(repository, settings, retention_stop),
+            name="earshot-retention-cleanup",
+        )
         try:
             yield
         finally:
-            live.close()
+            retention_stop.set()
+            try:
+                await retention_task
+            finally:
+                try:
+                    live.close()
+                finally:
+                    capture_calls.close()
 
     app = FastAPI(
         title="Earshot local ingest",
@@ -1884,6 +2328,20 @@ def create_app(
     )
     app.state.live = live
     app.state.capture_calls = capture_calls
+    app.state.hosted_jwt_verifier = (
+        HostedJwtVerifier(
+            issuer=settings.jwt_issuer or "",
+            audience=settings.jwt_audience or "",
+            jwks_url=settings.jwks_url or "",
+            jwks_ca_file=settings.jwks_ca_file,
+        )
+        if settings.auth_mode == "hosted_jwt"
+        else None
+    )
+    if enable_platform_adapter:
+        from .integrations.platform import create_platform_router
+
+        app.include_router(create_platform_router(repository))
 
     def openapi_schema() -> dict[str, Any]:
         if app.openapi_schema is not None:
@@ -1901,9 +2359,24 @@ def create_app(
             ref_template="#/components/schemas/{model}"
         )
         definitions = incident_schema.pop("$defs", {})
+        hosted_incident_schema = HostedIncidentBundleJson.model_json_schema(
+            ref_template="#/components/schemas/{model}"
+        )
+        hosted_definitions = hosted_incident_schema.pop("$defs", {})
         components = schema.setdefault("components", {}).setdefault("schemas", {})
         components.update(definitions)
+        components.update(hosted_definitions)
         components["IncidentBundleJson"] = incident_schema
+        components["HostedIncidentBundleJson"] = hosted_incident_schema
+        if settings.auth_mode == "hosted_jwt":
+            # Hosted ingestion accepts the closed JSON envelope only. The local
+            # operator route also accepts protobuf, so its schema is intentionally
+            # narrower here to match the actual hosted decoder.
+            for path in ("/v1/incidents", "/v1/incidents/validate"):
+                operation = schema.get("paths", {}).get(path, {}).get("post", {})
+                content = operation.get("requestBody", {}).get("content", {})
+                content.pop(PROTOBUF_MEDIA_TYPE, None)
+                content.pop("application/x-protobuf", None)
         # The capture body is read and validated by hand (streamed byte bound
         # first), so its schema is published here rather than inferred from a
         # route signature.
@@ -1921,11 +2394,24 @@ def create_app(
             "in": "cookie",
             "name": _VIEWER_SESSION_COOKIE,
         }
+        schema["components"]["securitySchemes"]["HostedServiceBearer"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
         for path, path_item in schema.get("paths", {}).items():
             if not path.startswith("/v1/"):
                 continue
             for method, operation in path_item.items():
                 if isinstance(operation, dict) and "responses" in operation:
+                    if settings.auth_mode == "hosted_jwt":
+                        if path.startswith("/v1/auth/"):
+                            continue
+                        operation["security"] = [{"HostedServiceBearer": []}]
+                        required_scope = _hosted_required_scope(method.upper(), path)
+                        if required_scope is not None:
+                            operation["x-required-scope"] = required_scope
+                        continue
                     # Loopback deployments may omit auth; remote deployments
                     # accept bearer clients or the same-origin viewer session.
                     authenticated = [{"BearerAuth": []}, {"BrowserSession": []}]
@@ -1955,7 +2441,7 @@ def create_app(
         value: dict[str, object] = {"error": error_body}
         if error.issues is not None:
             error_body["issues"] = error.issues
-        return JSONResponse(value, status_code=error.status_code)
+        return JSONResponse(value, status_code=error.status_code, headers=error.headers)
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(_: Request, error: RequestValidationError) -> JSONResponse:
@@ -2029,6 +2515,18 @@ def create_app(
             status_code=503,
         )
 
+    @app.exception_handler(ProjectInactiveError)
+    async def handle_inactive_project(_: Request, __: ProjectInactiveError) -> JSONResponse:
+        return JSONResponse(
+            {
+                "error": {
+                    "code": "EARSHOT_PROJECT_DELETING",
+                    "message": "project is not accepting requests",
+                }
+            },
+            status_code=410,
+        )
+
     @app.exception_handler(DeliveryError)
     async def handle_delivery_error(_: Request, error: DeliveryError) -> JSONResponse:
         headers = (
@@ -2100,8 +2598,8 @@ def create_app(
                 },
                 status_code=503,
             )
-        local_only_host_boundary = settings.trust_local_network or (
-            not settings.token and _is_loopback(settings.host)
+        local_only_host_boundary = settings.auth_mode != "hosted_jwt" and (
+            settings.trust_local_network or (not settings.token and _is_loopback(settings.host))
         )
         if (
             local_only_host_boundary
@@ -2118,6 +2616,118 @@ def create_app(
                 status_code=400,
             )
         if request.url.path.startswith("/v1/"):
+            if settings.auth_mode == "hosted_jwt":
+                if request.url.path.startswith("/v1/auth/"):
+                    return JSONResponse(
+                        {"error": {"code": "EARSHOT_NOT_FOUND", "message": "route not found"}},
+                        status_code=404,
+                    )
+                authorization_values = request.headers.getlist("authorization")
+                if len(authorization_values) != 1:
+                    return _unauthorized_response()
+                scheme, separator, credential = authorization_values[0].partition(" ")
+                if (
+                    not separator
+                    or scheme.lower() != "bearer"
+                    or not credential
+                    or " " in credential
+                ):
+                    return _unauthorized_response()
+                try:
+                    hosted_principal = await run_in_threadpool(
+                        app.state.hosted_jwt_verifier.verify,
+                        credential,
+                    )
+                except HostedJwksUnavailable:
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "EARSHOT_AUTHORITY_UNAVAILABLE",
+                                "message": "token signing keys are temporarily unavailable",
+                            }
+                        },
+                        status_code=503,
+                        headers={"Retry-After": "3"},
+                    )
+                except InvalidHostedToken:
+                    return _unauthorized_response()
+                project_state = await run_in_threadpool(
+                    repository.project_lifecycle,
+                    hosted_principal.project_id,
+                )
+                if project_state is None:
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "EARSHOT_PROJECT_NOT_PROVISIONED",
+                                "message": "signed project is not provisioned in Earshot",
+                            }
+                        },
+                        status_code=403,
+                    )
+                project_delete_request = (
+                    request.method.upper() == "DELETE"
+                    and request.url.path.startswith("/v1/projects/")
+                    and request.url.path.count("/") == 3
+                )
+                if project_state != "active" and not project_delete_request:
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "EARSHOT_PROJECT_DELETING",
+                                "message": "project is not accepting requests",
+                            }
+                        },
+                        status_code=410,
+                    )
+                project_assertions = request.headers.getlist(_PROJECT_HEADER)
+                if project_assertions and (
+                    len(project_assertions) != 1
+                    or project_assertions[0] != hosted_principal.project_id
+                ):
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "EARSHOT_PROJECT_MISMATCH",
+                                "message": "asserted SDK project does not match the signed project",
+                            }
+                        },
+                        status_code=403,
+                    )
+                required_scope = _hosted_required_scope(request.method, request.url.path)
+                if required_scope is None:
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "EARSHOT_OPERATION_UNAVAILABLE",
+                                "message": "hosted authorization is not defined for this operation",
+                            }
+                        },
+                        status_code=403,
+                    )
+                if required_scope not in hosted_principal.scopes:
+                    return JSONResponse(
+                        {
+                            "error": {
+                                "code": "EARSHOT_SCOPE_REQUIRED",
+                                "message": "token does not grant the required operation",
+                            }
+                        },
+                        status_code=403,
+                        headers={
+                            "WWW-Authenticate": (
+                                f'Bearer error="insufficient_scope", scope="{required_scope}"'
+                            )
+                        },
+                    )
+                request.state.project_id = hosted_principal.project_id
+                request.state.project_lifecycle = project_state
+                request.state.hosted_principal = hosted_principal
+                request.state.auth_method = "hosted_jwt"
+                request.state.auth_key_id = None
+                request.state.browser_session = None
+                request.state.browser_session_token = ""
+                return await call_next(request)
             authorization = request.headers.get("authorization", "")
             scheme, separator, credential = authorization.partition(" ")
             supplied = credential if separator and scheme.lower() == "bearer" else ""
@@ -2223,6 +2833,7 @@ def create_app(
         response = JSONResponse(
             {
                 "project_id": issued.session.project_id,
+                "auth_context_id": issued.session.auth_context_id,
                 "csrf_token": issued.session.csrf_token,
                 "expires_in_seconds": settings.viewer_session_ttl_seconds,
             },
@@ -2258,6 +2869,7 @@ def create_app(
                     "authenticated": False,
                     "authentication_required": False,
                     "project_id": DEFAULT_PROJECT_ID,
+                    "auth_context_id": "anonymous-default",
                     "csrf_token": None,
                     "expires_in_seconds": None,
                 },
@@ -2268,6 +2880,7 @@ def create_app(
                 "authenticated": True,
                 "authentication_required": True,
                 "project_id": session.project_id,
+                "auth_context_id": session.auth_context_id,
                 "csrf_token": session.csrf_token,
                 "expires_in_seconds": max(
                     0,
@@ -2410,6 +3023,13 @@ def create_app(
             200: {"model": CaptureAcceptedResponse | CaptureContinuousResponse},
             202: {"model": CaptureContinuousResponse},
             **_ERROR_RESPONSES,
+            413: {
+                "model": ProblemResponse,
+                "description": (
+                    "The payload exceeds a request bound, or a continuous call's "
+                    "durable journal would exceed its configured byte limit."
+                ),
+            },
         },
         openapi_extra=_CAPTURE_REQUEST_BODY,
     )
@@ -2432,6 +3052,9 @@ def create_app(
         Delivery is idempotent by batch content, so a transport retry after an
         unknown outcome resolves to the incident the first delivery created
         (``201`` when this call created it, ``200`` when it already existed).
+        A continuous call's durable journal is byte-bounded; a drain that would
+        exceed that bound is refused without changing its committed prefix, which
+        stays visible to live-session readers.
         """
 
         if _content_type(request) != "application/json":
@@ -2444,9 +3067,30 @@ def create_app(
         parsed = _strict_json_preflight(body, settings.max_json_depth, subject="capture")
         capture = _decode_capture_request(parsed, settings)
         project_id = request.state.project_id
+        if request.state.auth_method == "hosted_jwt":
+            capture = _hosted_capture_projection(
+                capture,
+                project_id=project_id,
+                repository=repository,
+            )
+            if capture.captureVersion == CONTINUOUS_CAPTURE_VERSION and not (
+                capture_calls.durable_available
+            ):
+                raise ApiProblem(
+                    503,
+                    "EARSHOT_CAPTURE_JOURNAL_UNAVAILABLE",
+                    "hosted continuous capture requires a provisioned durable journal; retry",
+                    headers={"Retry-After": "3"},
+                )
 
         if capture.captureVersion == CONTINUOUS_CAPTURE_VERSION:
-            return await _capture_continuous(capture, project_id, capture_calls, settings)
+            return await _capture_continuous(
+                capture,
+                project_id,
+                capture_calls,
+                settings,
+                repository,
+            )
 
         def accept() -> tuple[dict[str, object], bool, _CaptureRejections, int, int]:
             snapshots, dropped_stats, dropped_members = _sanitize_capture_snapshots(
@@ -2557,11 +3201,62 @@ def create_app(
                 settings.max_body_bytes,
             )
         content_type = _content_type(request)
+        parsed_json: dict[str, Any] | None = None
+        if request.state.auth_method == "hosted_jwt":
+            idempotency_key = request.headers.get("idempotency-key")
+            if idempotency_key is None:
+                raise ApiProblem(
+                    400,
+                    "EARSHOT_IDEMPOTENCY_KEY_REQUIRED",
+                    "hosted ingestion requires an Idempotency-Key",
+                )
+            if (
+                not idempotency_key
+                or len(idempotency_key) > 128
+                or idempotency_key != idempotency_key.strip()
+                or any(
+                    ord(character) < 0x21 or ord(character) > 0x7E for character in idempotency_key
+                )
+            ):
+                raise ApiProblem(
+                    400,
+                    "EARSHOT_INVALID_IDEMPOTENCY_KEY",
+                    "Idempotency-Key must be a bounded visible ASCII identifier",
+                )
+            if content_type not in {JSON_MEDIA_TYPE, "application/json"}:
+                raise ApiProblem(
+                    415,
+                    "EARSHOT_HOSTED_JSON_REQUIRED",
+                    "hosted ingestion requires the JSON incident representation",
+                )
+            parsed_json = await run_in_threadpool(
+                _assign_hosted_bundle_id,
+                payload,
+                config=settings,
+                repository=repository,
+                project_id=request.state.project_id,
+                idempotency_key=idempotency_key,
+            )
+            content_type = JSON_MEDIA_TYPE
 
         def decode_validate_and_canonicalize() -> tuple[
             IncidentBundle, list[dict[str, object]], bytes
         ]:
-            bundle = _decode_request(payload, content_type, settings)
+            bundle = _decode_request(
+                payload,
+                content_type,
+                settings,
+                parsed_json=parsed_json,
+            )
+            if request.state.auth_method == "hosted_jwt":
+                try:
+                    assert_hosted_metadata_only(bundle)
+                except HostedCapturePolicyError as error:
+                    raise ApiProblem(
+                        422,
+                        "EARSHOT_HOSTED_METADATA_ONLY",
+                        "hosted ingest accepts only the currently approved metadata fields",
+                    ) from error
             report = validate_incident(bundle)
             if not report.ok:
                 raise ApiProblem(
@@ -2599,11 +3294,25 @@ def create_app(
         status_code=201,
         responses={200: {"model": IngestResponse}, **_ERROR_RESPONSES},
         openapi_extra=_INCIDENT_REQUEST_BODY,
+        description=(
+            "Ingest an immutable incident for the authenticated project. "
+            "The session_id must not use Earshot's reserved capture- namespace."
+        ),
     )
     async def ingest_endpoint(request: Request) -> JSONResponse:
         bundle, warnings, canonical = await decode_and_validate(request)
+        if bundle.profile.manifest.session_id.startswith(CAPTURE_CALL_ID_PREFIX):
+            raise ApiProblem(
+                422,
+                "EARSHOT_SESSION_ID_RESERVED",
+                "incident session IDs cannot use Earshot's browser-capture namespace",
+            )
         idempotency_key = request.headers.get("idempotency-key")
-        if idempotency_key and idempotency_key != bundle.profile.manifest.bundle_id:
+        if (
+            request.state.auth_method != "hosted_jwt"
+            and idempotency_key
+            and idempotency_key != bundle.profile.manifest.bundle_id
+        ):
             raise ApiProblem(
                 400,
                 "EARSHOT_IDEMPOTENCY_KEY_MISMATCH",
@@ -2669,7 +3378,8 @@ def create_app(
         """
 
         _reject_foreign_origin(request)
-        items = live.sessions(project_id=request.state.project_id)
+        with repository.project_access_scope(request.state.project_id):
+            items = live.sessions(project_id=request.state.project_id)
         return JSONResponse(
             {
                 "items": [item.as_dict() for item in items],
@@ -2711,12 +3421,13 @@ def create_app(
 
         _reject_foreign_origin(request)
         try:
-            subscription = live.subscribe(
-                session_id,
-                project_id=request.state.project_id,
-                from_spec=from_,
-                last_event_id=request.headers.get("last-event-id"),
-            )
+            with repository.project_access_scope(request.state.project_id):
+                subscription = live.subscribe(
+                    session_id,
+                    project_id=request.state.project_id,
+                    from_spec=from_,
+                    last_event_id=request.headers.get("last-event-id"),
+                )
         except SessionNotLiveError as error:
             raise ApiProblem(
                 404,
@@ -2740,6 +3451,12 @@ def create_app(
                     # Cleared before draining so an event queued during the drain
                     # still wakes the next wait instead of being slept through.
                     wakeup.clear()
+                    project_state = await run_in_threadpool(
+                        repository.project_lifecycle,
+                        request.state.project_id,
+                    )
+                    if project_state != "active":
+                        subscription.finish("project_deleted")
                     for event in subscription.drain():
                         yield render_sse(event)
                     terminal = subscription.terminal()
@@ -2794,6 +3511,12 @@ def create_app(
         """
 
         _reject_foreign_origin(request)
+        if request.state.auth_method == "hosted_jwt":
+            raise ApiProblem(
+                409,
+                "EARSHOT_HOSTED_CONTRACT_NOT_ACCEPTED",
+                "hosted checkpoint writes await an accepted runtime event contract",
+            )
         if _content_type(request) != CHECKPOINT_MEDIA_TYPE:
             raise ApiProblem(
                 415,
@@ -2806,12 +3529,16 @@ def create_app(
             subject="checkpoint",
         )
         try:
-            accepted = await run_in_threadpool(
-                live.accept_frames,
-                session_id,
-                payload,
-                project_id=request.state.project_id,
-            )
+
+            def accept_frames():
+                with repository.project_write_scope(request.state.project_id):
+                    return live.accept_frames(
+                        session_id,
+                        payload,
+                        project_id=request.state.project_id,
+                    )
+
+            accepted = await run_in_threadpool(accept_frames)
         # No EARSHOT_SESSION_NOT_LIVE here: a session id is scoped to this
         # project, so an id another project holds is answered exactly as an id
         # nobody holds is — the sequence gap below — and never distinguished.
@@ -2849,6 +3576,12 @@ def create_app(
                     }
                 ],
             ) from error
+        except CheckpointSourceConflictError as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_CHECKPOINT_CAPTURE_OWNED",
+                "browser capture sessions accept drains only through the capture endpoint",
+            ) from error
         except CheckpointFramesInvalidError as error:
             raise ApiProblem(
                 400,
@@ -2880,15 +3613,25 @@ def create_app(
         responses={200: {"model": LiveSealResponse}, **_ERROR_RESPONSES},
     )
     async def live_seal_endpoint(session_id: str, request: Request) -> JSONResponse:
-        """Materialize a live buffer into an artifact, on operator command only.
+        """Materialize a live buffer into an artifact after an authorized command.
 
         Nothing else in this server turns a live session into an incident. A seal
         of a journal that never reached close produces a *provisional* artifact
         under a distinct bundle id, so it can never be confused with, or collide
-        with, the final one the producer will still send.
+        with, the final one the producer will still send. Hosted callers can seal
+        the metadata-only browser-capture source; generic hosted checkpoint sealing
+        remains gated on the runtime artifact contract.
         """
 
         _reject_foreign_origin(request)
+        if request.state.auth_method == "hosted_jwt" and not session_id.startswith(
+            CAPTURE_CALL_ID_PREFIX
+        ):
+            raise ApiProblem(
+                409,
+                "EARSHOT_HOSTED_CONTRACT_NOT_ACCEPTED",
+                "hosted checkpoint sealing awaits an accepted runtime artifact contract",
+            )
         try:
             kind, source = live.seal_source(session_id, project_id=request.state.project_id)
             summary = live.summary(session_id, project_id=request.state.project_id)
@@ -2907,6 +3650,12 @@ def create_app(
                 "EARSHOT_SESSION_NOT_SEALABLE",
                 "this live session cannot be materialized into an artifact",
             ) from error
+        if request.state.auth_method == "hosted_jwt" and kind != SOURCE_CAPTURE:
+            raise ApiProblem(
+                409,
+                "EARSHOT_HOSTED_CONTRACT_NOT_ACCEPTED",
+                "hosted checkpoint sealing awaits an accepted runtime artifact contract",
+            )
 
         # A journal that reached close reproduces exactly what the producer will
         # send, so it keeps its bundle id and content-addressed ingest
@@ -2919,7 +3668,7 @@ def create_app(
             # (``browser_capture_journal``); an ordinary checkpoint session keeps
             # the assembler's default. Both are irrelevant once a close was
             # observed, because a finalized replay carries no recovery record.
-            if kind == SOURCE_CHECKPOINT:
+            if kind in {SOURCE_CHECKPOINT, SOURCE_CAPTURE}:
                 with tempfile.TemporaryDirectory(prefix="earshot-seal-") as directory:
                     path = Path(directory) / "sealed.eck"
                     path.write_bytes(source if isinstance(source, bytes) else b"")
@@ -2937,6 +3686,15 @@ def create_app(
                     recovery_method=recovery_method,
                     recovery_reason=recovery_reason,
                 )
+            if request.state.auth_method == "hosted_jwt":
+                try:
+                    assert_hosted_metadata_only(result.bundle)
+                except HostedCapturePolicyError as error:
+                    raise ApiProblem(
+                        422,
+                        "EARSHOT_HOSTED_METADATA_ONLY",
+                        "hosted sealing accepts only metadata-only evidence",
+                    ) from error
             ingested = repository.ingest(
                 result.bundle,
                 encode_incident_protobuf(result.bundle),
@@ -2959,6 +3717,25 @@ def create_app(
                 "the sealed incident does not satisfy the Earshot contract",
                 issues=[_issue_dict(issue) for issue in error.report.errors],
             ) from error
+
+        if kind == SOURCE_CAPTURE and summary.close_observed:
+            try:
+
+                def acknowledge_capture_seal() -> None:
+                    # The sidecar replacement and project deletion must share
+                    # the store's write fence. Otherwise deletion can unlink
+                    # the old ledger and finish before mark_sealed recreates it.
+                    with repository.project_write_scope(request.state.project_id):
+                        capture_calls.mark_sealed(request.state.project_id, session_id)
+
+                await run_in_threadpool(acknowledge_capture_seal)
+            except CaptureJournalUnavailableError as error:
+                raise ApiProblem(
+                    503,
+                    "EARSHOT_CAPTURE_JOURNAL_UNAVAILABLE",
+                    "the artifact was stored but its capture replay fence is unavailable; retry",
+                    headers={"Retry-After": "3"},
+                ) from error
 
         if summary.close_observed:
             # The producer finished and the artifact exists; the live buffer is
@@ -2986,6 +3763,117 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.delete(
+        "/v1/projects/{project_id}",
+        response_model=ProjectDeletionResponse,
+        responses={202: {"model": ProjectDeletionResponse}, **_ERROR_RESPONSES},
+        summary="Delete all retained data and authorization state for a project",
+        description=(
+            "Requires the earshot:project:delete scope. Deletion is idempotent. "
+            "A 202 response means writes are fenced and cleanup is still pending; "
+            "repeat the same request until state is deleted."
+        ),
+    )
+    async def delete_project_endpoint(project_id: str, request: Request) -> JSONResponse:
+        if request.state.auth_method != "hosted_jwt":
+            raise ApiProblem(
+                403,
+                "EARSHOT_HOSTED_AUTH_REQUIRED",
+                "project deletion requires a hosted project-scoped JWT",
+            )
+        if project_id != request.state.project_id:
+            raise ApiProblem(
+                403,
+                "EARSHOT_PROJECT_MISMATCH",
+                "requested project does not match the signed project",
+            )
+        try:
+            lifecycle = await run_in_threadpool(repository.begin_project_deletion, project_id)
+        except ValueError as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_PROJECT_DELETE_FORBIDDEN",
+                "this project cannot be deleted",
+            ) from error
+
+        if lifecycle == "deleted":
+            return JSONResponse(
+                {
+                    "project_id": project_id,
+                    "state": "deleted",
+                    "retry_after_seconds": None,
+                },
+                status_code=200,
+                headers={"Cache-Control": "no-store"},
+            )
+
+        capture_cleanup_complete = await run_in_threadpool(capture_calls.drop_project, project_id)
+        live.drop_project(project_id)
+        storage_cleanup_complete = await run_in_threadpool(
+            repository.delete_project_data,
+            project_id,
+            finalize=False,
+            compact=capture_cleanup_complete,
+        )
+        if capture_cleanup_complete and storage_cleanup_complete:
+            await run_in_threadpool(repository.mark_project_deleted, project_id)
+            lifecycle = "deleted"
+        else:
+            lifecycle = "deleting"
+
+        complete = lifecycle == "deleted"
+        return JSONResponse(
+            {
+                "project_id": project_id,
+                "state": lifecycle,
+                "retry_after_seconds": None if complete else 3,
+            },
+            status_code=200 if complete else 202,
+            headers={
+                "Cache-Control": "no-store",
+                **({} if complete else {"Retry-After": "3"}),
+            },
+        )
+
+    @app.get(
+        "/v1/projects/{project_id}/summary",
+        response_model=ProjectSummaryResponse,
+        summary="Read a bounded metadata summary for one project",
+        description=(
+            "Returns at most 50 retained session metadata records. This projection "
+            "never reads artifact bytes and contains no host-specific links or labels."
+        ),
+        responses=_ERROR_RESPONSES,
+    )
+    def project_summary_endpoint(project_id: str, request: Request) -> ProjectSummaryResponse:
+        if project_id != request.state.project_id:
+            raise ApiProblem(
+                403,
+                "EARSHOT_PROJECT_MISMATCH",
+                "requested project does not match the authenticated project",
+            )
+        try:
+            summary = summarize_project(repository, project_id=project_id)
+        except InvalidCursorError as error:
+            raise ApiProblem(
+                400,
+                "EARSHOT_INVALID_CURSOR",
+                "invalid incident pagination cursor",
+            ) from error
+        return ProjectSummaryResponse(
+            project_id=summary.project_id,
+            items=[
+                ProjectSummaryItemResponse(
+                    session_id=item.session_id,
+                    status=item.status,
+                    framework=item.framework,
+                    framework_truncated=item.framework_truncated,
+                    created_at_unix_nano=item.created_at_unix_nano,
+                )
+                for item in summary.items
+            ],
+        )
+
     @app.get(
         "/v1/incidents",
         response_model=IncidentPageResponse,
@@ -3011,20 +3899,7 @@ def create_app(
                 "EARSHOT_INVALID_CURSOR",
                 "invalid incident pagination cursor",
             ) from error
-        visible = []
-        for item in page.items:
-            _, payload = repository.get_artifact(
-                item.bundle_id, project_id=request.state.project_id
-            )
-            try:
-                bundle = decode_incident_protobuf(payload)
-            except IncidentCodecError as error:
-                raise ArtifactCorruptionError("stored incident cannot be decoded") from error
-            try:
-                assert_export_allowed(bundle, "local_api")
-            except ExportPolicyError:
-                continue
-            visible.append(item.as_dict())
+        visible = [item.as_dict() for item in page.items]
         return JSONResponse(
             {
                 "items": visible,
@@ -3071,6 +3946,123 @@ def create_app(
         headers = dict(common_headers)
         headers["ETag"] = f'"sha256:{hashlib.sha256(rendered).hexdigest()}"'
         return Response(rendered, media_type=response_media_type, headers=headers)
+
+    @app.get(
+        "/v1/incidents/{bundle_id}/references",
+        response_model=IncidentExternalReferencesResponse,
+        summary="List related product records",
+        description=(
+            "Returns project-scoped opaque references attached to an incident. "
+            "References are catalog metadata and are not part of the immutable artifact."
+        ),
+        responses=_ERROR_RESPONSES,
+    )
+    def get_external_references_endpoint(bundle_id: str, request: Request) -> JSONResponse:
+        project_id = request.state.project_id
+        record, payload = repository.get_artifact(bundle_id, project_id=project_id)
+        try:
+            bundle = decode_incident_protobuf(payload)
+        except IncidentCodecError as error:
+            raise ArtifactCorruptionError("stored incident cannot be decoded") from error
+        assert_export_allowed(bundle, "local_api")
+        references = repository.get_external_references(bundle_id, project_id=project_id)
+        return JSONResponse(
+            {
+                "bundle_id": record.bundle_id,
+                "items": [
+                    {
+                        "namespace": item.namespace,
+                        "record_type": item.record_type,
+                        "external_id": item.external_id,
+                        "linked_at_unix_nano": item.linked_at_unix_nano,
+                    }
+                    for item in references
+                ],
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.put(
+        "/v1/incidents/{bundle_id}/references/{namespace}/{record_type}",
+        response_model=ExternalReferenceResponse,
+        summary="Set a related product record",
+        description=(
+            "Idempotently upserts one opaque, project-scoped reference. The external ID "
+            "must be a portable identifier; URLs and evidence content are not accepted."
+        ),
+        responses=_ERROR_RESPONSES,
+    )
+    def set_external_reference_endpoint(
+        bundle_id: str,
+        namespace: ExternalReferenceKeyPart,
+        record_type: ExternalReferenceKeyPart,
+        body: ExternalReferenceWriteRequest,
+        request: Request,
+    ) -> JSONResponse:
+        try:
+            key = ExternalReferenceKey(namespace=namespace, record_type=record_type)
+        except ValidationError as error:
+            raise ApiProblem(
+                422,
+                "EARSHOT_INVALID_EXTERNAL_REFERENCE",
+                "reference namespace and record type must be portable identifiers",
+            ) from error
+        project_id = request.state.project_id
+        _record, payload = repository.get_artifact(bundle_id, project_id=project_id)
+        try:
+            bundle = decode_incident_protobuf(payload)
+        except IncidentCodecError as error:
+            raise ArtifactCorruptionError("stored incident cannot be decoded") from error
+        assert_export_allowed(bundle, "local_api")
+        reference = repository.set_external_reference(
+            bundle_id,
+            project_id=project_id,
+            namespace=key.namespace,
+            record_type=key.record_type,
+            external_id=body.external_id,
+        )
+        return JSONResponse(
+            {
+                "namespace": reference.namespace,
+                "record_type": reference.record_type,
+                "external_id": reference.external_id,
+                "linked_at_unix_nano": reference.linked_at_unix_nano,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.delete(
+        "/v1/incidents/{bundle_id}/references/{namespace}/{record_type}",
+        status_code=204,
+        summary="Remove a related product record",
+        description="Removes one catalog reference without modifying the incident artifact.",
+        responses=_ERROR_RESPONSES,
+    )
+    def delete_external_reference_endpoint(
+        bundle_id: str,
+        namespace: ExternalReferenceKeyPart,
+        record_type: ExternalReferenceKeyPart,
+        request: Request,
+    ) -> Response:
+        try:
+            key = ExternalReferenceKey(namespace=namespace, record_type=record_type)
+        except ValidationError as error:
+            raise ApiProblem(
+                422,
+                "EARSHOT_INVALID_EXTERNAL_REFERENCE",
+                "reference namespace and record type must be portable identifiers",
+            ) from error
+        project_id = request.state.project_id
+        # The storage operation checks project scope and retention atomically.
+        # Deletion remains available even if export policy forbids reading the
+        # artifact's evidence through the API.
+        repository.delete_external_reference(
+            bundle_id,
+            project_id=project_id,
+            namespace=key.namespace,
+            record_type=key.record_type,
+        )
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     def resolve_analysis(
         bundle_id: str, *, project_id: str
