@@ -1590,6 +1590,19 @@ def test_openapi_exposes_wire_formats_live_tail_and_optional_loopback_auth(tmp_p
     assert schema["paths"]["/v1/auth/logout"]["post"]["security"] == [{"BrowserSession": []}]
 
 
+def test_openapi_standard_error_descriptions_are_stable_across_python_versions(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    schema = client.get("/openapi.json").json()
+    responses = schema["paths"]["/v1/incidents"]["post"]["responses"]
+    capture_responses = schema["paths"]["/v1/capture"]["post"]["responses"]
+
+    assert responses["413"]["description"] == "Content Too Large"
+    assert responses["422"]["description"] == "Unprocessable Content"
+    assert capture_responses["413"]["description"].startswith(
+        "The payload exceeds a request bound,"
+    )
+
+
 def test_openapi_marks_viewer_or_bearer_auth_mandatory_when_server_has_a_token(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="test-token"))
     schema = client.get("/openapi.json").json()

@@ -865,6 +865,12 @@ class _CaptureRejections:
     device_members: int = 0
 
 
+# `HTTPStatus.phrase` changed in Python 3.14; keep generated OpenAPI stable across versions.
+_STABLE_HTTP_STATUS_DESCRIPTIONS = {
+    "413": ("Content Too Large", "Request Entity Too Large"),
+    "422": ("Unprocessable Content", "Unprocessable Entity"),
+}
+
 _ERROR_RESPONSES = {
     status: {"model": ProblemResponse}
     for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 503)
@@ -2357,6 +2363,17 @@ def create_app(
                 "for Earshot v1alpha1 incidents."
             ),
         )
+        for path_item in schema.get("paths", {}).values():
+            for operation in path_item.values():
+                if not isinstance(operation, dict):
+                    continue
+                responses = operation.get("responses", {})
+                if not isinstance(responses, dict):
+                    continue
+                for status, descriptions in _STABLE_HTTP_STATUS_DESCRIPTIONS.items():
+                    response = responses.get(status)
+                    if isinstance(response, dict) and response.get("description") in descriptions:
+                        response["description"] = descriptions[0]
         incident_schema = IncidentBundleJson.model_json_schema(
             ref_template="#/components/schemas/{model}"
         )
