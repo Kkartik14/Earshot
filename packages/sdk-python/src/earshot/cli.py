@@ -133,6 +133,18 @@ def _purge_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _cleanup_unreferenced_objects_command(arguments: argparse.Namespace) -> int:
+    store = IncidentStore(_data_dir(arguments.data_dir))
+    removed = store.cleanup_unreferenced_objects()
+    _print_json(
+        {
+            "scope": "all projects in the data directory",
+            "removed_unreferenced_objects": removed,
+        }
+    )
+    return 0
+
+
 def _project_create_command(arguments: argparse.Namespace) -> int:
     store = IncidentStore(_data_dir(arguments.data_dir))
     project = store.create_project(arguments.project_id, display_name=arguments.display_name)
@@ -383,9 +395,16 @@ def _serve_command(arguments: argparse.Namespace) -> int:
     config = ApiConfig(
         host=arguments.host,
         token=token,
+        auth_mode=arguments.auth_mode,
+        jwt_issuer=arguments.jwt_issuer,
+        jwt_audience=arguments.jwt_audience,
+        jwks_url=arguments.jwks_url,
+        jwks_ca_file=arguments.jwks_ca_file,
         max_body_bytes=arguments.max_body_bytes,
         max_connector_body_bytes=arguments.max_connector_body_bytes,
         max_connector_deliveries_per_minute=(arguments.max_connector_deliveries_per_minute),
+        retention_cleanup_interval_seconds=arguments.retention_cleanup_interval_seconds,
+        retention_cleanup_batch_size=arguments.retention_cleanup_batch_size,
         analyzer_version=ANALYZER_VERSION,
         behind_tls_proxy=arguments.behind_tls_proxy,
         trust_local_network=arguments.trust_local_network,
@@ -406,6 +425,7 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         config=config,
         web_dir=arguments.web_dir,
         live_registry=registry,
+        enable_platform_adapter=arguments.platform_adapter,
     )
     print(f"Earshot data path: {data_dir}", file=sys.stderr)
     if checkpoint_dir is not None:
@@ -465,6 +485,23 @@ def _build_parser() -> argparse.ArgumentParser:
     purge.add_argument("--data-dir")
     purge.add_argument("--project", default=DEFAULT_PROJECT_ID)
     purge.set_defaults(handler=_purge_command)
+
+    maintenance = commands.add_parser(
+        "maintenance", help="run explicit store-wide maintenance operations"
+    )
+    maintenance_commands = maintenance.add_subparsers(dest="maintenance_command", required=True)
+    cleanup_objects = maintenance_commands.add_parser(
+        "cleanup-unreferenced-objects",
+        help="globally remove CAS objects not referenced by any incident",
+    )
+    cleanup_objects.add_argument("--data-dir")
+    cleanup_objects.add_argument(
+        "--confirm-global-object-sweep",
+        action="store_true",
+        required=True,
+        help="confirm a backup exists and every unreferenced object may be removed",
+    )
+    cleanup_objects.set_defaults(handler=_cleanup_unreferenced_objects_command)
 
     project = commands.add_parser("project", help="manage project authorization scopes")
     project_commands = project.add_subparsers(dest="project_command", required=True)
@@ -604,6 +641,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--token")
     serve.add_argument(
+        "--auth-mode",
+        choices=("operator", "hosted_jwt"),
+        default=os.environ.get("EARSHOT_AUTH_MODE", "operator"),
+    )
+    serve.add_argument("--jwt-issuer", default=os.environ.get("EARSHOT_JWT_ISSUER"))
+    serve.add_argument("--jwt-audience", default=os.environ.get("EARSHOT_JWT_AUDIENCE"))
+    serve.add_argument("--jwks-url", default=os.environ.get("EARSHOT_JWKS_URL"))
+    serve.add_argument("--jwks-ca-file", default=os.environ.get("EARSHOT_JWKS_CA_FILE"))
+    serve.add_argument(
+        "--platform-adapter",
+        action="store_true",
+        default=_boolean_environment("EARSHOT_PLATFORM_ADAPTER_ENABLED"),
+        help="mount the optional Platform Observe response adapter (hosted_jwt only)",
+    )
+    serve.add_argument(
         "--behind-tls-proxy",
         action="store_true",
         default=_boolean_environment("EARSHOT_BEHIND_TLS_PROXY"),
@@ -633,6 +685,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-connector-deliveries-per-minute",
         type=int,
         default=int(os.environ.get("EARSHOT_MAX_CONNECTOR_DELIVERIES_PER_MINUTE", "120")),
+    )
+    serve.add_argument(
+        "--retention-cleanup-interval-seconds",
+        type=float,
+        default=float(os.environ.get("EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS", "5")),
+    )
+    serve.add_argument(
+        "--retention-cleanup-batch-size",
+        type=int,
+        default=int(os.environ.get("EARSHOT_RETENTION_CLEANUP_BATCH_SIZE", "1000")),
     )
     serve.add_argument("--log-level", default="info")
     serve.set_defaults(handler=_serve_command)

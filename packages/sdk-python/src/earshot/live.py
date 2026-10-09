@@ -36,11 +36,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import threading
 import time
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ from typing import Any
 from .checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, encode_frame, scan_frames
 from .checkpoint.limits import (
     CHECKPOINT_COVERAGE_NOTE,
+    DEFAULT_MAX_JOURNAL_BYTES,
     DEFAULT_MAX_JOURNAL_RECORDS,
     MAX_CHECKPOINT_FRAME_BODY_BYTES,
 )
@@ -66,7 +68,9 @@ from .checkpoint.records import (
     encode_entry,
 )
 from .privacy import CaptureClass, CapturePolicy, export_denials
-from .storage import DEFAULT_PROJECT_ID
+from .storage import DEFAULT_PROJECT_ID, ProjectInactiveError
+
+_LOGGER = logging.getLogger(__name__)
 
 # The export destination this stream declares, and the name a capture policy's
 # ``ExportConfig.destinations`` must permit for a class's content to be tailed.
@@ -77,6 +81,7 @@ LIVE_TAIL_DESTINATION = "live_tail"
 
 SOURCE_JOURNAL = "journal"
 SOURCE_CHECKPOINT = "checkpoint"
+SOURCE_CAPTURE = "capture"
 
 STATE_LIVE = "live"
 STATE_STALE = "stale"
@@ -110,6 +115,12 @@ END_SEALED = "sealed"
 END_SESSION_EXPIRED = "session_expired"
 END_SESSION_SUPERSEDED = "session_superseded"
 END_SERVER_STOPPING = "server_stopping"
+END_PROJECT_DELETED = "project_deleted"
+END_CAPTURE_RETRY_REQUIRED = "capture_retry_required"
+
+# A journal replay must not monopolize the shared storage mutation lock. The
+# refresh loop fences each bounded publish batch against project deletion.
+_JOURNAL_REPLAY_PUBLISH_BATCH_SIZE = 256
 
 # What a live view is structurally unable to know. Sent on the ``open`` event so
 # a client cannot mistake an absent value for a measured one, and asserted by
@@ -157,6 +168,10 @@ class LiveCapacityError(LiveError):
     """A live-session quota for this project is already fully used."""
 
 
+class LiveCaptureJournalLimitError(LiveError):
+    """A durable browser-capture append would exceed its per-call byte limit."""
+
+
 class CheckpointSequenceError(LiveError):
     """An uploaded batch does not continue the sequence the server holds."""
 
@@ -179,6 +194,10 @@ class CheckpointDivergedError(LiveError):
     def __init__(self, message: str, *, sequence: int) -> None:
         super().__init__(message)
         self.sequence = sequence
+
+
+class CheckpointSourceConflictError(LiveError):
+    """A producer cannot append through the checkpoint route to another source."""
 
 
 class SessionNotSealableError(LiveError):
@@ -210,6 +229,29 @@ def _fsync_directory(directory: Path) -> None:
     finally:
         with contextlib.suppress(OSError):
             os.close(descriptor)
+
+
+def _fsync_directory_strict(directory: Path) -> None:
+    """Commit a durable capture journal name or fail the drain closed."""
+
+    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _retain_memory_frame(session: _LiveSession, frame: bytes) -> None:
+    """Retain one already-durable frame within the session's seal buffer."""
+
+    frames = session.frames
+    if frames is None:
+        return
+    if len(frames) + len(frame) > session.config.max_seal_bytes:
+        session.frames_complete = False
+        session.frames = None
+        return
+    frames.extend(frame)
 
 
 def _json(value: Any) -> str:
@@ -330,6 +372,10 @@ class LiveConfig:
     # record cap so a conforming producer can never meet it. It bounds the
     # per-sequence checksum ledger that makes a rewritten retry detectable.
     max_journal_records: int = DEFAULT_MAX_JOURNAL_RECORDS
+    # A durable browser call is one journal per accepted call. Bound its total disk
+    # use independently of record count; omission frames can continue after the
+    # recorder has stopped admitting facts.
+    max_capture_journal_bytes: int = DEFAULT_MAX_JOURNAL_BYTES
 
     def __post_init__(self) -> None:
         for name in (
@@ -346,6 +392,7 @@ class LiveConfig:
             "max_queue_bytes",
             "max_frame_bytes",
             "max_journal_records",
+            "max_capture_journal_bytes",
         ):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -386,7 +433,7 @@ class Subscription:
         self._registry = registry
         self._session = session
         self._config = config
-        self._backlog = list(backlog)
+        self._backlog: deque[LiveEvent] = deque(backlog)
         self._queue: deque[LiveEvent] = deque()
         self._queued_bytes = 0
         self._lock = threading.Lock()
@@ -412,9 +459,11 @@ class Subscription:
         """
 
         with self._lock:
-            if self._overflowed or self._closed:
+            if self._overflowed or self._closed or self._end_reason is not None:
                 return
             for event in events:
+                if event.sequence > 0 and event.sequence <= self.last_delivered_sequence:
+                    continue
                 if (
                     len(self._queue) >= self._config.max_queue_records
                     or self._queued_bytes + event.size_bytes > self._config.max_queue_bytes
@@ -431,7 +480,15 @@ class Subscription:
         """Tell this connection the session is over, and why."""
 
         with self._lock:
-            if self._end_reason is None:
+            if reason == END_PROJECT_DELETED:
+                # Project deletion revokes pending evidence immediately, even
+                # if the session had already reached another terminal state.
+                self._end_reason = reason
+                self._backlog.clear()
+                self._queue.clear()
+                self._queued_bytes = 0
+                self._overflowed = False
+            elif self._end_reason is None:
                 self._end_reason = reason
         self._wake()
 
@@ -457,19 +514,44 @@ class Subscription:
         """Take everything currently available, backlog first."""
 
         batch: list[LiveEvent] = []
-        if self._backlog:
-            batch = self._backlog
-            self._backlog = []
         with self._lock:
+            while self._backlog:
+                batch.append(self._backlog.popleft())
             while self._queue:
                 event = self._queue.popleft()
                 self._queued_bytes -= event.size_bytes
                 batch.append(event)
-        for event in reversed(batch):
-            if event.sequence > 0:
-                self.last_delivered_sequence = event.sequence
-                break
+            for event in reversed(batch):
+                if event.sequence > 0:
+                    self.last_delivered_sequence = event.sequence
+                    break
         return batch
+
+    def next_event(self) -> LiveEvent | None:
+        """Take one event, keeping the rest revocable until the next send."""
+
+        with self._lock:
+            if self._backlog:
+                event = self._backlog.popleft()
+            elif self._queue:
+                event = self._queue.popleft()
+                self._queued_bytes -= event.size_bytes
+            else:
+                return None
+            return event
+
+    def mark_delivered(self, event: LiveEvent) -> None:
+        """Advance the resume cursor only after the stream yielded the event."""
+
+        if event.sequence <= 0:
+            return
+        with self._lock:
+            self.last_delivered_sequence = max(self.last_delivered_sequence, event.sequence)
+
+    @property
+    def end_reason(self) -> str | None:
+        with self._lock:
+            return self._end_reason
 
     def terminal(self) -> list[LiveEvent]:
         """The event that ends this stream, once everything else has gone out."""
@@ -477,8 +559,9 @@ class Subscription:
         with self._lock:
             overflowed = self._overflowed
             end_reason = self._end_reason
-            pending = bool(self._queue)
-        if pending or self._backlog:
+            pending = bool(self._queue or self._backlog)
+            last_delivered_sequence = self.last_delivered_sequence
+        if pending:
             return []
         if overflowed:
             return [
@@ -488,8 +571,8 @@ class Subscription:
                     0,
                     {
                         "reason": "subscriber_fell_behind",
-                        "last_sequence": self.last_delivered_sequence,
-                        "resume_with": f"{self.journal_id}:{self.last_delivered_sequence}",
+                        "last_sequence": last_delivered_sequence,
+                        "resume_with": f"{self.journal_id}:{last_delivered_sequence}",
                         "note": (
                             "nothing was dropped; the durable journal still holds every "
                             "record, so reconnect with Last-Event-ID to catch up"
@@ -505,7 +588,7 @@ class Subscription:
                     0,
                     {
                         "reason": end_reason,
-                        "last_sequence": self.last_delivered_sequence,
+                        "last_sequence": last_delivered_sequence,
                         "close_observed": self._session.close_observed,
                     },
                 )
@@ -514,10 +597,8 @@ class Subscription:
 
     @property
     def finished(self) -> bool:
-        if self._backlog:
-            return False
         with self._lock:
-            if self._queue:
+            if self._queue or self._backlog:
                 return False
             return self._overflowed or self._end_reason is not None
 
@@ -635,6 +716,9 @@ class _LiveSession:
         self.events: deque[LiveEvent] = deque()
         self.retained_bytes = 0
         self.last_sequence = 0
+        # A journal snapshot can be fully verified before bounded replay has
+        # published every event from it.
+        self.observed_through_sequence = 0
         self.close_observed = False
         self.journal_complete = True
         self.last_append_unix_nano = 0
@@ -763,11 +847,18 @@ class LiveSessionRegistry:
         config: LiveConfig | None = None,
         project_id: str = DEFAULT_PROJECT_ID,
         clock: Any = time.time,
+        project_is_active: Callable[[str], bool] | None = None,
+        project_access_scope: Callable[[str], contextlib.AbstractContextManager[None]]
+        | None = None,
     ) -> None:
         self.config = config or LiveConfig()
         self.journal_dir = None if journal_dir is None else Path(journal_dir)
         self._key = key
         self._project_id = project_id
+        self._project_is_active = project_is_active or (lambda _project_id: True)
+        self._project_access_scope = project_access_scope or (
+            lambda _project_id: contextlib.nullcontext()
+        )
         self._clock = clock
         self._lock = threading.RLock()
         self._sessions: dict[tuple[str, str], _LiveSession] = {}
@@ -776,6 +867,10 @@ class LiveSessionRegistry:
         self._tracked: dict[Path, _TrackedFile] = {}
         self._connections = 0
         self._project_connections: dict[str, int] = {}
+        # Capture owns its durable expiry marker. The callback is registered by
+        # CaptureCallRegistry so this live layer stays independent of capture's
+        # persistence format.
+        self._capture_expiry_handler: Callable[[str, str], bool] | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -788,6 +883,24 @@ class LiveSessionRegistry:
             return
         self._thread = threading.Thread(target=self._run, name="earshot-live-tail", daemon=True)
         self._thread.start()
+
+    def set_project_active_check(self, check: Callable[[str], bool]) -> None:
+        """Fence journals rebuilt by the background reader after erasure."""
+
+        self._project_is_active = check
+
+    def set_project_access_scope(
+        self,
+        scope: Callable[[str], contextlib.AbstractContextManager[None]],
+    ) -> None:
+        """Serialize journal publication with the durable project deletion fence."""
+
+        self._project_access_scope = scope
+
+    def set_capture_expiry_handler(self, handler: Callable[[str, str], bool] | None) -> None:
+        """Let the capture owner persist expiry before dropping its live view."""
+
+        self._capture_expiry_handler = handler
 
     def close(self) -> None:
         self._stop.set()
@@ -807,12 +920,19 @@ class LiveSessionRegistry:
 
     def _run(self) -> None:
         interval = self.config.poll_interval_ms / 1000.0
+        failure_logged = False
         while not self._stop.wait(interval):
             try:
                 self.refresh()
                 self.expire()
             except Exception:  # pragma: no cover - the poller must never die
+                if not failure_logged:
+                    _LOGGER.exception("Live session polling failed; the next poll will retry")
+                    failure_logged = True
                 continue
+            if failure_logged:
+                _LOGGER.info("Live session polling recovered")
+                failure_logged = False
 
     # -------------------------------------------------------------- reading
 
@@ -829,6 +949,9 @@ class LiveSessionRegistry:
 
         if self.journal_dir is None or not self.journal_dir.is_dir():
             return
+        if not self._project_is_active(self._project_id):
+            self.drop_project(self._project_id)
+            return
         seen: set[Path] = set()
         for path in iter_journals(self.journal_dir):
             seen.add(path)
@@ -839,15 +962,28 @@ class LiveSessionRegistry:
             tracked = self._tracked.setdefault(path, _TrackedFile())
             if tracked.size == status.st_size and tracked.mtime_ns == status.st_mtime_ns:
                 continue
-            tracked.size = status.st_size
-            tracked.mtime_ns = status.st_mtime_ns
             try:
                 replay = JournalReader(path, key=self._key).read()
-            except (JournalUnreadableError, OSError):
+            except JournalUnreadableError:
                 # An unreadable header is not evidence of anything; it is simply
                 # not followable. It is never deleted, truncated, or repaired.
+                tracked.size = status.st_size
+                tracked.mtime_ns = status.st_mtime_ns
                 continue
-            self._publish_replay(path, tracked, replay.header, replay.entries)
+            except OSError:
+                # The file may become readable on a later poll. Keep the prior
+                # successful stamp so an unchanged retry is not skipped.
+                continue
+            try:
+                self._publish_replay(path, tracked, replay.header, replay.entries)
+            except ProjectInactiveError:
+                self.drop_project(self._project_id)
+                return
+            # Commit the observed stamp only after replay completes normally.
+            # If reading or any bounded publish scope fails transiently, the next
+            # refresh must retry even when the journal itself did not change.
+            tracked.size = status.st_size
+            tracked.mtime_ns = status.st_mtime_ns
         for path in [known for known in self._tracked if known not in seen]:
             tracked = self._tracked.pop(path)
             if tracked.session_id is not None:
@@ -866,10 +1002,46 @@ class LiveSessionRegistry:
         header: JournalOpen,
         entries: Sequence[JournalEntry],
     ) -> None:
+        first_batch = True
+        while True:
+            try:
+                with self._project_access_scope(self._project_id):
+                    if not self._project_is_active(self._project_id):
+                        self.drop_project(self._project_id)
+                        return
+                    more = self._publish_replay_batch(
+                        path,
+                        tracked,
+                        header,
+                        entries,
+                        allow_journal_replacement=first_batch,
+                    )
+            except ProjectInactiveError:
+                self.drop_project(self._project_id)
+                return
+            first_batch = False
+            if not more:
+                return
+
+    def _publish_replay_batch(
+        self,
+        path: Path,
+        tracked: _TrackedFile,
+        header: JournalOpen,
+        entries: Sequence[JournalEntry],
+        *,
+        allow_journal_replacement: bool,
+    ) -> bool:
+        """Publish one bounded journal slice while the project fence is held."""
+
         now_nano = int(self._clock() * 1e9)
         with self._lock:
             session = self._sessions.get((self._project_id, header.session_id))
             if session is not None and session.journal_id != header.journal_id:
+                if not allow_journal_replacement:
+                    # Another producer replaced this session between batches.
+                    # Leave the newer journal authoritative.
+                    return False
                 # A new journal for a session we were already following. Tell
                 # every subscriber to discard its state rather than splicing two
                 # sessions into one client-side timeline.
@@ -880,7 +1052,7 @@ class LiveSessionRegistry:
                 if tracked.last_sequence > 0:
                     # This journal was already followed and its session was
                     # dropped (sealed, superseded, expired). Do not resurrect it.
-                    return
+                    return False
                 session = self._register(
                     session_id=header.session_id,
                     project_id=self._project_id,
@@ -893,27 +1065,39 @@ class LiveSessionRegistry:
                 tracked.session_id = header.session_id
                 session.last_append_unix_nano = now_nano
                 self._deliver(session, [session.open_event])
+
+            session.observed_through_sequence = max(
+                session.observed_through_sequence,
+                len(entries) + 1,
+            )
+            last_published_sequence = max(1, tracked.last_sequence, session.last_sequence)
+            tracked.last_sequence = last_published_sequence
+            start_index = last_published_sequence - 1
+            if start_index >= len(entries):
+                return False
+
+            replay_batch = entries[start_index : start_index + _JOURNAL_REPLAY_PUBLISH_BATCH_SIZE]
             batch: list[LiveEvent] = []
-            sequence = 1
-            published_through = tracked.last_sequence
-            for entry in entries:
-                sequence += 1
-                if sequence <= tracked.last_sequence:
-                    continue
+            sequence = start_index + 1
+            published_through = last_published_sequence
+            for entry in replay_batch:
                 if session.close_observed:
                     # ``finalize`` is the end of this journal. A frame after it
                     # is not a later fact, it is a different journal wearing this
                     # one's name, and publishing it would let a closed session
                     # keep speaking.
                     break
+                sequence += 1
                 batch.append(_governed_entry_event(session, entry, sequence))
                 _absorb(session, entry)
                 published_through = sequence
             if not batch:
-                return
+                return False
+
             tracked.last_sequence = published_through
             session.last_append_unix_nano = now_nano
             self._deliver(session, batch)
+            return not session.close_observed and published_through < len(entries) + 1
 
     # --------------------------------------------------------------- upload
 
@@ -945,15 +1129,19 @@ class LiveSessionRegistry:
         is idempotent and republishes nothing.
         """
 
-        if len(payload) < HEADER_SIZE:
-            raise CheckpointFramesInvalidError("checkpoint batch is shorter than one frame")
-        first_sequence = int.from_bytes(payload[1:5], "big")
         now_nano = int(self._clock() * 1e9)
         with self._lock:
             # Keyed by tenant and id together, so a session id another project
             # holds is simply not this project's session: the answer is the one
             # an id nobody holds gets, and existence never leaks across tenants.
             session = self._sessions.get((project_id, session_id))
+            if session is not None and session.source == SOURCE_CAPTURE:
+                raise CheckpointSourceConflictError(
+                    "browser capture sessions do not accept checkpoint uploads"
+                )
+            if len(payload) < HEADER_SIZE:
+                raise CheckpointFramesInvalidError("checkpoint batch is shorter than one frame")
+            first_sequence = int.from_bytes(payload[1:5], "big")
             if first_sequence != 1:
                 if session is None:
                     raise CheckpointSequenceError(
@@ -1048,6 +1236,7 @@ class LiveSessionRegistry:
         recovery_method: str | None = None,
         recovery_reason: str | None = None,
         durable_path: Path | None = None,
+        before_publish: Callable[[], None] | None = None,
     ) -> AcceptedCheckpoint:
         """Append server-authored journal entries to a live call. Scan-free.
 
@@ -1071,6 +1260,18 @@ class LiveSessionRegistry:
         now_nano = int(self._clock() * 1e9)
         with self._lock:
             session = self._sessions.get((project_id, session_id))
+            if durable_path is not None:
+                return self._accept_durable_records_locked(
+                    session_id,
+                    entries,
+                    project_id=project_id,
+                    recovery_method=recovery_method,
+                    recovery_reason=recovery_reason,
+                    durable_path=Path(durable_path),
+                    now_nano=now_nano,
+                    session=session,
+                    before_publish=before_publish,
+                )
             rest: Sequence[JournalEntry]
             if session is None:
                 header = entries[0]
@@ -1084,7 +1285,7 @@ class LiveSessionRegistry:
                 session = self._register(
                     session_id=session_id,
                     project_id=project_id,
-                    source=SOURCE_CHECKPOINT,
+                    source=SOURCE_CAPTURE,
                     header=header,
                     path=None,
                     retain_frames=True,
@@ -1135,6 +1336,204 @@ class LiveSessionRegistry:
                 state=session.state(self._clock()),
                 sealable=session.sealable,
             )
+
+    def _accept_durable_records_locked(
+        self,
+        session_id: str,
+        entries: Sequence[JournalEntry],
+        *,
+        project_id: str,
+        recovery_method: str | None,
+        recovery_reason: str | None,
+        durable_path: Path,
+        now_nano: int,
+        session: _LiveSession | None,
+        before_publish: Callable[[], None] | None,
+    ) -> AcceptedCheckpoint:
+        """Append one capture drain to disk before publishing it in memory.
+
+        The capture sidecar is the outer transaction's write-ahead intent. This
+        method makes the journal append itself all-or-nothing for ordinary I/O
+        errors: it writes and fsyncs the complete encoded batch, then updates the
+        live session and its subscribers. A process death at any earlier point is
+        recovered by truncating to the sidecar's saved offset.
+        """
+
+        created_session = session is None
+        if created_session:
+            header = entries[0]
+            if not isinstance(header, JournalOpen):
+                raise CheckpointFramesInvalidError("first capture entries omit the header")
+            if header.session_id != session_id:
+                raise CheckpointFramesInvalidError("capture header declares a different session")
+            header_frame = encode_frame(
+                1, encode_entry(header), max_body_bytes=self.config.max_frame_bytes
+            )
+            self._enforce_quota(project_id)
+            session = self._register(
+                session_id=session_id,
+                project_id=project_id,
+                source=SOURCE_CAPTURE,
+                header=header,
+                path=None,
+                retain_frames=True,
+            )
+            session.recovery_method = recovery_method
+            session.recovery_reason = recovery_reason
+            rest = entries[1:]
+            frames: list[bytes] = [header_frame]
+            first_sequence = 2
+        else:
+            if session.close_observed:
+                raise CheckpointFinalizedError(
+                    "this journal is finalized and accepts no more entries"
+                )
+            if session.durable_path != durable_path:
+                raise OSError("capture journal path changed while the call was live")
+            rest = entries
+            frames = []
+            first_sequence = session.last_sequence + 1
+
+        assert session is not None
+        events: list[LiveEvent] = []
+        try:
+            for offset, entry in enumerate(rest):
+                if session.close_observed:
+                    raise CheckpointFinalizedError(
+                        "this journal is finalized and accepts no more entries"
+                    )
+                sequence = first_sequence + offset
+                if sequence > self.config.max_journal_records:
+                    raise CheckpointFramesInvalidError("capture journal runs past the record cap")
+                frame = encode_frame(
+                    sequence, encode_entry(entry), max_body_bytes=self.config.max_frame_bytes
+                )
+                frames.append(frame)
+                events.append(_governed_entry_event(session, entry, sequence))
+        except Exception:
+            if created_session:
+                self._sessions.pop((project_id, session_id), None)
+            raise
+
+        payload = b"".join(frames)
+        created_file = False
+        opened_existing = False
+        commit_marker_attempted = False
+        descriptor: int | None = None
+        prior_size = 0
+        if created_session:
+            if len(payload) > self.config.max_capture_journal_bytes:
+                self._sessions.pop((project_id, session_id), None)
+                raise LiveCaptureJournalLimitError(
+                    "capture journal would exceed its configured byte limit"
+                )
+        else:
+            descriptor = session.durable_fd
+            if descriptor is None:
+                descriptor = os.open(durable_path, os.O_WRONLY | os.O_APPEND)
+                opened_existing = True
+            try:
+                prior_size = os.fstat(descriptor).st_size
+            except OSError:
+                if opened_existing:
+                    with contextlib.suppress(OSError):
+                        os.close(descriptor)
+                raise
+            if prior_size + len(payload) > self.config.max_capture_journal_bytes:
+                if opened_existing:
+                    with contextlib.suppress(OSError):
+                        os.close(descriptor)
+                raise LiveCaptureJournalLimitError(
+                    "capture journal would exceed its configured byte limit"
+                )
+        try:
+            if created_session:
+                durable_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                with contextlib.suppress(OSError):
+                    durable_path.parent.chmod(0o700)
+                descriptor = os.open(
+                    durable_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND,
+                    0o600,
+                )
+                created_file = True
+
+            assert descriptor is not None
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(descriptor, remaining)
+                if written <= 0:
+                    raise OSError("durable capture journal write made no progress")
+                remaining = remaining[written:]
+            os.fsync(descriptor)
+            if created_file:
+                _fsync_directory_strict(durable_path.parent)
+            if before_publish is not None:
+                # Capture's sidecar is the commit marker for this append. Publish
+                # list/SSE state only after it is durable. Once the callback starts,
+                # its atomic rename may have succeeded even if directory fsync
+                # reports an error; preserve the fully fsynced journal so recovery
+                # can trust whichever whole sidecar survived a crash.
+                session.durable_path = durable_path
+                session.durable_fd = descriptor
+                commit_marker_attempted = True
+                before_publish()
+        except OSError:
+            if descriptor is not None and not commit_marker_attempted:
+                try:
+                    os.ftruncate(descriptor, prior_size)
+                    os.fsync(descriptor)
+                except OSError:
+                    if not created_session:
+                        session.durable_fd = None
+                if opened_existing:
+                    with contextlib.suppress(OSError):
+                        os.close(descriptor)
+                if created_session:
+                    with contextlib.suppress(OSError):
+                        os.close(descriptor)
+                    with contextlib.suppress(OSError):
+                        durable_path.unlink()
+                    with contextlib.suppress(OSError):
+                        _fsync_directory_strict(durable_path.parent)
+            if created_session and not commit_marker_attempted:
+                self._sessions.pop((project_id, session_id), None)
+            raise
+
+        assert descriptor is not None
+        if created_session:
+            session.durable_path = durable_path
+            session.durable_fd = descriptor
+        elif session.durable_fd is None:
+            session.durable_fd = descriptor
+
+        frame_index = 0
+        if created_session:
+            header_frame = frames[0]
+            _retain_memory_frame(session, header_frame)
+            session.remember_checksum(1, header_frame[-CHECKSUM_SIZE:])
+            self._deliver(session, [session.open_event])
+            frame_index = 1
+
+        batch: list[LiveEvent] = []
+        for entry, frame, event in zip(rest, frames[frame_index:], events, strict=True):
+            sequence = event.sequence
+            _retain_memory_frame(session, frame)
+            session.remember_checksum(sequence, frame[-CHECKSUM_SIZE:])
+            session.append(event)
+            _absorb(session, entry)
+            batch.append(event)
+        if batch:
+            session.last_append_unix_nano = now_nano
+            for subscriber in list(session.subscribers):
+                subscriber.offer(batch)
+        return AcceptedCheckpoint(
+            journal_id=session.journal_id,
+            accepted_through=session.last_sequence,
+            accepted_records=len(batch),
+            state=session.state(self._clock()),
+            sealable=session.sealable,
+        )
 
     def rebuild_capture_session(
         self,
@@ -1190,7 +1589,7 @@ class LiveSessionRegistry:
             session = self._register(
                 session_id=session_id,
                 project_id=project_id,
-                source=SOURCE_CHECKPOINT,
+                source=SOURCE_CAPTURE,
                 header=header,
                 path=None,
                 retain_frames=True,
@@ -1219,7 +1618,11 @@ class LiveSessionRegistry:
                 # A crash can tear the final frame; the intact prefix is authentic
                 # and the journal is honestly not known-complete.
                 session.journal_complete = False
-            self._reopen_durable(session, durable_path)
+            try:
+                self._reopen_durable(session, durable_path)
+            except OSError:
+                self._sessions.pop((project_id, session_id), None)
+                raise
             session.last_append_unix_nano = now_nano
             return AcceptedCheckpoint(
                 journal_id=session.journal_id,
@@ -1267,34 +1670,7 @@ class LiveSessionRegistry:
                 with contextlib.suppress(OSError):
                     os.close(fd)
                 session.durable_fd = None
-        frames = session.frames
-        if frames is None:
-            return
-        if len(frames) + len(frame) > self.config.max_seal_bytes:
-            session.frames_complete = False
-            session.frames = None
-            return
-        frames.extend(frame)
-
-    def _open_durable(self, session: _LiveSession, durable_path: Path) -> None:
-        """Begin the on-disk copy of a capture call's retained frames.
-
-        Best-effort: a directory or descriptor the host refuses leaves the session
-        purely in memory (its pre-restart behaviour) rather than failing the drain.
-        The parent directory is fsynced so the new file's *name* is durable, the
-        same reason the crash journal fsyncs its own directory on creation.
-        """
-
-        try:
-            durable_path.parent.mkdir(parents=True, exist_ok=True)
-            with contextlib.suppress(OSError):
-                durable_path.parent.chmod(0o700)
-            fd = os.open(durable_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600)
-        except OSError:
-            return
-        session.durable_fd = fd
-        session.durable_path = durable_path
-        _fsync_directory(durable_path.parent)
+        _retain_memory_frame(session, frame)
 
     def _reopen_durable(self, session: _LiveSession, durable_path: Path) -> None:
         """Reopen a rebuilt call's on-disk journal for continued appends.
@@ -1305,19 +1681,17 @@ class LiveSessionRegistry:
         what the process wrote before it died.
         """
 
-        try:
-            fd = os.open(durable_path, os.O_WRONLY | os.O_APPEND)
-        except OSError:
-            return
+        fd = os.open(durable_path, os.O_WRONLY | os.O_APPEND)
         session.durable_fd = fd
         session.durable_path = durable_path
 
     def _close_durable(self, session: _LiveSession, *, unlink: bool) -> None:
         """Close the on-disk copy, and remove it once the session is truly done.
 
-        A sealed, expired, or superseded session will never be rebuilt, so its
-        journal file is unlinked (and its directory entry fsynced) rather than left
-        to resurrect a session whose artifact already exists.
+        Sealed and superseded sessions will never be rebuilt, so their journal
+        files are unlinked (and their directory entry fsynced). An expired capture
+        closes only this live view; its call owner retains the durable journal for
+        retries, restart recovery, and project deletion.
         """
 
         fd = session.durable_fd
@@ -1402,7 +1776,7 @@ class LiveSessionRegistry:
             subscriber.offer(events)
 
     def drop_session(self, session_id: str, *, reason: str, project_id: str) -> bool:
-        """Forget one tenant's live buffer, because its artifact exists or it expired."""
+        """Forget one tenant's live buffer, because it ended, expired, or was replaced."""
 
         with self._lock:
             session = self._sessions.pop((project_id, session_id), None)
@@ -1410,10 +1784,15 @@ class LiveSessionRegistry:
                 return False
             subscribers = list(session.subscribers)
             session.subscribers.clear()
-            # A dropped session is sealed, expired, or superseded; it will never be
-            # rebuilt, so its on-disk journal is removed rather than left to
-            # resurrect a session whose artifact already exists.
-            self._close_durable(session, unlink=True)
+            # Expiry only releases the volatile live buffer. A capture call's
+            # durable journal and ownership sidecar remain paired for an exact
+            # retry, restart recovery, and project deletion. Sealed or superseded
+            # sessions can remove their journal because their durable state says
+            # they must never resume.
+            retain_capture_for_retry = (
+                session.source == SOURCE_CAPTURE and reason == END_SESSION_EXPIRED
+            )
+            self._close_durable(session, unlink=not retain_capture_for_retry)
             if project_id == self._project_id:
                 for tracked in self._tracked.values():
                     if tracked.session_id == session_id:
@@ -1422,15 +1801,88 @@ class LiveSessionRegistry:
             subscriber.finish(reason)
         return True
 
+    def rollback_capture_session(
+        self,
+        session_id: str,
+        *,
+        project_id: str,
+        durable_path: Path,
+    ) -> bool:
+        """Discard memory after an uncommitted durable capture append is rolled back.
+
+        Unlike ``drop_session``, this closes descriptors but keeps the file so the
+        committed prefix can be rebuilt on the exact client retry.
+        """
+
+        with self._lock:
+            session = self._sessions.get((project_id, session_id))
+            if (
+                session is None
+                or session.source != SOURCE_CAPTURE
+                or session.durable_path != Path(durable_path)
+            ):
+                return False
+            self._sessions.pop((project_id, session_id), None)
+            subscribers = list(session.subscribers)
+            session.subscribers.clear()
+            self._close_durable(session, unlink=False)
+        for subscriber in subscribers:
+            subscriber.finish(END_CAPTURE_RETRY_REQUIRED)
+        return True
+
+    def stop_project_tails(self, project_id: str) -> int:
+        """Revoke active project streams without waiting for capture cleanup."""
+
+        with self._lock:
+            subscribers = tuple(
+                subscriber
+                for (session_project_id, _), session in self._sessions.items()
+                if session_project_id == project_id
+                for subscriber in session.subscribers
+            )
+        for subscriber in subscribers:
+            subscriber.finish(END_PROJECT_DELETED)
+        return len(subscribers)
+
+    def drop_project(self, project_id: str) -> int:
+        """Forget every in-memory live session without deleting external journals."""
+
+        with self._lock:
+            keys = [key for key in self._sessions if key[0] == project_id]
+            sessions = [self._sessions.pop(key) for key in keys]
+            for tracked in self._tracked.values():
+                if project_id == self._project_id:
+                    tracked.session_id = None
+            subscribers = [subscriber for session in sessions for subscriber in session.subscribers]
+            for session in sessions:
+                session.subscribers.clear()
+                # Browser capture journals are Earshot-owned and are removed
+                # through CaptureCallRegistry.drop_project. Checkpoint source
+                # paths belong to the configured producer and remain untouched.
+                self._close_durable(session, unlink=session.source != SOURCE_JOURNAL)
+        for subscriber in subscribers:
+            subscriber.finish(END_PROJECT_DELETED)
+        return len(sessions)
+
     def expire(self) -> None:
         now = self._clock()
         with self._lock:
             stale = [
-                key
+                (key[0], key[1], session.source)
                 for key, session in self._sessions.items()
                 if session.state(now) == STATE_ABANDONED
             ]
-        for project_id, session_id in stale:
+            capture_expiry_handler = self._capture_expiry_handler
+        for project_id, session_id, source in stale:
+            if source == SOURCE_CAPTURE and capture_expiry_handler is not None:
+                # A failed durable marker write must leave the live session
+                # available; dropping it would make startup revive expired work.
+                try:
+                    handled = capture_expiry_handler(project_id, session_id)
+                except OSError:
+                    continue
+                if handled:
+                    continue
             self.drop_session(session_id, reason=END_SESSION_EXPIRED, project_id=project_id)
 
     def sessions(self, *, project_id: str) -> tuple[LiveSessionSummary, ...]:
@@ -1469,8 +1921,9 @@ class LiveSessionRegistry:
 
         ``Last-Event-ID`` wins over ``from`` because it is the client's own
         record of what it actually received. When it names a different journal
-        the server emits ``reset`` before anything else, so two sessions can
-        never be spliced into one client-side timeline.
+        or carries an invalid or impossible cursor, the server emits ``reset``
+        before anything else, so two sessions or impossible cursors cannot be
+        spliced into one client-side timeline.
         """
 
         with self._lock:
@@ -1493,22 +1946,39 @@ class LiveSessionRegistry:
             preamble: list[LiveEvent] = []
             resumed = False
             start = 2
-            if last_event_id:
+            if last_event_id is not None:
                 journal_id, _, raw = last_event_id.partition(":")
-                if journal_id == session.journal_id and raw.isdigit() and int(raw) >= 1:
-                    start = int(raw) + 1
-                    resumed = True
+                cursor = int(raw) if raw.isascii() and raw.isdecimal() and len(raw) <= 20 else None
+                reset_reason: str | None = None
+                reset_note: str
+                if not last_event_id:
+                    reset_reason = "invalid_resume_cursor"
+                    reset_note = "discard the invalid cursor and replay available journal history"
+                elif journal_id != session.journal_id:
+                    reset_reason = "journal_identity_changed"
+                    reset_note = "discard everything received for the previous journal"
+                elif cursor is None or cursor < 1:
+                    reset_reason = "invalid_resume_cursor"
+                    reset_note = "discard the invalid cursor and replay available journal history"
+                elif cursor > max(session.last_sequence, session.observed_through_sequence):
+                    reset_reason = "resume_cursor_ahead_of_journal"
+                    reset_note = (
+                        "discard the impossible cursor and replay available journal history"
+                    )
                 else:
+                    start = cursor + 1
+                    resumed = True
+                if reset_reason is not None:
                     preamble.append(
                         make_event(
                             EVENT_RESET,
                             session.journal_id,
                             0,
                             {
-                                "reason": "journal_identity_changed",
+                                "reason": reset_reason,
                                 "previous_journal_id": journal_id or None,
                                 "journal_id": session.journal_id,
-                                "note": "discard everything received for the previous journal",
+                                "note": reset_note,
                             },
                         )
                     )
@@ -1594,7 +2064,7 @@ class LiveSessionRegistry:
                 return SOURCE_JOURNAL, session.path
             if session.frames is None or not session.frames_complete:
                 raise SessionNotSealableError("this session outgrew its retained frame window")
-            return SOURCE_CHECKPOINT, bytes(session.frames)
+            return session.source, bytes(session.frames)
 
 
 def _frame_end(payload: bytes, offset: int) -> int:
@@ -1847,6 +2317,7 @@ def _entry_event(entry: JournalEntry, journal_id: str, sequence: int) -> LiveEve
 
 
 __all__ = [
+    "END_CAPTURE_RETRY_REQUIRED",
     "END_FINAL_ARTIFACT_STORED",
     "END_JOURNAL_REMOVED",
     "END_SEALED",
@@ -1865,6 +2336,7 @@ __all__ = [
     "EVENT_REPLAY_TRUNCATED",
     "EVENT_RESET",
     "LIVE_LIMITATIONS",
+    "SOURCE_CAPTURE",
     "SOURCE_CHECKPOINT",
     "SOURCE_JOURNAL",
     "STATE_ABANDONED",
@@ -1877,7 +2349,9 @@ __all__ = [
     "CheckpointFinalizedError",
     "CheckpointFramesInvalidError",
     "CheckpointSequenceError",
+    "CheckpointSourceConflictError",
     "LiveCapacityError",
+    "LiveCaptureJournalLimitError",
     "LiveConfig",
     "LiveError",
     "LiveEvent",

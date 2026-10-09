@@ -6,6 +6,7 @@ RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/analysis/package.json ./packages/analysis/package.json
 COPY packages/schema/package.json ./packages/schema/package.json
+COPY packages/viewer-ui/package.json ./packages/viewer-ui/package.json
 COPY apps/viewer/package.json ./apps/viewer/package.json
 RUN pnpm install --frozen-lockfile \
     --filter @earshot/viewer... \
@@ -17,6 +18,7 @@ COPY apps/viewer/index.html \
     apps/viewer/vite.config.ts \
     ./apps/viewer/
 COPY apps/viewer/src ./apps/viewer/src
+COPY packages/viewer-ui/src ./packages/viewer-ui/src
 RUN pnpm --filter @earshot/viewer build
 
 # 2) Build the Python wheel.

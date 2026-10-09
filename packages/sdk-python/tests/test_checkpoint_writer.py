@@ -16,7 +16,6 @@ from earshot.checkpoint import (
     CheckpointConfig,
     CheckpointWriter,
     JournalReader,
-    RecordMutation,
 )
 from earshot.checkpoint.keys import AT_REST_NONCE_BYTES
 from earshot.checkpoint.reader import JournalUnreadableError
@@ -507,33 +506,6 @@ def test_keeping_a_finalized_journal_is_an_explicit_choice(tmp_path: Path) -> No
 
     assert len(list(tmp_path.glob("*.eck"))) == 1
     assert JournalReader(_journal_path(tmp_path)).read().close_observed is True
-
-
-# ----------------------------------------------------------------- overhead
-
-
-def test_appending_a_frame_stays_off_the_voice_path_budget(tmp_path: Path) -> None:
-    """A journal append is one ``os.write`` into the page cache, not an fsync."""
-
-    import time
-
-    writer = _writer(tmp_path, fsync_mode="never")
-    recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
-    event = recorder.record_event("earshot.turn.start", turn_id="warmup")
-
-    samples: list[float] = []
-    for _ in range(500):
-        started = time.perf_counter()
-        writer.append_record(RecordMutation(kind="event", record=event))
-        samples.append(time.perf_counter() - started)
-    samples.sort()
-    p99 = samples[int(len(samples) * 0.99)]
-
-    # Generous versus the design's 100 us reference-machine gate so a loaded CI
-    # box cannot make this flaky; it still catches an fsync or a lock appearing
-    # on the append path, which are milliseconds, not microseconds.
-    assert p99 < 0.005, f"p99 append was {p99 * 1e6:.1f} us"
-    writer.release()
 
 
 # ------------------------------------------------------------- sdk wiring

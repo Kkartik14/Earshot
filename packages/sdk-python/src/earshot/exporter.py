@@ -1218,6 +1218,15 @@ class DurableExporter:
                 return False
         return False  # pragma: no cover - the bounded loop always returns
 
+    def _schedule_retry_cycle(self, path: Path) -> None:
+        cycle = self._retry_cycles.get(path.name, 0) + 1
+        self._retry_cycles[path.name] = cycle
+        cross_cycle_delay = min(
+            self._max_backoff,
+            max(0.05, self._base_backoff) * (2 ** min(cycle - 1, 20)),
+        )
+        self._retry_not_before[path.name] = time.monotonic() + cross_cycle_delay
+
     def _run(self) -> None:
         while not self._stop_requested.is_set():
             files = self._spool_files()
@@ -1242,13 +1251,7 @@ class DurableExporter:
                     if self._send_file(path):
                         made_progress = True
                     else:
-                        cycle = self._retry_cycles.get(path.name, 0) + 1
-                        self._retry_cycles[path.name] = cycle
-                        cross_cycle_delay = min(
-                            self._max_backoff,
-                            max(0.05, self._base_backoff) * (2 ** min(cycle - 1, 20)),
-                        )
-                        self._retry_not_before[path.name] = time.monotonic() + cross_cycle_delay
+                        self._schedule_retry_cycle(path)
                 finally:
                     with self._lock:
                         self._in_flight_files.discard(path.name)

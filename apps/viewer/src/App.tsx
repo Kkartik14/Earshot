@@ -1,18 +1,57 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Route, Routes } from "react-router-dom";
+import {
+  Link,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import {
   exchangeProjectKey,
+  clearViewerQueries,
   getViewerSession,
   logoutViewerSession,
+  ObserveFeature,
+  onViewerSessionInvalid,
   type ViewerSessionStatus,
-} from "./api/auth";
-import { onViewerSessionInvalid } from "./api/client";
+  type ObserveRoute,
+  type ViewerLinkProps,
+  ViewerQueryScopeProvider,
+} from "@earshot/viewer-ui";
 import styles from "./App.module.css";
-import { FleetDashboard } from "./features/fleet/FleetDashboard";
-import { SessionInspector } from "./features/inspector/SessionInspector";
-import { LiveSessionView } from "./features/live/LiveSessionView";
-import { SessionRail } from "./features/sessions/SessionRail";
+
+function RouterLink({ href, ...props }: ViewerLinkProps) {
+  return <Link to={href} {...props} />;
+}
+
+function RoutedObserve({ route }: { route: ObserveRoute }) {
+  const { pathname } = useLocation();
+  return (
+    <ObserveFeature route={route} currentPath={pathname} LinkComponent={RouterLink} />
+  );
+}
+
+function IncidentRoute() {
+  const { bundleId } = useParams<{ bundleId: string }>();
+  return bundleId ? <RoutedObserve route={{ kind: "incident", bundleId }} /> : null;
+}
+
+function LiveRoute() {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  return sessionId ? <RoutedObserve route={{ kind: "live", sessionId }} /> : null;
+}
+
+function SessionRoute() {
+  const [searchParams] = useSearchParams();
+  const sessionId = searchParams.get("sessionId");
+  return sessionId ? (
+    <RoutedObserve route={{ kind: "session", sessionId }} />
+  ) : (
+    <RoutedObserve route={{ kind: "fleet" }} />
+  );
+}
 
 type AuthState =
   | { kind: "loading" }
@@ -91,7 +130,7 @@ export function App() {
       onViewerSessionInvalid(() => {
         if (expiryHandled.current) return;
         expiryHandled.current = true;
-        queryClient.clear();
+        clearViewerQueries(queryClient);
         setAuth({ kind: "login", error: "Your viewer session expired. Sign in again." });
       }),
     [queryClient],
@@ -134,7 +173,7 @@ export function App() {
     setLogoutError(undefined);
     try {
       await logoutViewerSession(csrf);
-      queryClient.clear();
+      clearViewerQueries(queryClient);
       setAuth({ kind: "login" });
     } catch {
       setLogoutError("Sign out failed. Your viewer session is still active.");
@@ -144,7 +183,7 @@ export function App() {
   };
 
   return (
-    <div className={styles.shell}>
+    <>
       {auth.session.authenticated ? (
         <div className={styles.signOutControl}>
           {logoutError ? <span role="alert">{logoutError}</span> : null}
@@ -158,16 +197,21 @@ export function App() {
           </button>
         </div>
       ) : null}
-      <SessionRail />
-      <main className={styles.main}>
+      <ViewerQueryScopeProvider
+        scope={{
+          projectId: auth.session.project_id,
+          authContextId: auth.session.auth_context_id,
+        }}
+      >
         <Routes>
-          <Route index element={<FleetDashboard />} />
-          <Route path="sessions/:bundleId" element={<SessionInspector />} />
-          {/* A separate route, not a mode of the inspector: a live session and
-              an artifact are different kinds of thing and must not share a URL. */}
-          <Route path="live/:sessionId" element={<LiveSessionView />} />
+          <Route index element={<RoutedObserve route={{ kind: "fleet" }} />} />
+          <Route path="sessions/:bundleId" element={<IncidentRoute />} />
+          <Route path="observe" element={<SessionRoute />} />
+          {/* A live session and an artifact are different kinds of thing and must
+              not share a URL. */}
+          <Route path="live/:sessionId" element={<LiveRoute />} />
         </Routes>
-      </main>
-    </div>
+      </ViewerQueryScopeProvider>
+    </>
   );
 }

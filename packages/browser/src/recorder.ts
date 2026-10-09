@@ -216,6 +216,11 @@ function zeroAvailability(): SignalAvailability {
   };
 }
 
+/** Capture payloads are JSON wire values; copy them so callers cannot mutate a cached final drain. */
+function copyCapturePayload(payload: CapturePayload): CapturePayload {
+  return JSON.parse(JSON.stringify(payload)) as CapturePayload;
+}
+
 export class EarshotBrowserRecorder {
   readonly sessionId: string;
   readonly clockDomainId: string;
@@ -240,6 +245,8 @@ export class EarshotBrowserRecorder {
   private audioContext: AudioContextLike | null = null;
   private readonly teardowns: Array<() => void> = [];
   private stopped = false;
+  /** Exact terminal payload replayed by later `drain()` / `endCall()` calls. */
+  private finalPayload: CapturePayload | undefined;
   /** 1-based, monotonic per recorder; assigned inside `drain()` under version 2. */
   private drainSequence = 0;
 
@@ -542,6 +549,7 @@ export class EarshotBrowserRecorder {
    * can never be mistaken for a close.
    */
   drain(options: DrainOptions = {}): CapturePayload {
+    if (this.finalPayload) return copyCapturePayload(this.finalPayload);
     const payload: CapturePayload = {
       captureVersion: this.captureVersion,
       sessionId: this.sessionId,
@@ -570,6 +578,13 @@ export class EarshotBrowserRecorder {
     this.counters = zeroCounters();
     this.availability = zeroAvailability();
     this.pendingCoverage = [];
+    if (
+      this.captureVersion === CONTINUOUS_CAPTURE_VERSION &&
+      options.end === "call_ended"
+    ) {
+      this.finalPayload = copyCapturePayload(payload);
+      this.stop();
+    }
     return payload;
   }
 
@@ -586,12 +601,15 @@ export class EarshotBrowserRecorder {
    * and `visibilitychange` tear the observer down without ending the call, and the
    * server keeps such a call provisional forever.
    *
-   * Returns the final payload for the caller to POST. On a `captureVersion: 1`
-   * recorder there is no continuous call to close, so this simply drains and stops
-   * without an end signal.
+   * Returns the final payload for the caller to POST. Repeated calls, and later
+   * drains, replay that same payload so duplicate close notifications cannot
+   * create a post-finalization sequence. On a `captureVersion: 1` recorder there
+   * is no continuous call to close, so this drains and stops without an end signal.
    */
   endCall(): CapturePayload {
+    if (this.finalPayload) return copyCapturePayload(this.finalPayload);
     const payload = this.drain({ end: "call_ended" });
+    if (!this.finalPayload) this.finalPayload = copyCapturePayload(payload);
     this.stop();
     return payload;
   }

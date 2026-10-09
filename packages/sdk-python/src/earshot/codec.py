@@ -152,6 +152,21 @@ def decode_incident_json(
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
         raise IncidentCodecError("invalid incident JSON") from error
 
+    return decode_incident_json_value(
+        value,
+        max_profile_depth=max_profile_depth,
+        validate=validate,
+    )
+
+
+def decode_incident_json_value(
+    value: object,
+    *,
+    max_profile_depth: int = MAX_PROFILE_DEPTH,
+    validate: bool = True,
+) -> IncidentBundle:
+    """Decode a pre-parsed strict JSON value after transport-level checks."""
+
     if not isinstance(value, dict):
         raise IncidentCodecError("incident JSON root must be an object")
     unknown_envelope_fields = set(value) - {"profile", "raw_otlp_chunks"}

@@ -321,7 +321,7 @@ def test_internal_narrow_turn_fact_projection_is_recreated_from_canonical_incide
     assert fact.eou_ms == 50.0
     assert fact.projection_version == TURN_FACT_PROJECTION_VERSION
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
 
 
 def test_v9_turn_facts_are_rebuilt_with_language_from_canonical_incidents(tmp_path) -> None:
@@ -340,7 +340,7 @@ def test_v9_turn_facts_are_rebuilt_with_language_from_canonical_incidents(tmp_pa
     assert fact.bundle_id == "migrated-language"
     assert fact.language == "hi-IN"
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
 
 
 def test_turn_fact_queries_are_project_scoped(tmp_path) -> None:
@@ -359,7 +359,7 @@ def test_turn_fact_queries_are_project_scoped(tmp_path) -> None:
     ]
 
 
-def test_turn_fact_queries_purge_expired_derived_evidence(tmp_path) -> None:
+def test_turn_fact_queries_hide_expired_derived_evidence_until_purged(tmp_path) -> None:
     store = IncidentStore(tmp_path)
     bundle = _with_expired_metadata(make_valid_bundle(bundle_id="expired-turn-fact"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
@@ -368,6 +368,10 @@ def test_turn_fact_queries_purge_expired_derived_evidence(tmp_path) -> None:
 
     assert store.list_turn_facts() == ()
     assert store.summarize_turn_metric("first_token_ms") == ()
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM turn_metrics").fetchone()[0] == 1
+
+    assert store.purge_expired() == 1
     with sqlite3.connect(store.database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM turn_metrics").fetchone()[0] == 0
 

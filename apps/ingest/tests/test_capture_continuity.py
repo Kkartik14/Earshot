@@ -282,6 +282,37 @@ def test_a_declared_drain_loss_is_accepted_and_ledgered(tmp_path) -> None:
     assert coverage["capture.stats_continuity"].reason == "carry_invalidated_by_drain_loss"
 
 
+def test_resync_clips_a_range_already_applied_by_an_unknown_outcome(tmp_path) -> None:
+    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
+    headers = {"Authorization": "Bearer t"}
+    snapshots = series(3)
+    first = client.post("/v1/capture", json=drain(1, [snapshots[0]]), headers=headers)
+    assert first.status_code == 202, first.text
+
+    # The client lost the response to drain 1, then abandoned drain 2. It can
+    # only claim [1, 2], while the server knows drain 1 was already committed.
+    resumed = client.post(
+        "/v1/capture",
+        json=drain(
+            3,
+            [snapshots[2]],
+            resync={
+                "missedFromSequence": 1,
+                "missedThroughSequence": 2,
+                "reason": "upload_failed_payload_dropped",
+            },
+        ),
+        headers=headers,
+    )
+    assert resumed.status_code == 202, resumed.text
+
+    call_id = resumed.json()["call_id"]
+    sealed = seal(client, headers, call_id)
+    bundle = fetch_bundle(client, headers, sealed["bundle_id"])
+    coverage = {note.signal: note for note in bundle.profile.coverage}
+    assert coverage["capture.drain_sequence"].dropped_count == 1
+
+
 # -- boundary reconnect -------------------------------------------------------
 
 

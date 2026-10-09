@@ -22,9 +22,9 @@ state that makes the accumulation honest and bounded:
   refusal.
 
 The recorder is never closed here. Phase 1 only *accumulates*; materialization is
-the existing operator seal over the live session, which produces a **provisional**
-artifact because no close was observed. Nothing on a timer, a tab close, or a TTL
-ever finalizes a call -- that is Phase 2.
+an authorized seal over the live session, which produces a **provisional** artifact
+because no close was observed. Nothing on a timer, a tab close, or a TTL ever
+finalizes a call -- that is Phase 2.
 """
 
 from __future__ import annotations
@@ -32,13 +32,23 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
+import stat
 import threading
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..checkpoint.framing import scan_frames
+from ..checkpoint.records import (
+    JournalFormatError,
+    JournalOpen,
+    JournalOperationOpen,
+    JournalRecordEntry,
+    decode_entry,
+)
 from ..contract import TimePoint
 from ..engines.base import BrowserClockDomain
 from ..engines.device import apply_audio_graph
@@ -46,11 +56,25 @@ from ..engines.webrtc import WebRtcCarry, apply_webrtc_stats
 from ..observation import SourceClockReading
 from ..pipeline import PipelineSession, TurnRecorder
 from .durable import (
+    CURRENT_CAPTURE_DIGEST_VERSION,
+    DEFAULT_MAX_SEALED_REPLAY_LEDGERS,
+    DIGEST_RING_SIZE,
+    JOURNAL_SUFFIX,
+    LEGACY_CAPTURE_DIGEST_VERSION,
+    REJECTION_COVERAGE_CAPTURE_DIGEST_VERSION,
+    SIDECAR_SUFFIX,
+    WRITER_LOCK_NAME,
     CaptureSidecar,
+    acquire_writer_lock,
+    discard_rejected_first_drain,
     iter_sidecars,
     journal_path,
     max_fact_sequence,
+    prune_sealed_sidecars,
     read_sidecar,
+    recover_pending_sidecar,
+    release_writer_lock,
+    remove_sealed_journal,
     replay_coverage,
     sidecar_path,
     write_sidecar,
@@ -125,7 +149,6 @@ _STATS_CONTINUITY_RESTART_REASON = "carry_lost_on_restart"
 # How many accepted-batch digests a call remembers, so a retried or reordered
 # drain within this window is answered from content rather than re-applied. One
 # checksum-sized slot per drain; bounded by construction.
-_DIGEST_RING = 64
 
 
 class CaptureError(Exception):
@@ -150,6 +173,22 @@ class CaptureSequenceConflictError(CaptureError):
 
 class CaptureCallCapacityError(CaptureError):
     """This project is already carrying as many continuous calls as it will."""
+
+
+class CaptureCallReplayExpiredError(CaptureError):
+    """A sealed call's bounded replay ledger expired while its bundle ID stayed reserved."""
+
+
+class CaptureJournalUnavailableError(CaptureError):
+    """The durable call ledger could not be persisted before the journal."""
+
+
+class _CaptureJournalTooLargeError(OSError):
+    """A durable journal exceeds the configured recovery read bound."""
+
+
+class CaptureJournalWriterConflictError(CaptureError):
+    """Another process already owns this durable capture journal directory."""
 
 
 class CaptureCallClosedError(CaptureError):
@@ -222,27 +261,55 @@ class CaptureDrain:
             wall_origin_ms=self.clock_wall_origin_ms,
         )
 
-    def digest(self) -> str:
+    def call_metadata_digest(self) -> str:
+        """Hash the call-level trace and clock metadata without storing it twice."""
+
+        material = json.dumps(
+            [self.trace_id, self.span_id, float(self.clock_uncertainty_ms)],
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def digest(self, *, version: int = CURRENT_CAPTURE_DIGEST_VERSION) -> str:
         """A stable digest of this drain's governed content.
 
         Two byte-identical raw batches sanitize to the same content and so to the
         same digest -- a genuine retry. A forged batch claiming a taken slot has
-        different content and a different digest, and is refused.
+        different content and a different digest, and is refused. Version 1 is
+        retained for older persisted retries; version 2 binds rejection coverage;
+        version 3 also binds the drain's trace/span and clock uncertainty metadata.
         """
 
+        if (
+            isinstance(version, bool)
+            or not isinstance(version, int)
+            or version
+            not in {
+                LEGACY_CAPTURE_DIGEST_VERSION,
+                REJECTION_COVERAGE_CAPTURE_DIGEST_VERSION,
+                CURRENT_CAPTURE_DIGEST_VERSION,
+            }
+        ):
+            raise ValueError("unsupported capture drain digest version")
+        content: dict[str, object] = {
+            "sequence": self.drain_sequence,
+            "snapshots": list(self.snapshots),
+            "device_events": list(self.device_events),
+            "coverage": [list(note) for note in self.coverage],
+            "resync": (
+                None
+                if self.resync is None
+                else [self.resync.missed_from, self.resync.missed_through, self.resync.reason]
+            ),
+            "end": (None if self.end is None else [self.end.reason, self.end.timestamp_ms]),
+        }
+        if version >= REJECTION_COVERAGE_CAPTURE_DIGEST_VERSION:
+            content["rejection_coverage"] = [list(note) for note in self.rejection_coverage]
+        if version >= CURRENT_CAPTURE_DIGEST_VERSION:
+            content["call_metadata_digest"] = self.call_metadata_digest()
         material = json.dumps(
-            {
-                "sequence": self.drain_sequence,
-                "snapshots": list(self.snapshots),
-                "device_events": list(self.device_events),
-                "coverage": [list(note) for note in self.coverage],
-                "resync": (
-                    None
-                    if self.resync is None
-                    else [self.resync.missed_from, self.resync.missed_through, self.resync.reason]
-                ),
-                "end": (None if self.end is None else [self.end.reason, self.end.timestamp_ms]),
-            },
+            content,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
@@ -272,9 +339,20 @@ class DrainOutcome:
 class CaptureCall:
     """One continuous call: its recorder, its turn, its carry, its sequencing."""
 
-    def __init__(self, drain: CaptureDrain, *, journal_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        drain: CaptureDrain,
+        *,
+        journal_dir: Path | None = None,
+        correlation_key_id: str | None = None,
+        call_metadata: tuple[str | None, str | None, float] | None = None,
+        call_metadata_bound: bool = True,
+    ) -> None:
         self.call_key = drain.call_key
         self.project_id = drain.project_id
+        self._correlation_key_id = correlation_key_id
+        self._call_metadata_digest = drain.call_metadata_digest()
+        self._call_metadata_bound = call_metadata_bound
         # Where this call's durable journal and drain-sequencing ledger live, so an
         # in-flight call survives a backend restart. ``None`` keeps the call purely
         # in memory (its pre-durability behaviour).
@@ -323,6 +401,7 @@ class CaptureCall:
         self.carry: WebRtcCarry | None = None
         self._applied = 0
         self._digests: OrderedDict[int, str] = OrderedDict()
+        self._digest_versions: OrderedDict[int, int] = OrderedDict()
         self._outcomes: OrderedDict[int, DrainOutcome] = OrderedDict()
         self._identity_declared = False
         # The browser-domain span the call actually observed: the earliest and
@@ -341,6 +420,10 @@ class CaptureCall:
         # restart, because the raw snapshot the boundary delta needs was never in
         # the journal and must not be fabricated.
         self._restarted = False
+        self._retry_sequence: int | None = None
+        self._retry_digest: str | None = None
+        self._retry_digest_version: int | None = None
+        self._intent_pending = False
 
     @property
     def finalized(self) -> bool:
@@ -355,6 +438,7 @@ class CaptureCall:
         *,
         journal_dir: Path,
         finalized: bool,
+        correlation_key_id: str | None = None,
     ) -> CaptureCall:
         """Reconstruct a call from its durable ledger so a restart is resumable.
 
@@ -381,22 +465,70 @@ class CaptureCall:
         observed and written before the restart.
         """
 
-        call = cls(drain, journal_dir=journal_dir)
+        call = cls(
+            drain,
+            journal_dir=journal_dir,
+            correlation_key_id=correlation_key_id,
+            call_metadata_bound=sidecar.call_metadata_bound,
+        )
         # Discard the fresh recorder's re-emitted header and clock-domain entries:
         # both are already durable and in the rebuilt live session, so appending
         # them again would duplicate frames.
         call.writer.take_new()
         call._applied = sidecar.applied
         call._digests = OrderedDict(sorted(sidecar.digests.items()))
+        call._digest_versions = OrderedDict(sorted(sidecar.digest_versions.items()))
         call._first_observed_ms = sidecar.first_observed_ms
         call._last_observed_ms = sidecar.last_observed_ms
         call._lossy = sidecar.lossy
         call._finalized = finalized
+        call._retry_sequence = sidecar.retry_sequence
+        call._retry_digest = sidecar.retry_digest
+        call._retry_digest_version = sidecar.retry_digest_version
         call._identity_declared = True
         call.carry = None
         call._restarted = True
         call.turn._sequence = max_fact_sequence(journal_path_on_disk)
         call.session.recorder._coverage = replay_coverage(journal_path_on_disk) or []
+        return call
+
+    @classmethod
+    def rebuild_finalized_ledger(
+        cls,
+        drain: CaptureDrain,
+        sidecar: CaptureSidecar,
+        *,
+        journal_dir: Path,
+        correlation_key_id: str | None = None,
+    ) -> CaptureCall:
+        """Restore the closed-call replay fence after sealing removed its journal."""
+
+        if (
+            not sidecar.sealed
+            or not sidecar.finalized
+            or sidecar.applied < 1
+            or sidecar.retry_sequence is not None
+        ):
+            raise CaptureJournalUnavailableError(
+                "the capture journal is missing without a complete finalized ledger"
+            )
+        call = cls(
+            drain,
+            journal_dir=journal_dir,
+            correlation_key_id=correlation_key_id,
+            call_metadata_bound=sidecar.call_metadata_bound,
+        )
+        call.writer.take_new()
+        call._applied = sidecar.applied
+        call._digests = OrderedDict(sorted(sidecar.digests.items()))
+        call._digest_versions = OrderedDict(sorted(sidecar.digest_versions.items()))
+        call._first_observed_ms = sidecar.first_observed_ms
+        call._last_observed_ms = sidecar.last_observed_ms
+        call._lossy = sidecar.lossy
+        call._finalized = True
+        call._retry_digest_version = sidecar.retry_digest_version
+        call._identity_declared = True
+        call.turn._sequence = sidecar.turn_sequence
         return call
 
     # -- sequencing ------------------------------------------------------------
@@ -409,24 +541,44 @@ class CaptureCall:
         """
 
         sequence = drain.drain_sequence
-        if sequence == self._applied + 1:
-            return "apply"
+        if not _matches_call_metadata(
+            drain,
+            bound=self._call_metadata_bound,
+            digest=self._call_metadata_digest,
+        ):
+            raise CaptureSequenceConflictError(
+                "a drain changes this call's trace or clock metadata",
+                sequence=sequence,
+            )
         if sequence <= self._applied:
             recorded = self._digests.get(sequence)
-            if recorded is not None and recorded == drain.digest():
+            digest_version = self._digest_versions.get(sequence, LEGACY_CAPTURE_DIGEST_VERSION)
+            if recorded is not None and recorded == drain.digest(version=digest_version):
                 return "replay"
             raise CaptureSequenceConflictError(
                 "a drain rewrites a sequence this call already resolved",
                 sequence=sequence,
             )
+        if self._retry_sequence is not None and (
+            sequence != self._retry_sequence or self._retry_digest != self._digest(drain)
+        ):
+            raise CaptureSequenceConflictError(
+                "a new drain differs from the interrupted request",
+                sequence=sequence,
+            )
+        if sequence == self._applied + 1:
+            return "apply"
         # sequence > applied + 1: a gap. Only a declared loss covering exactly the
         # missing range may cross it; anything else is a gap the client must resync.
         resync = drain.resync
         if (
             resync is not None
-            and resync.missed_from == self._applied + 1
             and resync.missed_through == sequence - 1
+            and resync.missed_from <= self._applied + 1
         ):
+            # The client can lose the response to a drain that the server already
+            # committed. Accept an overlapping claim and clip its applied prefix
+            # below; the server's durable sequence is authoritative.
             return "apply_gap"
         if resync is not None and resync.missed_from <= self._applied:
             raise CaptureSequenceConflictError(
@@ -438,42 +590,61 @@ class CaptureCall:
             expected_sequence=self._applied + 1,
         )
 
-    def _remember_digest(self, sequence: int, digest: str) -> None:
+    def _digest_version_for(self, drain: CaptureDrain) -> int:
+        if self._retry_sequence == drain.drain_sequence and self._retry_digest_version is not None:
+            return self._retry_digest_version
+        return CURRENT_CAPTURE_DIGEST_VERSION
+
+    def _digest(self, drain: CaptureDrain) -> str:
+        return drain.digest(version=self._digest_version_for(drain))
+
+    def _remember_digest(self, sequence: int, digest: str, version: int) -> None:
         self._digests[sequence] = digest
-        while len(self._digests) > _DIGEST_RING:
-            self._digests.popitem(last=False)
+        self._digest_versions[sequence] = version
+        while len(self._digests) > DIGEST_RING_SIZE:
+            expired_sequence, _ = self._digests.popitem(last=False)
+            self._digest_versions.pop(expired_sequence, None)
 
     def _remember_outcome(self, sequence: int, outcome: DrainOutcome) -> None:
         self._outcomes[sequence] = outcome
-        while len(self._outcomes) > _DIGEST_RING:
+        while len(self._outcomes) > DIGEST_RING_SIZE:
             self._outcomes.popitem(last=False)
 
-    def _persist_sidecar(self, applied: int) -> None:
-        """Write the drain-sequencing ledger durably. A no-op without a journal dir.
-
-        Called before the drain's frames are journaled, so the ledger is never
-        behind the journal: a crash can only leave it one drain ahead, which the
-        sequencing resolves as an idempotent replay. ``finalized`` and
-        ``turn_sequence`` are stored for completeness but a rebuild reads both from
-        the journal, which is the authority on what was actually admitted.
-        """
+    def _persist_sidecar(self, sidecar: CaptureSidecar | None = None) -> None:
+        """Write the sequencing ledger durably, or do nothing for memory-only calls."""
 
         if self._journal_dir is None:
             return
-        write_sidecar(
-            self._journal_dir,
-            CaptureSidecar(
+        if sidecar is None:
+            sidecar = CaptureSidecar(
                 project_id=self.project_id,
                 call_key=self.call_key,
-                applied=applied,
+                applied=self._applied,
                 digests=dict(self._digests),
+                digest_versions=dict(self._digest_versions),
                 turn_sequence=self.turn._sequence,
                 first_observed_ms=self._first_observed_ms,
                 last_observed_ms=self._last_observed_ms,
                 lossy=self._lossy,
                 finalized=self._finalized,
-            ),
-        )
+                correlation_key_id=self._correlation_key_id,
+                call_metadata_bound=self._call_metadata_bound,
+                call_metadata_digest=(
+                    self._call_metadata_digest if self._call_metadata_bound else None
+                ),
+                retry_sequence=self._retry_sequence,
+                retry_digest=self._retry_digest,
+                retry_digest_version=self._retry_digest_version,
+            )
+        write_sidecar(self._journal_dir, sidecar)
+
+    def _journal_size_before_drain(self) -> int:
+        if self._durable_path is None:
+            return 0
+        try:
+            return self._durable_path.stat().st_size
+        except FileNotFoundError:
+            return 0
 
     # -- projection ------------------------------------------------------------
 
@@ -498,18 +669,62 @@ class CaptureCall:
                     "this call was ended by an explicit endCall() and accepts no more drains"
                 )
 
-            # Settle the observed span and the loss flag before anything is
-            # journaled, so the ledger persisted next reflects exactly this drain.
+            # The pre-append sidecar stores the previous committed state plus an
+            # intent. If a process dies at any point before the committed sidecar
+            # is durable, startup truncates the journal to this byte offset and
+            # requires the identical drain digest again.
+            previous_observed = (self._first_observed_ms, self._last_observed_ms)
+            previous_lossy = self._lossy
+            previous_digests = self._digests.copy()
+            previous_digest_versions = self._digest_versions.copy()
+            previous_applied = self._applied
+            previous_finalized = self._finalized
+            previous_retry = (
+                self._retry_sequence,
+                self._retry_digest,
+                self._retry_digest_version,
+            )
+            previous_turn_sequence = self.turn._sequence
+            digest_version = self._digest_version_for(drain)
+            digest = drain.digest(version=digest_version)
+            journal_size = self._journal_size_before_drain()
+            if self._journal_dir is not None:
+                intent = CaptureSidecar(
+                    project_id=self.project_id,
+                    call_key=self.call_key,
+                    applied=self._applied,
+                    digests=dict(previous_digests),
+                    digest_versions=dict(previous_digest_versions),
+                    turn_sequence=previous_turn_sequence,
+                    first_observed_ms=previous_observed[0],
+                    last_observed_ms=previous_observed[1],
+                    lossy=previous_lossy,
+                    finalized=self._finalized,
+                    correlation_key_id=self._correlation_key_id,
+                    call_metadata_bound=self._call_metadata_bound,
+                    call_metadata_digest=(
+                        self._call_metadata_digest if self._call_metadata_bound else None
+                    ),
+                    pending_sequence=drain.drain_sequence,
+                    pending_digest=digest,
+                    pending_journal_size=journal_size,
+                    pending_digest_version=digest_version,
+                    retry_sequence=self._retry_sequence,
+                    retry_digest=self._retry_digest,
+                    retry_digest_version=self._retry_digest_version,
+                )
+                try:
+                    self._persist_sidecar(intent)
+                except OSError as error:
+                    raise CaptureJournalUnavailableError(
+                        "durable capture ownership metadata could not be persisted"
+                    ) from error
+                self._intent_pending = True
+
+            # Settle the observed span and the loss flag for the projected drain.
             self._observe_samples(drain)
             if decision == "apply_gap" or self._restarted or _drain_declares_loss(drain):
                 self._lossy = True
-
-            # Persist the drain-sequencing ledger BEFORE the frames it admits. A
-            # crash in the window between leaves the ledger knowing a drain the
-            # journal does not yet carry, which resumes as an idempotent replay --
-            # never as duplicated or fabricated evidence.
-            self._remember_digest(drain.drain_sequence, drain.digest())
-            self._persist_sidecar(drain.drain_sequence)
 
             if not self._identity_declared:
                 self.turn.record_coverage(_IDENTITY_SIGNAL, "partial", _IDENTITY_REASON)
@@ -527,7 +742,8 @@ class CaptureCall:
 
             if decision == "apply_gap":
                 assert drain.resync is not None
-                lost = drain.resync.missed_through - drain.resync.missed_from + 1
+                first_missing = max(drain.resync.missed_from, self._applied + 1)
+                lost = max(0, drain.resync.missed_through - first_missing + 1)
                 self.turn.record_coverage(
                     _DRAIN_SEQUENCE_SIGNAL,
                     "partial",
@@ -551,14 +767,50 @@ class CaptureCall:
             if drain.end is not None:
                 self._record_end(drain.end)
             entries = self.writer.take_new()
-            accepted = live.accept_records(
-                self.call_key,
-                entries,
-                project_id=self.project_id,
-                recovery_method=RECOVERY_METHOD,
-                recovery_reason=RECOVERY_REASON_SEALED,
-                durable_path=self._durable_path,
-            )
+
+            # Prepare the committed ledger before the durable append reaches the
+            # live registry. The registry invokes this callback after fsyncing the
+            # frames and before updating list/SSE memory, so observers never see a
+            # drain whose commit marker can still fail.
+            self._applied = drain.drain_sequence
+            self._remember_digest(drain.drain_sequence, digest, digest_version)
+            self._finalized = finalize
+            self._retry_sequence = None
+            self._retry_digest = None
+            self._retry_digest_version = None
+
+            def commit_capture_ledger() -> None:
+                if self._journal_dir is not None:
+                    self._persist_sidecar()
+                    self._intent_pending = False
+
+            try:
+                accepted = live.accept_records(
+                    self.call_key,
+                    entries,
+                    project_id=self.project_id,
+                    recovery_method=RECOVERY_METHOD,
+                    recovery_reason=RECOVERY_REASON_SEALED,
+                    durable_path=self._durable_path,
+                    before_publish=(
+                        commit_capture_ledger if self._journal_dir is not None else None
+                    ),
+                )
+            except OSError as error:
+                self._first_observed_ms, self._last_observed_ms = previous_observed
+                self._lossy = previous_lossy
+                self._digests = previous_digests
+                self._digest_versions = previous_digest_versions
+                self._applied = previous_applied
+                self._finalized = previous_finalized
+                (
+                    self._retry_sequence,
+                    self._retry_digest,
+                    self._retry_digest_version,
+                ) = previous_retry
+                raise CaptureJournalUnavailableError(
+                    "the durable capture journal could not append this drain"
+                ) from error
             outcome = DrainOutcome(
                 call_id=self.call_key,
                 journal_id=accepted.journal_id,
@@ -572,12 +824,6 @@ class CaptureCall:
                 accepted_coverage=len(drain.coverage),
                 finalized=finalize,
             )
-            if finalize:
-                self._finalized = True
-                # The close is now durably in the journal; record it in the ledger
-                # too so a rebuild that reads the sidecar agrees with the journal.
-                self._persist_sidecar(drain.drain_sequence)
-            self._applied = drain.drain_sequence
             self._remember_outcome(drain.drain_sequence, outcome)
             return outcome
 
@@ -598,7 +844,10 @@ class CaptureCall:
                 summary.sealable,
             )
         except Exception:  # pragma: no cover - the session exists whenever a call does
-            journal_id, accepted_through, state, sealable = "", self._applied, "live", False
+            journal_id = self.writer.status().journal_id or ""
+            accepted_through = self._applied
+            state = "finalized" if self._finalized else "live"
+            sealable = False
         return DrainOutcome(
             call_id=self.call_key,
             journal_id=journal_id,
@@ -775,14 +1024,128 @@ def _drain_declares_loss(drain: CaptureDrain) -> bool:
     return any(count > 0 for _, _, count in drain.rejection_coverage)
 
 
+def _matches_call_metadata(
+    drain: CaptureDrain,
+    *,
+    bound: bool,
+    digest: str | None,
+) -> bool:
+    """Compare stable call metadata when the sidecar can prove its first values."""
+
+    return not bound or drain.call_metadata_digest() == digest
+
+
+def _capture_journal_entries(
+    journal_bytes: bytes,
+    *,
+    call_key: str,
+    max_frame_bytes: int,
+) -> list[object]:
+    """Decode a complete durable call journal before any live replay or append."""
+
+    scan = scan_frames(journal_bytes, max_body_bytes=max_frame_bytes)
+    if not scan.frames or scan.torn_tail_bytes or scan.stop_reason is not None:
+        raise ValueError("capture journal is not a complete frame sequence")
+    try:
+        entries = [decode_entry(frame.body) for frame in scan.frames]
+    except JournalFormatError as error:
+        raise ValueError("capture journal contains an unreadable entry") from error
+
+    header = entries[0]
+    expected_journal_id = hashlib.sha256(
+        b"earshot.capture.journal:" + call_key.encode("utf-8", errors="surrogatepass")
+    ).hexdigest()[:32]
+    if (
+        not isinstance(header, JournalOpen)
+        or header.session_id != call_key
+        or header.bundle_id != call_key
+        or header.journal_id != expected_journal_id
+    ):
+        raise ValueError("capture journal header does not match its call")
+    return entries
+
+
+def _legacy_call_metadata_from_journal(
+    journal_bytes: bytes,
+    *,
+    call_key: str,
+    clock_domain_id: str,
+    max_frame_bytes: int,
+) -> tuple[int, tuple[str | None, str | None] | None]:
+    """Recover metadata an older sidecar did not bind, from its bounded journal.
+
+    Clock uncertainty is always in the call's declared clock-domain record. Trace
+    context is present on captured event and operation records when those facts
+    were emitted. A call with no such record has no durable trace evidence, so its
+    first accepted post-migration drain establishes that context.
+    """
+
+    try:
+        entries = _capture_journal_entries(
+            journal_bytes,
+            call_key=call_key,
+            max_frame_bytes=max_frame_bytes,
+        )
+    except ValueError as error:
+        raise ValueError(f"legacy {error}") from error
+
+    uncertainties: set[int] = set()
+    trace_pairs: set[tuple[str | None, str | None]] = set()
+    for entry in entries[1:]:
+        if isinstance(entry, JournalRecordEntry):
+            value = entry.value or {}
+            if entry.kind == "clock_domain" and value.get("clock_domain_id") == clock_domain_id:
+                uncertainty = value.get("uncertainty_nano")
+                if isinstance(uncertainty, str) and uncertainty.isdecimal():
+                    uncertainties.add(int(uncertainty))
+                elif isinstance(uncertainty, int) and not isinstance(uncertainty, bool):
+                    uncertainties.add(uncertainty)
+                else:
+                    raise ValueError("legacy capture clock uncertainty is unavailable")
+            if entry.kind in {"event", "operation"} and ("trace_id" in value or "span_id" in value):
+                trace_id = value.get("trace_id")
+                span_id = value.get("span_id")
+                if (trace_id is None) != (span_id is None) or (
+                    trace_id is not None
+                    and (not isinstance(trace_id, str) or not isinstance(span_id, str))
+                ):
+                    raise ValueError("legacy capture trace context is invalid")
+                trace_pairs.add((trace_id, span_id))
+        elif isinstance(entry, JournalOperationOpen):
+            trace_id = entry.trace_id
+            span_id = entry.span_id
+            if (trace_id is None) != (span_id is None):
+                raise ValueError("legacy capture trace context is invalid")
+            trace_pairs.add((trace_id, span_id))
+
+    if len(uncertainties) != 1 or len(trace_pairs) > 1:
+        raise ValueError("legacy capture call metadata is ambiguous")
+    return uncertainties.pop(), next(iter(trace_pairs)) if trace_pairs else None
+
+
+def _legacy_metadata_matches_durable_values(
+    drain: CaptureDrain,
+    *,
+    uncertainty_nano: int,
+    trace_pair: tuple[str | None, str | None] | None,
+) -> bool:
+    """Check the durable precision available for an unbound legacy call."""
+
+    uncertainty_matches = int(drain.clock_uncertainty_ms * _NANOS_PER_MS) == uncertainty_nano
+    trace_matches = trace_pair is None or (drain.trace_id, drain.span_id) == trace_pair
+    return uncertainty_matches and trace_matches
+
+
 class CaptureCallRegistry:
     """Every continuous browser call this server is currently accumulating.
 
-    Keyed by ``(project_id, call_key)``. The call key already folds in the
-    authenticated project, so this keying only makes lookup total; isolation is a
-    property of the key itself. Each project is bounded to a fixed number of
+    Keyed by ``(project_id, call_key)``. The call key folds in the authenticated
+    project and client identity; the registry key independently enforces
+    project-scoped lookup. Each project is bounded to a fixed number of
     concurrent calls, refused with :class:`CaptureCallCapacityError`, so one
-    tenant cannot spend the whole server's capture budget.
+    tenant cannot spend the whole server's capture budget. Durable calls also
+    share a server-wide bound, so dormant journals cannot accumulate beyond the
+    configured live-session count after repeated process restarts.
     """
 
     def __init__(
@@ -791,45 +1154,481 @@ class CaptureCallRegistry:
         *,
         journal_dir: Path | str | None = None,
         max_calls_per_project: int = 16,
+        max_durable_calls: int | None = None,
+        max_sealed_replay_ledgers: int = DEFAULT_MAX_SEALED_REPLAY_LEDGERS,
+        correlation_key_id: str | None = None,
     ) -> None:
         self._live = live
         # When set, every call journals its facts and its drain-sequencing ledger
         # here, so an in-flight call survives a backend restart. ``None`` keeps
         # calls purely in memory (a restart then drops them, as it did before).
-        self._journal_dir = None if journal_dir is None else Path(journal_dir)
+        self._journal_dir = (
+            None if journal_dir is None else Path(journal_dir).expanduser().resolve()
+        )
+        self._writer_lock_fd: int | None = None
+        self._writer_lock_error: OSError | None = None
+        self._correlation_key_id = correlation_key_id
+        self._correlation_state_error: OSError | None = None
+        self._hosted_inventory_error: OSError | None = None
+        self._hosted_inventory_directory_identity: tuple[int, int] | None = None
+        self._hosted_inventory_failed_identity: tuple[int, int] | None = None
+        if self._journal_dir is not None:
+            try:
+                self._writer_lock_fd = acquire_writer_lock(self._journal_dir, create=False)
+            except BlockingIOError as error:
+                raise CaptureJournalWriterConflictError(str(error)) from error
+            except OSError as error:
+                # Keep unrelated API operations available so project deletion can
+                # remain pending until its capture journals are safely removable.
+                # Durable capture itself is fenced in drain() below.
+                self._writer_lock_error = error
         self._max_per_project = max_calls_per_project
+        self._max_durable_calls = (
+            live.config.max_sessions if max_durable_calls is None else max_durable_calls
+        )
+        if (
+            isinstance(self._max_durable_calls, bool)
+            or not isinstance(self._max_durable_calls, int)
+            or self._max_durable_calls < 1
+        ):
+            raise ValueError("max_durable_calls must be a positive integer")
+        if (
+            isinstance(max_sealed_replay_ledgers, bool)
+            or not isinstance(max_sealed_replay_ledgers, int)
+            or max_sealed_replay_ledgers < 1
+        ):
+            raise ValueError("max_sealed_replay_ledgers must be a positive integer")
+        self._max_sealed_replay_ledgers = max_sealed_replay_ledgers
         self._lock = threading.Lock()
         self._calls: dict[tuple[str, str], CaptureCall] = {}
+        # Unfinalized durable calls remain capacity owners while they are
+        # dormant after expiry or restart, even though they are absent from the
+        # live registry and the in-memory call map.
+        self._durable_call_keys: set[tuple[str, str]] = set()
+        # Durable storage has one server-wide budget. Reservations cover the gap
+        # between capacity admission and the first sidecar write; storage keys
+        # keep dormant and unsealed calls counted after a process restart.
+        self._durable_storage_keys: set[tuple[str, str]] = set()
+        self._durable_reserved_keys: set[tuple[str, str]] = set()
+        self._journal_limit_refusals: OrderedDict[tuple[str, str], tuple[int, str, int]] = (
+            OrderedDict()
+        )
+        self._drain_locks: dict[tuple[str, str], tuple[threading.Lock, int]] = {}
+        self._project_is_active: Callable[[str], bool] | None = None
+        self._expiry_handler = self.expire_session
+        if self._journal_dir is not None:
+            self._live.set_capture_expiry_handler(self._expiry_handler)
 
-    def rebuild_from_disk(self) -> None:
-        """Restore every durable call's live session at startup.
+    @property
+    def durable_configured(self) -> bool:
+        """Whether accepted calls can survive a process restart."""
+
+        return self._journal_dir is not None
+
+    @property
+    def durable_available(self) -> bool:
+        """Whether the configured journal and its correlation identity are usable."""
+
+        if self._journal_dir is None or not self._ensure_writer_lock():
+            return False
+        if self._hosted_inventory_error is not None:
+            self._refresh_hosted_inventory(force=True)
+        return self._correlation_state_error is None
+
+    def has_call_ownership(self, project_id: str, call_key: str) -> bool:
+        """Whether in-memory or durable state still owns this call identity."""
+
+        key = (project_id, call_key)
+        with self._lock:
+            if (
+                key in self._calls
+                or key in self._durable_storage_keys
+                or key in self._durable_reserved_keys
+            ):
+                return True
+        if self._journal_dir is None:
+            return False
+        try:
+            sidecar_path(self._journal_dir, call_key).lstat()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            # Let the normal durable recovery path turn uncertain ownership into
+            # a retryable error; treating it as absent could reuse the call ID.
+            return True
+        return True
+
+    def close(self) -> None:
+        """Release this process's exclusive journal-directory lease."""
+
+        if self._journal_dir is not None:
+            self._live.set_capture_expiry_handler(None)
+        descriptor = self._writer_lock_fd
+        self._writer_lock_fd = None
+        if descriptor is not None:
+            with contextlib.suppress(OSError):
+                release_writer_lock(descriptor)
+
+    def _ensure_writer_lock(self) -> bool:
+        """Acquire the configured lease, retrying after storage is repaired."""
+
+        if self._journal_dir is None:
+            return True
+        if self._writer_lock_fd is not None:
+            try:
+                directory_stat = self._journal_dir.lstat()
+                lock_stat = (self._journal_dir / WRITER_LOCK_NAME).lstat()
+                descriptor_stat = os.fstat(self._writer_lock_fd)
+            except OSError as error:
+                self._writer_lock_error = error
+                self.close()
+                return False
+            if (
+                not stat.S_ISDIR(directory_stat.st_mode)
+                or not stat.S_ISREG(lock_stat.st_mode)
+                or (lock_stat.st_dev, lock_stat.st_ino)
+                != (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            ):
+                self._writer_lock_error = OSError(
+                    "capture journal directory no longer matches its writer lease"
+                )
+                self.close()
+                return False
+            self._writer_lock_error = None
+            self._refresh_hosted_inventory()
+            return True
+        try:
+            self._writer_lock_fd = acquire_writer_lock(self._journal_dir, create=False)
+        except OSError as error:
+            self._writer_lock_error = error
+            return False
+        self._writer_lock_error = None
+        self._refresh_hosted_inventory()
+        return True
+
+    def _refresh_hosted_inventory(self, *, force: bool = False) -> None:
+        """Recheck ownership when the configured journal directory changes."""
+
+        if self._journal_dir is None or self._correlation_key_id is None:
+            return
+        try:
+            directory_stat = self._journal_dir.lstat()
+            if not stat.S_ISDIR(directory_stat.st_mode):
+                raise OSError("hosted capture journal path is not a real directory")
+            identity = (directory_stat.st_dev, directory_stat.st_ino)
+        except OSError as error:
+            self._hosted_inventory_error = error
+            self._correlation_state_error = error
+            self._hosted_inventory_directory_identity = None
+            self._hosted_inventory_failed_identity = None
+            return
+        if not force and identity == self._hosted_inventory_directory_identity:
+            return
+        if not force and identity == self._hosted_inventory_failed_identity:
+            return
+        try:
+            self._validate_hosted_journal_inventory()
+        except OSError as error:
+            self._hosted_inventory_error = error
+            self._correlation_state_error = error
+            self._hosted_inventory_directory_identity = None
+            self._hosted_inventory_failed_identity = identity
+            return
+        prior_inventory_error = self._hosted_inventory_error
+        self._hosted_inventory_error = None
+        if self._correlation_state_error is prior_inventory_error:
+            self._correlation_state_error = None
+        self._hosted_inventory_directory_identity = identity
+        self._hosted_inventory_failed_identity = None
+
+    def _fence_hosted_inventory(self, error: OSError) -> None:
+        """Fence new hosted writes when one call's durable ownership is uncertain."""
+
+        if self._correlation_key_id is None:
+            return
+        self._hosted_inventory_error = error
+        self._correlation_state_error = error
+        self._hosted_inventory_directory_identity = None
+        self._hosted_inventory_failed_identity = None
+
+    def _retain_drain_lock(self, key: tuple[str, str]) -> threading.Lock:
+        """Keep a per-call transaction lock alive through waiters and recovery."""
+
+        with self._lock:
+            entry = self._drain_locks.get(key)
+            lock, users = (threading.Lock(), 0) if entry is None else entry
+            self._drain_locks[key] = (lock, users + 1)
+            return lock
+
+    def _release_drain_lock(self, key: tuple[str, str], lock: threading.Lock) -> None:
+        """Drop an idle per-call lock without racing a queued drain."""
+
+        with self._lock:
+            entry = self._drain_locks.get(key)
+            if entry is None or entry[0] is not lock:
+                return
+            if entry[1] == 1:
+                self._drain_locks.pop(key)
+            else:
+                self._drain_locks[key] = (lock, entry[1] - 1)
+
+    def _remember_journal_limit_refusal(
+        self, key: tuple[str, str], drain: CaptureDrain, *, digest_version: int
+    ) -> None:
+        """Cache a permanent retry result for an active, already-full call."""
+
+        with self._lock:
+            self._journal_limit_refusals[key] = (
+                drain.drain_sequence,
+                drain.digest(version=digest_version),
+                digest_version,
+            )
+            self._journal_limit_refusals.move_to_end(key)
+            while len(self._journal_limit_refusals) > self._live.config.max_sessions:
+                self._journal_limit_refusals.popitem(last=False)
+
+    def _refuse_cached_journal_limit(self, drain: CaptureDrain) -> None:
+        """Avoid rereading a full journal for an exact retry already refused."""
+
+        from ..live import LiveCaptureJournalLimitError
+
+        key = (drain.project_id, drain.call_key)
+        with self._lock:
+            refusal = self._journal_limit_refusals.get(key)
+        if refusal is None:
+            return
+        if not self._live.contains(drain.call_key, project_id=drain.project_id):
+            with self._lock:
+                if self._journal_limit_refusals.get(key) == refusal:
+                    refusal = self._journal_limit_refusals.get(key)
+                    if refusal is not None and drain.drain_sequence >= refusal[0]:
+                        self._journal_limit_refusals.pop(key, None)
+            return
+        sequence, digest, digest_version = refusal
+        if drain.drain_sequence != sequence:
+            return
+        with self._lock:
+            if self._journal_limit_refusals.get(key) == refusal:
+                self._journal_limit_refusals.move_to_end(key)
+        if drain.digest(version=digest_version) == digest:
+            raise LiveCaptureJournalLimitError(
+                "capture journal would exceed its configured byte limit"
+            )
+        with self._lock:
+            if self._journal_limit_refusals.get(key) == refusal:
+                self._journal_limit_refusals.pop(key, None)
+
+    def _validate_hosted_journal_inventory(self) -> None:
+        """Reject hosted recovery when durable capture ownership is incomplete."""
+
+        if self._journal_dir is None or self._correlation_key_id is None:
+            return
+        try:
+            entries = tuple(self._journal_dir.iterdir())
+        except OSError as error:
+            raise OSError("hosted capture journal inventory cannot be read") from error
+
+        sidecars: dict[str, CaptureSidecar] = {}
+        journal_stems: set[str] = set()
+        for path in entries:
+            name = path.name
+            if name == WRITER_LOCK_NAME:
+                continue
+            if name.endswith(f"{SIDECAR_SUFFIX}.tmp"):
+                raise OSError("hosted capture journal contains an unresolved sidecar write")
+            if name.endswith(SIDECAR_SUFFIX):
+                try:
+                    file_stat = path.lstat()
+                except OSError as error:
+                    raise OSError("hosted capture sidecar cannot be inspected") from error
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise OSError("hosted capture sidecar is not a regular file")
+                sidecar = read_sidecar(path)
+                if (
+                    sidecar is None
+                    or sidecar.correlation_key_id != self._correlation_key_id
+                    or sidecar_path(self._journal_dir, sidecar.call_key) != path
+                ):
+                    raise OSError("hosted capture sidecar identity cannot be proven")
+                sidecars[name.removesuffix(SIDECAR_SUFFIX)] = sidecar
+                continue
+            if name.endswith(JOURNAL_SUFFIX):
+                try:
+                    file_stat = path.lstat()
+                except OSError as error:
+                    raise OSError("hosted capture journal cannot be inspected") from error
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise OSError("hosted capture journal is not a regular file")
+                journal_stems.add(name.removesuffix(JOURNAL_SUFFIX))
+
+        if journal_stems.difference(sidecars):
+            raise OSError("hosted capture journal has no attributable sidecar")
+        for stem, sidecar in sidecars.items():
+            if stem in journal_stems or sidecar.sealed:
+                continue
+            if sidecar.applied > 0 or (
+                sidecar.pending_journal_size is not None and sidecar.pending_journal_size > 0
+            ):
+                raise OSError("hosted capture sidecar refers to a missing journal")
+
+    def _read_journal(self, path: Path) -> bytes:
+        """Read one regular capture journal without exceeding the configured cap."""
+
+        maximum = self._live.config.max_capture_journal_bytes
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise OSError("durable capture journal is not a regular file")
+            if metadata.st_size > maximum:
+                raise _CaptureJournalTooLargeError(
+                    "durable capture journal exceeds its configured byte limit"
+                )
+
+            chunks: list[bytes] = []
+            total = 0
+            while total <= maximum:
+                chunk = os.read(descriptor, min(64 * 1024, maximum + 1 - total))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            if total > maximum:
+                raise _CaptureJournalTooLargeError(
+                    "durable capture journal exceeds its configured byte limit"
+                )
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+
+    def __del__(self) -> None:
+        # Application lifespan is the normal release path. This is a fallback for
+        # direct registry users that discard an instance without a close call.
+        self.close()
+
+    def rebuild_from_disk(
+        self,
+        *,
+        project_is_active: Callable[[str], bool] | None = None,
+    ) -> None:
+        """Restore active calls and count expired calls without reattaching them.
 
         Reads the durable ledgers written before the process died and replays each
         call's journal back into a live session, so an in-flight call is tailable,
         sealable, and -- crucially -- **provisional** immediately after a restart,
-        never fabricating a close. The drain-sequencing state of a call is rebuilt
-        lazily instead, on the first drain that continues it (which carries the
-        clock domain), so this only has to make the live surface whole again.
+        never fabricating a close. Calls already expired before shutdown stay
+        dormant and count against their project's call budget; an exact retry
+        reattaches one lazily without reviving stale work at startup.
         """
 
         from ..live import LiveError
 
-        if self._journal_dir is None or not self._journal_dir.is_dir():
+        if self._journal_dir is None or not self._ensure_writer_lock():
             return
+        self._project_is_active = project_is_active
+        if self._correlation_key_id is not None:
+            self._refresh_hosted_inventory(force=True)
+            if self._hosted_inventory_error is not None:
+                return
+            # Retry any previously interrupted sealed-journal cleanup below.
+            self._correlation_state_error = None
+        with self._lock:
+            self._durable_call_keys.clear()
+            self._durable_storage_keys.clear()
+            self._durable_reserved_keys.clear()
         for ledger in iter_sidecars(self._journal_dir):
             sidecar = read_sidecar(ledger)
             if sidecar is None:
+                if self._correlation_key_id is not None:
+                    self._correlation_state_error = OSError(
+                        "a hosted capture ledger is unreadable; correlation cannot be proven"
+                    )
                 continue
+            key = (sidecar.project_id, sidecar.call_key)
             journal = journal_path(self._journal_dir, sidecar.call_key)
-            try:
-                frames = journal.read_bytes()
-            except OSError:
-                # An orphan ledger whose journal was already sealed and removed has
-                # nothing to rebuild; drop it so ledgers do not accumulate.
-                with contextlib.suppress(OSError):
-                    ledger.unlink()
+            if not sidecar.sealed:
+                with self._lock:
+                    self._durable_storage_keys.add(key)
+            else:
+                try:
+                    journal.lstat()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    with self._lock:
+                        self._durable_storage_keys.add(key)
+                else:
+                    with self._lock:
+                        self._durable_storage_keys.add(key)
+            if sidecar.correlation_key_id != self._correlation_key_id:
+                self._correlation_state_error = OSError(
+                    "capture ledger uses a different instance correlation key"
+                )
                 continue
-            with contextlib.suppress(LiveError):
+            if sidecar.sealed:
+                # The durable seal marker prevents resurrection. A later startup
+                # or project deletion can retry physical cleanup.
+                try:
+                    remove_sealed_journal(self._journal_dir, sidecar.call_key)
+                except OSError as error:
+                    if self._correlation_key_id is not None:
+                        self._correlation_state_error = error
+                else:
+                    with self._lock:
+                        self._durable_storage_keys.discard(key)
+                with self._lock:
+                    self._durable_call_keys.discard(key)
+                continue
+            if project_is_active is not None and not project_is_active(sidecar.project_id):
+                continue
+            if not sidecar.finalized:
+                with self._lock:
+                    self._durable_call_keys.add(key)
+            try:
+                sidecar = recover_pending_sidecar(self._journal_dir, sidecar)
+            except OSError:
+                # Keep the project attributable and fenced from a fresh call. Its
+                # next retry can report the unavailable journal without exposing
+                # an uncommitted prefix as accepted evidence.
+                continue
+            try:
+                frames = self._read_journal(journal)
+            except _CaptureJournalTooLargeError as error:
+                if self._correlation_key_id is not None:
+                    self._correlation_state_error = error
+                # Keep the attributable files intact so project deletion can
+                # finish; lazy recovery will return a retryable unavailable error.
+                continue
+            except OSError:
+                # The first interrupted drain has no prior journal and keeps its
+                # digest as an exact-retry fence. Applied state without a journal
+                # is corruption: preserve the ledger for deletion accounting and
+                # refuse to replace it with a new call.
+                if sidecar.applied == 0 and sidecar.retry_sequence is None:
+                    with contextlib.suppress(OSError):
+                        ledger.unlink()
+                continue
+            try:
+                _capture_journal_entries(
+                    frames,
+                    call_key=sidecar.call_key,
+                    max_frame_bytes=self._live.config.max_frame_bytes,
+                )
+            except ValueError:
+                if self._correlation_key_id is not None:
+                    self._correlation_state_error = OSError(
+                        "a hosted capture journal cannot be replayed safely"
+                    )
+                continue
+            if sidecar.expired:
+                # Keep the durable call available for its exact retry without
+                # consuming live-session capacity merely because the server
+                # restarted. _rebuild_call reattaches it lazily on that retry.
+                continue
+            try:
                 self._live.rebuild_capture_session(
                     sidecar.call_key,
                     frames,
@@ -838,12 +1637,268 @@ class CaptureCallRegistry:
                     recovery_method=RECOVERY_METHOD,
                     recovery_reason=RECOVERY_REASON_SEALED,
                 )
+            except LiveError:
+                if self._correlation_key_id is not None:
+                    self._correlation_state_error = OSError(
+                        "a hosted capture journal cannot be replayed safely"
+                    )
+        try:
+            with self._lock:
+                prune_sealed_sidecars(
+                    self._journal_dir,
+                    max_count=self._max_sealed_replay_ledgers,
+                    protected_call_keys=frozenset(key[1] for key in self._drain_locks),
+                )
+        except OSError as error:
+            if self._correlation_key_id is not None:
+                self._correlation_state_error = error
 
-    def drain(self, drain: CaptureDrain) -> DrainOutcome:
+    def drop_project(self, project_id: str) -> bool:
+        """Remove this project's in-memory calls and owned durable call journals."""
+
+        with self._lock:
+            for key in tuple(self._calls):
+                if key[0] == project_id:
+                    self._calls.pop(key, None)
+            for key in tuple(self._journal_limit_refusals):
+                if key[0] == project_id:
+                    self._journal_limit_refusals.pop(key, None)
+        if self._journal_dir is None:
+            return True
+        if not self._ensure_writer_lock():
+            return False
+        try:
+            directory_stat = self._journal_dir.lstat()
+        except FileNotFoundError:
+            # The configured volume may have been removed or unmounted. The open
+            # file descriptor cannot prove that the named durable store is empty.
+            return False
+        except OSError:
+            return False
+        if not stat.S_ISDIR(directory_stat.st_mode):
+            return False
+
+        complete = True
+        try:
+            with os.scandir(self._journal_dir) as entries:
+                paths = tuple(self._journal_dir / entry.name for entry in entries)
+        except OSError:
+            return False
+        ledgers = tuple(path for path in paths if path.name.endswith(SIDECAR_SUFFIX))
+        journals = tuple(path for path in paths if path.name.endswith(JOURNAL_SUFFIX))
+        temporary_ledgers = tuple(
+            path for path in paths if path.name.endswith(f"{SIDECAR_SUFFIX}.tmp")
+        )
+        ledger_stems = {ledger.name.removesuffix(SIDECAR_SUFFIX) for ledger in ledgers}
+        for temporary in temporary_ledgers:
+            sidecar = read_sidecar(temporary)
+            if sidecar is None:
+                complete = False
+                continue
+            expected_temporary_name = (
+                sidecar_path(self._journal_dir, sidecar.call_key).name + ".tmp"
+            )
+            if temporary.name != expected_temporary_name:
+                complete = False
+                continue
+            ledger_stems.add(temporary.name.removesuffix(f"{SIDECAR_SUFFIX}.tmp"))
+            if sidecar.project_id != project_id:
+                continue
+            try:
+                journal_path(self._journal_dir, sidecar.call_key).unlink(missing_ok=True)
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                complete = False
+        for ledger in ledgers:
+            sidecar = read_sidecar(ledger)
+            if sidecar is None:
+                complete = False
+                continue
+            if sidecar_path(self._journal_dir, sidecar.call_key) != ledger:
+                complete = False
+                continue
+            if sidecar.project_id != project_id:
+                continue
+            journal = journal_path(self._journal_dir, sidecar.call_key)
+            try:
+                journal.unlink(missing_ok=True)
+                ledger.unlink(missing_ok=True)
+            except OSError:
+                complete = False
+        for journal in journals:
+            if journal.name.removesuffix(JOURNAL_SUFFIX) not in ledger_stems:
+                complete = False
+        try:
+            descriptor = os.open(self._journal_dir, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        except OSError:
+            complete = False
+        if complete and self._correlation_state_error is not None:
+            self.rebuild_from_disk(project_is_active=self._project_is_active)
+        if complete:
+            with self._lock:
+                self._durable_call_keys = {
+                    key for key in self._durable_call_keys if key[0] != project_id
+                }
+                self._durable_storage_keys = {
+                    key for key in self._durable_storage_keys if key[0] != project_id
+                }
+                self._durable_reserved_keys = {
+                    key for key in self._durable_reserved_keys if key[0] != project_id
+                }
+        return complete
+
+    def drain(
+        self,
+        drain: CaptureDrain,
+        *,
+        bundle_identity_exists: Callable[[str, str], bool] | None = None,
+    ) -> DrainOutcome:
         """Accept one drain of one call. Thread-safe; drains of a call serialize."""
 
+        key = (drain.project_id, drain.call_key)
+        transaction_lock = self._retain_drain_lock(key)
+        try:
+            with transaction_lock:
+                if (
+                    bundle_identity_exists is not None
+                    and not self.has_call_ownership(drain.project_id, drain.call_key)
+                    and bundle_identity_exists(drain.project_id, drain.call_key)
+                ):
+                    raise CaptureCallReplayExpiredError(
+                        "the retained replay window for this completed capture call has expired"
+                    )
+                return self._drain_serialized(drain)
+        finally:
+            self._release_drain_lock(key, transaction_lock)
+
+    def _drain_serialized(self, drain: CaptureDrain) -> DrainOutcome:
+        """Run lookup, append, and recovery as one same-call transaction."""
+
+        from ..live import LiveCaptureJournalLimitError
+
+        self._refuse_cached_journal_limit(drain)
+        if self._correlation_state_error is not None:
+            raise CaptureJournalUnavailableError(
+                "capture journal identity cannot be safely resumed"
+            ) from self._correlation_state_error
+        if not self._ensure_writer_lock():
+            raise CaptureJournalUnavailableError(
+                "the durable capture directory could not be exclusively opened"
+            ) from self._writer_lock_error
         call = self._call_for(drain)
-        return call.process(drain, self._live)
+        try:
+            outcome = call.process(drain, self._live)
+            if self._journal_dir is not None:
+                with self._lock:
+                    key = (drain.project_id, drain.call_key)
+                    # A successful replacement resolved the sequence that may
+                    # previously have been refused for size. The cached 413 must
+                    # no longer mask the now-authoritative sequence conflict.
+                    self._journal_limit_refusals.pop(key, None)
+                    self._durable_reserved_keys.discard(key)
+                    self._durable_storage_keys.add(key)
+                    if call.finalized:
+                        self._durable_call_keys.discard(key)
+                    else:
+                        self._durable_call_keys.add(key)
+            return outcome
+        except Exception as error:
+            if self._journal_dir is not None:
+                ledger = sidecar_path(self._journal_dir, drain.call_key)
+                sidecar = read_sidecar(ledger)
+                persisted_sidecar = sidecar
+                key = (drain.project_id, drain.call_key)
+                pending = sidecar is not None and sidecar.pending_sequence is not None
+                committed_before_failure = (
+                    sidecar is not None
+                    and sidecar.pending_sequence is None
+                    and sidecar.applied == drain.drain_sequence
+                    and sidecar.digests.get(drain.drain_sequence) == call._digest(drain)
+                )
+                if call._intent_pending or pending or committed_before_failure:
+                    preserve_committed_prefix = False
+                    discarded_first_drain = False
+                    try:
+                        if pending:
+                            assert sidecar is not None
+                            recovered = recover_pending_sidecar(self._journal_dir, sidecar)
+                            persisted_sidecar = recovered
+                            if isinstance(error, LiveCaptureJournalLimitError):
+                                if recovered.applied == 0:
+                                    discard_rejected_first_drain(self._journal_dir, recovered)
+                                    persisted_sidecar = None
+                                    discarded_first_drain = True
+                                else:
+                                    # A 413 proves this append never reached the
+                                    # live session. Keep the accepted prefix and
+                                    # let the client replace this unapplied body;
+                                    # only ambiguous interrupted writes require an
+                                    # exact digest retry.
+                                    cleared_retry = replace(
+                                        recovered,
+                                        retry_sequence=None,
+                                        retry_digest=None,
+                                        retry_digest_version=None,
+                                    )
+                                    write_sidecar(self._journal_dir, cleared_retry)
+                                    persisted_sidecar = cleared_retry
+                                    preserve_committed_prefix = self._live.contains(
+                                        drain.call_key, project_id=drain.project_id
+                                    )
+                                    if preserve_committed_prefix:
+                                        self._remember_journal_limit_refusal(
+                                            key,
+                                            drain,
+                                            digest_version=call._digest_version_for(drain),
+                                        )
+                    except OSError as recovery_error:
+                        if isinstance(error, LiveCaptureJournalLimitError):
+                            raise CaptureJournalUnavailableError(
+                                "the rejected capture drain could not be safely released"
+                            ) from recovery_error
+                        raise
+                    finally:
+                        if not preserve_committed_prefix:
+                            self._live.rollback_capture_session(
+                                drain.call_key,
+                                project_id=drain.project_id,
+                                durable_path=journal_path(self._journal_dir, drain.call_key),
+                            )
+                        with self._lock:
+                            self._durable_reserved_keys.discard(key)
+                            if discarded_first_drain:
+                                self._durable_storage_keys.discard(key)
+                                self._durable_call_keys.discard(key)
+                            elif persisted_sidecar is not None and not persisted_sidecar.sealed:
+                                self._durable_storage_keys.add(key)
+                                if persisted_sidecar.finalized:
+                                    self._durable_call_keys.discard(key)
+                                else:
+                                    self._durable_call_keys.add(key)
+                            else:
+                                self._durable_storage_keys.discard(key)
+                                self._durable_call_keys.discard(key)
+                            if self._calls.get(key) is call:
+                                self._calls.pop(key, None)
+                else:
+                    with self._lock:
+                        self._durable_reserved_keys.discard(key)
+                        if sidecar is None:
+                            self._durable_storage_keys.discard(key)
+                            self._durable_call_keys.discard(key)
+                        elif sidecar.sealed:
+                            self._durable_call_keys.discard(key)
+                        else:
+                            self._durable_storage_keys.add(key)
+                            if sidecar.finalized:
+                                self._durable_call_keys.discard(key)
+                            else:
+                                self._durable_call_keys.add(key)
+            raise
 
     def _call_for(self, drain: CaptureDrain) -> CaptureCall:
         key = (drain.project_id, drain.call_key)
@@ -852,30 +1907,178 @@ class CaptureCallRegistry:
             if call is not None:
                 # A finalized call is kept so a drain arriving after its explicit
                 # end is refused rather than silently starting a second call under
-                # the same key. A still-live call appends. A call whose live session
-                # expired or was superseded starts afresh -- its accumulation is
-                # gone, so appending onto a session that no longer exists would lie.
+                # the same key. A still-live call appends. Its expired durable
+                # ledger is rebuilt below for an exact retry; a missing ledger
+                # (memory-only or superseded) starts afresh.
                 if call.finalized or self._live.contains(
                     drain.call_key, project_id=drain.project_id
                 ):
                     return call
                 self._calls.pop(key, None)
+
             # Not in memory. If a durable ledger survived a restart, rebuild the
             # call from it so a continuing drain resumes cleanly instead of a fresh
             # call that would refuse its in-sequence drain as a gap.
-            rebuilt = self._rebuild_call(drain)
+            try:
+                rebuilt = self._rebuild_call(drain)
+            except CaptureJournalUnavailableError:
+                if self._correlation_state_error is None:
+                    self._fence_hosted_inventory(
+                        OSError("hosted capture ownership could not be safely recovered")
+                    )
+                raise
             if rebuilt is not None:
                 self._calls[key] = rebuilt
                 return rebuilt
+            if self._journal_dir is not None:
+                durable_keys = self._durable_storage_keys | self._durable_reserved_keys
+                if key not in durable_keys and len(durable_keys) >= self._max_durable_calls:
+                    raise CaptureCallCapacityError(
+                        "the server is carrying as many durable capture calls as it will"
+                    )
             self._prune_finalized(drain.project_id)
-            owned = sum(1 for project, _ in self._calls if project == drain.project_id)
+            owned_keys = {key for key in self._calls if key[0] == drain.project_id}
+            owned_keys.update(key for key in self._durable_call_keys if key[0] == drain.project_id)
+            owned = len(owned_keys)
             if owned >= self._max_per_project:
                 raise CaptureCallCapacityError(
                     "this project is carrying as many continuous calls as it will"
                 )
-            call = CaptureCall(drain, journal_dir=self._journal_dir)
+            call = CaptureCall(
+                drain,
+                journal_dir=self._journal_dir,
+                correlation_key_id=self._correlation_key_id,
+            )
             self._calls[key] = call
+            if self._journal_dir is not None:
+                self._durable_reserved_keys.add(key)
             return call
+
+    def mark_sealed(self, project_id: str, call_key: str) -> None:
+        """Persist that a finalized call's artifact was accepted before unlinking it."""
+
+        if self._journal_dir is None:
+            return
+        key = (project_id, call_key)
+        transaction_lock = self._retain_drain_lock(key)
+        try:
+            with transaction_lock:
+                self._mark_sealed_serialized(project_id, call_key)
+        finally:
+            self._release_drain_lock(key, transaction_lock)
+
+    def _mark_sealed_serialized(self, project_id: str, call_key: str) -> None:
+        """Commit and compact one finalized call while its drain lock is held."""
+
+        if not self._ensure_writer_lock():
+            raise CaptureJournalUnavailableError(
+                "the durable capture directory could not be exclusively opened"
+            ) from self._writer_lock_error
+        ledger = sidecar_path(self._journal_dir, call_key)
+        try:
+            ledger_stat = ledger.lstat()
+        except OSError as error:
+            raise CaptureJournalUnavailableError(
+                "the finalized capture ledger could not be inspected"
+            ) from error
+        if not stat.S_ISREG(ledger_stat.st_mode):
+            raise CaptureJournalUnavailableError(
+                "the finalized capture ledger is not a regular file"
+            )
+        sidecar = read_sidecar(ledger)
+        if (
+            sidecar is None
+            or sidecar.call_key != call_key
+            or sidecar.project_id != project_id
+            or not sidecar.finalized
+            or sidecar.pending_sequence is not None
+            or sidecar.retry_sequence is not None
+        ):
+            raise CaptureJournalUnavailableError(
+                "the finalized capture ledger is not in a sealable state"
+            )
+        if not sidecar.sealed:
+            try:
+                write_sidecar(
+                    self._journal_dir,
+                    replace(sidecar, sealed=True, expired=False),
+                )
+            except OSError as error:
+                raise CaptureJournalUnavailableError(
+                    "the sealed capture acknowledgment could not be persisted"
+                ) from error
+        try:
+            remove_sealed_journal(self._journal_dir, call_key)
+        except OSError as error:
+            raise CaptureJournalUnavailableError(
+                "the sealed capture journal could not be removed"
+            ) from error
+        with self._lock:
+            self._calls.pop((project_id, call_key), None)
+            self._durable_call_keys.discard((project_id, call_key))
+            self._durable_storage_keys.discard((project_id, call_key))
+            self._durable_reserved_keys.discard((project_id, call_key))
+            try:
+                prune_sealed_sidecars(
+                    self._journal_dir,
+                    max_count=self._max_sealed_replay_ledgers,
+                    protected_call_keys=frozenset(
+                        key[1] for key in self._drain_locks if key != (project_id, call_key)
+                    ),
+                )
+            except OSError as error:
+                raise CaptureJournalUnavailableError(
+                    "sealed capture replay retention could not be enforced"
+                ) from error
+
+    def expire_session(self, project_id: str, call_key: str) -> bool:
+        """Persist a call's dormant state before the live registry drops it."""
+
+        from ..live import END_SESSION_EXPIRED, STATE_ABANDONED, SessionNotLiveError
+
+        key = (project_id, call_key)
+        transaction_lock = self._retain_drain_lock(key)
+        try:
+            with transaction_lock:
+                try:
+                    summary = self._live.summary(call_key, project_id=project_id)
+                except SessionNotLiveError:
+                    return True
+                if summary.state != STATE_ABANDONED:
+                    return True
+                if not self._ensure_writer_lock():
+                    raise OSError("capture ownership cannot be persisted before expiry")
+                assert self._journal_dir is not None
+                ledger = sidecar_path(self._journal_dir, call_key)
+                try:
+                    metadata = ledger.lstat()
+                except OSError as error:
+                    raise OSError("expired capture ownership ledger is unavailable") from error
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise OSError("expired capture ownership ledger is not a regular file")
+                sidecar = read_sidecar(ledger)
+                if (
+                    sidecar is None
+                    or sidecar.project_id != project_id
+                    or sidecar.call_key != call_key
+                    or sidecar.correlation_key_id != self._correlation_key_id
+                    or sidecar.finalized
+                    or sidecar.sealed
+                ):
+                    raise OSError("expired capture ownership cannot be proven")
+                sidecar = recover_pending_sidecar(self._journal_dir, sidecar)
+                if not sidecar.expired:
+                    write_sidecar(self._journal_dir, replace(sidecar, expired=True))
+                self._live.drop_session(
+                    call_key,
+                    reason=END_SESSION_EXPIRED,
+                    project_id=project_id,
+                )
+                with self._lock:
+                    self._durable_call_keys.add(key)
+                return True
+        finally:
+            self._release_drain_lock(key, transaction_lock)
 
     def _rebuild_call(self, drain: CaptureDrain) -> CaptureCall | None:
         """Reconstruct a call from its durable ledger, or ``None`` if there is none.
@@ -890,14 +2093,185 @@ class CaptureCallRegistry:
             return None
         from ..live import LiveError, SessionNotLiveError
 
-        sidecar = read_sidecar(sidecar_path(self._journal_dir, drain.call_key))
-        if sidecar is None:
-            return None
+        ledger = sidecar_path(self._journal_dir, drain.call_key)
         journal = journal_path(self._journal_dir, drain.call_key)
+        temporary_ledger = ledger.with_name(ledger.name + ".tmp")
         try:
-            frames = journal.read_bytes()
-        except OSError:
+            ledger_stat = ledger.lstat()
+            ledger_exists = True
+        except FileNotFoundError:
+            ledger_stat = None
+            ledger_exists = False
+        except OSError as error:
+            raise CaptureJournalUnavailableError(
+                "the capture ownership ledger could not be inspected"
+            ) from error
+        if ledger_stat is not None and not stat.S_ISREG(ledger_stat.st_mode):
+            raise CaptureJournalUnavailableError(
+                "the capture ownership ledger is not a regular file"
+            )
+        sidecar = read_sidecar(ledger) if ledger_exists else None
+        if sidecar is None:
+            for path in (journal, temporary_ledger):
+                try:
+                    path.lstat()
+                except FileNotFoundError:
+                    continue
+                except OSError as error:
+                    raise CaptureJournalUnavailableError(
+                        "the capture ownership files could not be inspected"
+                    ) from error
+                raise CaptureJournalUnavailableError(
+                    "durable capture files exist without a valid ownership ledger"
+                )
+            if ledger_exists:
+                raise CaptureJournalUnavailableError(
+                    "the capture ownership ledger is unreadable or corrupt"
+                )
             return None
+        if sidecar.call_key != drain.call_key or sidecar.project_id != drain.project_id:
+            raise CaptureJournalUnavailableError(
+                "the capture ownership ledger does not match this project and call"
+            )
+        if sidecar.correlation_key_id != self._correlation_key_id:
+            self._correlation_state_error = OSError(
+                "capture ledger uses a different instance correlation key"
+            )
+            raise CaptureJournalUnavailableError(
+                "capture journal identity cannot be safely resumed"
+            ) from self._correlation_state_error
+        if sidecar.sealed:
+            try:
+                journal.lstat()
+            except FileNotFoundError:
+                self._durable_storage_keys.discard((sidecar.project_id, sidecar.call_key))
+            except OSError:
+                self._durable_storage_keys.add((sidecar.project_id, sidecar.call_key))
+            else:
+                self._durable_storage_keys.add((sidecar.project_id, sidecar.call_key))
+            self._durable_call_keys.discard((sidecar.project_id, sidecar.call_key))
+        else:
+            self._durable_storage_keys.add((sidecar.project_id, sidecar.call_key))
+            if not sidecar.finalized:
+                self._durable_call_keys.add((sidecar.project_id, sidecar.call_key))
+        self._preflight_sidecar_drain(drain, sidecar)
+        if sidecar.sealed:
+            if not sidecar.call_metadata_bound:
+                # A sealed ledger has no journal from which to recover its old
+                # metadata. Replays cannot change the completed artifact, so pin
+                # the first verified replay's values for all later retries.
+                sidecar = replace(
+                    sidecar,
+                    call_metadata_bound=True,
+                    call_metadata_digest=drain.call_metadata_digest(),
+                )
+                try:
+                    write_sidecar(self._journal_dir, sidecar)
+                except OSError as error:
+                    raise CaptureJournalUnavailableError(
+                        "legacy capture metadata could not be migrated"
+                    ) from error
+            return CaptureCall.rebuild_finalized_ledger(
+                drain,
+                sidecar,
+                journal_dir=self._journal_dir,
+                correlation_key_id=self._correlation_key_id,
+            )
+        try:
+            sidecar = recover_pending_sidecar(self._journal_dir, sidecar)
+        except OSError as error:
+            raise CaptureJournalUnavailableError(
+                "the pending capture journal transaction could not be recovered"
+            ) from error
+        if sidecar.applied == 0 and sidecar.retry_sequence is not None:
+            # No accepted journal facts exist yet. Preserve the legacy sequence
+            # fence, and bind metadata from the first drain that is actually
+            # accepted after this restart.
+            call = CaptureCall(
+                drain,
+                journal_dir=self._journal_dir,
+                correlation_key_id=self._correlation_key_id,
+                call_metadata_bound=True,
+            )
+            call._retry_sequence = sidecar.retry_sequence
+            call._retry_digest = sidecar.retry_digest
+            call._retry_digest_version = sidecar.retry_digest_version
+            return call
+        try:
+            frames = self._read_journal(journal)
+        except _CaptureJournalTooLargeError as error:
+            raise CaptureJournalUnavailableError(
+                "the durable capture journal exceeds its configured byte limit"
+            ) from error
+        except FileNotFoundError as error:
+            if sidecar.applied > 0:
+                raise CaptureJournalUnavailableError(
+                    "the committed capture journal is missing"
+                ) from error
+            if sidecar.retry_sequence is None:
+                return None
+            call = CaptureCall(
+                drain,
+                journal_dir=self._journal_dir,
+                correlation_key_id=self._correlation_key_id,
+                call_metadata_bound=sidecar.call_metadata_bound,
+            )
+            call._retry_sequence = sidecar.retry_sequence
+            call._retry_digest = sidecar.retry_digest
+            call._retry_digest_version = sidecar.retry_digest_version
+            return call
+        except OSError as error:
+            raise CaptureJournalUnavailableError("the capture journal could not be read") from error
+        try:
+            _capture_journal_entries(
+                frames,
+                call_key=sidecar.call_key,
+                max_frame_bytes=self._live.config.max_frame_bytes,
+            )
+        except ValueError as error:
+            if self._correlation_key_id is not None:
+                self._correlation_state_error = OSError(
+                    "a hosted capture journal cannot be replayed safely"
+                )
+            raise CaptureJournalUnavailableError(
+                "the durable capture journal cannot be replayed because it is incomplete or corrupt"
+            ) from error
+        if not sidecar.call_metadata_bound:
+            try:
+                uncertainty_nano, trace_pair = _legacy_call_metadata_from_journal(
+                    frames,
+                    call_key=drain.call_key,
+                    clock_domain_id=drain.clock_domain_id,
+                    max_frame_bytes=self._live.config.max_frame_bytes,
+                )
+            except ValueError as error:
+                if self._correlation_key_id is not None:
+                    self._correlation_state_error = OSError(
+                        "a hosted capture journal cannot be replayed safely"
+                    )
+                raise CaptureJournalUnavailableError(
+                    "the capture journal cannot be replayed or its legacy metadata recovered"
+                ) from error
+            if not _legacy_metadata_matches_durable_values(
+                drain,
+                uncertainty_nano=uncertainty_nano,
+                trace_pair=trace_pair,
+            ):
+                raise CaptureSequenceConflictError(
+                    "a drain changes this call's trace or clock metadata",
+                    sequence=drain.drain_sequence,
+                )
+            sidecar = replace(
+                sidecar,
+                call_metadata_bound=True,
+                call_metadata_digest=drain.call_metadata_digest(),
+            )
+            try:
+                write_sidecar(self._journal_dir, sidecar)
+            except OSError as error:
+                raise CaptureJournalUnavailableError(
+                    "legacy capture metadata could not be migrated"
+                ) from error
         if not self._live.contains(drain.call_key, project_id=drain.project_id):
             try:
                 self._live.rebuild_capture_session(
@@ -908,26 +2282,80 @@ class CaptureCallRegistry:
                     recovery_method=RECOVERY_METHOD,
                     recovery_reason=RECOVERY_REASON_SEALED,
                 )
-            except LiveError:
-                return None
+            except LiveError as error:
+                if self._correlation_key_id is not None:
+                    self._correlation_state_error = OSError(
+                        "a hosted capture journal cannot be replayed safely"
+                    )
+                raise CaptureJournalUnavailableError(
+                    "the durable capture journal cannot be replayed"
+                ) from error
         try:
             finalized = self._live.summary(
                 drain.call_key, project_id=drain.project_id
             ).close_observed
-        except SessionNotLiveError:
-            return None
+        except SessionNotLiveError as error:
+            if self._correlation_key_id is not None:
+                self._correlation_state_error = OSError(
+                    "a hosted capture journal has no rebuilt live session"
+                )
+            raise CaptureJournalUnavailableError(
+                "the durable capture journal has no rebuilt live session"
+            ) from error
         return CaptureCall.rebuild(
-            drain, sidecar, journal, journal_dir=self._journal_dir, finalized=finalized
+            drain,
+            sidecar,
+            journal,
+            journal_dir=self._journal_dir,
+            finalized=finalized,
+            correlation_key_id=self._correlation_key_id,
         )
 
+    @staticmethod
+    def _preflight_sidecar_drain(drain: CaptureDrain, sidecar: CaptureSidecar) -> None:
+        """Refuse changed retries before rebuilding or publishing a live session."""
+
+        sequence = drain.drain_sequence
+        if not _matches_call_metadata(
+            drain,
+            bound=sidecar.call_metadata_bound,
+            digest=sidecar.call_metadata_digest,
+        ):
+            raise CaptureSequenceConflictError(
+                "a drain changes this call's trace or clock metadata",
+                sequence=sequence,
+            )
+
+        if sequence <= sidecar.applied:
+            digest = sidecar.digests.get(sequence)
+            digest_version = sidecar.digest_versions.get(sequence, LEGACY_CAPTURE_DIGEST_VERSION)
+            if digest is None or digest != drain.digest(version=digest_version):
+                raise CaptureSequenceConflictError(
+                    "a drain rewrites a sequence this call already resolved",
+                    sequence=sequence,
+                )
+
+        retry_sequence = sidecar.retry_sequence or sidecar.pending_sequence
+        retry_digest = sidecar.retry_digest or sidecar.pending_digest
+        retry_digest_version = sidecar.retry_digest_version or sidecar.pending_digest_version
+        if retry_sequence is not None and (
+            sequence != retry_sequence
+            or retry_digest is None
+            or retry_digest_version is None
+            or drain.digest(version=retry_digest_version) != retry_digest
+        ):
+            raise CaptureSequenceConflictError(
+                "a new drain differs from the interrupted request",
+                sequence=sequence,
+            )
+
     def _prune_finalized(self, project_id: str) -> None:
-        """Reclaim finalized calls whose sealed live session is already gone.
+        """Reclaim finalized calls from memory after their live session is gone.
 
         A finalized call is retained only long enough to refuse an in-flight late
-        drain; once its live session has been sealed and dropped there is nothing
-        left to append to and nothing left to refuse, so it no longer counts against
-        the project's concurrent-call budget. Its durable ledger is removed with it,
-        because the journal it tracked was unlinked when the session was dropped.
+        drain. Once its live session is gone there is nothing left to append to, so
+        it no longer counts against the project's concurrent-call budget. Its
+        durable ledger remains as the replay fence and project-deletion record.
         Caller holds the registry lock.
         """
 
@@ -940,9 +2368,6 @@ class CaptureCallRegistry:
         ]
         for key in dead:
             self._calls.pop(key, None)
-            if self._journal_dir is not None:
-                with contextlib.suppress(OSError):
-                    sidecar_path(self._journal_dir, key[1]).unlink()
 
 
 __all__ = [
@@ -956,6 +2381,8 @@ __all__ = [
     "CaptureDrain",
     "CaptureEnd",
     "CaptureError",
+    "CaptureJournalUnavailableError",
+    "CaptureJournalWriterConflictError",
     "CaptureSequenceConflictError",
     "CaptureSequenceGapError",
     "DrainOutcome",

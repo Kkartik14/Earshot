@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import gzip
 import json
+import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -22,8 +23,8 @@ from earshot.codec import (
     encode_incident_json,
     encode_incident_protobuf,
 )
-from earshot.contract import DerivedAnalysis, Diagnosis, ExportPolicy
-from earshot.storage import IncidentStore
+from earshot.contract import DerivedAnalysis, Diagnosis, ExportPolicy, RetentionPolicy
+from earshot.storage import IncidentStore, StorageCleanupPendingError
 from incident_factory import SECRET_SENTINEL, make_valid_bundle
 
 pytestmark = pytest.mark.integration
@@ -46,6 +47,42 @@ def changed_status(bundle, status: str):
     )
 
 
+def changed_session_id(bundle, session_id: str):
+    profile = bundle.profile
+    updated_profile = profile.model_copy(
+        update={
+            "manifest": profile.manifest.model_copy(update={"session_id": session_id}),
+            "session": profile.session.model_copy(update={"session_id": session_id}),
+            "participants": tuple(
+                item.model_copy(update={"session_id": session_id}) for item in profile.participants
+            ),
+            "audio_streams": tuple(
+                item.model_copy(update={"session_id": session_id}) for item in profile.audio_streams
+            ),
+            "operations": tuple(
+                item.model_copy(update={"session_id": session_id}) for item in profile.operations
+            ),
+            "events": tuple(
+                item.model_copy(update={"session_id": session_id}) for item in profile.events
+            ),
+        }
+    )
+    return bundle.model_copy(update={"profile": updated_profile})
+
+
+def with_expired_metadata(bundle):
+    policies = tuple(
+        policy.model_copy(update={"retention": RetentionPolicy(expires_at_unix_nano="0")})
+        if policy.capture_class == "metadata"
+        else policy
+        for policy in bundle.profile.privacy.capture_classes
+    )
+    privacy = bundle.profile.privacy.model_copy(update={"capture_classes": policies})
+    return bundle.model_copy(
+        update={"profile": bundle.profile.model_copy(update={"privacy": privacy})}
+    )
+
+
 def test_health_and_readiness_are_available_without_incident_auth(tmp_path) -> None:
     config = ApiConfig(token="test-token")
     _, client = app_client(tmp_path, config=config)
@@ -61,11 +98,15 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
     original_ingest = store.ingest
     started = threading.Event()
     release = threading.Event()
+    operation_finished = threading.Event()
 
     def blocked_ingest(bundle, payload, **kwargs):
         started.set()
-        assert release.wait(2)
-        return original_ingest(bundle, payload, **kwargs)
+        try:
+            release.wait(10)
+            return original_ingest(bundle, payload, **kwargs)
+        finally:
+            operation_finished.set()
 
     monkeypatch.setattr(store, "ingest", blocked_ingest)
     app = create_app(store=store, analyzer=analyze_incident)
@@ -79,11 +120,15 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
             )
         )
         try:
-            assert await asyncio.to_thread(started.wait, 1)
-            health = await asyncio.wait_for(client.get("/healthz"), timeout=0.25)
+            assert await asyncio.to_thread(started.wait, 5)
+            health = await asyncio.wait_for(client.get("/healthz"), timeout=12)
             assert health.status_code == 200
+            assert not operation_finished.is_set(), (
+                "health waited for the blocked storage operation to finish"
+            )
         finally:
             release.set()
+            await asyncio.gather(ingest, return_exceptions=True)
         assert (await ingest).status_code == 201
 
 
@@ -94,17 +139,20 @@ async def test_api_key_verification_does_not_stall_asgi_health(tmp_path, monkeyp
     original_authenticate = store.authenticate_api_key
     started = threading.Event()
     release = threading.Event()
+    operation_finished = threading.Event()
 
     def blocked_authenticate(credential: str):
         started.set()
-        release.wait(2)
-        return original_authenticate(credential)
+        try:
+            release.wait(10)
+            return original_authenticate(credential)
+        finally:
+            operation_finished.set()
 
     monkeypatch.setattr(store, "authenticate_api_key", blocked_authenticate)
     app = create_app(store=store, analyzer=analyze_incident)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        started_at = time.monotonic()
         authenticated = asyncio.create_task(
             client.get(
                 "/v1/incidents",
@@ -112,12 +160,15 @@ async def test_api_key_verification_does_not_stall_asgi_health(tmp_path, monkeyp
             )
         )
         try:
-            assert await asyncio.to_thread(started.wait, 1)
-            health = await asyncio.wait_for(client.get("/healthz"), timeout=0.25)
+            assert await asyncio.to_thread(started.wait, 5)
+            health = await asyncio.wait_for(client.get("/healthz"), timeout=12)
             assert health.status_code == 200
-            assert time.monotonic() - started_at < 0.5
+            assert not operation_finished.is_set(), (
+                "health waited for API-key verification to finish"
+            )
         finally:
             release.set()
+            await asyncio.gather(authenticated, return_exceptions=True)
         assert (await authenticated).status_code == 200
 
 
@@ -131,6 +182,21 @@ def test_remote_binding_requires_an_explicit_tls_proxy(host: str, allowed: bool)
     else:
         with pytest.raises(ValueError, match="requires an explicitly trusted TLS proxy"):
             ApiConfig(host=host)
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"retention_cleanup_interval_seconds": 0},
+        {"retention_cleanup_interval_seconds": float("nan")},
+        {"retention_cleanup_batch_size": 0},
+        {"retention_cleanup_batch_size": 10_001},
+        {"retention_cleanup_batch_size": True},
+    ],
+)
+def test_retention_cleanup_settings_are_finite_and_bounded(settings) -> None:
+    with pytest.raises(ValueError):
+        ApiConfig(**settings)
 
 
 def test_tls_proxy_allows_an_authenticated_non_loopback_socket() -> None:
@@ -157,6 +223,8 @@ def test_project_key_exchanges_for_a_secure_http_only_viewer_session(tmp_path) -
         analyzer=analyze_incident,
     )
     with TestClient(app, base_url="https://viewer.example") as client:
+        unauthorized = client.get("/v1/incidents/bundle-1/references")
+        assert unauthorized.status_code == 401
         exchange = client.post(
             "/v1/auth/session",
             headers={"Authorization": f"Bearer {issued.credential}"},
@@ -170,11 +238,20 @@ def test_project_key_exchanges_for_a_secure_http_only_viewer_session(tmp_path) -
         assert issued.credential not in exchange.text
         assert exchange.json()["project_id"] == "default"
         assert exchange.json()["csrf_token"]
+        assert exchange.json()["auth_context_id"]
+        assert exchange.json()["auth_context_id"] != exchange.json()["csrf_token"]
 
         session = client.get("/v1/auth/session")
         assert session.status_code == 200
         assert session.json()["authenticated"] is True
         assert session.json()["csrf_token"] == exchange.json()["csrf_token"]
+        assert session.json()["auth_context_id"] == exchange.json()["auth_context_id"]
+
+        no_csrf = client.put(
+            "/v1/incidents/bundle-1/references/platform/call",
+            json={"external_id": "call_123"},
+        )
+        assert no_csrf.status_code == 403
 
         authenticated = client.get("/v1/incidents")
         assert authenticated.status_code == 200
@@ -185,6 +262,117 @@ def test_project_key_exchanges_for_a_secure_http_only_viewer_session(tmp_path) -
         assert invalid_bearer.status_code == 401
 
 
+def test_incident_references_are_idempotent_and_returned_only_within_project(
+    tmp_path, valid_bundle
+) -> None:
+    store = IncidentStore(tmp_path)
+    store.ingest(valid_bundle, encode_incident_protobuf(valid_bundle))
+    default_key = store.issue_api_key("default", label="platform service")
+    store.create_project("other-project", display_name="Other project")
+    other_key = store.issue_api_key("other-project", label="other project service")
+    app = create_app(store=store, analyzer=analyze_incident)
+
+    with TestClient(app) as client:
+        call = client.put(
+            "/v1/incidents/bundle-1/references/platform/call",
+            json={"external_id": "call_123"},
+            headers={"Authorization": f"Bearer {default_key.credential}"},
+        )
+        assert call.status_code == 200
+        assert call.json()["external_id"] == "call_123"
+
+        run = client.put(
+            "/v1/incidents/bundle-1/references/voice_labs/run",
+            json={"external_id": "run_456"},
+            headers={"Authorization": f"Bearer {default_key.credential}"},
+        )
+        assert run.status_code == 200
+        first_link_time = run.json()["linked_at_unix_nano"]
+        retry = client.put(
+            "/v1/incidents/bundle-1/references/voice_labs/run",
+            json={"external_id": "run_456"},
+            headers={"Authorization": f"Bearer {default_key.credential}"},
+        )
+        assert retry.status_code == 200
+        assert retry.json()["linked_at_unix_nano"] == first_link_time
+
+        listing = client.get(
+            "/v1/incidents/bundle-1/references",
+            headers={"Authorization": f"Bearer {default_key.credential}"},
+        )
+        assert listing.status_code == 200
+        assert [
+            (item["namespace"], item["record_type"], item["external_id"])
+            for item in listing.json()["items"]
+        ] == [
+            ("platform", "call", "call_123"),
+            ("voice_labs", "run", "run_456"),
+        ]
+        assert default_key.credential not in listing.text
+
+        cross_project = client.get(
+            "/v1/incidents/bundle-1/references",
+            headers={"Authorization": f"Bearer {other_key.credential}"},
+        )
+        assert cross_project.status_code == 404
+        assert code(cross_project) == "EARSHOT_INCIDENT_NOT_FOUND"
+
+        mismatch = client.get(
+            "/v1/incidents/bundle-1/references",
+            headers={
+                "Authorization": f"Bearer {default_key.credential}",
+                "X-Earshot-Project-Id": "other-project",
+            },
+        )
+        assert mismatch.status_code == 403
+        assert code(mismatch) == "EARSHOT_PROJECT_MISMATCH"
+
+        removed = client.delete(
+            "/v1/incidents/bundle-1/references/voice_labs/run",
+            headers={"Authorization": f"Bearer {default_key.credential}"},
+        )
+        assert removed.status_code == 204
+        remaining = client.get(
+            "/v1/incidents/bundle-1/references",
+            headers={"Authorization": f"Bearer {default_key.credential}"},
+        )
+        assert [item["external_id"] for item in remaining.json()["items"]] == ["call_123"]
+
+
+@pytest.mark.parametrize(
+    "external_id",
+    ["", "call/123", "call 123", "<script>", "secret?token=value"],
+)
+def test_incident_references_reject_nonportable_or_untrusted_ids(
+    tmp_path, valid_bundle, external_id: str
+) -> None:
+    store, client = app_client(tmp_path)
+    store.ingest(valid_bundle, encode_incident_protobuf(valid_bundle))
+
+    response = client.put(
+        "/v1/incidents/bundle-1/references/platform/call",
+        json={"external_id": external_id},
+    )
+
+    assert response.status_code == 422
+    assert code(response) == "EARSHOT_INVALID_REQUEST"
+    assert not external_id or external_id not in response.text
+
+
+def test_incident_references_reject_nonportable_path_keys_without_echoing_them(
+    tmp_path, valid_bundle
+) -> None:
+    store, client = app_client(tmp_path)
+    store.ingest(valid_bundle, encode_incident_protobuf(valid_bundle))
+    response = client.put(
+        "/v1/incidents/bundle-1/references/Not+Portable/call",
+        json={"external_id": "call_123"},
+    )
+
+    assert response.status_code == 422
+    assert "Not+Portable" not in response.text
+
+
 def test_tokenless_loopback_viewer_can_discover_that_login_is_not_required(tmp_path) -> None:
     _, client = app_client(tmp_path)
     response = client.get("/v1/auth/session")
@@ -193,6 +381,7 @@ def test_tokenless_loopback_viewer_can_discover_that_login_is_not_required(tmp_p
         "authenticated": False,
         "authentication_required": False,
         "project_id": "default",
+        "auth_context_id": "anonymous-default",
         "csrf_token": None,
         "expires_in_seconds": None,
     }
@@ -607,6 +796,183 @@ def test_conflicting_retry_returns_409_without_changing_original(tmp_path, valid
     assert code(second) == "EARSHOT_INCIDENT_CONFLICT"
     retrieved = client.get("/v1/incidents/bundle-1", headers={"Accept": PROTOBUF_MEDIA_TYPE})
     assert retrieved.content == original
+
+
+def test_incident_listing_uses_catalog_metadata_without_reading_artifacts(
+    tmp_path, valid_bundle, monkeypatch
+) -> None:
+    store, client = app_client(tmp_path)
+    _ingest(client, valid_bundle)
+
+    def artifact_read_is_not_needed(*_args, **_kwargs):
+        raise AssertionError("incident listing must not read artifact bytes")
+
+    monkeypatch.setattr(store, "get_artifact", artifact_read_is_not_needed)
+
+    response = client.get("/v1/incidents")
+
+    assert response.status_code == 200
+    assert [item["bundle_id"] for item in response.json()["items"]] == ["bundle-1"]
+
+
+def test_expiry_reaper_runs_without_a_list_request(tmp_path, valid_bundle) -> None:
+    expired = with_expired_metadata(valid_bundle)
+    store = IncidentStore(tmp_path)
+    record = store.ingest(expired, encode_incident_protobuf(expired)).record
+    object_path = store.objects.path_for(record.digest)
+    config = ApiConfig(
+        retention_cleanup_interval_seconds=0.01,
+        retention_cleanup_batch_size=1,
+    )
+
+    with TestClient(create_app(store=store, config=config)):
+        deadline = time.monotonic() + 2
+        while object_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert not object_path.exists()
+    with sqlite3.connect(store.database_path) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM incidents WHERE bundle_id = 'bundle-1'"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_expiry_backlog_releases_the_store_lock_between_batches(tmp_path, monkeypatch):
+    expired_bundles = []
+    for bundle_id in ("expiry-lock-a", "expiry-lock-b"):
+        bundle = make_valid_bundle(bundle_id=bundle_id)
+        policies = tuple(
+            policy.model_copy(update={"retention": RetentionPolicy(expires_at_unix_nano="0")})
+            if policy.capture_class == "metadata"
+            else policy
+            for policy in bundle.profile.privacy.capture_classes
+        )
+        privacy = bundle.profile.privacy.model_copy(update={"capture_classes": policies})
+        expired_bundles.append(
+            bundle.model_copy(
+                update={"profile": bundle.profile.model_copy(update={"privacy": privacy})}
+            )
+        )
+
+    store = IncidentStore(tmp_path)
+    object_paths = tuple(
+        store.objects.path_for(store.ingest(bundle, encode_incident_protobuf(bundle)).record.digest)
+        for bundle in expired_bundles
+    )
+    original_purge_expired = store.purge_expired
+    first_batch_finished = threading.Event()
+    resume_reaper = threading.Event()
+    second_batch_finished = threading.Event()
+    calls = [0]
+
+    def pause_between_batches(*args, **kwargs):
+        result = original_purge_expired(*args, **kwargs)
+        calls[0] += 1
+        if calls[0] == 1:
+            first_batch_finished.set()
+            assert resume_reaper.wait(2)
+        elif calls[0] == 2:
+            second_batch_finished.set()
+        return result
+
+    monkeypatch.setattr(store, "purge_expired", pause_between_batches)
+    config = ApiConfig(
+        retention_cleanup_interval_seconds=0.01,
+        retention_cleanup_batch_size=1,
+    )
+    try:
+        with TestClient(create_app(store=store, config=config)) as client:
+            assert first_batch_finished.wait(2)
+            response = client.get("/v1/incidents")
+            assert response.status_code == 200
+            assert response.json()["items"] == []
+            with sqlite3.connect(store.database_path) as connection:
+                assert connection.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 1
+
+            resume_reaper.set()
+            assert second_batch_finished.wait(2)
+            assert all(not path.exists() for path in object_paths)
+    finally:
+        resume_reaper.set()
+
+
+def test_expiry_reaper_retries_a_failed_scrub_without_new_expired_rows(
+    tmp_path, valid_bundle, monkeypatch
+) -> None:
+    store = IncidentStore(tmp_path)
+    expired = with_expired_metadata(valid_bundle)
+    result = store.ingest(expired, encode_incident_protobuf(expired))
+    object_path = store.objects.path_for(result.record.digest)
+    original_scrub = store._scrub_deleted_pages
+    first_scrub_failed = threading.Event()
+    retry_scrub_succeeded = threading.Event()
+    scrub_calls = 0
+
+    def fail_first_scrub(*, compact=True, skip_if_current=False):
+        nonlocal scrub_calls
+        scrub_calls += 1
+        if scrub_calls == 1:
+            first_scrub_failed.set()
+            raise StorageCleanupPendingError("simulated busy checkpoint")
+        result = original_scrub(compact=compact, skip_if_current=skip_if_current)
+        retry_scrub_succeeded.set()
+        return result
+
+    monkeypatch.setattr(store, "_scrub_deleted_pages", fail_first_scrub)
+    config = ApiConfig(
+        retention_cleanup_interval_seconds=0.01,
+        retention_cleanup_batch_size=1,
+    )
+
+    with TestClient(create_app(store=store, config=config)):
+        assert first_scrub_failed.wait(2)
+        assert retry_scrub_succeeded.wait(2)
+        time.sleep(0.05)
+
+    assert scrub_calls == 2
+    assert not object_path.exists()
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 0
+
+
+def test_final_expiry_compaction_does_not_hold_the_store_lock(
+    tmp_path, valid_bundle, monkeypatch
+) -> None:
+    store = IncidentStore(tmp_path)
+    expired = with_expired_metadata(valid_bundle)
+    store.ingest(expired, encode_incident_protobuf(expired))
+    original_scrub = store._scrub_deleted_pages
+    compaction_started = threading.Event()
+    release_compaction = threading.Event()
+
+    def pause_compaction(*, compact=True, skip_if_current=False):
+        if compact:
+            compaction_started.set()
+            assert release_compaction.wait(10)
+        return original_scrub(compact=compact, skip_if_current=skip_if_current)
+
+    monkeypatch.setattr(store, "_scrub_deleted_pages", pause_compaction)
+    config = ApiConfig(
+        retention_cleanup_interval_seconds=0.01,
+        retention_cleanup_batch_size=1,
+    )
+
+    try:
+        with TestClient(create_app(store=store, config=config)) as client:
+            assert compaction_started.wait(5)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                listing = executor.submit(client.get, "/v1/incidents")
+                try:
+                    response = listing.result(timeout=5)
+                finally:
+                    release_compaction.set()
+            assert response.status_code == 200
+            assert response.json()["items"] == []
+    finally:
+        release_compaction.set()
 
 
 def test_list_pagination_and_session_filter_are_stable(tmp_path) -> None:
@@ -1166,7 +1532,7 @@ def test_analyzer_cannot_cache_a_diagnosis_with_dangling_evidence(tmp_path, vali
     assert code(response) == "EARSHOT_ANALYZER_CONTRACT"
 
 
-def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp_path) -> None:
+def test_openapi_exposes_wire_formats_live_tail_and_optional_loopback_auth(tmp_path) -> None:
     _, client = app_client(tmp_path)
     schema = client.get("/openapi.json").json()
     content = schema["paths"]["/v1/incidents"]["post"]["requestBody"]["content"]
@@ -1184,6 +1550,14 @@ def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp
     incident_schema = {"$ref": "#/components/schemas/IncidentBundleJson"}
     assert incident_response_content["application/json"]["schema"] == incident_schema
     assert incident_response_content[JSON_MEDIA_TYPE]["schema"] == incident_schema
+    tail_operation = schema["paths"]["/v1/live/sessions/{session_id}/tail"]["get"]
+    assert set(tail_operation["responses"]["200"]["content"]) == {"text/event-stream"}
+    last_event_id = next(
+        parameter
+        for parameter in tail_operation["parameters"]
+        if parameter["in"] == "header" and parameter["name"] == "Last-Event-ID"
+    )
+    assert last_event_id["required"] is False
     content_encoding = next(
         parameter
         for parameter in schema["paths"]["/v1/incidents"]["post"]["parameters"]
@@ -1202,6 +1576,21 @@ def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp
         "in": "cookie",
         "name": "earshot_session",
     }
+    assert "/v1/platform/projects/{project_id}/observe/summary" not in schema["paths"]
+    generic_summary = schema["paths"]["/v1/projects/{project_id}/summary"]["get"]
+    assert generic_summary["security"] == [
+        {"BearerAuth": []},
+        {"BrowserSession": []},
+        {},
+    ]
+    summary_fields = schema["components"]["schemas"]["ProjectSummaryItemResponse"]["properties"]
+    assert set(summary_fields) == {
+        "session_id",
+        "status",
+        "framework",
+        "framework_truncated",
+        "created_at_unix_nano",
+    }
     assert schema["paths"]["/v1/incidents"]["post"]["security"] == [
         {"BearerAuth": []},
         {"BrowserSession": []},
@@ -1215,6 +1604,19 @@ def test_openapi_exposes_both_wire_formats_models_and_optional_loopback_auth(tmp
     assert schema["paths"]["/v1/auth/logout"]["post"]["security"] == [{"BrowserSession": []}]
 
 
+def test_openapi_standard_error_descriptions_are_stable_across_python_versions(tmp_path) -> None:
+    _, client = app_client(tmp_path)
+    schema = client.get("/openapi.json").json()
+    responses = schema["paths"]["/v1/incidents"]["post"]["responses"]
+    capture_responses = schema["paths"]["/v1/capture"]["post"]["responses"]
+
+    assert responses["413"]["description"] == "Content Too Large"
+    assert responses["422"]["description"] == "Unprocessable Content"
+    assert capture_responses["413"]["description"].startswith(
+        "The payload exceeds a request bound,"
+    )
+
+
 def test_openapi_marks_viewer_or_bearer_auth_mandatory_when_server_has_a_token(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="test-token"))
     schema = client.get("/openapi.json").json()
@@ -1223,6 +1625,11 @@ def test_openapi_marks_viewer_or_bearer_auth_mandatory_when_server_has_a_token(t
         {"BrowserSession": []},
     ]
     assert schema["paths"]["/v1/auth/session"]["get"]["security"] == [{"BrowserSession": []}]
+
+
+def test_hosted_auth_configuration_requires_all_verifier_settings() -> None:
+    with pytest.raises(ValueError, match="issuer, audience, and JWKS URL"):
+        ApiConfig(auth_mode="hosted_jwt")
 
 
 def test_openapi_keeps_connector_trust_separate_and_documents_retryable_errors(
