@@ -123,12 +123,8 @@ describe("live session view", () => {
 
     const banner = screen.getByRole("region", { name: /live session status/i });
     expect(within(banner).getByText(/LIVE — INCOMPLETE/)).toBeInTheDocument();
-    // The discrete standing is announced; the ticking as-of line is not, so a
-    // screen reader is told the state without a per-second flood.
     expect(within(banner).getByRole("status")).toHaveTextContent(/has not closed/i);
     expect(within(banner).getByText(/journal record #1/)).toBeInTheDocument();
-    // And the view describes itself by the banner, so the state is reachable
-    // from anywhere inside it.
     const view = banner.parentElement as HTMLElement;
     expect(view).toHaveAttribute(
       "aria-describedby",
@@ -172,8 +168,6 @@ describe("live session view", () => {
       `${JOURNAL}:2`,
     );
 
-    // "p95 first-token" appears only as a named unknown, never as a value, and
-    // no zero stands in for a measurement that has not been taken.
     const metrics = screen.getByText(/p95 first-token/i);
     expect(metrics.closest("div")).toHaveTextContent(/unknown/);
     expect(screen.queryByText("0ms")).not.toBeInTheDocument();
@@ -214,7 +208,6 @@ describe("live session view", () => {
     expect(
       within(panel).getByText(/not a complete account of the session/i),
     ).toBeInTheDocument();
-    // The withheld slot is not counted as an admitted fact anywhere.
     const admitted = screen.getByRole("region", { name: /admitted facts/i });
     expect(
       within(admitted).getByText(/No records have been admitted yet/i),
@@ -242,7 +235,6 @@ describe("live session view", () => {
     const panel = screen.getByRole("region", { name: /operations in progress/i });
     expect(within(panel).getByText("llm")).toBeInTheDocument();
     expect(within(panel).getByText("no end observed")).toBeInTheDocument();
-    // No duration anywhere: not a number, not a dash, not a ticking clock.
     expect(within(panel).queryByText(/ms$/)).not.toBeInTheDocument();
   });
 
@@ -321,7 +313,6 @@ describe("live session view", () => {
       `${JOURNAL}:2`,
     );
 
-    // The live view is never silently upgraded in place; the reader chooses.
     const link = screen.getByRole("link", { name: /show the final artifact/i });
     expect(screen.getByText(/CLOSED — ARTIFACT NOT YET STORED/)).toBeInTheDocument();
     fireEvent.click(link);
@@ -369,8 +360,6 @@ describe("live session view", () => {
     expect(within(panel).getByText(/nothing was dropped/i)).toBeInTheDocument();
 
     fireEvent.click(button);
-    // A second EventSource means the tail really re-subscribed, and the browser
-    // resumes it with Last-Event-ID.
     expect(FakeEventSource.instances).toHaveLength(2);
   });
 

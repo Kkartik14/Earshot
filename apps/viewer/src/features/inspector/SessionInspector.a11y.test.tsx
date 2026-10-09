@@ -10,8 +10,7 @@ import type { AnalysisLike, IncidentLike } from "./timeline";
 const incident = incidentFixture as unknown as IncidentLike;
 const analysis = analysisFixture as unknown as AnalysisLike;
 
-// The backend-authored explanation shape the viewer consumes, assembled from the
-// captured fixtures exactly as the transform tests do.
+// Explanation fixture assembled from the captured incident and analysis.
 const explanation = {
   bundle_id: "fixture-bundle",
   session_id: "fixture-session",
@@ -94,8 +93,7 @@ const explanation = {
   })),
 };
 
-// The stored analysis response the `/analysis` endpoint returns, wrapping the
-// captured DerivedAnalysis fixture with its binding, exactly as the API does.
+// Stored analysis response with its evidence binding.
 const analysisResponse = {
   bundle_id: "fixture-bundle",
   analyzer_version: "1.0.4",
@@ -104,7 +102,7 @@ const analysisResponse = {
   analysis: analysisFixture,
 };
 
-// A backend contradiction report citing an operation this session really owns.
+// Contradiction response citing an operation in this session.
 const contradictionReport = {
   bundle_id: "fixture-bundle",
   analyzer_version: "fixture",
@@ -121,9 +119,7 @@ const contradictionReport = {
   ],
 };
 
-// The backend's "what the evidence does not tell us" projection for this session:
-// a coverage gap, a turn-metric limitation, and an uncountable omission — each an
-// explicit unknown the EvidencePanel renders with its reason.
+// Not-observed response covering a gap, metric limitation, and uncounted omission.
 const notObservedReport = {
   coverage_gaps: [
     { signal: "client.render", availability: "not_observed", reason: "collector_absent" },
@@ -149,7 +145,7 @@ const notObservedReport = {
   ],
 };
 
-// The agent-facing digest the summary endpoint returns for this session.
+// Summary endpoint response for this session.
 const evidenceSummaryReport = {
   session_id: "fixture-session",
   counts: {
@@ -167,9 +163,7 @@ const evidenceSummaryReport = {
   first_abnormal_boundary: { found: false, reason: "no_boundary_diagnosis" },
 };
 
-/** The same session, but reconstructed from a checkpoint journal after the
- * process died before close. Validation forces the typed declaration, so a
- * viewer that renders the incident at all has the facts to render this. */
+/** Checkpoint-recovered form of the fixture incident. */
 const recoveredFixture = {
   ...incidentFixture,
   profile: {
@@ -194,10 +188,7 @@ const recoveredFixture = {
   },
 };
 
-/** The same session as a browser capture batch: a partial observation of a call
- * still in progress. It declares recovery with `close_observed=false` and no
- * journal — the browser never ran a checkpoint journal — so the strip must not
- * claim a journal or that the process crashed. */
+/** Partial browser capture form of the fixture, with no checkpoint journal. */
 const captureFixture = {
   ...incidentFixture,
   profile: {
@@ -226,8 +217,7 @@ const captureFixture = {
   },
 };
 
-/** The same session, plus a reference to a recording a provider holds. Earshot
- * stores the reference; the bytes stay with the custodian. */
+/** Fixture with a reference to media held by an external custodian. */
 const custodyFixture = {
   ...incidentFixture,
   profile: {
@@ -322,11 +312,9 @@ describe("SessionInspector focus management", () => {
 
   it("surfaces backend diagnoses and selects the evidence operation on click", () => {
     renderInspector();
-    // The session-level Diagnoses panel renders the analyzer's diagnosis.
     expect(screen.getByRole("heading", { name: /diagnoses/i })).toBeInTheDocument();
     expect(screen.getByText("operation.failed")).toBeInTheDocument();
 
-    // Clicking the evidence chip opens the detail for that exact operation.
     fireEvent.click(screen.getByRole("button", { name: "operation-llm-0-5" }));
     expect(screen.getByRole("dialog", { name: /llm detail/i })).toBeInTheDocument();
   });
@@ -349,11 +337,9 @@ describe("SessionInspector focus management", () => {
     const region = within(
       screen.getByRole("region", { name: /what the evidence does not tell us/i }),
     );
-    // Each category is a first-class unknown carrying its own reason.
     expect(region.getByText("client.render")).toBeInTheDocument();
     expect(region.getByText(/collector absent/i)).toBeInTheDocument();
     expect(region.getByText(/render not observed/i)).toBeInTheDocument();
-    // An uncountable omission is stated as such, never as a zero.
     expect(region.getByText("count not recorded")).toBeInTheDocument();
     expect(region.queryByText(/0 omitted/)).toBeNull();
   });
@@ -361,10 +347,8 @@ describe("SessionInspector focus management", () => {
   it("surfaces the analyzer's own output binding for the incident", () => {
     renderInspector();
     const panel = within(screen.getByRole("region", { name: "Analysis" }));
-    // The analyzer identity and the exact evidence digest it is bound to.
     expect(panel.getByText(/earshot\.deterministic · 1\.0\.4/)).toBeInTheDocument();
     expect(panel.getByText(/c81631093d9c/)).toBeInTheDocument();
-    // Counts come straight from the analyzer's output arrays, not invented.
     expect(panel.getByText("turns analyzed").parentElement).toHaveTextContent("5");
   });
 
@@ -386,7 +370,6 @@ describe("SessionInspector focus management", () => {
     renderInspector({ incident: recoveredFixture });
 
     const strip = screen.getByRole("region", { name: /recovered artifact/i });
-    // Announced once, and stated as the opposite of a clean close.
     expect(within(strip).getByRole("status")).toHaveTextContent(
       /process terminated before close/i,
     );
@@ -397,7 +380,6 @@ describe("SessionInspector focus management", () => {
         /evidence was lost at the end of the journal \(37 bytes\)/i,
       ),
     ).toBeInTheDocument();
-    // It sits above the session, so it cannot be scrolled past unnoticed.
     expect(strip.compareDocumentPosition(screen.getByRole("heading", { level: 1 }))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
@@ -407,8 +389,6 @@ describe("SessionInspector focus management", () => {
     renderInspector({ incident: captureFixture });
 
     const strip = screen.getByRole("region", { name: /recovered artifact/i });
-    // Named for what it is -- a partial capture -- not a crash recovery, and it
-    // never claims a checkpoint journal the browser never ran.
     expect(
       within(strip).getByText(/PARTIAL CAPTURE — NOT A CLEAN CLOSE/),
     ).toBeInTheDocument();
@@ -419,7 +399,6 @@ describe("SessionInspector focus management", () => {
       /checkpoint journal/i,
     );
     expect(within(strip).getByRole("status")).not.toHaveTextContent(/the process ended/i);
-    // The close was still not observed, but there is no journal line to render.
     expect(within(strip).getByText(/close observed:/i)).toHaveTextContent("no");
     expect(within(strip).queryByText(/^journal /i)).toBeNull();
   });
@@ -435,8 +414,6 @@ describe("SessionInspector focus management", () => {
     const panel = within(screen.getByRole("region", { name: /media custody/i }));
     expect(panel.getByText("provider.vapi")).toBeInTheDocument();
     expect(panel.getByText("cannot align")).toBeInTheDocument();
-    // The whole rendered session, not just the panel: nothing anywhere asks the
-    // browser to fetch media on render.
     expect(container.querySelectorAll("audio, video, source, [src]")).toHaveLength(0);
     expect(screen.getByRole("link", { name: /open at the custodian/i })).toHaveAttribute(
       "href",
