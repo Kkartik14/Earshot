@@ -80,9 +80,7 @@ STT_MODEL = "whisper-large-v3-turbo"
 LLM_MODEL = "llama-3.1-8b-instant"
 TTS_MODEL = "canopylabs/orpheus-v1-english"
 TTS_VOICE = "autumn"
-# Generated artifacts live under the gitignored .earshot/ tree, matching the
-# LiveKit examples. Never write them to the repo root: they are nondeterministic
-# and would land in git status and prettier's format check.
+# Keep generated artifacts under `.earshot/`, not the repository root.
 OUTPUT_PATH = pathlib.Path(".earshot/pipecat_headless/incident.json")
 _FAILED_STAGE_STATUSES = {
     "error",
@@ -278,8 +276,6 @@ async def synth_user_pcm(*, timeout: float = SYNTH_TIMEOUT_S) -> bytes:
 
 
 def _pipeline_params() -> PipelineParams:
-    # Pin the input rate to our synthesized PCM: the segmented STT wraps its buffer
-    # as WAV at the pipeline rate, not the frame rate, so a mismatch garbles audio.
     return PipelineParams(
         enable_metrics=True,
         enable_usage_metrics=True,
