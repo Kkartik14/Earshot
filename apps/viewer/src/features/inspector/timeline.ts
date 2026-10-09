@@ -437,7 +437,6 @@ export function buildTimeline(explanation: ExplanationLike): Timeline {
   return { turns, scaleMs: roundUp(Math.max(1, ...knownDurations), 250) };
 }
 
-
 export interface EvidenceView {
   source: string;
   observer: string;
@@ -782,7 +781,6 @@ export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
   });
 }
 
-
 /** A backend-authored diagnosis, with each evidence id resolved to the turn that
  * contains the referenced operation (when it is an operation). */
 export interface DiagnosisView {
@@ -824,7 +822,6 @@ export function buildDiagnoses(explanation: ExplanationLike): DiagnosisView[] {
   }));
 }
 
-
 /** One backend-detected contradiction, with its cited evidence resolved to the
  * turn that owns it where the id names an operation. */
 export interface ContradictionView {
@@ -856,7 +853,6 @@ export function buildContradictions(
     })),
   }));
 }
-
 
 /** The analyzer's basis for a latency it derived through a declared calibration. */
 const CALIBRATED_BASIS = "cross_clock_calibrated";

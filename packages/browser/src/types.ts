@@ -3,7 +3,6 @@
  * tests without DOM library declarations. Capture is metadata-only.
  */
 
-
 /**
  * A single `RTCStats`-shaped member bag. Every value is a JSON primitive; the
  * server engine reads members like `type`, `packetsReceived`, `packetsLost`,
@@ -34,7 +33,6 @@ export interface WebRtcSnapshot {
   /** Stat id -> `RTCStats`-shaped member bag (missing members omitted). */
   stats: Record<string, StatMembers>;
 }
-
 
 /** The minimal event-target surface (Web Audio / MediaDevices / PermissionStatus). */
 export interface EventTargetLike {

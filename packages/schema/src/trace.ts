@@ -29,13 +29,11 @@ export const InterruptionType = z.enum(["barge_in", "dtmf"]);
 export const AudioKind = z.enum(["input", "output"]);
 export const Framework = z.enum(["pipecat", "livekit", "vapi", "custom"]);
 
-
 export const TraceErrorSchema = z.object({
   code: z.string().min(1),
   category: z.string().min(1),
   message: z.string(),
 });
-
 
 export const AudioFormatSchema = z.object({
   encoding: z.string().min(1),
@@ -56,7 +54,6 @@ export const AudioRefSchema = z.object({
     .optional(),
 });
 
-
 export const SpanSchema = z.object({
   spanId: Id,
   turnId: Id,
@@ -71,7 +68,6 @@ export const SpanSchema = z.object({
   error: TraceErrorSchema.nullable().default(null),
 });
 
-
 export const EventSchema = z.object({
   eventId: Id,
   turnId: Id,
@@ -81,7 +77,6 @@ export const EventSchema = z.object({
   tMs: Millis,
   data: z.record(z.unknown()).default({}),
 });
-
 
 export const UtteranceSchema = z.object({
   transcript: z.string(),
@@ -107,7 +102,6 @@ export const TurnSchema = z.object({
   error: TraceErrorSchema.nullable().default(null),
   audio: z.object({ inputRef: Id.optional(), outputRef: Id.optional() }).optional(),
 });
-
 
 export const AgentInfoSchema = z.object({
   id: Id,
@@ -156,7 +150,6 @@ export const SessionSchema = z.object({
   metadata: z.record(z.unknown()).default({}),
 });
 
-
 export const TraceBundleSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   session: SessionSchema,
@@ -165,7 +158,6 @@ export const TraceBundleSchema = z.object({
   events: z.array(EventSchema).default([]),
   audio: z.array(AudioRefSchema).default([]),
 });
-
 
 export type TraceError = z.infer<typeof TraceErrorSchema>;
 export type AudioFormat = z.infer<typeof AudioFormatSchema>;

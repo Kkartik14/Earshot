@@ -744,7 +744,6 @@ class Client:
             if transport is None:
                 next_exporter: DeliverySink | None = None
             else:
-                # Resolve the configured strategy through the registry, including host registrations.
                 next_exporter = default_delivery_registry().build(
                     delivery_mode,
                     DeliveryContext(

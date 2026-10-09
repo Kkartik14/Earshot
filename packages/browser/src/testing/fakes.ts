@@ -25,7 +25,6 @@ import type {
   Scheduler,
 } from "../types.js";
 
-
 /** A controllable monotonic clock: each `now()` returns then advances by `step`. */
 export class FakeClock {
   constructor(
@@ -91,7 +90,6 @@ export function sequentialRandom(start = 1): RandomSource {
   };
 }
 
-
 /** Build a Map-backed `RTCStatsReport` from `{ id: members }`. */
 export function makeStatsReport(
   entries: Record<string, Record<string, unknown>>,
@@ -144,7 +142,6 @@ export class ControllablePeerConnection implements PeerConnectionLike {
     if (resolve) resolve(this.report);
   }
 }
-
 
 export class FakeEventTarget {
   private readonly listeners = new Map<string, Set<() => void>>();
@@ -323,7 +320,6 @@ export class FakePermissions implements PermissionsLike {
     return Promise.resolve(this.status);
   }
 }
-
 
 /** One recorded POST, so a test can assert on headers and body without a server. */
 export interface RecordedRequest {

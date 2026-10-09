@@ -581,7 +581,6 @@ class TurnRecorder:
             dropped_count=dropped_count,
         )
 
-
     def _operation(
         self,
         operation_name: str,

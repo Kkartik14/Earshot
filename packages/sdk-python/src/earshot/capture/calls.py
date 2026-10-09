@@ -399,7 +399,6 @@ class CaptureCall:
         call.session.recorder._coverage = replay_coverage(journal_path_on_disk) or []
         return call
 
-
     def _classify(self, drain: CaptureDrain) -> str:
         """Decide what to do with this drain, or refuse it. Caller holds the lock.
 
@@ -473,7 +472,6 @@ class CaptureCall:
                 finalized=self._finalized,
             ),
         )
-
 
     def process(self, drain: CaptureDrain, live: LiveSessionRegistry) -> DrainOutcome:
         """Sequence, project, journal and append one drain. Holds the call lock."""
@@ -652,7 +650,6 @@ class CaptureCall:
                 self._first_observed_ms = reading
             if self._last_observed_ms is None or reading > self._last_observed_ms:
                 self._last_observed_ms = reading
-
 
     def _record_end(self, end: CaptureEnd) -> None:
         """Handle a declared end: finalize on ``call_ended``, ledger the extent else.

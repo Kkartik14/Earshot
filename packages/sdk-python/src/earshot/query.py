@@ -431,7 +431,6 @@ class EvidenceQuery:
         self._index = _EvidenceIndex(bundle, self.analysis)
         self._turns_by_id = {turn.turn_id: turn for turn in self.analysis.projections.turns}
 
-
     def known_about_turn(self, turn_id: str) -> TurnKnowledge:
         """Return all latency metrics, diagnoses, and the interruption chain."""
 
@@ -460,7 +459,6 @@ class EvidenceQuery:
             diagnoses=diagnoses,
             interruption_chains=chains,
         )
-
 
     def _boundary_coordinate(self, diagnosis: Diagnosis) -> tuple[int, str, str, int] | None:
         """The earliest canonical coordinate among a diagnosis's cited evidence."""
@@ -540,7 +538,6 @@ class EvidenceQuery:
             "at_nano": at_nano,
         }
 
-
     def not_observed(self) -> NotObserved:
         """Unify coverage gaps, analysis/turn limitations, and omissions."""
 
@@ -609,7 +606,6 @@ class EvidenceQuery:
             omissions=omissions,
         )
 
-
     def recomputable(self, reference: str) -> Recomputable:
         """Whether ``reference`` (a diagnosis id or metric) still resolves.
 
@@ -662,12 +658,10 @@ class EvidenceQuery:
             missing_evidence_ids=missing,
         )
 
-
     def contradictions(self) -> list[Contradiction]:
         """Detect evidence-linked contradictions in this incident."""
 
         return detect_contradictions(self.bundle, self.analysis)
-
 
     def summary(self) -> SummaryDigest:
         """Return a compact, agent-facing digest of the whole incident."""

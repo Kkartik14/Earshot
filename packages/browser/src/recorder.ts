@@ -240,7 +240,6 @@ export class EarshotBrowserRecorder {
     this.capturerStartedAtMs = this.clock();
   }
 
-
   /** The session's W3C trace-context (stable for the recorder's lifetime). */
   traceContext(): TraceContext {
     return this.trace;
@@ -253,7 +252,6 @@ export class EarshotBrowserRecorder {
   injectTraceHeaders(headers?: Record<string, string>): Record<string, string> {
     return injectTraceHeaders(this.trace, headers);
   }
-
 
   /**
    * Periodically sample `pc.getStats()` and buffer normalised snapshots. Each
@@ -306,7 +304,6 @@ export class EarshotBrowserRecorder {
     this.teardowns.push(() => this.scheduler.clearInterval(handle));
   }
 
-
   /** Observe latency, render queue, state, and sink changes. Missing or
    * unpopulated `getOutputTimestamp()` values are recorded as coverage.
    */
@@ -357,7 +354,6 @@ export class EarshotBrowserRecorder {
     ctx.addEventListener("sinkchange", onSinkChange);
     this.teardowns.push(() => ctx.removeEventListener("sinkchange", onSinkChange));
   }
-
 
   /** Watch `devicechange` and optional microphone permission changes. Resolves
    * after the initial permission query; failures are recorded as coverage.
@@ -425,7 +421,6 @@ export class EarshotBrowserRecorder {
     }
   }
 
-
   /** Record a configured-vs-actual sample-rate mismatch the app detected. */
   recordSampleRateMismatch(configuredHz: number, actualHz: number): void {
     if (this.stopped) return;
@@ -464,7 +459,6 @@ export class EarshotBrowserRecorder {
     }
     this.pendingCoverage.push({ ...note });
   }
-
 
   /** Return buffered observations and reset per-drain state. Session, trace, and
    * clock-domain ids persist. Version 2 accepts `{ end }` to declare why capture
@@ -526,7 +520,6 @@ export class EarshotBrowserRecorder {
       }
     }
   }
-
 
   private clockDomain(): BrowserClockDomain {
     return {

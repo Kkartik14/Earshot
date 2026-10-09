@@ -193,7 +193,6 @@ class GeminiLiveAdapter(ProviderAdapter):
             )
         raise ValueError("unsupported Gemini Live message shape")
 
-
     def _setup_complete(self, payload: Mapping[str, object], receipt_ms: float) -> AdapterUpdate:
         event_type = "setupComplete"
 
@@ -568,7 +567,6 @@ class GeminiLiveAdapter(ProviderAdapter):
 
         return self._remember(payload, create_update, observed_at_ms=receipt_ms)
 
-
     def _realtime_input(
         self,
         payload: Mapping[str, object],
@@ -683,7 +681,6 @@ class GeminiLiveAdapter(ProviderAdapter):
 
         return self._remember(payload, create_update, observed_at_ms=receipt_ms)
 
-
     def _open_response(self, receipt_ms: float) -> None:
         self._response_open = True
         self._response_started_ms = receipt_ms
@@ -763,7 +760,6 @@ class GeminiLiveAdapter(ProviderAdapter):
         self._response_first_audio = False
         self._response_speech_stopped_ms = None
         self._open_response_gesture = None
-
 
     def _register_pending_tool_call(self, native_id: str | None, receipt_ms: float) -> None:
         """Record a tool-call REQUEST as pending, correlated by its function id.
@@ -845,7 +841,6 @@ class GeminiLiveAdapter(ProviderAdapter):
                 attributes=attributes,
             )
         self._pending_tool_calls.clear()
-
 
     def _parse_parts(
         self, model_turn: Mapping[str, object]

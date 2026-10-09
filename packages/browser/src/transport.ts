@@ -242,7 +242,6 @@ export class EarshotCaptureTransport {
     }
   }
 
-
   private drain(): Promise<void> {
     if (this.draining) return this.draining;
     const run = (async () => {

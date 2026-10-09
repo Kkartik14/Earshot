@@ -194,7 +194,6 @@ class BrowserCaptureSource:
             device=device,
         )
 
-
     def _resolve_clock_domain(self, batch: Mapping[str, Any]) -> BrowserClockDomain:
         """Lock this call's browser clock, or reject a batch from a different one."""
 
@@ -217,7 +216,6 @@ class BrowserCaptureSource:
                 "use a separate BrowserCaptureSource for a separate call"
             )
         return self._clock_domain
-
 
     def _author_client_coverage(self, sink: ObservationSink, coverage: Any) -> None:
         """Record the browser's own coverage claims, under their own namespace."""

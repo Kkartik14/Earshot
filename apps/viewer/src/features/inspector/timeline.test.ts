@@ -427,7 +427,6 @@ describe("getCoverage", () => {
   });
 });
 
-
 interface RawOp {
   operation_id?: string;
   operation_name: string;

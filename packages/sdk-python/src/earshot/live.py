@@ -402,7 +402,6 @@ class Subscription:
         self.journal_id = session.journal_id
         self.last_delivered_sequence = resume_from
 
-
     def offer(self, events: Sequence[LiveEvent]) -> None:
         """Queue events for this connection, or mark it as fallen behind.
 
@@ -442,7 +441,6 @@ class Subscription:
         # nothing left to wake and nothing to report.
         with contextlib.suppress(RuntimeError):
             loop.call_soon_threadsafe(wakeup.set)
-
 
     def attach(self, loop: Any, wakeup: Any) -> None:
         """Bind the asyncio primitives the serving coroutine waits on."""
@@ -777,7 +775,6 @@ class LiveSessionRegistry:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-
     def start(self) -> None:
         """Begin following the configured checkpoint directory, if any."""
 
@@ -810,7 +807,6 @@ class LiveSessionRegistry:
                 self.expire()
             except Exception:  # pragma: no cover - the poller must never die
                 continue
-
 
     def refresh(self) -> None:
         """Scan the checkpoint directory once and publish whatever is new.
@@ -910,7 +906,6 @@ class LiveSessionRegistry:
             tracked.last_sequence = published_through
             session.last_append_unix_nano = now_nano
             self._deliver(session, batch)
-
 
     def accept_frames(
         self,
@@ -1341,7 +1336,6 @@ class LiveSessionRegistry:
         if owned >= self.config.max_sessions_per_project:
             raise LiveCapacityError("this project is holding as many live sessions as it will")
 
-
     def _register(
         self,
         *,
@@ -1448,7 +1442,6 @@ class LiveSessionRegistry:
 
         with self._lock:
             return (project_id, session_id) in self._sessions
-
 
     def subscribe(
         self,
@@ -1565,7 +1558,6 @@ class LiveSessionRegistry:
                 # Dropped rather than left at zero: the map is keyed by tenant
                 # and must not grow with every project that ever connected.
                 self._project_connections.pop(subscription.project_id, None)
-
 
     def seal_source(self, session_id: str, *, project_id: str) -> tuple[str, Path | bytes]:
         """What an explicit seal would read, or why it cannot be done.
