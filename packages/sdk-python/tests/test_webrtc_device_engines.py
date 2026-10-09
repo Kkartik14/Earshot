@@ -25,9 +25,6 @@ pytestmark = pytest.mark.unit
 START = 1_800_000_000_000_000_000
 
 
-# -- builders ------------------------------------------------------------------
-
-
 def _inbound(
     *,
     received: int | None = None,
@@ -100,9 +97,6 @@ def _named(facts: WebRtcFacts | DeviceFacts, name: str) -> list:
     return [m for m in facts.measurements if m.name == name]
 
 
-# -- WebRTC: delta correctness + network.degraded ------------------------------
-
-
 def test_rising_loss_jitter_rtt_emit_correct_deltas() -> None:
     snapshots = [
         _snap(
@@ -166,7 +160,6 @@ def test_degradation_incident_produces_network_degraded_citing_the_sample() -> N
 
 
 def test_jitter_buffer_growth_is_detected() -> None:
-    # Per-interval average buffer delay rises 20ms -> 50ms -> 90ms.
     snapshots = [
         _snap(0, {"IT": _inbound(received=1000, lost=0, buffer_delay=0.0, emitted=0)}),
         _snap(1000, {"IT": _inbound(received=2000, lost=0, buffer_delay=2.0, emitted=100)}),
@@ -192,8 +185,6 @@ def test_steady_jitter_buffer_does_not_grow() -> None:
 
 @pytest.mark.integration
 def test_high_jitter_buffer_delay_alone_is_not_network_degraded() -> None:
-    # A 90ms de-jitter buffer with healthy inter-arrival jitter and no loss must
-    # not be misread as excess jitter: it says nothing about the network SLO.
     snapshots = [
         _snap(
             0, {"IT": _inbound(received=1000, lost=0, jitter=0.005, buffer_delay=0.0, emitted=0)}
@@ -206,9 +197,6 @@ def test_high_jitter_buffer_delay_alone_is_not_network_degraded() -> None:
     bundle = _record(lambda turn: apply_webrtc_stats(turn, snapshots))
     analysis = _analyze(bundle)
     assert "network.degraded" not in _codes(analysis)
-
-
-# -- WebRTC: reconnect + route change ------------------------------------------
 
 
 @pytest.mark.integration
@@ -250,8 +238,6 @@ def test_candidate_pair_change_emits_a_route_change_event() -> None:
 
 
 def test_transport_selected_pair_change_emits_route_change() -> None:
-    # No pair marks itself selected/nominated; the transport names the active
-    # pair. A change to that named pair is a real route change.
     snapshots = [
         _snap(
             0,
@@ -280,10 +266,6 @@ def test_transport_selected_pair_change_emits_route_change() -> None:
 
 
 def test_unrelated_candidate_pair_change_is_not_a_route_change() -> None:
-    # The active pair (named by the transport) is CP2/cellular in BOTH snapshots.
-    # An UNRELATED, non-selected pair CP1 flips its local networkType. The old
-    # arbitrary-first-pair fallback would track CP1 and cry route change; the
-    # honest resolver tracks only the selected CP2, which never changed.
     snapshots = [
         _snap(
             0,
@@ -331,9 +313,6 @@ def test_route_change_alone_is_not_a_reconnect() -> None:
     assert "transport.reconnect" not in _codes(_analyze(bundle))
 
 
-# -- WebRTC: missing-member and counter-reset discipline -----------------------
-
-
 def test_missing_jitter_member_yields_no_jitter_measurement() -> None:
     snapshots = [
         _snap(0, {"IT": _inbound(received=1000, lost=0)}),
@@ -348,7 +327,6 @@ def test_missing_jitter_member_yields_no_jitter_measurement() -> None:
 
 
 def test_missing_loss_member_yields_no_packet_loss_measurement() -> None:
-    # packetsLost absent in the second snapshot -> the ratio is unknown, not 0.
     snapshots = [
         _snap(0, {"IT": _inbound(received=1000, lost=0)}),
         _snap(1000, {"IT": {"type": "inbound-rtp", "kind": "audio", "packetsReceived": 2000}}),
@@ -358,7 +336,6 @@ def test_missing_loss_member_yields_no_packet_loss_measurement() -> None:
 
 
 def test_counter_reset_drops_the_interval_with_a_coverage_note() -> None:
-    # packetsReceived and packetsLost both fall: a stream reset, not negative loss.
     snapshots = [
         _snap(0, {"IT": _inbound(received=1000, lost=50)}),
         _snap(1000, {"IT": _inbound(received=10, lost=0)}),
@@ -381,9 +358,6 @@ def test_concealment_ratio_is_a_bounded_interval_delta() -> None:
     [concealment] = _named(facts, "concealment_ratio")
     assert concealment.value == pytest.approx(480 / 48000)
     assert 0.0 <= concealment.value <= 1.0
-
-
-# -- Device / audio-graph engine ----------------------------------------------
 
 
 @pytest.mark.integration
@@ -471,8 +445,6 @@ def test_output_latency_is_estimated_and_base_latency_is_measured() -> None:
 
 
 def test_devicechange_touching_active_device_is_a_route_change() -> None:
-    # A devicechange carrying the tracked device hash (the active input track
-    # ended) is real evidence the active route changed.
     events = [{"type": "devicechange", "timestamp_ms": 0, "deviceHash": "dev_1a2b3c4d"}]
     facts = analyze_audio_graph(events)
     assert facts.route_changed is True
@@ -487,8 +459,6 @@ def test_sink_change_is_an_active_output_route_change() -> None:
 
 
 def test_unrelated_devicechange_is_not_a_route_failure() -> None:
-    # A bare global devicechange (a USB drive was plugged in) touches no active
-    # audio device: it must NOT be a route change / fault, only benign coverage.
     events = [{"type": "devicechange", "timestamp_ms": 0}]
     facts = analyze_audio_graph(events)
     assert facts.route_changed is False
@@ -506,9 +476,6 @@ def test_unrelated_devicechange_does_not_fire_device_unavailable() -> None:
     analysis = _analyze(bundle)
     assert "device.unavailable" not in _codes(analysis)
     assert validate_derived_analysis(bundle, analysis).ok
-
-
-# -- Determinism and clean-input discipline ------------------------------------
 
 
 def test_engines_are_deterministic() -> None:
@@ -586,14 +553,10 @@ def test_clean_session_produces_no_diagnosis() -> None:
 
 
 def test_malformed_telemetry_fails_open() -> None:
-    # No raise on junk; simply no facts.
     assert analyze_webrtc_stats([]) == WebRtcFacts((), (), ())
     assert analyze_webrtc_stats([{"nope": 1}, "junk", 5]) == WebRtcFacts((), (), ())
     assert analyze_audio_graph([]) == DeviceFacts((), (), ())
     assert analyze_audio_graph([{"type": "unknown", "timestamp_ms": 0}]) == DeviceFacts((), (), ())
-
-
-# -- Full integration: every boundary from one raw capture ---------------------
 
 
 @pytest.mark.integration
@@ -639,9 +602,6 @@ def test_end_to_end_capture_yields_all_four_boundary_diagnoses() -> None:
     assert validate_derived_analysis(bundle, analysis).ok
 
 
-# -- Out-of-order batches: never a fabricated coordinate or a backward delta ----
-
-
 def _raw_ts(facts: WebRtcFacts | DeviceFacts, name: str) -> list[float]:
     """The RAW browser timestamps the named measurements were observed at."""
 
@@ -650,9 +610,6 @@ def _raw_ts(facts: WebRtcFacts | DeviceFacts, name: str) -> list[float]:
 
 
 def test_a_non_monotonic_snapshot_batch_keeps_each_raw_timestamp() -> None:
-    # A batch delivered out of order used to collapse the later-delivered (but
-    # EARLIER-observed) snapshot onto the first snapshot's coordinate, so two
-    # observations 1s apart were both reported at 2000 ms.
     clock = BrowserClockDomain(clock_domain_id="clk_session")
     snapshots = [
         _snap(2000, {"IT": _inbound(received=2000, lost=100, jitter=0.050)}),
@@ -665,9 +622,6 @@ def test_a_non_monotonic_snapshot_batch_keeps_each_raw_timestamp() -> None:
 
 
 def test_a_non_monotonic_snapshot_batch_never_differences_backward() -> None:
-    # The counters did not reset -- the BATCH went backwards. Differencing the
-    # pair in delivery order reported a reset that never happened; the interval
-    # is dropped and declared as an ordering gap instead.
     clock = BrowserClockDomain(clock_domain_id="clk_session")
     snapshots = [
         _snap(2000, {"IT": _inbound(received=2000, lost=100)}),
@@ -685,8 +639,6 @@ def test_a_non_monotonic_snapshot_batch_never_differences_backward() -> None:
 
 
 def test_a_monotonic_batch_after_a_backward_step_still_derives_its_interval() -> None:
-    # Only the interval that went backwards is dropped; the ordered pair that
-    # follows it is still real evidence and is still derived.
     snapshots = [
         _snap(2000, {"IT": _inbound(received=2000, lost=100)}),
         _snap(1000, {"IT": _inbound(received=1000, lost=5)}),
@@ -698,8 +650,6 @@ def test_a_monotonic_batch_after_a_backward_step_still_derives_its_interval() ->
 
 
 def test_a_non_monotonic_snapshot_batch_infers_no_transport_transition() -> None:
-    # A reconnect is a claim about ORDER. Across a backward step the order is not
-    # observed, so no transition is inferred over it.
     snapshots = [
         _snap(2000, {"T": _transport("connected")}),
         _snap(1000, {"T": _transport("disconnected")}),

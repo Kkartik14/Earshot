@@ -70,9 +70,6 @@ def _denying(bundle: IncidentBundle) -> IncidentBundle:
     )
 
 
-# -- built-ins are reachable by their stable names ------------------------------
-
-
 def test_built_in_exporters_are_registered_under_stable_names() -> None:
     assert exporter_names() == ("openinference", "otlp")
     # The registry hands back the same public functions, not a wrapper: the
@@ -82,8 +79,6 @@ def test_built_in_exporters_are_registered_under_stable_names() -> None:
 
 
 def test_both_otlp_projections_declare_the_otlp_export_destination() -> None:
-    # A policy that permits the ``otlp`` destination governs both documents; a
-    # second destination name would silently widen every policy already written.
     assert get_exporter("otlp").destination == "otlp"
     assert get_exporter("openinference").destination == "otlp"
 
@@ -99,9 +94,6 @@ def test_unknown_exporter_names_the_known_ones_not_the_request(valid_bundle) -> 
     # The requested name arrives from outside and must not be echoed back.
     assert "not-an-exporter" not in str(error.value)
     assert "otlp" in str(error.value)
-
-
-# -- the client is the normal way to reach them ---------------------------------
 
 
 def test_the_client_exports_a_finished_incident_by_name(valid_bundle) -> None:
@@ -133,9 +125,6 @@ def test_a_user_exporter_reaches_the_cli_without_a_cli_change(
 
     assert cli_main(["export", str(source), "--format", "acme"]) == 0
     assert json.loads(capsys.readouterr().out) == _passthrough(valid_bundle)
-
-
-# -- registration is explicit, governed, and inert ------------------------------
 
 
 def test_a_registered_name_is_never_silently_replaced(registered) -> None:
@@ -202,8 +191,6 @@ def test_unregister_reports_whether_anything_was_removed(registered) -> None:
 
 
 def test_importing_the_registry_touches_no_network() -> None:
-    # Registration must be a dict fill and nothing else: an import that dialled an
-    # endpoint would make merely importing earshot an observable event.
     program = (
         "import sys\n"
         "def audit(event, args):\n"

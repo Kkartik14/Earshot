@@ -329,7 +329,7 @@ def test_a_loss_count_is_a_non_negative_integer() -> None:
 def test_each_owned_identifier_namespace_rejects_duplicates(
     valid_bundle: IncidentBundle, collection: str, id_field: str
 ) -> None:
-    del id_field  # Documents which identity this parameterized mutation duplicates.
+    del id_field
     if collection == "raw_otlp_chunks":
         broken = valid_bundle.model_copy(
             update={

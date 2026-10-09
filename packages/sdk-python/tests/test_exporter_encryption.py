@@ -66,7 +66,6 @@ def _durable(transport, spool_dir: Path, **kwargs) -> DurableExporter:
 
 @pytest.fixture(autouse=True)
 def _clear_spool_key_env(monkeypatch):
-    # The exporter resolves keys from the environment; keep every test hermetic.
     monkeypatch.delenv("EARSHOT_SPOOL_KEY", raising=False)
     monkeypatch.delenv("EARSHOT_SPOOL_KEY_FILE", raising=False)
 

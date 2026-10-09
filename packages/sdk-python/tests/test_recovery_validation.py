@@ -299,9 +299,6 @@ def test_first_observation_survives_the_json_and_protobuf_round_trip() -> None:
         assert recovery.first_observation.monotonic_time_nano == "1000"
 
 
-# ------------------------------------------------------------ version policy
-
-
 def test_producers_emit_the_current_contract_version() -> None:
     assert CONTRACT_VERSION == "0.2.0"
     assert SEMANTIC_PROFILE_VERSION == "0.2.0"

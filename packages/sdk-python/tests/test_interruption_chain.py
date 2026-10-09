@@ -76,15 +76,9 @@ def _by_stage(chain) -> dict:
     return {stage.stage: stage for stage in chain.stages}
 
 
-# --- The vocabulary is complete and ordered ----------------------------------
-
-
 def test_chain_carries_every_canonical_stage_once_in_order() -> None:
     chain = _chain(_fault("full_barge_in_chain"))
     assert tuple(stage.stage for stage in chain.stages) == _CANONICAL_STAGES
-
-
-# --- full_barge_in_chain: every stage observed, effectiveness available -------
 
 
 def test_full_chain_observes_every_stage_with_a_measured_effectiveness() -> None:
@@ -120,9 +114,6 @@ def test_full_chain_observes_every_stage_with_a_measured_effectiveness() -> None
     assert validate_derived_analysis(bundle, analysis).ok
 
 
-# --- F6(b): a tool is attributed only through an explicit causal link ---------
-
-
 def _strip_tool_links(bundle):
     profile = bundle.profile
     operations = tuple(
@@ -137,7 +128,6 @@ def _strip_tool_links(bundle):
 
 
 def test_causally_linked_tool_is_attributed_as_the_interruption_outcome() -> None:
-    # op-tool carries an explicit ``cancelled_by`` edge to the cancelled agent turn.
     stages = _by_stage(_chain(_fault("full_barge_in_chain")))
     assert stages["tool_outcome"].observed
     assert stages["tool_outcome"].evidence_id == "op-tool"
@@ -145,17 +135,12 @@ def test_causally_linked_tool_is_attributed_as_the_interruption_outcome() -> Non
 
 
 def test_same_turn_tool_without_causal_link_is_not_attributed() -> None:
-    # Remove the causal edge: the tool now merely shares the turn. Co-occurrence is
-    # not causality, so it must not be attributed as the interruption's outcome.
     stripped = _strip_tool_links(_fault("full_barge_in_chain"))
     tool_stage = _by_stage(_chain(stripped))["tool_outcome"]
     assert not tool_stage.observed
     assert tool_stage.coverage_reason == "no_causally_linked_tool"
     assert tool_stage.evidence_id is None
     assert tool_stage.outcome is None
-
-
-# --- F6(a): two episodes in one turn are two chains, never one spliced --------
 
 
 def _two_episode_bundle():
@@ -212,9 +197,6 @@ def test_two_episodes_in_one_turn_produce_two_separated_chains() -> None:
     assert episode_two["render_stopped"].evidence_id == "ep2-render-stop"
     assert chains[1].effectiveness.availability == "available"
     assert chains[1].effectiveness.value == 100.0
-
-
-# --- P1#8(a): operations and samples are scoped to their own episode ----------
 
 
 def _sample(
@@ -300,9 +282,6 @@ def _episode_scoping_bundle(operations, quality_samples):
 
 
 def test_quality_sample_from_a_later_episode_is_not_read_as_an_earlier_intent() -> None:
-    # The sample is measured entirely inside episode two. Before the fix, the
-    # per-episode chain drew samples turn-wide, so episode ONE's intent stage cited
-    # ep2-intent and carried a coordinate two seconds after its own overlap.
     bundle = _episode_scoping_bundle(
         operations=(),
         quality_samples=(
@@ -330,10 +309,6 @@ def test_quality_sample_from_a_later_episode_is_not_read_as_an_earlier_intent() 
 
 
 def test_tool_from_a_later_episode_is_not_attributed_to_an_earlier_one() -> None:
-    # op-ep2-tool runs, and is cancelled, entirely inside episode two. Before the
-    # fix, operations were drawn turn-wide: the tool's end was after episode ONE's
-    # overlap and its causal target shared the turn, so episode one claimed it as
-    # its own tool_outcome.
     bundle = _episode_scoping_bundle(
         operations=(
             _operation(
@@ -376,9 +351,6 @@ def test_tool_from_a_later_episode_is_not_attributed_to_an_earlier_one() -> None
 
 
 def test_evidence_straddling_two_episodes_is_a_limitation_not_a_guess() -> None:
-    # A tool still running when the second barge-in began, and a sampling window
-    # open across both, have no single owner the evidence can name. Neither episode
-    # claims them; both say why.
     bundle = _episode_scoping_bundle(
         operations=(
             _operation(
@@ -407,15 +379,9 @@ def test_evidence_straddling_two_episodes_is_a_limitation_not_a_guess() -> None:
 
 
 def test_single_episode_turn_still_sees_the_whole_turn() -> None:
-    # With one interruption there is nothing to mis-attribute a record *to*, so the
-    # projection is unchanged: the tool that began before the barge-in and was cut
-    # off by it is still attributed.
     stages = _by_stage(_chain(_fault("full_barge_in_chain")))
     assert stages["tool_outcome"].evidence_id == "op-tool"
     assert stages["intent"].evidence_id == "quality-interruption-intent"
-
-
-# --- barge_in: partial chain, same-clock effectiveness available --------------
 
 
 def test_clean_barge_in_partial_chain_has_available_effectiveness() -> None:
@@ -452,15 +418,10 @@ def test_clean_barge_in_partial_chain_has_available_effectiveness() -> None:
 
 
 def test_barge_in_reads_model_cancel_as_the_effective_stop_when_alone() -> None:
-    # With only earshot.model.cancelled present, the same event evidences both the
-    # cancellation request and the effective generation stop (documented ambiguity).
     stages = _by_stage(_chain(_fault("barge_in")))
     assert stages["cancellation_requested"].evidence_id == "event-model-cancelled"
     assert stages["generation_stopped"].observed
     assert stages["generation_stopped"].evidence_id == "event-model-cancelled"
-
-
-# --- false_interruption: classified false, downstream not observed ------------
 
 
 def test_false_interruption_chain_is_false_and_stops_at_classified() -> None:
@@ -490,9 +451,6 @@ def test_false_interruption_chain_is_false_and_stops_at_classified() -> None:
     assert validate_derived_analysis(bundle, analysis).ok
 
 
-# --- native_s2s_interruption: accepted, minimal chain -------------------------
-
-
 def test_native_s2s_chain_is_accepted_with_only_the_classify_stage() -> None:
     bundle = _fault("native_s2s_interruption")
     analysis = _analyze(bundle)
@@ -512,9 +470,6 @@ def test_native_s2s_chain_is_accepted_with_only_the_classify_stage() -> None:
     assert validate_derived_analysis(bundle, analysis).ok
 
 
-# --- A turn without an interruption produces no chain -------------------------
-
-
 def test_turn_without_interruption_has_no_chain() -> None:
     bundle = _fault("fast_endpointing")
     analysis = _analyze(bundle)
@@ -525,9 +480,6 @@ def test_turn_without_interruption_has_no_chain() -> None:
 def test_no_interruption_valid_bundle_has_no_chain(valid_bundle) -> None:
     analysis = _analyze(valid_bundle)
     assert all(turn.interruption_chains == () for turn in analysis.projections.turns)
-
-
-# --- Cross-clock effectiveness honors calibration -----------------------------
 
 
 def _cross_clock_bundle(*, relations: tuple[ClockRelation, ...]):
@@ -611,9 +563,6 @@ def test_cross_clock_effectiveness_refuses_without_a_calibration() -> None:
     assert effectiveness.value is None
     assert effectiveness.limitation == "cross_clock_domain"
     assert validate_derived_analysis(bundle, analysis).ok
-
-
-# --- Determinism -------------------------------------------------------------
 
 
 @pytest.mark.parametrize(

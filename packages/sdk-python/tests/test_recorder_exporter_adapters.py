@@ -2120,7 +2120,5 @@ def test_seconds_to_nanoseconds_rejects_invalid_provider_values(value, expected)
 
 
 def test_importing_adapters_does_not_require_optional_framework_packages() -> None:
-    # The duck-typed mapping modules should already have imported without either
-    # heavy runtime being installed; this assertion also guards accidental imports.
     assert PipecatAdapter.__module__ == "earshot.adapters.pipecat"
     assert LiveKitAdapter.__module__ == "earshot.adapters.livekit"

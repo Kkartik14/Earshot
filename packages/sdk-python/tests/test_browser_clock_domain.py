@@ -35,9 +35,6 @@ def _domains(bundle) -> dict:
     return {domain.clock_domain_id: domain for domain in bundle.profile.clock_domains}
 
 
-# -- distinct origins, not falsely simultaneous --------------------------------
-
-
 def test_two_browser_batches_with_distinct_origins_are_not_falsely_simultaneous() -> None:
     clock = BrowserClockDomain(clock_domain_id="clk_session")
     # WebRTC batch observed at browser-time 5000ms; device batch 15s later.
@@ -73,8 +70,6 @@ def test_two_browser_batches_with_distinct_origins_are_not_falsely_simultaneous(
 
 
 def test_periodic_drains_do_not_restart_the_browser_timeline() -> None:
-    # The browser's monotonic clock is continuous across drains, so a later batch
-    # keeps a strictly-later coordinate rather than resetting to zero.
     clock = BrowserClockDomain(clock_domain_id="clk_session")
     session = earshot.pipeline(session_id="f2-drain", started_at_unix_nano=START)
     with session.turn("turn-a") as turn:
@@ -88,9 +83,6 @@ def test_periodic_drains_do_not_restart_the_browser_timeline() -> None:
         key=lambda e: int(e.time.monotonic_time_nano),
     )
     assert [int(e.time.monotonic_time_nano) for e in stale] == [1_000_000_000, 90_000_000_000]
-
-
-# -- browser facts land in a browser clock domain with uncertainty -------------
 
 
 def test_browser_facts_land_in_browser_domain_with_uncertainty() -> None:
@@ -152,7 +144,7 @@ def test_browser_facts_land_in_browser_domain_with_uncertainty() -> None:
 
 
 def test_browser_facts_without_wall_origin_carry_only_monotonic() -> None:
-    clock = BrowserClockDomain(clock_domain_id="clk_session")  # no wall origin
+    clock = BrowserClockDomain(clock_domain_id="clk_session")
     session = earshot.pipeline(session_id="f2-nowall", started_at_unix_nano=START)
     with session.turn() as turn:
         apply_audio_graph(turn, [{"type": "underrun", "timestamp_ms": 700}], clock_domain=clock)
@@ -162,9 +154,6 @@ def test_browser_facts_without_wall_origin_carry_only_monotonic() -> None:
     assert int(stale.time.monotonic_time_nano) == 700_000_000
     assert stale.time.source_time_unix_nano is None  # no wall reading fabricated
     assert validate_incident(bundle).ok
-
-
-# -- cross-clock latency: unavailable without a relation, estimated with one ----
 
 
 def _cross_clock_bundle():
@@ -227,13 +216,7 @@ def test_cross_clock_latency_becomes_estimated_with_a_relation() -> None:
     assert delta.uncertainty >= 500  # the relation's own error bound is carried forward
 
 
-# -- fact-level provenance agrees with the clock domain's own declaration -------
-
-
 def test_a_browser_fact_is_not_labelled_as_observed_by_the_server() -> None:
-    # The clock domain already declares observer="browser". A fact recorded into
-    # that domain claiming observer="server" would contradict the declaration and
-    # let a client report read as a server measurement.
     clock = BrowserClockDomain(clock_domain_id="clk_session")
     session = earshot.pipeline(session_id="f2-observer", started_at_unix_nano=START)
     with session.turn() as turn:

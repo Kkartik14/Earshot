@@ -219,7 +219,6 @@ def test_inverse_direction_relation_aligns_in_reverse() -> None:
 
 
 def test_drift_correction_is_anchored_at_reference() -> None:
-    # 1000 ppm drift over a 1 second gap after the reference is a 1_000_000 ns shift.
     reference = SERVER_ORIGIN + CLIENT_SKEW + 720_000_000
     drifting = _calibration(
         offset_nano=str(-CLIENT_SKEW),
@@ -252,8 +251,6 @@ def test_same_domain_behaviour_is_unchanged_with_aligner() -> None:
 
 
 def test_monotonic_values_are_never_aligned_across_domains() -> None:
-    # Two points sharing only monotonic values across domains never subtract, even
-    # with a relation present: monotonic clocks are domain-local.
     aligner = _ClockAligner((_calibration(),))
     start = TimePoint(monotonic_time_nano="1000", clock_domain_id="server-clock")
     end = TimePoint(monotonic_time_nano="2000", clock_domain_id="client-render")
@@ -333,9 +330,6 @@ def test_valid_calibration_bundle_passes_validation() -> None:
     assert report.ok, report
 
 
-# --- F5(a): exact affine inverse with drift ----------------------------------
-
-
 def _drift_relation(**overrides: object) -> ClockRelation:
     params: dict[str, object] = {
         "relation_id": "rel-drift",
@@ -352,10 +346,6 @@ def _drift_relation(**overrides: object) -> ClockRelation:
 
 
 def test_drift_inverse_is_the_exact_affine_inverse() -> None:
-    # INVARIANT: for a relation with non-zero drift, inverse(forward(t)) == t.
-    # The old code applied ``wall - correction`` on the inverse path, which is not
-    # the inverse of ``wall + offset + drift*(wall-ref)`` and drifts off by tens of
-    # nanoseconds as t moves away from the reference.
     aligner = _ClockAligner((_drift_relation(),))
     reference = 1_000_000_000
     for gap in (0, 1_000_000, 200_000_000, -50_000_000):
@@ -373,10 +363,6 @@ def test_drift_inverse_is_the_exact_affine_inverse() -> None:
 
 
 def test_degenerate_drift_slope_refuses_inverse_without_crashing() -> None:
-    # drift_ppm == -1e6 makes slope ``1 + (-1) == 0``: f collapses to a constant and
-    # is not invertible. The contract now refuses such a relation outright, so the
-    # only way to reach the arithmetic with one is to bypass validation -- and the
-    # arithmetic must still refuse it rather than divide by zero.
     with pytest.raises(ValidationError):
         _drift_relation(relation_id="rel-degenerate", drift_ppm=-1_000_000.0, offset_nano="0")
     unvalidated = ClockRelation.model_construct(
@@ -394,11 +380,7 @@ def test_degenerate_drift_slope_refuses_inverse_without_crashing() -> None:
     assert aligner.align(b_point, "A") is _DEGENERATE_ALIGNMENT
 
 
-# --- F5(b): validity bounds live in the from-domain coordinate ----------------
-
-
 def test_inverse_validity_window_uses_from_domain_coordinate() -> None:
-    # Window is declared in the ``from`` (A) domain; B = A + offset(-9e8).
     relation = ClockRelation(
         relation_id="rel-window",
         from_clock_domain_id="A",
@@ -419,9 +401,6 @@ def test_inverse_validity_window_uses_from_domain_coordinate() -> None:
     # the input 2.5e9 sitting inside [1e9, 3e9] and wrongly aligned it.
     out_of_window = TimePoint(source_time_unix_nano="2500000000", clock_domain_id="B")
     assert aligner.align(out_of_window, "A") is None
-
-
-# --- F5(c): overlapping relations are reconciled, not lexically picked --------
 
 
 def _pair_relation(relation_id: str, offset: int, uncertainty: int) -> ClockRelation:
@@ -483,9 +462,6 @@ def test_ambiguous_calibration_makes_cross_clock_delta_unavailable() -> None:
     assert delta.limitation == "cross_clock_ambiguous"
 
 
-# --- F5(d)/(e): the contract rejects non-finite and unanchored drift ----------
-
-
 def test_non_finite_drift_rejected_by_contract() -> None:
     for bad in (float("nan"), float("inf"), float("-inf")):
         with pytest.raises(ValidationError):
@@ -519,9 +495,6 @@ def test_drift_without_reference_rejected_by_contract() -> None:
         drift_ppm=0.0,
         method="handshake_offset",
     )
-
-
-# --- P1#6(a): a contract-valid drift can never make the analyzer raise --------
 
 
 def _unvalidated_relation(**overrides: object) -> ClockRelation:
@@ -575,8 +548,6 @@ def test_drift_outside_the_documented_domain_is_refused_by_the_contract(
 
 
 def test_drift_at_the_edge_of_the_documented_domain_is_accepted_and_applies() -> None:
-    # The bound is exclusive, so a drift just inside it is a legal calibration and
-    # must still produce a value rather than a refusal.
     relation = ClockRelation(
         relation_id="rel-edge-drift",
         from_clock_domain_id="A",
@@ -594,11 +565,6 @@ def test_drift_at_the_edge_of_the_documented_domain_is_accepted_and_applies() ->
 
 
 def test_extreme_drift_refuses_with_a_limitation_instead_of_raising() -> None:
-    # Before the fix this exact input raised
-    #   OverflowError: cannot convert float infinity to integer
-    # from ``round(drift * (wall - reference))`` in ``_ClockAligner._map_wall``.
-    # An analyzer must never crash on evidence -- it must decline to produce a value
-    # and say why.
     aligner = _ClockAligner((_unvalidated_relation(drift_ppm=1e308),))
     delta = comparable_delta(_A_POINT, _B_POINT, aligner)
     assert delta.availability == "unavailable"
@@ -608,8 +574,6 @@ def test_extreme_drift_refuses_with_a_limitation_instead_of_raising() -> None:
 
 
 def test_alignment_leaving_the_uint64_domain_refuses_rather_than_reporting_it() -> None:
-    # A legal drift can still carry an instant past the largest nanosecond value the
-    # contract can express. That is not a coordinate, so it is not reported as one.
     relation = _unvalidated_relation(
         relation_id="rel-out-of-domain",
         offset_nano=str((1 << 63) - 1),
@@ -620,13 +584,7 @@ def test_alignment_leaving_the_uint64_domain_refuses_rather_than_reporting_it() 
     assert _ClockAligner((relation,)).align(point_b, "A") is _UNREPRESENTABLE_ALIGNMENT
 
 
-# --- P1#6(b): a relation that reverses time is not a calibration --------------
-
-
 def test_negative_slope_is_refused_forward_not_silently_reversed() -> None:
-    # slope 1 + (-3e6/1e6) == -2: the forward map sends a later instant to an
-    # earlier one. Applying it would produce a reversed -- and therefore fictional
-    # -- delta, so the relation is refused in both directions.
     aligner = _ClockAligner((_unvalidated_relation(drift_ppm=-3e6),))
     assert aligner.align(_B_POINT, "A") is _DEGENERATE_ALIGNMENT
     delta = comparable_delta(_A_POINT, _B_POINT, aligner)
@@ -635,7 +593,6 @@ def test_negative_slope_is_refused_forward_not_silently_reversed() -> None:
 
 
 def test_a_usable_relation_still_wins_over_a_degenerate_sibling() -> None:
-    # Refusing a degenerate relation must not poison a declared, applicable one.
     aligner = _ClockAligner(
         (
             _unvalidated_relation(relation_id="rel-degenerate", drift_ppm=-3e6),
@@ -651,9 +608,6 @@ def test_a_usable_relation_still_wins_over_a_degenerate_sibling() -> None:
     )
     aligned = aligner.align(_B_POINT, "A")
     assert aligned == (2_999_999_500, 10)
-
-
-# --- P1#6(c): a relation's absent uncertainty is unknown, never zero ----------
 
 
 def test_relation_without_uncertainty_yields_an_unknown_bound_not_zero() -> None:
@@ -675,8 +629,6 @@ def test_relation_without_uncertainty_yields_an_unknown_bound_not_zero() -> None
 
 
 def test_unknown_relation_bound_survives_metric_serialization() -> None:
-    # The bound must not vanish on the way out: an unknown one is named, and a known
-    # one is carried as a number in the metric's own unit.
     relation = ClockRelation(
         relation_id="rel-no-bound",
         from_clock_domain_id="B",
@@ -710,8 +662,6 @@ def _pair_relation_to_a(relation_id: str, offset: int, uncertainty: int) -> Cloc
 
 
 def test_relation_declaring_a_bound_is_preferred_over_one_declaring_none() -> None:
-    # Both place the instant identically, so there is no disagreement; the tie is
-    # broken toward the relation that actually declares how wrong it might be.
     aligner = _ClockAligner(
         (
             ClockRelation(
@@ -728,8 +678,6 @@ def test_relation_declaring_a_bound_is_preferred_over_one_declaring_none() -> No
 
 
 def test_disagreeing_relations_with_an_unknown_bound_are_ambiguous() -> None:
-    # An unknown bound cannot show that two differing placements agree, so the
-    # alignment is not decidable -- exactly as when a known bound is too small.
     aligner = _ClockAligner(
         (
             ClockRelation(
