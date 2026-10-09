@@ -1,16 +1,5 @@
-/**
- * Output-sink switching, feature-detected.
- *
- * `AudioContext.setSinkId` / the `sinkchange` event are part of the Audio Output
- * Devices API and are NOT available in every browser (notably not Firefox, and
- * historically not Safari). This module never assumes they exist: it detects
- * them, and where they are missing it simply cannot switch — the SDK then records
- * no `sink_change` event, which is the honest signal. Nothing here fabricates a
- * sink id or a change that did not happen.
- *
- * When switching IS supported, calling `setSinkId` triggers the real `sinkchange`
- * event that `recorder.attachAudioContext` is already listening for, so the SDK
- * captures the (hashed) output-route change through its normal code path.
+/** Feature-detect output-device switching; unsupported browsers emit no sink event.
+ * The browser SDK records the real `sinkchange` event and hashes its device id.
  */
 
 /** The structural surface of the not-everywhere AudioContext sink API. */

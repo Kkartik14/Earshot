@@ -1,24 +1,5 @@
-/**
- * Loopback mode: a REAL WebRTC session that stays on your machine.
- *
- * It captures the real microphone and pipes it through two real
- * `RTCPeerConnection`s (a sender and a receiver, connected by host ICE
- * candidates), then renders the received audio through a real `AudioContext`.
- * No external service and no API key are involved, so this is the mode you can
- * run anywhere to exercise the capture code paths end to end.
- *
- * What it drives that a synthesised-source loopback cannot:
- *  - the real `getUserMedia` microphone-permission path (via the session);
- *  - real `inbound-rtp` audio stats on the RECEIVER's `getStats()`;
- *  - a real `AudioContext` output path (state / outputLatency / render-queue /
- *    sinkchange), because the received stream is actually connected to the
- *    context's output device.
- *
- * The received audio is routed through a gain node defaulting to 0 (silent) so
- * running it near your microphone does not howl; the render path is still live
- * (the context runs and outputs to its device), so `outputLatency` and
- * `getOutputTimestamp()` are real. Raise the monitor gain (headphones advised) to
- * actually hear it.
+/** Local WebRTC loopback that exercises real microphone, stats, and render paths.
+ * Monitoring is muted by default to avoid acoustic feedback.
  */
 
 import type { VoiceModeHandle } from "./mode.js";
@@ -75,7 +56,6 @@ export async function startLoopback(
   session: CaptureSession,
   log: (message: string) => void,
 ): Promise<VoiceModeHandle> {
-  // Real Permissions API + devicechange, then the real getUserMedia mic path.
   await session.observeDevices();
   const micStream = await session.requestMicrophone({ audio: true });
   if (micStream === null) {
@@ -83,8 +63,7 @@ export async function startLoopback(
   }
 
   const { sender, receiver, remote } = await connectLoopback(micStream, log);
-  // Sample the RECEIVER: its getStats() carries the inbound-rtp audio + playout
-  // stats the server's analyze_webrtc_stats engine reads.
+  // Receiver stats expose inbound audio and playout counters.
   session.attachPeerConnection(receiver, 1000);
 
   const audioCtx = new AudioContext();

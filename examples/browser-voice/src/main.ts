@@ -1,16 +1,3 @@
-/**
- * The runnable browser voice app.
- *
- * It builds a small form, then starts a real capture session in one of two
- * modes — local WebRTC loopback, or a raw OpenAI Realtime WebRTC connection —
- * and POSTs the captured telemetry to the earshot backend's `POST /v1/capture`.
- * Everything below drives real browser objects; nothing fabricates a metric.
- *
- * Only Chrome has been exercised against this app in-repo; the Safari/Firefox
- * and real-hardware paths are made to EXIST and run here, but are not claimed as
- * validated. See README.md.
- */
-
 import { LogPanel, el } from "./dom.js";
 import { startLoopback } from "./loopback.js";
 import type { VoiceModeHandle } from "./mode.js";
