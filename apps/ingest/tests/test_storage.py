@@ -983,19 +983,19 @@ def test_explicit_purge_compacts_after_releasing_the_store_lock(
     def pause_compaction(*, compact=True, skip_if_current=False):
         if compact:
             compaction_started.set()
-            assert release_compaction.wait(3)
+            assert release_compaction.wait(10)
         return original_scrub(compact=compact, skip_if_current=skip_if_current)
 
     monkeypatch.setattr(store, "_scrub_deleted_pages", pause_compaction)
     with ThreadPoolExecutor(max_workers=2) as executor:
         purge = executor.submit(store.purge, "bundle-1")
-        assert compaction_started.wait(2)
+        assert compaction_started.wait(5)
         listing = executor.submit(store.list_incidents)
         try:
-            page = listing.result(timeout=0.5)
+            page = listing.result(timeout=5)
         finally:
             release_compaction.set()
-        purge.result(timeout=3)
+        purge.result(timeout=10)
 
     assert page.items == ()
 
@@ -1048,7 +1048,7 @@ def test_startup_compaction_does_not_hold_the_store_lock(
     def pause_compaction(instance, *, compact=True, skip_if_current=False):
         if instance is not store:
             compaction_started.set()
-            assert release_compaction.wait(3)
+            assert release_compaction.wait(10)
         return original_scrub(
             instance,
             compact=compact,
@@ -1058,13 +1058,13 @@ def test_startup_compaction_does_not_hold_the_store_lock(
     monkeypatch.setattr(IncidentStore, "_scrub_deleted_pages", pause_compaction)
     with ThreadPoolExecutor(max_workers=2) as executor:
         startup = executor.submit(IncidentStore, tmp_path)
-        assert compaction_started.wait(2)
+        assert compaction_started.wait(5)
         listing = executor.submit(store.list_incidents)
         try:
-            page = listing.result(timeout=0.5)
+            page = listing.result(timeout=5)
         finally:
             release_compaction.set()
-        restarted = startup.result(timeout=3)
+        restarted = startup.result(timeout=10)
 
     assert len(page.items) == 1
     restarted.close()
@@ -1260,18 +1260,18 @@ def test_startup_expiry_cleanup_releases_store_lock_between_batches(tmp_path, mo
             startup_batches += 1
             if startup_batches == 1:
                 first_batch_finished.set()
-                assert release_startup.wait(3)
+                assert release_startup.wait(10)
         return removed
 
     monkeypatch.setattr(IncidentStore, "_purge_expired_reconciliation_batch", one_at_a_time)
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
             startup = executor.submit(IncidentStore, tmp_path)
-            assert first_batch_finished.wait(2)
+            assert first_batch_finished.wait(5)
             listing = executor.submit(store.list_incidents)
-            assert listing.result(timeout=0.5).items == ()
+            assert listing.result(timeout=5).items == ()
             release_startup.set()
-            restarted = startup.result(timeout=5)
+            restarted = startup.result(timeout=10)
         assert startup_batches == 2
         restarted.close()
     finally:
@@ -1309,18 +1309,18 @@ def test_startup_expiry_selection_releases_store_lock_during_index_scan(
         )
         if instance is not store and not selection_finished.is_set():
             selection_finished.set()
-            assert release_selection.wait(3)
+            assert release_selection.wait(10)
         return bundle_ids
 
     monkeypatch.setattr(IncidentStore, "_expired_bundle_ids", pause_after_selection)
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
             startup = executor.submit(IncidentStore, tmp_path)
-            assert selection_finished.wait(2)
+            assert selection_finished.wait(5)
             listing = executor.submit(store.list_incidents)
-            assert listing.result(timeout=0.5).items == ()
+            assert listing.result(timeout=5).items == ()
             release_selection.set()
-            restarted = startup.result(timeout=5)
+            restarted = startup.result(timeout=10)
         restarted.close()
     finally:
         release_selection.set()

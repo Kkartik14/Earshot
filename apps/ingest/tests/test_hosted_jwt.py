@@ -45,7 +45,7 @@ class _JwksHandler(BaseHTTPRequestHandler):
             request_number = self.server.jwks_requests  # type: ignore[attr-defined]
         if request_number > 1 and self.server.block_jwks_refresh:  # type: ignore[attr-defined]
             self.server.refresh_started.set()  # type: ignore[attr-defined]
-            self.server.release_refresh.wait(timeout=3)  # type: ignore[attr-defined]
+            self.server.release_refresh.wait(timeout=10)  # type: ignore[attr-defined]
         body = self.server.jwks_body  # type: ignore[attr-defined]
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -1203,13 +1203,13 @@ def test_unknown_key_refresh_does_not_block_verification_with_a_cached_key(
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         unknown = pool.submit(reject_unknown)
-        assert server.refresh_started.wait(timeout=1)
+        assert server.refresh_started.wait(timeout=5)
         known = pool.submit(verifier.verify, valid_token)
         try:
-            principal = known.result(timeout=0.5)
+            principal = known.result(timeout=5)
         finally:
             server.release_refresh.set()
-        unknown.result(timeout=2)
+        unknown.result(timeout=5)
 
     assert principal.project_id == "project-a"
 

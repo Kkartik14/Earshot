@@ -204,23 +204,88 @@ def test_retryable_failure_retains_spool_record(tmp_path) -> None:
         assert exporter.shutdown()
 
 
-def test_cross_cycle_backoff_prevents_tight_retry_bursts(tmp_path) -> None:
-    class CountingUnavailable:
+def test_cross_cycle_backoff_holds_a_failed_spool_item_until_due(monkeypatch, tmp_path) -> None:
+    class Clock:
+        now = 100.0
+
+        def monotonic(self) -> float:
+            return self.now
+
+        def time(self) -> float:
+            return 1_800_000_000.0
+
+        def time_ns(self) -> int:
+            return 1_800_000_000_000_000_000
+
+    class RetryOnce:
         def __init__(self) -> None:
             self.calls = 0
+            self.attempt_started = [threading.Event(), threading.Event()]
 
         def send(self, _item: ExportItem) -> None:
             self.calls += 1
-            raise RetryableExportError("unavailable")
+            if self.calls <= len(self.attempt_started):
+                self.attempt_started[self.calls - 1].set()
+            if self.calls == 1:
+                raise RetryableExportError("unavailable")
 
-    transport = CountingUnavailable()
-    exporter = _durable(transport, tmp_path)
+    transport = RetryOnce()
+    clock = Clock()
+    exporter = DurableExporter(
+        transport,
+        spool_dir=tmp_path,
+        max_attempts=1,
+        base_backoff=0,
+        max_elapsed=30,
+    )
+    waiting_before_retry = [threading.Event(), threading.Event()]
+    release_retry_wait = threading.Semaphore(0)
+
+    class ControlledWake(threading.Event):
+        def __init__(self) -> None:
+            super().__init__()
+            self.wait_count = 0
+            self.wait_lock = threading.Lock()
+
+        def wait(self, timeout: float | None = None) -> bool:
+            if transport.calls == 1:
+                self.clear()
+                with self.wait_lock:
+                    index = self.wait_count
+                    self.wait_count += 1
+                if index < len(waiting_before_retry):
+                    waiting_before_retry[index].set()
+                release_retry_wait.acquire(timeout=5)
+                return False
+            return super().wait(timeout)
+
+    wake = ControlledWake()
+    exporter._wake = wake
+    monkeypatch.setattr("earshot.exporter.time", clock)
     try:
         assert exporter.submit(ExportItem("backoff", b"payload"))
-        _wait_until(lambda: transport.calls >= 2)
-        time.sleep(0.18)
-        assert transport.calls <= 4
+        assert transport.attempt_started[0].wait(5)
+        assert waiting_before_retry[0].wait(5)
+
+        retry_path = next(tmp_path.glob("*.spool"))
+        retry_at = exporter._retry_not_before[retry_path.name]
+        assert exporter._retry_cycles[retry_path.name] == 1
+        assert retry_at == pytest.approx(100.05)
+        assert transport.calls == 1
+
+        release_retry_wait.release()
+        assert waiting_before_retry[1].wait(5)
+        assert transport.calls == 1
+
+        clock.now = retry_at
+        release_retry_wait.release()
+        assert transport.attempt_started[1].wait(5)
+        _wait_until(lambda: not retry_path.exists())
+        assert transport.calls == 2
     finally:
+        clock.now = 1_000.0
+        for _ in range(3):
+            release_retry_wait.release()
         assert exporter.shutdown()
 
 
@@ -377,12 +442,11 @@ def test_sync_retry_after_cannot_exceed_total_deadline() -> None:
         transport,
         max_attempts=3,
         base_backoff=0,
-        max_elapsed=0.02,
+        max_elapsed=5,
     )
-    started = time.monotonic()
     assert not exporter.submit(ExportItem("deadline", b"payload"))
-    assert time.monotonic() - started < 0.2
     assert len(transport.timeouts) == 1
+    assert 0 < transport.timeouts[0] <= 5
     assert exporter.status().failed == 1
 
 

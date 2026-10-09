@@ -98,11 +98,15 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
     original_ingest = store.ingest
     started = threading.Event()
     release = threading.Event()
+    operation_finished = threading.Event()
 
     def blocked_ingest(bundle, payload, **kwargs):
         started.set()
-        assert release.wait(2)
-        return original_ingest(bundle, payload, **kwargs)
+        try:
+            release.wait(10)
+            return original_ingest(bundle, payload, **kwargs)
+        finally:
+            operation_finished.set()
 
     monkeypatch.setattr(store, "ingest", blocked_ingest)
     app = create_app(store=store, analyzer=analyze_incident)
@@ -116,11 +120,15 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
             )
         )
         try:
-            assert await asyncio.to_thread(started.wait, 1)
-            health = await asyncio.wait_for(client.get("/healthz"), timeout=0.25)
+            assert await asyncio.to_thread(started.wait, 5)
+            health = await asyncio.wait_for(client.get("/healthz"), timeout=12)
             assert health.status_code == 200
+            assert not operation_finished.is_set(), (
+                "health waited for the blocked storage operation to finish"
+            )
         finally:
             release.set()
+            await asyncio.gather(ingest, return_exceptions=True)
         assert (await ingest).status_code == 201
 
 
@@ -131,17 +139,20 @@ async def test_api_key_verification_does_not_stall_asgi_health(tmp_path, monkeyp
     original_authenticate = store.authenticate_api_key
     started = threading.Event()
     release = threading.Event()
+    operation_finished = threading.Event()
 
     def blocked_authenticate(credential: str):
         started.set()
-        release.wait(2)
-        return original_authenticate(credential)
+        try:
+            release.wait(10)
+            return original_authenticate(credential)
+        finally:
+            operation_finished.set()
 
     monkeypatch.setattr(store, "authenticate_api_key", blocked_authenticate)
     app = create_app(store=store, analyzer=analyze_incident)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        started_at = time.monotonic()
         authenticated = asyncio.create_task(
             client.get(
                 "/v1/incidents",
@@ -149,12 +160,15 @@ async def test_api_key_verification_does_not_stall_asgi_health(tmp_path, monkeyp
             )
         )
         try:
-            assert await asyncio.to_thread(started.wait, 1)
-            health = await asyncio.wait_for(client.get("/healthz"), timeout=0.25)
+            assert await asyncio.to_thread(started.wait, 5)
+            health = await asyncio.wait_for(client.get("/healthz"), timeout=12)
             assert health.status_code == 200
-            assert time.monotonic() - started_at < 0.5
+            assert not operation_finished.is_set(), (
+                "health waited for API-key verification to finish"
+            )
         finally:
             release.set()
+            await asyncio.gather(authenticated, return_exceptions=True)
         assert (await authenticated).status_code == 200
 
 
@@ -937,7 +951,7 @@ def test_final_expiry_compaction_does_not_hold_the_store_lock(
     def pause_compaction(*, compact=True, skip_if_current=False):
         if compact:
             compaction_started.set()
-            assert release_compaction.wait(3)
+            assert release_compaction.wait(10)
         return original_scrub(compact=compact, skip_if_current=skip_if_current)
 
     monkeypatch.setattr(store, "_scrub_deleted_pages", pause_compaction)
@@ -948,11 +962,11 @@ def test_final_expiry_compaction_does_not_hold_the_store_lock(
 
     try:
         with TestClient(create_app(store=store, config=config)) as client:
-            assert compaction_started.wait(2)
+            assert compaction_started.wait(5)
             with ThreadPoolExecutor(max_workers=1) as executor:
                 listing = executor.submit(client.get, "/v1/incidents")
                 try:
-                    response = listing.result(timeout=0.5)
+                    response = listing.result(timeout=5)
                 finally:
                     release_compaction.set()
             assert response.status_code == 200

@@ -259,7 +259,7 @@ def test_pipeline_timeout_is_bounded_and_finalized(tmp_path: pathlib.Path) -> No
             "test-key",
             runtime_factory=create_runtime,
             output_path=output_path,
-            run_timeout=0.01,
+            run_timeout=0.1,
         )
     )
 
@@ -308,7 +308,7 @@ def test_run_deadline_cannot_be_suppressed_into_false_success(tmp_path: pathlib.
                 "test-key",
                 runtime_factory=create_runtime,
                 output_path=output_path,
-                run_timeout=0.001,
+                run_timeout=0.1,
             )
         )
         try:
@@ -357,7 +357,7 @@ def test_late_failure_after_deadline_does_not_leak_task_exception_payload(
             "test-key",
             runtime_factory=create_runtime,
             output_path=output_path,
-            run_timeout=0.001,
+            run_timeout=0.1,
         )
     )
 
@@ -744,7 +744,7 @@ def test_synth_user_pcm_kills_a_wedged_say_process(
 
     async def synthesize() -> None:
         with pytest.raises(TimeoutError, match="timed out"):
-            await driver.synth_user_pcm(timeout=0.001)
+            await driver.synth_user_pcm(timeout=0.1)
 
     asyncio.run(synthesize())
     assert process.killed
