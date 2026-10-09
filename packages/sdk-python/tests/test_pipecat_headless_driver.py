@@ -274,18 +274,27 @@ def test_pipeline_timeout_is_bounded_and_finalized(tmp_path: pathlib.Path) -> No
 def test_run_deadline_cannot_be_suppressed_into_false_success(tmp_path: pathlib.Path) -> None:
     driver = load_driver()
     output_path = tmp_path / "incident.json"
-    created: list[SuccessfulRuntime] = []
 
     class CancellationSuppressingRuntime(SuccessfulRuntime):
-        cancellation_seen = False
+        def __init__(self, recorder: earshot.IncidentRecorder) -> None:
+            super().__init__(recorder)
+            self.cancellation_seen = asyncio.Event()
+            self.allow_cancellation_to_finish = asyncio.Event()
+            self.cancellation_finished = asyncio.Event()
 
         async def run(self) -> None:
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                self.cancellation_seen = True
-                await asyncio.sleep(0.08)
-                await super().run()
+                self.cancellation_seen.set()
+                while not self.allow_cancellation_to_finish.is_set():
+                    try:
+                        await self.allow_cancellation_to_finish.wait()
+                    except asyncio.CancelledError:
+                        continue
+                self.cancellation_finished.set()
+
+    created: list[CancellationSuppressingRuntime] = []
 
     def create_runtime(api_key: str, recorder: earshot.IncidentRecorder) -> Any:
         del api_key
@@ -293,20 +302,33 @@ def test_run_deadline_cannot_be_suppressed_into_false_success(tmp_path: pathlib.
         created.append(runtime)
         return runtime
 
-    started = time.monotonic()
-    exit_code = asyncio.run(
-        driver.run_driver(
-            "test-key",
-            runtime_factory=create_runtime,
-            output_path=output_path,
-            run_timeout=0.001,
+    async def run_with_cancellation_handshake() -> int:
+        driver_task = asyncio.create_task(
+            driver.run_driver(
+                "test-key",
+                runtime_factory=create_runtime,
+                output_path=output_path,
+                run_timeout=0.001,
+            )
         )
-    )
-    elapsed = time.monotonic() - started
+        try:
+            done, _ = await asyncio.wait({driver_task}, timeout=5)
+            assert driver_task in done, "driver waited for suppressed cancellation to finish"
+            runtime = created[0]
+            await asyncio.wait_for(runtime.cancellation_seen.wait(), timeout=5)
+            assert not runtime.cancellation_finished.is_set()
+            return driver_task.result()
+        finally:
+            if created:
+                runtime = created[0]
+                runtime.allow_cancellation_to_finish.set()
+                if not driver_task.done():
+                    await asyncio.wait_for(driver_task, timeout=5)
+                await asyncio.wait_for(runtime.cancellation_finished.wait(), timeout=5)
+
+    exit_code = asyncio.run(run_with_cancellation_handshake())
 
     assert exit_code == 1
-    assert elapsed < 0.05
-    assert created[0].cancellation_seen
     bundle = decode_incident_json(output_path.read_bytes())
     assert bundle.profile.session.status == "timed_out"
 
