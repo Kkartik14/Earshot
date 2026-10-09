@@ -1,36 +1,8 @@
-/**
- * `EarshotCaptureTransport` — the client half of the capture wire.
- *
- * It POSTs drained `CapturePayload`s to the earshot backend's capture endpoint
- * (`POST /v1/capture`, implemented in
- * `packages/sdk-python/src/earshot/api.py`) and is responsible for exactly one
- * thing beyond the HTTP call: never letting a delivery failure look like a clean
- * session.
- *
- * Four properties hold by construction:
- *
- * **Versioned.** The payload carries `captureVersion` in its body (see
- * `protocol.ts`), so this client and the server evolve independently of the
- * shared `/v1` route. A server that does not speak the version answers
- * `EARSHOT_UNSUPPORTED_CAPTURE_VERSION`, which is a *permanent* failure here —
- * retrying it would only repeat the same answer.
- *
- * **Authenticated, never hardcoded, never logged.** The endpoint and credential
- * are options; there is no default endpoint and no baked-in key. The credential
- * is written into a request header and nowhere else: it is never placed in a
- * failure object, an error message, or any console call (this module makes no
- * console calls at all).
- *
- * **Bounded.** One delivery is in flight at a time and the pending queue has a
- * hard cap; on overflow the OLDEST payload is dropped. Retries are a bounded
- * number of attempts with exponential backoff, and only for failures that can
- * plausibly succeed later (transport error, 408, 429, 5xx).
- *
- * **Never a silent drop.** A payload this transport gives up on is reported to
- * `onFailure` AND recorded as coverage on the supplied sink (the recorder), so
- * the observations it carried are declared lost in the *next* payload instead of
- * vanishing. The dropped payload's own coverage notes are forwarded too, so the
- * gaps it was already carrying survive the delivery failure.
+/** POST drained payloads to `/v1/capture` without hiding delivery loss.
+ * Credentials are request options and never enter errors or failure records.
+ * The queue and retry count are bounded; only transient failures are retried.
+ * Undelivered observations and their existing coverage are recorded on the next
+ * payload, and each failure is reported through `onFailure`.
  */
 
 import type { CaptureCoverage, CapturePayload } from "./types.js";
@@ -270,7 +242,6 @@ export class EarshotCaptureTransport {
     }
   }
 
-  // -- internals -------------------------------------------------------------
 
   private drain(): Promise<void> {
     if (this.draining) return this.draining;
