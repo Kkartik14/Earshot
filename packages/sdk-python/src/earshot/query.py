@@ -122,11 +122,6 @@ def _metric_dict(metric: object, name: str) -> dict[str, object]:
     return {"metric": name, **payload}
 
 
-# --------------------------------------------------------------------------- #
-# Structured result shapes                                                     #
-# --------------------------------------------------------------------------- #
-
-
 @dataclass(frozen=True)
 class TurnKnowledge:
     """Everything the evidence graph knows about one turn."""
@@ -296,11 +291,6 @@ class IncidentComparison:
         }
 
 
-# --------------------------------------------------------------------------- #
-# Shared, deterministic evidence indexing                                      #
-# --------------------------------------------------------------------------- #
-
-
 def _derive_analysis(bundle: IncidentBundle) -> DerivedAnalysis:
     """Compute the deterministic analysis bound to this exact evidence digest."""
 
@@ -418,11 +408,6 @@ def _diagnosis_dict(
     }
 
 
-# --------------------------------------------------------------------------- #
-# EvidenceQuery                                                                #
-# --------------------------------------------------------------------------- #
-
-
 class EvidenceQuery:
     """A deterministic, structured question surface over one incident.
 
@@ -446,7 +431,6 @@ class EvidenceQuery:
         self._index = _EvidenceIndex(bundle, self.analysis)
         self._turns_by_id = {turn.turn_id: turn for turn in self.analysis.projections.turns}
 
-    # -- known_about_turn --------------------------------------------------- #
 
     def known_about_turn(self, turn_id: str) -> TurnKnowledge:
         """Return all latency metrics, diagnoses, and the interruption chain."""
@@ -477,7 +461,6 @@ class EvidenceQuery:
             interruption_chains=chains,
         )
 
-    # -- first_abnormal_boundary -------------------------------------------- #
 
     def _boundary_coordinate(self, diagnosis: Diagnosis) -> tuple[int, str, str, int] | None:
         """The earliest canonical coordinate among a diagnosis's cited evidence."""
@@ -557,7 +540,6 @@ class EvidenceQuery:
             "at_nano": at_nano,
         }
 
-    # -- not_observed ------------------------------------------------------- #
 
     def not_observed(self) -> NotObserved:
         """Unify coverage gaps, analysis/turn limitations, and omissions."""
@@ -627,7 +609,6 @@ class EvidenceQuery:
             omissions=omissions,
         )
 
-    # -- recomputable ------------------------------------------------------- #
 
     def recomputable(self, reference: str) -> Recomputable:
         """Whether ``reference`` (a diagnosis id or metric) still resolves.
@@ -681,14 +662,12 @@ class EvidenceQuery:
             missing_evidence_ids=missing,
         )
 
-    # -- contradictions ----------------------------------------------------- #
 
     def contradictions(self) -> list[Contradiction]:
         """Detect evidence-linked contradictions in this incident."""
 
         return detect_contradictions(self.bundle, self.analysis)
 
-    # -- summary ------------------------------------------------------------ #
 
     def summary(self) -> SummaryDigest:
         """Return a compact, agent-facing digest of the whole incident."""
@@ -728,11 +707,6 @@ class EvidenceQuery:
         """Diff this incident against a known-good session."""
 
         return compare_incidents(self.bundle, known_good, incident_analysis=self.analysis)
-
-
-# --------------------------------------------------------------------------- #
-# Contradiction detection                                                      #
-# --------------------------------------------------------------------------- #
 
 
 def _measurements_by_turn(
@@ -967,11 +941,6 @@ def detect_contradictions(
     return contradictions
 
 
-# --------------------------------------------------------------------------- #
-# Known-good comparison                                                        #
-# --------------------------------------------------------------------------- #
-
-
 def _diagnosis_keys(
     analysis: DerivedAnalysis,
     index: _EvidenceIndex,
@@ -1038,7 +1007,6 @@ def compare_incidents(
     incident_index = _EvidenceIndex(incident, incident_analysis)
     known_index = _EvidenceIndex(known_good, known_good_analysis)
 
-    # -- diagnoses --------------------------------------------------------- #
     incident_keys = _diagnosis_keys(incident_analysis, incident_index)
     known_keys = _diagnosis_keys(known_good_analysis, known_index)
     diagnoses_added = tuple(
@@ -1048,7 +1016,6 @@ def compare_incidents(
         value for key, value in sorted(known_keys.items()) if key not in incident_keys
     )
 
-    # -- per-turn metric deltas / availability changes --------------------- #
     incident_turns = {turn.turn_id: turn for turn in incident_analysis.projections.turns}
     known_turns = {turn.turn_id: turn for turn in known_good_analysis.projections.turns}
     matched = sorted(set(incident_turns) & set(known_turns))
@@ -1065,12 +1032,7 @@ def compare_incidents(
                 incident_metric.availability == "available"
                 and known_metric.availability == "available"
             )
-            # Matching units are not enough to make two numbers the same quantity.
-            # A metric's ``basis`` names what it was measured *from* and *to*: a
-            # response latency ending at audio render and one ending at a TTS
-            # estimate are both in ``ms``, and subtracting them reports the missing
-            # render leg as if it were a regression. Only like bases subtract; every
-            # other pair is reported as incomparable.
+            # Compare metrics only when both their unit and measured basis match.
             comparable = (
                 both_available
                 and incident_metric.unit == known_metric.unit
@@ -1088,8 +1050,7 @@ def compare_incidents(
                     }
                 )
             elif incident_metric.availability != known_metric.availability or both_available:
-                # Availability changed, or both available but the two are not
-                # comparable: report the change, never a fabricated delta.
+                # Report availability or comparability changes without a delta.
                 availability_changes.append(
                     {
                         "turn_id": turn_id,
@@ -1105,7 +1066,6 @@ def compare_incidents(
         "only_in_known_good": sorted(set(known_turns) - set(incident_turns)),
     }
 
-    # -- coverage gaps ----------------------------------------------------- #
     incident_gaps = _coverage_gap_tuples(incident)
     known_gaps = _coverage_gap_tuples(known_good)
     coverage_gaps_new = tuple(
@@ -1115,7 +1075,6 @@ def compare_incidents(
         value for key, value in sorted(known_gaps.items()) if key not in incident_gaps
     )
 
-    # -- contradictions ---------------------------------------------------- #
     incident_contradictions = detect_contradictions(incident, incident_analysis)
     known_signatures = {
         contradiction.signature()

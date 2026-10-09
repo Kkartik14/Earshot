@@ -101,7 +101,6 @@ class OpenAIRealtimeAdapter(ProviderAdapter):
             return self._response_done(payload, receipt_ms)
         raise ValueError(f"unsupported OpenAI Realtime event type: {event_type}")
 
-    # -------------------------------------------------------- bounded state
 
     def _evict_tracked_responses(self, turn: TurnRecorder) -> None:
         """Bound the per-response map, and say so rather than lose it quietly.

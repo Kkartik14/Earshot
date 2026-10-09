@@ -185,7 +185,6 @@ class SpanRouter:
         self._stale = False
         self._lock = threading.RLock()
 
-    # -- registration -----------------------------------------------------
     def register(self, sink: SpanSink) -> None:
         with self._lock:
             self._sinks[sink.route_key] = sink
@@ -224,7 +223,6 @@ class SpanRouter:
                 len(self._span_to_session) + len(self._trace_to_session) + len(self._retired_sinks)
             )
 
-    # -- processor callbacks ---------------------------------------------
     def on_start(self, span: Any, parent_context: Any | None) -> None:
         if self._stale or not self._predicate(span):
             return
@@ -334,7 +332,6 @@ class SpanRouter:
                 self._quarantined += 1
             sink.record_loss("routing_target_closed")
 
-    # -- helpers ----------------------------------------------------------
     def _resolve_session(self, parent_context: Any | None) -> str | None:
         if _OTEL:
             try:
@@ -440,7 +437,6 @@ class SpanRouter:
         self._trace_to_session.clear()
 
 
-# --- process-scoped registry ---------------------------------------------
 _routers: WeakKeyDictionary[Any, dict[str, SpanRouter]] = WeakKeyDictionary()
 _registry_lock = threading.RLock()
 
@@ -486,8 +482,6 @@ def get_router(provider: Any, framework: str, predicate: SpanPredicate) -> SpanR
 
 
 def _reset_after_fork() -> None:
-    # A lock held by a vanished thread can never be acquired in the child.
-    # Replace every inherited lock before touching the associated state.
     global _registry_lock
     _registry_lock = threading.RLock()
     for per_framework in list(_routers.values()):
@@ -552,7 +546,6 @@ class RoutingHandle:
         finally:
             _otel_context.detach(token)
 
-    # -- legacy SpanProcessor compatibility -------------------------------
     def shutdown(self) -> None:
         self.close()
 
@@ -571,8 +564,6 @@ def attach_adapter(
 ) -> RoutingHandle:
     """Register an adapter's recorder as a session sink on the shared router."""
 
-    # Validate before the weak-keyed registry touches the provider so an invalid
-    # provider raises a clear error (and never a "cannot weakref" surprise).
     if not callable(getattr(provider, "add_span_processor", None)):
         raise TypeError("tracer provider does not support span processors")
     router = get_router(provider, framework, predicate)

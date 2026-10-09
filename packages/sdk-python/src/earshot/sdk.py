@@ -453,9 +453,7 @@ def _build_durable_delivery(context: DeliveryContext) -> DeliverySink:
     )
 
 
-# Register the built-in delivery strategies once, so a caller selects any of them
-# -- or a strategy their own process registered -- by the same ``delivery_mode``
-# name, through the same registry the projection seam uses for ``format``.
+# Register built-in and host-provided strategies in the same delivery registry.
 for _mode, _factory in (
     ("async", _build_async_delivery),
     ("sync", _build_sync_delivery),
@@ -746,9 +744,7 @@ class Client:
             if transport is None:
                 next_exporter: DeliverySink | None = None
             else:
-                # Select delivery through the same registry the projection seam uses
-                # for ``format``: the built-in async/sync/durable factories -- and
-                # any a host registered -- are reached by name, not hard-wired here.
+                # Resolve the configured strategy through the registry, including host registrations.
                 next_exporter = default_delivery_registry().build(
                     delivery_mode,
                     DeliveryContext(

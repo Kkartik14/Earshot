@@ -246,7 +246,6 @@ class CheckpointWriter:
         self._stop = threading.Event()
         self._fsync_thread: threading.Thread | None = None
 
-    # ------------------------------------------------------------------ open
 
     def open_journal(
         self,
@@ -329,7 +328,6 @@ class CheckpointWriter:
                 )
                 self._fsync_thread.start()
 
-    # ---------------------------------------------------------------- append
 
     def append_record(self, mutation: RecordMutation) -> None:
         """Journal one admitted mutation, from inside the recorder's lock."""
@@ -462,7 +460,6 @@ class CheckpointWriter:
             if self._append_locked(entry, force_fsync=True, bypass_caps=True):
                 self._finalized = True
 
-    # --------------------------------------------------------------- release
 
     def release(self, *, delivered: bool = False) -> None:
         """Stop journaling, and unlink the journal once a successor exists.
@@ -522,7 +519,6 @@ class CheckpointWriter:
                 last_failure=self._last_failure,
             )
 
-    # -------------------------------------------------------------- internal
 
     def _append_locked(
         self,

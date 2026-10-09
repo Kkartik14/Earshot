@@ -253,7 +253,6 @@ class CheckpointUploader:
         self._persist_offset(plan.end)
         return True
 
-    # -------------------------------------------------------------- internal
 
     def _load_offset(self) -> int:
         """The last acknowledged byte offset, or zero when there is nothing to trust.
