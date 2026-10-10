@@ -50,7 +50,7 @@ This installs `earshot-observability` in editable mode plus the `dev` extra
 pip show earshot-observability   # "Editable project location" should be this repo root
 ```
 
-Applications that only *emit* Earshot evidence (no local server/CLI) only need the
+Applications that only _emit_ Earshot evidence (no local server/CLI) only need the
 lightweight base package (`pip install earshot-observability`, no extras) — the `dev`
 extra above is for working on Earshot itself. Running the server from a
 non-development install additionally needs the `server` extra:
@@ -118,6 +118,7 @@ curl -sS -X POST http://127.0.0.1:4319/v1/incidents \
 ```
 
 If any of these fail:
+
 - `curl: couldn't connect` → the server isn't actually listening; check its stdout/logs.
 - A `500`/`ArtifactCorruptionError` crash loop when reusing an **existing** data
   dir/Docker volume from a much older checkout usually means the on-disk schema

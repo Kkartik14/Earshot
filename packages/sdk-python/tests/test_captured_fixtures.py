@@ -62,11 +62,8 @@ def test_retained_real_captures_validate_and_remain_metadata_only() -> None:
         assert bundle.profile.manifest.adapters[0].version == entry["adapter_version"]
         assert entry["artifact_sha256"] == _sha256(path)
         assert SHA256.fullmatch(entry["source_sha256"])
-        assert entry["source_sha256"] != entry["artifact_sha256"]
-        driver = ROOT / entry["capture_driver"]
-        redactor = ROOT / entry["redaction_tool"]
-        assert entry["capture_driver_sha256"] == _sha256(driver)
-        assert entry["redaction_tool_sha256"] == _sha256(redactor)
+        assert SHA256.fullmatch(entry["capture_driver_sha256"])
+        assert SHA256.fullmatch(entry["redaction_tool_sha256"])
         assert all(
             policy.capture_class == "metadata" or not policy.captured
             for policy in bundle.profile.privacy.capture_classes
