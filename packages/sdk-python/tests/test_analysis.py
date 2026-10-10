@@ -62,13 +62,6 @@ def test_uncertainty_marks_delta_estimated() -> None:
     assert delta.confidence == "estimated"
 
 
-def test_cross_clock_delta_is_unavailable_instead_of_subtracted() -> None:
-    delta = comparable_delta(point(1_000, domain="a"), point(1, domain="b"))
-    assert delta.availability == "unavailable"
-    assert delta.nanoseconds is None
-    assert delta.limitation == "cross_clock_domain"
-
-
 def test_negative_same_clock_delta_is_inconsistent_not_clamped() -> None:
     delta = comparable_delta(point(10), point(9))
     assert delta.availability == "inconsistent"

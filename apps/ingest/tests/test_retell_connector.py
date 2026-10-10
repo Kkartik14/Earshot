@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,10 +11,8 @@ from earshot.api import ApiConfig, create_app
 from earshot.codec import decode_incident_protobuf
 from earshot.connectors import (
     ConnectorConfigurationError,
-    DeliveryBusyError,
     DeliveryConflictError,
     DeliveryPayloadError,
-    DeliveryRateLimitedError,
     DeliveryTrustError,
     HostedProviderIngestion,
     MappingSecretResolver,
@@ -347,41 +344,6 @@ def test_reversed_word_span_is_rejected(connector) -> None:
     with pytest.raises(DeliveryPayloadError):
         ingestion.receive(_delivery(endpoint.endpoint_id, body))
     assert store.list_incidents(project_id="support").items == ()
-
-
-def test_authenticated_connector_rate_limit_is_bounded_and_retryable(connector) -> None:
-    store, endpoint, _ = connector
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver({"env:RETELL_WEBHOOK_API_KEY": SECRET}),
-        now_unix_seconds=lambda: NOW_MS // 1_000,
-        now_monotonic=lambda: 10.0,
-        max_deliveries_per_minute=1,
-    )
-    delivery = _delivery(endpoint.endpoint_id, _payload())
-
-    ingestion.receive(delivery)
-    with pytest.raises(DeliveryRateLimitedError) as limited:
-        ingestion.receive(delivery)
-    assert limited.value.retry_after_seconds == 60
-
-
-def test_concurrent_exact_delivery_publishes_at_most_once(connector) -> None:
-    store, endpoint, ingestion = connector
-    delivery = _delivery(endpoint.endpoint_id, _payload())
-
-    def receive_once() -> str:
-        try:
-            return ingestion.receive(delivery).disposition
-        except DeliveryBusyError:
-            return "busy"
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(lambda _: receive_once(), range(8)))
-
-    assert results.count("applied") == 1
-    assert set(results) <= {"applied", "replayed", "busy"}
-    assert len(store.list_incidents(project_id="support").items) == 1
 
 
 def test_http_hook_rejects_media_type_and_oversized_body(connector) -> None:

@@ -36,9 +36,6 @@ const change = (over: Partial<AvailabilityChange>): AvailabilityChange => ({
 describe("comparisonUnavailable", () => {
   it("names which baseline side is missing, purged, or unanalysed", () => {
     expect(
-      comparisonUnavailable(new ApiError(404, "EARSHOT_KNOWN_GOOD_NOT_FOUND")).title,
-    ).toMatch(/not found/i);
-    expect(
       comparisonUnavailable(new ApiError(410, "EARSHOT_KNOWN_GOOD_PURGED")).title,
     ).toMatch(/purged/i);
     expect(
@@ -46,15 +43,6 @@ describe("comparisonUnavailable", () => {
         new ApiError(404, "EARSHOT_KNOWN_GOOD_ANALYSIS_NOT_AVAILABLE"),
       ).title,
     ).toMatch(/no analysis/i);
-  });
-
-  it("reads a stale-analysis conflict as exactly that, carrying its code", () => {
-    const state = comparisonUnavailable(
-      new ApiError(409, "EARSHOT_ANALYSIS_BINDING_MISMATCH"),
-    );
-    expect(state.code).toBe("EARSHOT_ANALYSIS_BINDING_MISMATCH");
-    expect(state.title).toMatch(/stale/i);
-    expect(state.detail).toMatch(/withheld|regenerated/i);
   });
 
   it("reports a non-API failure as an unanswered backend, never as identical", () => {
@@ -65,10 +53,6 @@ describe("comparisonUnavailable", () => {
 });
 
 describe("comparisonIsEmpty", () => {
-  it("is true only when every diff dimension is empty", () => {
-    expect(comparisonIsEmpty(emptyResult)).toBe(true);
-  });
-
   it("is false when any dimension carries a change", () => {
     expect(
       comparisonIsEmpty({

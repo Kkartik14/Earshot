@@ -177,5 +177,6 @@ describe("ComparisonPanel", () => {
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent(/stale analysis/i);
     expect(status).toHaveTextContent(/EARSHOT_ANALYSIS_BINDING_MISMATCH/);
+    expect(status).toHaveTextContent(/withheld|regenerated/i);
   });
 });

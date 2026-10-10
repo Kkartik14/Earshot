@@ -178,26 +178,6 @@ def test_many_drains_become_one_incident(tmp_path) -> None:
     assert validate_incident(many).ok
 
 
-def test_the_assembled_incident_is_provisional_and_never_final(tmp_path) -> None:
-    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
-    headers = {"Authorization": "Bearer t"}
-    for index, snapshot in enumerate(series(10)):
-        response = client.post("/v1/capture", json=drain(index + 1, [snapshot]), headers=headers)
-    call_id = response.json()["call_id"]
-
-    sealed = seal(client, headers, call_id)
-    assert sealed["finality"] == "provisional"
-    assert sealed["close_observed"] is False
-    bundle = fetch_bundle(client, headers, sealed["bundle_id"])
-    manifest = bundle.profile.manifest
-    assert manifest.finality == "provisional"
-    assert bundle.profile.session.ended_at is None
-    assert manifest.recovery is not None
-    assert manifest.recovery.method == "browser_capture_journal"
-    assert manifest.recovery.close_observed is False
-    assert validate_incident(bundle).ok
-
-
 def test_a_retried_drain_is_applied_once(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="t"))
     headers = {"Authorization": "Bearer t"}
@@ -362,23 +342,6 @@ def test_a_capture_call_is_visible_and_tailable_on_the_live_surface(tmp_path) ->
     assert "record" in names
 
 
-def test_sealing_mid_call_yields_a_provisional_artifact_under_a_sequence_suffix(tmp_path) -> None:
-    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
-    headers = {"Authorization": "Bearer t"}
-    for index, snapshot in enumerate(series(5)):
-        response = client.post("/v1/capture", json=drain(index + 1, [snapshot]), headers=headers)
-    call_id = response.json()["call_id"]
-    accepted_through = response.json()["accepted_through"]
-
-    sealed = seal(client, headers, call_id)
-    assert sealed["bundle_id"] == f"{call_id}.s{accepted_through}"
-    assert sealed["finality"] == "provisional"
-
-    # The call is still live after a mid-call seal: nothing finalized it.
-    still_live = client.get("/v1/live/sessions", headers=headers).json()["items"]
-    assert [item["session_id"] for item in still_live] == [call_id]
-
-
 def endcall(sequence: int, snapshots: list[dict], ts: float, **extra) -> dict:
     """A final drain that declares an explicit application-observed close."""
 
@@ -483,17 +446,21 @@ def test_an_ended_call_with_lost_drains_is_final_but_incomplete(tmp_path) -> Non
     assert validate_incident(bundle).ok
 
 
-def test_a_closed_tab_never_becomes_a_finished_call(tmp_path) -> None:
+def test_a_closed_tab_stays_live_when_sealed_without_finalizing_the_call(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="t"))
     headers = {"Authorization": "Bearer t"}
     # Twenty drains, then the tab simply closes: no ``end`` ever arrives.
     for index, snapshot in enumerate(series(20)):
         response = client.post("/v1/capture", json=drain(index + 1, [snapshot]), headers=headers)
     call_id = response.json()["call_id"]
+    accepted_through = response.json()["accepted_through"]
 
     sealed = seal(client, headers, call_id)
+    assert sealed["bundle_id"] == f"{call_id}.s{accepted_through}"
     assert sealed["finality"] == "provisional"
     assert sealed["close_observed"] is False
+    still_live = client.get("/v1/live/sessions", headers=headers).json()["items"]
+    assert [item["session_id"] for item in still_live] == [call_id]
     bundle = fetch_bundle(client, headers, sealed["bundle_id"])
     manifest = bundle.profile.manifest
     assert manifest.finality == "provisional"
@@ -502,6 +469,7 @@ def test_a_closed_tab_never_becomes_a_finished_call(tmp_path) -> None:
     assert bundle.profile.session.ended_at is None
     assert named_measurements(bundle, "client.observed_call_duration") == []
     assert manifest.recovery is not None
+    assert manifest.recovery.method == "browser_capture_journal"
     assert manifest.recovery.close_observed is False
     assert manifest.recovery.first_observation is not None
     assert manifest.recovery.last_observation is not None

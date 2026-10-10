@@ -65,6 +65,7 @@ describe("ExportPanel", () => {
     const status = screen.getByRole("status");
     expect(status).toHaveTextContent(/denied by policy/i);
     expect(status).toHaveTextContent(/EARSHOT_EXPORT_DENIED/);
+    expect(status).toHaveTextContent(/no document was produced/i);
     expect(screen.queryByRole("link", { name: /download/i })).not.toBeInTheDocument();
   });
 
