@@ -38,7 +38,6 @@ describe("liveStore", () => {
     expect(facts.sessionId).toBe("s-1");
     expect(facts.producer).toEqual({ name: "earshot", version: "0.1.0" });
     expect(facts.unknownUntilClose).toContain("derived_analysis");
-    // Nothing is claimed about the session itself.
     expect(facts.closeObserved).toBe(false);
     expect(facts.finalize).toBeNull();
   });
@@ -80,7 +79,6 @@ describe("liveStore", () => {
     const [operation] = facts.openOperations;
     expect(operation.operationName).toBe("llm");
     expect(operation.startedAtNano).toBe("2000");
-    // There is no field that could hold an end or a duration.
     expect(Object.keys(operation)).not.toContain("endedAt");
     expect(Object.keys(operation)).not.toContain("durationNano");
   });
@@ -161,11 +159,9 @@ describe("liveStore", () => {
     expect(facts.restriction.destination).toBe("live_tail");
     expect(facts.restriction.declaredClasses).toEqual(["transcript"]);
     expect(facts.restriction.withheldRecords).toBe(2);
-    // The same refusal twice is one reason, not two.
     expect(facts.restriction.refusals).toEqual([
       { captureClass: "transcript", reason: "export_denied_by_policy" },
     ]);
-    // And nothing was invented in its place: a withheld slot is not a record.
     expect(facts.records).toEqual([]);
     expect(facts.recordCounts).toEqual({});
     expect(facts.asOfSequence).toBe(3);
@@ -186,7 +182,6 @@ describe("liveStore", () => {
       },
     ]);
     expect(facts.restriction.policyReadable).toBe(false);
-    // A backend that says nothing about it has not declared an unreadable policy.
     expect(reduce([OPEN]).restriction.policyReadable).toBe(true);
   });
 
@@ -243,7 +238,6 @@ describe("liveStore", () => {
     ]);
     expect(facts.recordCounts).toEqual({ unknown: 1 });
     expect(facts.records[0].value).toBeNull();
-    // No operation id means nothing identifiable to track.
     expect(facts.openOperations).toHaveLength(0);
   });
 

@@ -57,9 +57,6 @@ def _span_attributes(span: dict) -> dict[str, object]:
     return {attribute["key"]: attribute["value"] for attribute in span["attributes"]}
 
 
-# --------------------------------------------------------------------------- #
-# Structure and identity preservation
-# --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("project", [to_otlp, to_openinference])
 @pytest.mark.parametrize("name", ["tool_timeout_retry", "full_barge_in_chain", "llm_delay"])
 def test_span_count_equals_operations_plus_standalone_events(name: str, project) -> None:
@@ -216,14 +213,12 @@ def test_openinference_span_kinds() -> None:
     assert kinds["turn_detection"] == "CHAIN"
 
 
-# --------------------------------------------------------------------------- #
 # The projection must not manufacture trace topology
 #
 # A lossy OTLP projection is expected; an *authoritative-looking* one is a defect.
 # These tests pin the four ways the projection could invent structure the incident
 # never contained: epoch timestamps, duplicate span identity, one incident split
 # across synthetic traces, and spans reassigned to a service they never declared.
-# --------------------------------------------------------------------------- #
 # 2000-01-01T00:00:00Z. Any emitted OTLP unix-nano below this is not a wall clock:
 # it is a monotonic reading written into an epoch field.
 _YEAR_2000_UNIX_NANO = 946_684_800_000_000_000
@@ -292,7 +287,6 @@ def _service_by_span_name(document: dict) -> dict[str, str]:
     return services
 
 
-# --- (a) monotonic readings must never land in a unix-epoch field ----------- #
 @pytest.mark.parametrize("project", [to_otlp, to_openinference])
 @pytest.mark.parametrize("name", _PROJECTION_FIXTURES)
 def test_every_emitted_time_field_holds_a_real_wall_clock(name: str, project) -> None:
@@ -305,9 +299,6 @@ def test_every_emitted_time_field_holds_a_real_wall_clock(name: str, project) ->
 
 
 def test_monotonic_only_operation_is_omitted_not_dated_to_1970() -> None:
-    # A browser-clock render whose endpoints carry only performance.now()-style
-    # readings has no server unix time at all; writing 1.5s-since-boot into
-    # startTimeUnixNano would place the span in January 1970.
     bundle = make_valid_bundle()
     operations = list(bundle.profile.operations)
     operations[-1] = operations[-1].model_copy(
@@ -357,7 +348,6 @@ def test_the_emitted_time_basis_is_declared_on_every_span() -> None:
         assert basis in {"source_wall", "observed_wall"}
 
 
-# --- (b) one logical entity -> exactly one OTLP entity ---------------------- #
 @pytest.mark.parametrize("project", [to_otlp, to_openinference])
 @pytest.mark.parametrize("name", _PROJECTION_FIXTURES)
 def test_span_identity_is_unique_within_a_document(name: str, project) -> None:
@@ -366,9 +356,6 @@ def test_span_identity_is_unique_within_a_document(name: str, project) -> None:
 
 
 def test_two_events_recorded_on_one_source_span_get_distinct_identities() -> None:
-    # The classic OTLP ingest shape: two span events lifted off the same span, each
-    # carrying that span's trace/span id. Reusing it as their own span id emits two
-    # spans with one identity.
     bundle = make_valid_bundle()
     base = bundle.profile.events[0]
     twins = tuple(
@@ -419,7 +406,6 @@ def test_an_event_carrying_an_operations_span_identity_becomes_that_spans_event(
     assert sum(1 for span in _spans(document) if span["name"] == ghost.event_name) == 0
 
 
-# --- (c) one incident -> one trace ------------------------------------------ #
 @pytest.mark.parametrize("project", [to_otlp, to_openinference])
 @pytest.mark.parametrize("name", _PROJECTION_FIXTURES)
 def test_one_incident_projects_into_one_trace(name: str, project) -> None:
@@ -457,8 +443,6 @@ def test_the_synthetic_incident_trace_id_is_deterministic_and_incident_scoped() 
 
 
 def test_records_without_a_trace_context_join_the_recorded_trace() -> None:
-    # full_barge_in_chain records operations on one real trace plus standalone
-    # interruption events and quality samples that carry no trace context.
     bundle = _load("full_barge_in_chain")
     recorded = {
         operation.trace_id
@@ -471,7 +455,6 @@ def test_records_without_a_trace_context_join_the_recorded_trace() -> None:
     assert "earshot.session" in {span["name"] for span in _spans(document)}
 
 
-# --- (d) distinct resources stay distinct ----------------------------------- #
 def test_distinct_service_resources_are_not_merged_first_wins() -> None:
     bundle = make_valid_bundle()
     operations = list(bundle.profile.operations)
@@ -516,9 +499,6 @@ def test_incident_facts_are_repeated_on_every_resource() -> None:
         assert attributes["earshot.projection.lossy"] == {"boolValue": True}
 
 
-# --------------------------------------------------------------------------- #
-# Determinism + golden pinning
-# --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("project", [to_otlp, to_openinference])
 @pytest.mark.parametrize(
     "name", ["tool_timeout_retry", "webrtc_degradation", "full_barge_in_chain"]
@@ -545,9 +525,6 @@ def test_openinference_golden_is_pinned() -> None:
     assert _dump(to_openinference(bundle)) == expected
 
 
-# --------------------------------------------------------------------------- #
-# Push client helpers
-# --------------------------------------------------------------------------- #
 def test_push_endpoint_normalizes_to_v1_traces() -> None:
     assert OtlpHttpExporter("http://localhost:6006").endpoint == "http://localhost:6006/v1/traces"
     assert (
@@ -573,9 +550,6 @@ def test_push_client_rejects_unsafe_endpoints() -> None:
         langfuse_exporter("https://cloud.langfuse.com", "pk", "")  # missing secret
 
 
-# --------------------------------------------------------------------------- #
-# Mock-server push behavior
-# --------------------------------------------------------------------------- #
 class _MockOtlpServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -670,7 +644,6 @@ def test_push_refuses_redirects_and_never_raises() -> None:
 
 @pytest.mark.integration
 def test_push_is_fail_open_on_a_dead_endpoint() -> None:
-    # Nothing is listening on this loopback port; export must return, not raise.
     result = OtlpHttpExporter("http://127.0.0.1:1", timeout=0.5).export({"resourceSpans": []})
     assert result.ok is False
     assert result.retryable is True
@@ -686,9 +659,6 @@ def test_push_refuses_oversized_bodies_without_sending() -> None:
         assert collector.requests == []
 
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
 def test_cli_export_writes_projected_document(tmp_path, capsys) -> None:
     source = FAULTS / "tool_timeout_retry.incident.json"
     out = tmp_path / "otlp.json"

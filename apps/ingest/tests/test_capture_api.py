@@ -138,9 +138,6 @@ def bundle(client, bundle_id) -> IncidentBundle:
     return IncidentBundle.model_validate(json.loads(response.text))
 
 
-# -- auth, project scoping, CSRF ----------------------------------------------
-
-
 def test_capture_requires_a_credential_when_authentication_is_required(tmp_path) -> None:
     config = ApiConfig(token="test-token")
     _, client = app_client(tmp_path, config=config)
@@ -215,9 +212,6 @@ def test_capture_from_a_viewer_session_requires_the_csrf_token(tmp_path) -> None
     assert with_csrf.status_code == 201
 
 
-# -- versioned wire format -----------------------------------------------------
-
-
 def test_unsupported_capture_version_is_a_specific_client_error(tmp_path) -> None:
     _, client = app_client(tmp_path)
     response = client.post("/v1/capture", json=payload(captureVersion=999))
@@ -241,18 +235,12 @@ def test_capture_version_must_be_a_declared_integer(tmp_path, version) -> None:
 
 
 def test_version_is_checked_before_the_rest_of_the_schema(tmp_path) -> None:
-    # A client on a future wire format learns that, not a pile of field errors
-    # about a schema it was never targeting. Versions 1 and 2 are governed; a
-    # version beyond them is the clean, specific refusal.
     _, client = app_client(tmp_path)
     response = client.post(
         "/v1/capture",
         json={"captureVersion": 3, "somethingElseEntirely": True},
     )
     assert code(response) == "EARSHOT_UNSUPPORTED_CAPTURE_VERSION"
-
-
-# -- bounds: never a 500 -------------------------------------------------------
 
 
 def test_body_limit_is_enforced_while_streaming(tmp_path) -> None:
@@ -373,8 +361,6 @@ def test_non_json_media_type_is_refused(tmp_path) -> None:
 
 
 def test_hostile_numeric_members_do_not_reach_the_recorder(tmp_path) -> None:
-    # A negative or absurd counter would make an engine derive a value outside a
-    # governed domain. It is dropped at the boundary instead of raising.
     _, client = app_client(tmp_path)
     body = payload(
         snapshots=[
@@ -388,9 +374,6 @@ def test_hostile_numeric_members_do_not_reach_the_recorder(tmp_path) -> None:
     samples = profile(client, response.json()["bundle_id"])["quality_samples"]
     names = {m["name"] for sample in samples for m in sample["measurements"]}
     assert "packet_loss_ratio" not in names
-
-
-# -- server-side field enforcement (privacy sentinels) -------------------------
 
 
 def hostile_payload() -> dict:
@@ -498,9 +481,6 @@ def test_an_unknown_device_event_type_is_dropped_not_stored(tmp_path) -> None:
     assert response.json()["accepted_device_events"] == 0
 
 
-# -- clock domain honesty ------------------------------------------------------
-
-
 def test_browser_facts_land_in_the_browser_clock_domain_at_raw_readings(tmp_path) -> None:
     _, client = app_client(tmp_path)
     response = client.post("/v1/capture", json=payload())
@@ -539,9 +519,6 @@ def test_a_batch_without_a_wall_origin_carries_only_the_monotonic_reading(tmp_pa
     assert reconnecting["time"].get("source_time_unix_nano") is None
 
 
-# -- coverage, facts, and idempotent delivery ----------------------------------
-
-
 def test_client_coverage_is_recorded_under_its_own_observer_namespace(tmp_path) -> None:
     _, client = app_client(tmp_path)
     response = client.post("/v1/capture", json=payload())
@@ -553,8 +530,6 @@ def test_client_coverage_is_recorded_under_its_own_observer_namespace(tmp_path) 
 
 
 def test_a_client_cannot_mask_a_server_derived_coverage_note(tmp_path) -> None:
-    # A payload claiming a signal is "available" must not overwrite what the
-    # engine actually observed; the client's claim is namespaced to the browser.
     _, client = app_client(tmp_path)
     response = client.post(
         "/v1/capture",
@@ -596,8 +571,6 @@ def test_capture_batch_becomes_analyzable_governed_facts(tmp_path) -> None:
 
 
 def test_playout_stats_make_a_render_underrun_observable(tmp_path) -> None:
-    # RTCAudioPlayoutStats: synthesized samples are audio the output device had
-    # to invent because the render queue ran dry -- an observed render fault.
     _, client = app_client(tmp_path)
     response = client.post(
         "/v1/capture",
@@ -669,10 +642,6 @@ def test_a_different_batch_is_a_different_incident(tmp_path) -> None:
 
 
 def test_a_capture_batch_is_a_partial_observation_not_a_finished_call(tmp_path) -> None:
-    # A browser capture batch drains telemetry while the call is still going: the
-    # observer never saw the call close. So the incident must not manufacture a
-    # finished call with an invented end. It stays a provisional observation of an
-    # ongoing session, exactly as a crash-recovered incident does.
     _, client = app_client(tmp_path)
     bundle_id = client.post("/v1/capture", json=payload()).json()["bundle_id"]
     stored = profile(client, bundle_id)
@@ -752,8 +721,6 @@ def test_capture_is_published_in_the_openapi_contract(tmp_path) -> None:
 
 
 def test_concurrent_delivery_of_one_batch_yields_one_incident(tmp_path) -> None:
-    # Two deliveries of the same batch race: the loser finds the identifier taken
-    # by evidence identical to its own, which is the same incident, not a conflict.
     _, client = app_client(tmp_path)
     with ThreadPoolExecutor(max_workers=2) as pool:
         responses = [
@@ -767,13 +734,7 @@ def test_concurrent_delivery_of_one_batch_yields_one_incident(tmp_path) -> None:
     assert len(client.get("/v1/incidents").json()["items"]) == 1
 
 
-# -- browser provenance: trace context, observer, client-reported loss ---------
-
-
 def test_the_browser_trace_context_reaches_the_incident(tmp_path) -> None:
-    # Correlating a browser capture with the application's trace is a property of
-    # the ARTIFACT, not of the acknowledgement: an echo in the response body is
-    # gone the moment the response is.
     _, client = app_client(tmp_path)
     response = client.post("/v1/capture", json=payload())
     assert response.status_code == 201
@@ -797,9 +758,6 @@ def test_a_batch_without_a_trace_context_claims_none(tmp_path) -> None:
 
 
 def test_a_traceparent_that_disagrees_with_its_ids_is_refused(tmp_path) -> None:
-    # traceparent and the structured ids are two spellings of ONE context. When
-    # they disagree the context is unknowable, so the server refuses rather than
-    # silently picking a winner and attributing evidence to the wrong trace.
     _, client = app_client(tmp_path)
     for trace_context in (
         {"traceparent": f"00-{'c' * 32}-{SPAN_ID}-01", "traceId": TRACE_ID, "spanId": SPAN_ID},
@@ -811,8 +769,6 @@ def test_a_traceparent_that_disagrees_with_its_ids_is_refused(tmp_path) -> None:
 
 
 def test_browser_derived_facts_are_labelled_as_observed_by_the_browser(tmp_path) -> None:
-    # The browser observed these facts; the server only recorded them. Claiming a
-    # server observer would make a client report look like a server measurement.
     _, client = app_client(tmp_path)
     response = client.post("/v1/capture", json=payload())
     stored = profile(client, response.json()["bundle_id"])
@@ -826,8 +782,6 @@ def test_browser_derived_facts_are_labelled_as_observed_by_the_browser(tmp_path)
 
 
 def test_client_reported_loss_counts_survive_onto_the_artifact(tmp_path) -> None:
-    # The client counted what it lost. A number that only ever appears in the
-    # HTTP response is not evidence -- it has to reach the incident.
     _, client = app_client(tmp_path)
     response = client.post("/v1/capture", json=payload())
     stored = profile(client, response.json()["bundle_id"])
@@ -854,13 +808,7 @@ def test_a_coverage_note_without_a_count_asserts_none(tmp_path) -> None:
     assert "dropped_count" not in note
 
 
-# -- out-of-order batches ------------------------------------------------------
-
-
 def test_a_non_monotonic_snapshot_batch_is_refused(tmp_path) -> None:
-    # Normalizing [2000ms, 1000ms] used to fabricate two observations at 2000ms
-    # and difference the cumulative counters backwards. Neither is evidence, so
-    # the batch is refused with a specific error instead.
     _, client = app_client(tmp_path)
     body = payload()
     body["snapshots"][0]["timestamp_ms"] = 2000
@@ -887,8 +835,6 @@ def test_a_non_monotonic_device_event_batch_is_refused(tmp_path) -> None:
 
 
 def test_repeated_timestamps_are_still_accepted(tmp_path) -> None:
-    # Two observations at the same coarse browser reading are ordinary; only a
-    # reading that goes BACKWARDS is incoherent.
     _, client = app_client(tmp_path)
     body = payload()
     body["snapshots"][0]["timestamp_ms"] = 1000

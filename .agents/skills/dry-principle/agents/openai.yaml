@@ -1,0 +1,3 @@
+interface:
+  display_name: "DRY Principle"
+  short_description: "Keep each rule or behavior authoritative in one place"

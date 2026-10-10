@@ -45,9 +45,6 @@ def _by_code(analysis, code: str) -> list:
     return [diagnosis for diagnosis in analysis.diagnoses if diagnosis.code == code]
 
 
-# --- Gate faults: attribute to the right boundary ----------------------------
-
-
 def test_packet_loss_and_jitter_and_rtt_attribute_to_the_network_boundary() -> None:
     bundle = _fault("webrtc_degradation")
     analysis = _analyze(bundle)
@@ -116,9 +113,6 @@ def test_tool_retry_attributes_to_the_tool_boundary_and_keeps_operation_failed()
     assert validate_derived_analysis(bundle, analysis).ok
 
 
-# --- Negative cases: the engine must not fabricate ---------------------------
-
-
 def test_clean_barge_in_is_not_a_false_interruption() -> None:
     bundle = _fault("barge_in")
     analysis = _analyze(bundle)
@@ -165,9 +159,6 @@ def test_not_observed_render_latency_says_unknown_instead_of_diagnosing() -> Non
     assert validate_derived_analysis(stripped, analysis).ok
 
 
-# --- Configurable SLO recipes -------------------------------------------------
-
-
 def test_slo_recipe_thresholds_are_configurable() -> None:
     bundle = _fault("webrtc_degradation")
     assert "network.degraded" in _codes(_analyze(bundle))
@@ -184,9 +175,6 @@ def test_tight_render_slo_can_flag_an_otherwise_healthy_render() -> None:
     bundle = _fault("stt_delay")
     # stt_delay has no turn anchor, so render latency is not_observed regardless.
     assert "render.delayed" not in _codes(_analyze(bundle, SloRecipe(render_start_latency_ms=1.0)))
-
-
-# --- Bonus boundaries reuse existing fixtures with the same discipline --------
 
 
 def test_device_events_attribute_to_the_capture_boundary() -> None:
@@ -244,9 +232,6 @@ def test_fast_endpointing_is_below_slo_and_says_unknown() -> None:
 
     assert "endpointing.slow" not in _codes(analysis)
     assert validate_derived_analysis(bundle, analysis).ok
-
-
-# --- Determinism and source-order invariance ---------------------------------
 
 
 @pytest.mark.parametrize(

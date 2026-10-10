@@ -499,7 +499,7 @@ def _snapshot(
     bundle_id: str,
     unfinished_operations: int,
 ) -> RecorderSnapshot:
-    from ..recorder import RecorderSnapshot  # lazy: keeps the import graph acyclic
+    from ..recorder import RecorderSnapshot
 
     header = replay.header
     return RecorderSnapshot(

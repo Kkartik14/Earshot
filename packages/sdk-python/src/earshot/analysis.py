@@ -149,7 +149,6 @@ def _matches_stream_direction(
     return not require_explicit
 
 
-# --- Boundary-attribution SLO recipe -----------------------------------------
 # Deterministic thresholds that turn a governed measurement into a boundary
 # hypothesis. Every default is a conservative, real-time-voice-oriented value; a
 # caller may override any subset through ``SloRecipe`` without touching the rules.
@@ -392,11 +391,6 @@ class _ClockAligner:
     def _apply(
         relation: ClockRelation, wall: int, *, forward: bool
     ) -> _Alignment | _RefusedAlignment | None:
-        # The validity window is declared in the relation's ``from`` domain. On the
-        # forward path the input ``wall`` already lives there; on the inverse path
-        # the ``from``-domain coordinate is the inverse's *output*, so the window
-        # must be checked against the mapped value, not against the ``to``-domain
-        # input.
         if forward and not _ClockAligner._in_window(relation, wall):
             return None
         aligned = _ClockAligner._map_wall(relation, wall, forward=forward)
@@ -1118,7 +1112,6 @@ def _provider_stage_latency_fallback(
     }
 
 
-# --- Interruption causal chain -----------------------------------------------
 # The canonical, ordered stages of a barge-in teardown. Each maps to one or more
 # open Earshot event names (or, for ``intent``/``resumed``, a provider
 # measurement, and for ``tool_outcome``, a tool operation's status). A stage is
@@ -1953,7 +1946,6 @@ def _operation_turn_ids(operations: Sequence[Operation]) -> dict[str, str | None
     return resolved
 
 
-# --- Boundary-attribution engine ---------------------------------------------
 # Each rule turns governed evidence into an evidence-linked ``Diagnosis`` that
 # names the boundary at fault. Rules are deterministic and source-order-invariant
 # (inputs are sorted), they cite only real operation/event/sample ids, and they

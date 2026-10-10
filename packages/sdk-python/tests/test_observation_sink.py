@@ -154,9 +154,6 @@ def _applied(snapshots: list[dict[str, Any]]) -> CollectorSink:
     return sink
 
 
-# -- the engines author through the protocol, not through a recorder -----------
-
-
 def test_engines_author_onto_a_sink_that_is_not_a_recorder() -> None:
     sink = CollectorSink()
 
@@ -210,13 +207,7 @@ def test_a_browser_clock_domain_is_declared_through_the_sink() -> None:
     assert domain.clock_domain_id == "clk_collector"
 
 
-# -- the seam is behaviour-preserving ------------------------------------------
-
-
 def _incident_through(applier) -> str:
-    # A fixed identity and a manual clock make the encoded incident a byte-exact
-    # function of the authored facts alone, except for the session's own
-    # per-process clock-domain id, which is normalized away.
     session = earshot.pipeline(
         session_id="sink-parity",
         bundle_id="bundle-sink-parity",
@@ -256,8 +247,6 @@ def test_repeated_derivations_author_identical_calls() -> None:
 
     assert first.calls == second.calls
 
-
-# -- the foreign-clock reading is a single, source-agnostic value object -------
 
 FOREIGN = BrowserClockDomain(clock_domain_id="clk_native", wall_origin_unix_nano=START)
 FOREIGN_READING = SourceClockReading(
@@ -322,9 +311,6 @@ def test_a_custom_sink_authors_foreign_clock_facts_with_a_source_clock_reading()
     assert "clk_native" in direct
 
 
-# -- a non-recorder sink can author an operation it observed -------------------
-
-
 def _author_observed_operation(sink: ObservationSink) -> None:
     sink.record_operation(
         "op-native-batch-7",
@@ -358,10 +344,6 @@ def test_a_non_recorder_sink_can_author_an_observed_operation() -> None:
 
 
 def test_an_observed_operation_never_advances_the_turn_cursor() -> None:
-    # ``record_operation`` observes; it must not move the stage cursor that a
-    # following ``record_stage`` would build on -- that cursor is the bookkeeping a
-    # collector deliberately lacks. A stage after an observed operation therefore
-    # still starts at offset zero.
     session = earshot.pipeline(
         session_id="op-cursor",
         bundle_id="bundle-op-cursor",
@@ -373,9 +355,6 @@ def test_an_observed_operation_never_advances_the_turn_cursor() -> None:
         turn.stt("deepgram", ttfb_ms=10.0)
     bundle = session.close()
     assert validate_incident(bundle).ok
-
-
-# -- the pipeline recorder keeps satisfying the protocol -----------------------
 
 
 def _protocol_members() -> tuple[str, ...]:
@@ -406,10 +385,6 @@ def test_turn_recorder_satisfies_the_observation_sink_protocol() -> None:
 
 
 def test_the_protocol_excludes_pipeline_turn_bookkeeping() -> None:
-    # The seam carries operation *observation* (``record_operation`` takes a
-    # caller-supplied id and never touches the cursor) but not operation
-    # *minting*: ``record_stage`` mints an id from the turn cursor and advances it,
-    # and leaving THAT out is what lets a fact-only collector implement the seam.
     members = _protocol_members()
     assert "record_operation" in members
     assert "record_stage" not in members

@@ -18,20 +18,8 @@ DEFAULT_SAMPLE_RATE = 24_000
 _AUDIO_OUTPUT_CAPABILITIES = vio.AudioOutputCapabilities(pause=False)
 
 
-# ---------------------------------------------------------------------------
-# Model-agnostic provider selection
-#
-# The examples default to Groq's free tier (no credit card) but are not wired to
-# any one vendor. Each stage is chosen from the environment, so the same driver
-# proves the adapter on whatever STT/LLM/TTS a deployment actually runs:
-#
-#   EARSHOT_STT_PROVIDER / EARSHOT_STT_MODEL
-#   EARSHOT_LLM_PROVIDER / EARSHOT_LLM_MODEL
-#   EARSHOT_TTS_PROVIDER / EARSHOT_TTS_MODEL / EARSHOT_TTS_VOICE
-#
-# Adapters normalize provider-neutral facts, so switching vendors must not change
-# the shape of the incident -- only the numbers inside it.
-# ---------------------------------------------------------------------------
+# Override the default Groq stage choices with EARSHOT_{STT,LLM,TTS}_PROVIDER,
+# *_MODEL, and *_VOICE environment variables.
 
 _STAGE_DEFAULTS: dict[str, dict[str, str]] = {
     "STT": {"provider": "groq", "model": "whisper-large-v3-turbo"},
@@ -64,8 +52,6 @@ def _stage_choice(stage: str) -> StageChoice:
 
 
 def _livekit_plugin(provider: str) -> object:
-    # livekit.plugins is a namespace package; each vendor plugin must be imported
-    # explicitly rather than read as an attribute.
     import importlib
 
     try:
@@ -140,8 +126,6 @@ class NullAudioOutput(vio.AudioOutput):
         return self._saw_audio
 
     async def capture_frame(self, frame: rtc.AudioFrame) -> None:
-        # The base implementation opens a segment and increments the count used
-        # by wait_for_playout(). A sink must call it for every captured frame.
         await super().capture_frame(frame)
         if self._segment_duration == 0.0:
             self.on_playback_started(created_at=time.time())
@@ -149,8 +133,6 @@ class NullAudioOutput(vio.AudioOutput):
         self._saw_audio = True
 
     def _finish_segment(self, *, interrupted: bool) -> None:
-        # The base implementation closes the active capture segment. Match it
-        # with exactly one playback-finished notification when audio was seen.
         super().flush()
         if self._segment_duration == 0.0:
             return

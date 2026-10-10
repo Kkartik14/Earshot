@@ -41,8 +41,7 @@ const UNKNOWN_REASONS: Record<string, string> = {
 
 const DEFAULT_REASON = "available after the session closes";
 
-/** One admitted-fact counter. A count of what has arrived so far, and labelled
- *  as exactly that — never presented as a total. */
+/** Counter for facts admitted so far. */
 function FactCount({ kind, count }: { kind: string; count: number }) {
   return (
     <div className={styles.count}>
@@ -52,11 +51,7 @@ function FactCount({ kind, count }: { kind: string; count: number }) {
   );
 }
 
-/** An operation the journal saw start and has not seen end.
- *
- *  The bar is drawn with an open, hatched right edge and carries no width that
- *  could be read as a duration: the start was observed, the end genuinely was
- *  not, and there is nothing in between to measure. */
+/** Render an open operation without implying an unobserved duration. */
 function OpenOperation({ operation }: { operation: LiveOpenOperation }) {
   return (
     <li className={styles.openOp}>
@@ -83,8 +78,7 @@ export function LiveSessionBody({
   );
   const standing = standingOf(facts, connection);
   const bannerId = useId();
-  // Only look for an artifact once the stream says the session is over. Polling
-  // earlier would invite reading a half-written session as a finished one.
+  // Fetch the artifact only after the stream reports a close.
   const settled = facts.closeObserved || facts.ending != null;
   const stored = useSessionIncidents(sessionId, { enabled: settled, pollMs: 3_000 });
   const artifact = stored.data?.items?.[0];

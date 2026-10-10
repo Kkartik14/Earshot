@@ -74,8 +74,6 @@ class ServerJournalWriter:
         self._closed = False
         self._journal_id: str | None = None
 
-    # -- the recorder-facing checkpoint surface --------------------------------
-
     def open_journal(
         self,
         *,
@@ -280,8 +278,6 @@ class ServerJournalWriter:
             dropped_records=0,
             last_failure=None,
         )
-
-    # -- the registry-facing surface -------------------------------------------
 
     def take_new(self) -> list[JournalEntry]:
         """The entries admitted since the last call, in admission order."""

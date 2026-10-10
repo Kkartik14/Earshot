@@ -427,8 +427,6 @@ describe("getCoverage", () => {
   });
 });
 
-// -- generic operation list (WS-3) ------------------------------------------
-
 interface RawOp {
   operation_id?: string;
   operation_name: string;
@@ -636,7 +634,6 @@ describe("generic operation list", () => {
   });
 });
 
-// -- real fault-family projections (WS-5) -----------------------------------
 // These are the actual backend explanation projections, decoded and dumped from
 // the fault fixtures, so the transform is exercised against real link/diagnosis/
 // error/unassigned shapes rather than hand-built stand-ins.

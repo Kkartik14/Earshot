@@ -19,9 +19,7 @@ const Millis = z.number().finite().nonnegative();
 /** An opaque, non-empty identifier. */
 const Id = z.string().min(1);
 
-// ---------------------------------------------------------------------------
 // Enums (values are data, not schema — providers/frameworks are free strings)
-// ---------------------------------------------------------------------------
 
 export const SessionStatus = z.enum(["completed", "failed", "abandoned"]);
 export const TurnStatus = z.enum(["completed", "interrupted", "no_response", "failed"]);
@@ -31,19 +29,11 @@ export const InterruptionType = z.enum(["barge_in", "dtmf"]);
 export const AudioKind = z.enum(["input", "output"]);
 export const Framework = z.enum(["pipecat", "livekit", "vapi", "custom"]);
 
-// ---------------------------------------------------------------------------
-// Shared
-// ---------------------------------------------------------------------------
-
 export const TraceErrorSchema = z.object({
   code: z.string().min(1),
   category: z.string().min(1),
   message: z.string(),
 });
-
-// ---------------------------------------------------------------------------
-// Audio (by reference — never inline)
-// ---------------------------------------------------------------------------
 
 export const AudioFormatSchema = z.object({
   encoding: z.string().min(1),
@@ -64,10 +54,6 @@ export const AudioRefSchema = z.object({
     .optional(),
 });
 
-// ---------------------------------------------------------------------------
-// Span (waterfall rows)
-// ---------------------------------------------------------------------------
-
 export const SpanSchema = z.object({
   spanId: Id,
   turnId: Id,
@@ -82,10 +68,6 @@ export const SpanSchema = z.object({
   error: TraceErrorSchema.nullable().default(null),
 });
 
-// ---------------------------------------------------------------------------
-// Event (optional, fine-grained timeline)
-// ---------------------------------------------------------------------------
-
 export const EventSchema = z.object({
   eventId: Id,
   turnId: Id,
@@ -95,10 +77,6 @@ export const EventSchema = z.object({
   tMs: Millis,
   data: z.record(z.unknown()).default({}),
 });
-
-// ---------------------------------------------------------------------------
-// Turn
-// ---------------------------------------------------------------------------
 
 export const UtteranceSchema = z.object({
   transcript: z.string(),
@@ -124,10 +102,6 @@ export const TurnSchema = z.object({
   error: TraceErrorSchema.nullable().default(null),
   audio: z.object({ inputRef: Id.optional(), outputRef: Id.optional() }).optional(),
 });
-
-// ---------------------------------------------------------------------------
-// Session
-// ---------------------------------------------------------------------------
 
 export const AgentInfoSchema = z.object({
   id: Id,
@@ -176,10 +150,6 @@ export const SessionSchema = z.object({
   metadata: z.record(z.unknown()).default({}),
 });
 
-// ---------------------------------------------------------------------------
-// Bundle — the unit that gets uploaded for one call
-// ---------------------------------------------------------------------------
-
 export const TraceBundleSchema = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
   session: SessionSchema,
@@ -188,10 +158,6 @@ export const TraceBundleSchema = z.object({
   events: z.array(EventSchema).default([]),
   audio: z.array(AudioRefSchema).default([]),
 });
-
-// ---------------------------------------------------------------------------
-// Inferred types
-// ---------------------------------------------------------------------------
 
 export type TraceError = z.infer<typeof TraceErrorSchema>;
 export type AudioFormat = z.infer<typeof AudioFormatSchema>;
@@ -209,9 +175,7 @@ export type Consent = z.infer<typeof ConsentSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type TraceBundle = z.infer<typeof TraceBundleSchema>;
 
-// ---------------------------------------------------------------------------
 // Parse helpers (used by ingest — disk/network data is never trusted)
-// ---------------------------------------------------------------------------
 
 export type ParseResult =
   | { readonly ok: true; readonly bundle: TraceBundle }

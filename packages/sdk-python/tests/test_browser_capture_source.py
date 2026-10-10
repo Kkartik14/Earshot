@@ -147,9 +147,6 @@ def _coverage(bundle) -> set[tuple[str, str, str | None]]:
     return {(note.signal, note.availability, note.reason) for note in bundle.profile.coverage}
 
 
-# -- the central Phase 3 promise ----------------------------------------------
-
-
 def test_one_call_one_bundle_two_clock_domains() -> None:
     session = _session()
     server_domain = session.clock_domain_id
@@ -177,9 +174,6 @@ def test_one_call_one_bundle_two_clock_domains() -> None:
 
     # No relation between the two clocks was invented.
     assert bundle.profile.clock_relations == ()
-
-
-# -- no invented cross-clock comparability ------------------------------------
 
 
 def test_cross_clock_latency_is_unavailable_without_a_relation() -> None:
@@ -239,9 +233,6 @@ def test_a_declared_calibration_makes_cross_clock_latency_estimated() -> None:
     assert aligned.uncertainty is not None and aligned.uncertainty >= 500
 
 
-# -- clock-domain discipline holds --------------------------------------------
-
-
 def test_browser_facts_never_advance_the_server_clock_turn_extent() -> None:
     session = _session()
     source = BrowserCaptureSource()
@@ -254,9 +245,6 @@ def test_browser_facts_never_advance_the_server_clock_turn_extent() -> None:
         assert turn._max_ms == 0.0
     bundle = session.close()
     assert validate_incident(bundle).ok
-
-
-# -- the carry threads across batches into the shared recorder ----------------
 
 
 def test_the_carry_recovers_a_boundary_spanning_reconnect() -> None:
@@ -330,9 +318,6 @@ def test_a_batch_from_a_different_clock_domain_is_refused() -> None:
             source.apply(turn, other)
 
 
-# -- the client's own coverage and the server allowlist's refusals -------------
-
-
 def test_client_and_rejection_coverage_are_authored_with_counts() -> None:
     session = _session()
     _feed_browser(session, BrowserCaptureSource(), [BATCH_1, BATCH_2])
@@ -347,8 +332,6 @@ def test_client_and_rejection_coverage_are_authored_with_counts() -> None:
     )
     assert note.dropped_count == 3
 
-
-# -- the SDK path is the HTTP path's privacy equal -----------------------------
 
 CERTIFICATE_SENTINEL = "SENTINELbase64Certificate=="
 FINGERPRINT_SENTINEL = "AA:BB:CC:SENTINELFINGERPRINT"

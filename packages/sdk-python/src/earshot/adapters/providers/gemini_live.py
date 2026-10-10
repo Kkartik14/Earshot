@@ -193,8 +193,6 @@ class GeminiLiveAdapter(ProviderAdapter):
             )
         raise ValueError("unsupported Gemini Live message shape")
 
-    # -- server messages -----------------------------------------------------
-
     def _setup_complete(self, payload: Mapping[str, object], receipt_ms: float) -> AdapterUpdate:
         event_type = "setupComplete"
 
@@ -356,10 +354,6 @@ class GeminiLiveAdapter(ProviderAdapter):
             correlation_id = self._opaque_id("tool_call", base_native or update_id)
 
             def apply_update(turn: TurnRecorder) -> None:
-                # A toolCall REQUESTS that the client run the function; it is not
-                # evidence the function ran. Ledger the arguments as omitted and
-                # register the request as pending -- author NO outcome until real
-                # evidence (a cancellation or client toolResponse) correlates to it.
                 for native_id, args_present, index in parsed:
                     if args_present:
                         turn.record_omission(
@@ -397,8 +391,6 @@ class GeminiLiveAdapter(ProviderAdapter):
             correlation_id = self._opaque_id("tool_call", cancelled_ids[0])
 
             def apply_update(turn: TurnRecorder) -> None:
-                # A cancellation RESOLVES the original pending request as cancelled;
-                # it never spawns a second operation for the same id.
                 for native_id in cancelled_ids:
                     self._resolve_tool_call(
                         turn,
@@ -447,9 +439,6 @@ class GeminiLiveAdapter(ProviderAdapter):
             correlation_id = self._opaque_id("tool_call", parsed[0][0])
 
             def apply_update(turn: TurnRecorder) -> None:
-                # A client toolResponse is the correlated outcome the request was
-                # waiting for: it RESOLVES the same pending operation with real
-                # timing. The returned payload is content-free omitted evidence.
                 for native_id, response_present, index in parsed:
                     if response_present:
                         turn.record_omission(
@@ -578,8 +567,6 @@ class GeminiLiveAdapter(ProviderAdapter):
 
         return self._remember(payload, create_update, observed_at_ms=receipt_ms)
 
-    # -- client turn signals -------------------------------------------------
-
     def _realtime_input(
         self,
         payload: Mapping[str, object],
@@ -694,8 +681,6 @@ class GeminiLiveAdapter(ProviderAdapter):
 
         return self._remember(payload, create_update, observed_at_ms=receipt_ms)
 
-    # -- fused response lifecycle -------------------------------------------
-
     def _open_response(self, receipt_ms: float) -> None:
         self._response_open = True
         self._response_started_ms = receipt_ms
@@ -775,8 +760,6 @@ class GeminiLiveAdapter(ProviderAdapter):
         self._response_first_audio = False
         self._response_speech_stopped_ms = None
         self._open_response_gesture = None
-
-    # -- tool call lifecycle -------------------------------------------------
 
     def _register_pending_tool_call(self, native_id: str | None, receipt_ms: float) -> None:
         """Record a tool-call REQUEST as pending, correlated by its function id.
@@ -858,8 +841,6 @@ class GeminiLiveAdapter(ProviderAdapter):
                 attributes=attributes,
             )
         self._pending_tool_calls.clear()
-
-    # -- parsing helpers -----------------------------------------------------
 
     def _parse_parts(
         self, model_turn: Mapping[str, object]

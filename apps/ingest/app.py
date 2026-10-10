@@ -17,9 +17,7 @@ def _integer_environment(name: str, default: int) -> int:
 HOST = os.environ.get("EARSHOT_HOST", "127.0.0.1")
 TOKEN = os.environ.get("EARSHOT_TOKEN")
 DATA_DIR = Path(os.environ.get("EARSHOT_DATA_DIR", ".earshot"))
-# Opt-in durability for in-flight continuous browser calls: with a directory
-# configured, a call is journaled to disk and survives a backend restart; without
-# one, an in-flight call is lost on restart, exactly like any other live session.
+# Opt-in durability for continuous browser calls across backend restarts.
 CAPTURE_JOURNAL_DIR = os.environ.get("EARSHOT_CAPTURE_JOURNAL_DIR")
 BEHIND_TLS_PROXY = os.environ.get("EARSHOT_BEHIND_TLS_PROXY", "").lower() in {
     "1",

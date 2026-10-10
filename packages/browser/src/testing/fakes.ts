@@ -25,10 +25,6 @@ import type {
   Scheduler,
 } from "../types.js";
 
-// ---------------------------------------------------------------------------
-// Deterministic seams
-// ---------------------------------------------------------------------------
-
 /** A controllable monotonic clock: each `now()` returns then advances by `step`. */
 export class FakeClock {
   constructor(
@@ -94,10 +90,6 @@ export function sequentialRandom(start = 1): RandomSource {
   };
 }
 
-// ---------------------------------------------------------------------------
-// WebRTC fakes
-// ---------------------------------------------------------------------------
-
 /** Build a Map-backed `RTCStatsReport` from `{ id: members }`. */
 export function makeStatsReport(
   entries: Record<string, Record<string, unknown>>,
@@ -150,10 +142,6 @@ export class ControllablePeerConnection implements PeerConnectionLike {
     if (resolve) resolve(this.report);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Event-target base + Web Audio / media fakes
-// ---------------------------------------------------------------------------
 
 export class FakeEventTarget {
   private readonly listeners = new Map<string, Set<() => void>>();
@@ -332,10 +320,6 @@ export class FakePermissions implements PermissionsLike {
     return Promise.resolve(this.status);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Capture transport fakes
-// ---------------------------------------------------------------------------
 
 /** One recorded POST, so a test can assert on headers and body without a server. */
 export interface RecordedRequest {

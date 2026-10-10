@@ -110,9 +110,6 @@ class _CapturingDelivery:
         )
 
 
-# -- built-ins are reachable by their stable names ------------------------------
-
-
 def test_built_in_delivery_modes_are_registered_under_stable_names() -> None:
     assert delivery_modes() == ("async", "durable", "sync")
     assert earshot.delivery_modes() == delivery_modes()
@@ -120,8 +117,6 @@ def test_built_in_delivery_modes_are_registered_under_stable_names() -> None:
 
 
 def test_built_in_delivery_strategies_satisfy_the_delivery_sink_protocol() -> None:
-    # The three exporters were already one shape; the protocol only names it. A
-    # strategy that drops any verb is not a delivery the router can drive.
     for strategy in (BoundedAsyncExporter, SynchronousExporter, DurableExporter):
         for verb in ("submit", "flush", "shutdown", "status"):
             assert callable(getattr(strategy, verb, None)), (strategy, verb)
@@ -132,9 +127,6 @@ def test_unknown_delivery_mode_names_the_known_ones_not_the_request() -> None:
         get_delivery("not-a-delivery")
     assert "not-a-delivery" not in str(error.value)
     assert "async" in str(error.value)
-
-
-# -- a delivery built through the seam is the delivery built directly -----------
 
 
 def test_a_delivery_built_through_the_seam_delivers_identical_bytes() -> None:
@@ -159,9 +151,6 @@ def test_a_delivery_built_through_the_seam_delivers_identical_bytes() -> None:
         == direct_transport.sent
         == [("bundle-seam-parity", INCIDENT_JSON, b'{"resourceSpans":[]}')]
     )
-
-
-# -- a user strategy is reachable through the normal delivery_mode surface ------
 
 
 def test_a_user_delivery_is_selectable_through_the_client(registered) -> None:
@@ -192,8 +181,6 @@ def test_a_user_delivery_is_selectable_through_the_client(registered) -> None:
 
 
 def test_the_built_in_delivery_modes_still_work_exactly_as_before(monkeypatch) -> None:
-    # Routing selection through the registry must not disturb the config API: the
-    # async default still builds, delivers, and reports through the client.
     monkeypatch.setattr(earshot.sdk, "HttpExportTransport", _CapturingTransport)
     client = earshot.Client(endpoint="http://localhost:4319", delivery_mode="async")
     try:
@@ -203,9 +190,6 @@ def test_the_built_in_delivery_modes_still_work_exactly_as_before(monkeypatch) -
         assert client.status().sent == 1
     finally:
         assert client.shutdown()
-
-
-# -- registration is explicit and inert -----------------------------------------
 
 
 def test_a_registered_delivery_name_is_never_silently_replaced(registered) -> None:
@@ -261,8 +245,6 @@ def test_the_process_registry_is_one_object() -> None:
 
 
 def test_importing_the_delivery_registry_touches_no_network() -> None:
-    # Registration must be a dict fill and nothing else: an import that constructed
-    # a transport would make merely importing earshot an observable event.
     program = (
         "import sys\n"
         "def audit(event, args):\n"

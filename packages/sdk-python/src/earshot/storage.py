@@ -2582,7 +2582,6 @@ class IncidentStore:
         *,
         project_id: str = DEFAULT_PROJECT_ID,
     ) -> tuple[IncidentRecord, bytes]:
-        # Keep the index lookup and object read coherent with concurrent purge.
         with self._mutation():
             record = self.get_record(bundle_id, project_id=project_id)
             return record, self.objects.get(record.digest)

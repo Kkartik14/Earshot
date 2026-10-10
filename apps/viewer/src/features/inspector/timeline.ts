@@ -1,12 +1,9 @@
-// Visualizes the backend-authored explanation projection. The browser positions
-// exact coordinates; it never decides whether an operation is a point or interval.
+// Position the backend-authored explanation projection without deriving timing semantics.
 
 import type { components } from "../../api/schema";
 import { statusTone, type Tone } from "../../lib/status";
 
-// The cascade stages remain a named subset, but they no longer gate what the
-// viewer renders: every turn operation is shown. `StageName` stays for the
-// cascade-only lead-metric lookup and the optional STT->LLM->TTS projection.
+// Cascade stage names are used only for lead metrics and the optional cascade view.
 export type StageName = "stt" | "llm" | "tts";
 
 /** Coarse operation class used for colour and grouping. `stt|llm|tts` map to
@@ -50,7 +47,6 @@ function classifyRole(operationName: string): OperationRole {
   }
 }
 
-/** The themed CSS custom property that colours a given role. */
 export function roleColorVar(role: OperationRole): string {
   switch (role) {
     case "stt":
@@ -68,7 +64,6 @@ export function roleColorVar(role: OperationRole): string {
   }
 }
 
-/** A short human word for a role, used where no provider/model is present. */
 export function roleLabel(role: OperationRole): string {
   switch (role) {
     case "stt":
@@ -138,29 +133,25 @@ export interface MetricView {
   confidence: string;
 }
 
-/** A rendered operation error (code + category, coloured by tone). */
 export interface ErrorView {
   code: string;
   category: string;
   captureClass: string;
 }
-/** The status/error badge for an operation: shown only when the operation is not
- * in a healthy state, or carries an explicit error. */
+/** Status and optional error badge for an operation. */
 export interface StatusView {
   abnormal: boolean;
   tone: Tone;
   label: string;
   error?: ErrorView;
 }
-/** A resolved graph edge between two operations in the same turn. Edges come
- * only from explicit links or same-trace parent span identity. */
+/** Resolved same-turn edge from an explicit link or same-trace parent span. */
 export interface EdgeView {
   fromOperationId: string;
   toOperationId: string;
   relationship: string;
 }
-/** A single link as carried on an operation; `resolved` is true when the target
- * is another operation within this turn (so it can be drawn as an edge). */
+/** Operation link; resolved links target another operation in this turn. */
 export interface LinkView {
   relationship: string;
   targetOperationId: string | null;
@@ -175,8 +166,7 @@ const NON_ABNORMAL_STATUS = new Set([
   "success",
   "succeeded",
   "done",
-  // OTel UNSET and an unknown source status assert no failure. Preserve the
-  // source label, but do not manufacture an abnormal state from missing proof.
+  // Unknown and OTel UNSET statuses do not prove a failure.
   "unset",
   "unknown",
 ]);
@@ -186,8 +176,7 @@ const errorView = (e: ExplainedError | null | undefined): ErrorView | undefined 
     ? undefined
     : { code: e.code, category: e.category, captureClass: e.capture_class };
 
-/** Whether an operation is abnormal, and how to badge it. An explicit error is a
- * failure (crit); otherwise the tone follows the status word via status.ts. */
+/** Classify operation status and choose its badge tone. */
 export function operationStatus(op: {
   status: string;
   error?: ExplainedError | null;
@@ -199,8 +188,7 @@ export function operationStatus(op: {
   return { abnormal, tone, label, error };
 }
 
-/** A ± uncertainty in milliseconds from a nanosecond magnitude. BigInt-exact
- * parse; a negative or unparseable value is treated as absent. */
+/** Convert non-negative nanosecond uncertainty to milliseconds. */
 const uncertaintyMs = (value: string | null | undefined): number | null => {
   const n = nano(value);
   if (n == null || n < 0n) return null;
@@ -290,9 +278,7 @@ interface OperationWindow {
 
 const coordinateDeltaMs = (
   value: string,
-  // Widened to a bare string so analysis-authored coordinates (interruption
-  // stages) can be placed by the same rule: an offset exists only when the basis
-  // and clock domain match the origin's exactly.
+  // Place interruption coordinates only when basis and clock domain match.
   basis: string | null | undefined,
   domain: string | null | undefined,
   origin: ExplainedOperation | null,
@@ -310,13 +296,8 @@ const coordinateDeltaMs = (
   return Number(coordinate - originCoordinate) / 1_000_000;
 };
 
-/** Normalize a cascade lead measurement (STT/LLM TTFB, LLM TTFT) to milliseconds
- * by its declared unit. The lead is a provider scalar whose unit is NOT fixed to
- * ms: the measurement contract permits provider-specific units, and sibling
- * producers report the same latencies in seconds (Pipecat `metrics.ttfb` and
- * LiveKit `*_latency` both carry `unit="s"`). Reading `value` as raw ms would be
- * 1000x wrong for a seconds lead. An unexpected unit is left unavailable rather
- * than silently mislabeled as milliseconds. */
+/** Convert a cascade lead to milliseconds using its declared unit. Unknown units
+ * stay unavailable instead of being mislabeled as milliseconds. */
 const leadMeasurementMs = (lead: ExplainedMeasurement | undefined): number | null => {
   if (
     lead == null ||
@@ -336,10 +317,8 @@ const leadMeasurementMs = (lead: ExplainedMeasurement | undefined): number | nul
   }
 };
 
-/** Placement over EVERY operation in the turn, using the analyzer's facts.
- * The clock-alignment origin is computed across all operations (not just the
- * cascade), preserving the "leave the whole turn unplaced if any op is
- * unaligned" discipline so an arbitrary first arrival never reads as +0 ms. */
+/** Place every operation against one origin; leave the turn unplaced if clocks
+ * or time bases differ. */
 function computeOperations(turn: ExplainedTurn): OperationWindow[] {
   const candidates = turn.operations;
   const coordinateGroups = new Set(
@@ -363,9 +342,7 @@ function computeOperations(turn: ExplainedTurn): OperationWindow[] {
         return left.operation_id.localeCompare(right.operation_id);
       })
     : candidates;
-  // A single origin would falsely place independent clocks on one axis. If any
-  // operation is unaligned, leave the whole turn unplaced instead of making
-  // whichever operation happened to arrive first look like +0 ms.
+  // Do not place independent clocks on one axis.
   const origin = comparable ? (ops[0] ?? null) : null;
 
   return ops.map((op) => {
@@ -459,8 +436,6 @@ export function buildTimeline(explanation: ExplanationLike): Timeline {
     .filter((value): value is number => value != null);
   return { turns, scaleMs: roundUp(Math.max(1, ...knownDurations), 250) };
 }
-
-// -- drawer detail ----------------------------------------------------------
 
 export interface EvidenceView {
   source: string;
@@ -806,8 +781,6 @@ export function buildTurnDetails(explanation: ExplanationLike): TurnDetail[] {
   });
 }
 
-// -- session-level facts ----------------------------------------------------
-
 /** A backend-authored diagnosis, with each evidence id resolved to the turn that
  * contains the referenced operation (when it is an operation). */
 export interface DiagnosisView {
@@ -849,8 +822,6 @@ export function buildDiagnoses(explanation: ExplanationLike): DiagnosisView[] {
   }));
 }
 
-// -- contradictions ---------------------------------------------------------
-
 /** One backend-detected contradiction, with its cited evidence resolved to the
  * turn that owns it where the id names an operation. */
 export interface ContradictionView {
@@ -882,8 +853,6 @@ export function buildContradictions(
     })),
   }));
 }
-
-// -- clock comparability ----------------------------------------------------
 
 /** The analyzer's basis for a latency it derived through a declared calibration. */
 const CALIBRATED_BASIS = "cross_clock_calibrated";
@@ -1005,12 +974,7 @@ export function buildClockCalibration(
   return { domains, relations, crossClock };
 }
 
-/** How a media file's own timeline relates to the incident's, if at all.
- *
- *  Media synchronization is not a second mechanism: a media file's timeline is
- *  another clock domain, so this is the ordinary cross-clock question answered by
- *  the ordinary `ClockRelation`. `aligned` reports the declared calibration and
- *  its own error bound; `unaligned` refuses to guess an offset. */
+/** Alignment of externally held media with the incident clock domains. */
 export type MediaAlignmentView =
   | { state: "session_domain"; note: string }
   | {
@@ -1023,17 +987,14 @@ export type MediaAlignmentView =
   | { state: "unaligned"; note: string }
   | { state: "undeclared"; note: string };
 
-/** The declared retention governing externally-held media. Earshot records the
- *  policy; it does not enforce it, because it does not hold the bytes. */
+/** Declared retention policy; Earshot records but does not enforce it. */
 export interface MediaRetentionView {
   expiresAtUnixNano: string | null;
   ttlMs: number | null;
   policyId: string | null;
 }
 
-/** One media reference, as custody facts only. There is deliberately no field
- *  carrying media bytes, a duration derived from them, or anything earshot could
- *  only know by reading them: earshot never does. */
+/** Media custody metadata only; the viewer never reads or fetches media bytes. */
 export interface MediaCustodyView {
   mediaId: string;
   mediaKind: string;
@@ -1044,28 +1005,22 @@ export interface MediaCustodyView {
   /** The declared digest, if the reference carries one. Never computed here. */
   digest: string | null;
   sizeBytes: number | null;
-  /** The plain-language integrity claim, written so it cannot be read as
-   *  "earshot checked this". */
+  /** Explain the producer's integrity claim without implying verification. */
   integrityNote: string;
   coveredMs: number | null;
   coveredNote: string;
   consent: string | null;
   retention: MediaRetentionView | null;
   alignment: MediaAlignmentView;
-  /** A custodian URL for a user-initiated, direct hand-off. It is never used as
-   *  a media `src`: an `src` would make the viewer fetch the bytes on render. */
+  /** Direct hand-off URL; never used as a media source. */
   locatorUri: string | null;
   locatorExpiresNano: string | null;
 }
 
-/** Assemble the custody panel: where externally-held media lives, whether anyone
- *  measured it, and whether a declared calibration can place it on this
- *  session's timeline. Reads only `profile.media_refs` and the clock records —
- *  it dereferences nothing. */
+/** Build custody views from media references and clock metadata without fetching media. */
 export function buildMediaCustody(incident: IncidentLike): MediaCustodyView[] {
   const relations = incident.profile.clock_relations ?? [];
-  // The domains this session's own evidence is recorded in: the set media has to
-  // reach to be overlayable at all.
+  // Media must share one of these domains to appear on the session timeline.
   const observationDomains = new Set<string>();
   for (const op of incident.profile.operations ?? []) {
     for (const point of [op.started_at, op.ended_at]) {
@@ -1122,11 +1077,8 @@ const retentionView = (
   };
 };
 
-/** Decide media alignment with the same rule the analyzer's aligner uses: the
- *  media domain is either one the session records in, or a single declared
- *  relation joins it to one (in either direction — a calibration is an
- *  invertible affine map). Chains are not composed, so a media file two hops away
- *  is reported unaligned rather than aligned by an offset nothing computed. */
+/** Align media only in a session domain or through one declared relation; do not
+ * compose multi-hop clock relations. */
 function mediaAlignment(
   mediaDomain: string | null | undefined,
   observationDomains: Set<string>,
@@ -1163,9 +1115,7 @@ function mediaAlignment(
   };
 }
 
-/** A session-level operation whose evidence is not turn-scoped (e.g. a
- * `device_unavailable` op). It has no shared turn axis, so only a self-contained
- * observed duration (from `duration_nano`) is shown — never a cross-op offset. */
+/** Session-level operation; show its observed duration without a turn offset. */
 export interface UnassignedOperationView {
   operationId: string;
   name: string;

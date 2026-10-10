@@ -379,9 +379,6 @@ def test_gemini_and_openai_native_s2s_project_the_same_governed_turn_facts() -> 
     assert not _native_measurements(gemini_bundle, "openai.")
 
 
-# -- F3: a reused adapter must not leak one session's lifecycle state into the next
-
-
 def test_gemini_session_close_isolates_lifecycle_state() -> None:
     adapter = GeminiLiveAdapter(model=MODEL, identity_key=IDENTITY_KEY)
 
@@ -418,9 +415,6 @@ def test_gemini_session_close_isolates_lifecycle_state() -> None:
     events_b = [event.event_name for event in bundle_b.profile.events]
     assert "earshot.speech.started" in events_b
     assert "earshot.interruption.detected" not in events_b
-
-
-# -- F4: a Gemini toolCall is a REQUEST resolved only by correlated evidence
 
 
 def _tool_ops(bundle: earshot.IncidentBundle):

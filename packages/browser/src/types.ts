@@ -1,18 +1,7 @@
-/**
- * Structural (duck-typed) shapes of the W3C APIs this capture kernel consumes,
- * plus the payload shapes it produces.
- *
- * Why structural instead of `lib.dom.d.ts`? This package targets `lib: ES2022`
- * with no DOM lib (see the repo `tsconfig.base.json`) so it type-checks and runs
- * in both a browser and Node/worker/test context. We depend only on the exact
- * members we read from each API, which also makes the whole surface trivial to
- * mock (see `src/testing/fakes.ts`). Nothing here reads audio samples — the
- * kernel is metadata-only by construction.
+/** Structural W3C API shapes and capture payload types. Keeping only the members
+ * this package reads allows the same types to run in browsers, workers, and Node
+ * tests without DOM library declarations. Capture is metadata-only.
  */
-
-// ---------------------------------------------------------------------------
-// WebRTC — the subset of RTCPeerConnection / RTCStatsReport we touch
-// ---------------------------------------------------------------------------
 
 /**
  * A single `RTCStats`-shaped member bag. Every value is a JSON primitive; the
@@ -44,10 +33,6 @@ export interface WebRtcSnapshot {
   /** Stat id -> `RTCStats`-shaped member bag (missing members omitted). */
   stats: Record<string, StatMembers>;
 }
-
-// ---------------------------------------------------------------------------
-// Web Audio / media devices — the subset we observe
-// ---------------------------------------------------------------------------
 
 /** The minimal event-target surface (Web Audio / MediaDevices / PermissionStatus). */
 export interface EventTargetLike {
@@ -148,9 +133,7 @@ export interface DeviceEvent {
   [member: string]: string | number | boolean | undefined;
 }
 
-// ---------------------------------------------------------------------------
 // Trace context (W3C) + the drained payload
-// ---------------------------------------------------------------------------
 
 /** A W3C trace-context for the session (no secrets — random ids only). */
 export interface TraceContext {
@@ -286,9 +269,7 @@ export interface CapturePayload {
   end?: CaptureEnd;
 }
 
-// ---------------------------------------------------------------------------
 // Injected environment (clock / scheduler / randomness) — the seams for tests
-// ---------------------------------------------------------------------------
 
 /** A high-resolution, monotonic time source in milliseconds. */
 export type Clock = () => number;
