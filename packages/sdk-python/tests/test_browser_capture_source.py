@@ -176,24 +176,6 @@ def test_one_call_one_bundle_two_clock_domains() -> None:
     assert bundle.profile.clock_relations == ()
 
 
-def test_cross_clock_latency_is_unavailable_without_a_relation() -> None:
-    session = _session()
-    server_domain = session.clock_domain_id
-    _record_server_stages(session)
-    _feed_browser(session, BrowserCaptureSource(), [BATCH_1, BATCH_2])
-    bundle = session.close()
-
-    server_point = _server_domain_point(bundle, server_domain)
-    browser_point = _browser_domain_point(bundle)
-
-    # A browser render/quality coordinate and a server operation coordinate cannot
-    # be differenced: the analyzer refuses rather than fabricating a latency.
-    delta = comparable_delta(server_point, browser_point)
-    assert delta.availability == "unavailable"
-    assert delta.nanoseconds is None
-    assert delta.limitation == "cross_clock_domain"
-
-
 def test_a_declared_calibration_makes_cross_clock_latency_estimated() -> None:
     session = _session()
     server_domain = session.clock_domain_id

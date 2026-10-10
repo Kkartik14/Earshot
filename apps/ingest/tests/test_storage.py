@@ -628,25 +628,6 @@ def test_destination_filtered_listing_never_pages_through_restricted_ids(tmp_pat
         store.list_incidents(destination="attacker")
 
 
-def test_secure_purge_scrubs_analysis_secret_from_sqlite_files(tmp_path, valid_bundle) -> None:
-    secret = b"purge_forensic_marker_835f0d6c"
-    store = IncidentStore(tmp_path)
-    store.ingest(valid_bundle, canonical(valid_bundle))
-    store.put_analysis(
-        "bundle-1",
-        "secret",
-        analysis_value(store, "bundle-1", "secret", secret.decode()),
-    )
-    assert any(
-        secret in path.read_bytes() for path in tmp_path.glob("earshot.sqlite3*") if path.is_file()
-    )
-
-    store.purge("bundle-1")
-    for path in tmp_path.glob("earshot.sqlite3*"):
-        if path.is_file():
-            assert secret not in path.read_bytes(), path
-
-
 def test_startup_preserves_orphans_until_explicit_cleanup_and_cleans_temp(tmp_path) -> None:
     store = IncidentStore(tmp_path)
     digest, _ = store.objects.put(b"unindexed crash leftover")

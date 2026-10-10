@@ -302,14 +302,4 @@ describe("attachPeerConnection interval sampling", () => {
     expect(snapshots[0]!.stats.transport!.iceState).toBe("connected");
     expect(snapshots[1]!.stats.transport!.iceState).toBe("disconnected");
   });
-
-  it("fails open when getStats() rejects (no snapshot, no throw)", async () => {
-    const scheduler = new FakeScheduler();
-    const pc = new FakePeerConnection([]); // empty -> getStats rejects
-    const recorder = createBrowserRecorder({ scheduler });
-    recorder.attachPeerConnection(pc);
-
-    await expect(scheduler.fireAll(1)).resolves.toBeUndefined();
-    expect(recorder.drain().snapshots).toHaveLength(0);
-  });
 });

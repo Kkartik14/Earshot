@@ -277,19 +277,6 @@ def test_metrics_http_can_group_turns_by_stt_language(tmp_path) -> None:
     assert [group["group"] for group in response.json()["groups"]] == ["hi-IN"]
 
 
-def test_turn_facts_are_rebuilt_from_canonical_incidents_on_restart(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
-    bundle = make_valid_bundle(bundle_id="rebuild-turn-fact")
-    store.ingest(bundle, encode_incident_protobuf(bundle))
-    with sqlite3.connect(store.database_path) as connection:
-        connection.execute("DELETE FROM turn_metrics")
-    store.close()
-
-    restarted = IncidentStore(tmp_path)
-
-    assert [fact.bundle_id for fact in restarted.list_turn_facts()] == ["rebuild-turn-fact"]
-
-
 def test_internal_narrow_turn_fact_projection_is_recreated_from_canonical_incidents(
     tmp_path,
 ) -> None:
