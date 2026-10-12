@@ -1603,10 +1603,6 @@ class LiveKitAdapter:
     def attach_interruption_listeners(self, session: object) -> None:
         """Attach adaptive-interruption callbacks when the session exposes them."""
 
-        # LiveKit 1.6 derives InterruptionMetrics from the same
-        # OverlappingSpeechEvent but provides no shared request/speech ID. Once
-        # this event surface is attached it exclusively owns interruption point
-        # facts; metrics continue to own operations and aggregate quality.
         def listener(event: object) -> None:
             try:
                 self.consume_interruption_event(event)

@@ -1,23 +1,6 @@
-/**
- * Installation self-check core (framework-free).
- *
- * Proves that `@earshot/browser`, as BUILT and consumed from the workspace, can
- * drive a recorder to a `CapturePayload` in the exact shape the two server
- * engines deserialise. It reuses the round-trip idea from
- * `packages/browser/src/roundtrip.test.ts`: mirror the Python normalisers'
- * preconditions in TS so a drift on either side fails here.
- *
- * Two deliberate import sources:
- *  - the recorder + protocol constants come from `@earshot/browser` — the
- *    resolved package `exports`, i.e. the BUILT `dist/` artifact. If the package
- *    cannot be built or imported, this file cannot even load.
- *  - the W3C fakes come from the SDK's own `src/testing/fakes.ts`. Those are
- *    excluded from the built package (they are test-only), so — exactly like the
- *    SDK's own tests — they are imported from source across the workspace.
- *
- * `assertConsumable()` throws an `Error` on the first mismatch and returns the
- * drained payload on success, so a caller (`selfcheck.test.ts`, or any runner)
- * can gate a release on it exiting non-zero.
+/** Framework-free check that the built browser package emits server-consumable
+ * capture payloads. It imports the recorder from the package and test fakes from
+ * source because those fakes are excluded from the build.
  */
 
 import {
@@ -95,8 +78,6 @@ async function drivePayload(): Promise<CapturePayload> {
   driven.attachPeerConnection(pc);
   await scheduler.fireAll(1);
 
-  // Real AudioContext render path (state + latency + sample rate), then the
-  // getUserMedia grant path with a real (fake) track carrying a device id.
   const ctx = new FakeAudioContext({
     state: "running",
     baseLatency: 0.005,
@@ -114,7 +95,7 @@ async function drivePayload(): Promise<CapturePayload> {
   await driven.observeMediaDevices(devices, {
     permissions: new FakePermissions(new FakePermissionStatus("granted")),
   });
-  await driven.requestMicrophone(devices); // granted + device hash + sample-rate check
+  await driven.requestMicrophone(devices);
 
   return driven.drain();
 }
@@ -126,7 +107,6 @@ export async function assertConsumable(): Promise<CapturePayload> {
 
   const payload = await drivePayload();
 
-  // -- envelope --------------------------------------------------------------
   assert(
     payload.captureVersion === CONTINUOUS_CAPTURE_VERSION,
     `captureVersion should be ${CONTINUOUS_CAPTURE_VERSION}, got ${payload.captureVersion}`,
@@ -141,7 +121,6 @@ export async function assertConsumable(): Promise<CapturePayload> {
     payload.clockDomain.kind === "browser_monotonic" && payload.clockDomain.unit === "ms",
     "clockDomain must be a browser_monotonic ms domain",
   );
-  // captureVersion 2 continuous-capture fields:
   assert(
     payload.drainSequence === 1,
     `first drain must be sequence 1, got ${payload.drainSequence}`,
@@ -151,7 +130,6 @@ export async function assertConsumable(): Promise<CapturePayload> {
     "capturerStartedAtMs must be a finite number under captureVersion 2",
   );
 
-  // -- snapshots -> analyze_webrtc_stats ------------------------------------
   assert(payload.snapshots.length > 0, "expected at least one getStats snapshot");
   for (const snapshot of payload.snapshots) {
     assert(
@@ -177,7 +155,6 @@ export async function assertConsumable(): Promise<CapturePayload> {
     "jitterBufferEmittedCount must be a number",
   );
   assert(isEngineNumber(inbound?.concealedSamples), "concealedSamples must be a number");
-  // A member that was ABSENT on the source stat must stay absent (never 0).
   assert(
     inbound?.packetsDiscarded === undefined,
     "an unset stat member must stay missing, never coerced to 0",
@@ -191,7 +168,6 @@ export async function assertConsumable(): Promise<CapturePayload> {
     "local-candidate.networkType must survive",
   );
 
-  // -- deviceEvents -> analyze_audio_graph ----------------------------------
   assert(payload.deviceEvents.length > 0, "expected at least one device event");
   for (const event of payload.deviceEvents) {
     assert(
@@ -228,7 +204,6 @@ export async function assertConsumable(): Promise<CapturePayload> {
     "sample_rate_mismatch must carry numeric configured_hz/actual_hz",
   );
 
-  // -- coverage --------------------------------------------------------------
   assert(Array.isArray(payload.coverage), "coverage must be an array");
   for (const note of payload.coverage) {
     assert(
@@ -242,7 +217,6 @@ export async function assertConsumable(): Promise<CapturePayload> {
     assert(typeof note.reason === "string", "coverage.reason must be a string");
   }
 
-  // -- wire-serialisable (the server receives JSON) --------------------------
   const roundTripped = JSON.parse(JSON.stringify(payload)) as CapturePayload;
   assert(
     roundTripped.captureVersion === payload.captureVersion &&

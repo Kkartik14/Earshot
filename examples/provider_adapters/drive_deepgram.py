@@ -65,7 +65,7 @@ async def _transcribe() -> list:
     ) as ws:
 
         async def send_audio() -> None:
-            frame = int(SR * 0.1) * 2  # 100 ms of s16le mono
+            frame = int(SR * 0.1) * 2
             for offset in range(0, len(pcm), frame):
                 await ws.send(pcm[offset : offset + frame])
                 await asyncio.sleep(0.1)

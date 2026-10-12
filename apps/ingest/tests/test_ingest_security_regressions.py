@@ -245,6 +245,7 @@ def test_purge_removes_sensitive_bytes_from_sqlite_wal_and_shm(tmp_path) -> None
     store = IncidentStore(data_dir)
     bundle = _change_session(make_valid_bundle(), SECRET_SENTINEL)
     store.ingest(bundle, encode_protobuf(bundle))
+    analysis_secret = b"purge_forensic_marker_835f0d6c"
     store.put_analysis(
         "bundle-1",
         "sensitive-analysis",
@@ -252,19 +253,31 @@ def test_purge_removes_sensitive_bytes_from_sqlite_wal_and_shm(tmp_path) -> None
             store,
             "bundle-1",
             "sensitive-analysis",
-            "sensitive_analysis",
+            analysis_secret.decode(),
         ),
     )
+    needles = (SECRET_SENTINEL.encode(), analysis_secret)
+    database_files = tuple(path for path in data_dir.glob("earshot.sqlite3*") if path.is_file())
+    assert all(any(needle in path.read_bytes() for path in database_files) for needle in needles)
+
     store.purge("bundle-1")
+    for path in data_dir.glob("earshot.sqlite3*"):
+        if path.is_file():
+            contents = path.read_bytes()
+            for needle in needles:
+                assert needle not in contents, path
+
     with sqlite3.connect(store.database_path) as connection:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
     store.close()
 
-    needle = SECRET_SENTINEL.encode()
     residuals = []
     for path in data_dir.rglob("*"):
-        if path.is_file() and needle in path.read_bytes():
-            residuals.append(path.relative_to(data_dir).as_posix())
+        if path.is_file():
+            contents = path.read_bytes()
+            for needle in needles:
+                if needle in contents:
+                    residuals.append(path.relative_to(data_dir).as_posix())
     assert residuals == [], (
         "purge left recoverable secret bytes in live SQLite/CAS files; "
         "this check does not claim erasure from SSD wear-leveling or copy-on-write snapshots: "

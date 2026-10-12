@@ -377,8 +377,6 @@ class BoundedAsyncExporter:
             self._worker.start()
 
     def _notify(self, diagnostic: ExportDiagnostic) -> None:
-        # User callbacks are outside our trust boundary and cannot become an
-        # application failure path.
         with contextlib.suppress(Exception):
             self._diagnostic(diagnostic)
 

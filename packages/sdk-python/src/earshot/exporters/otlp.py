@@ -147,9 +147,7 @@ _EVENT_RESOURCE_NOTE = (
 )
 
 
-# --------------------------------------------------------------------------- #
 # AnyValue / attribute encoding (OTLP/JSON ProtoJSON shapes)
-# --------------------------------------------------------------------------- #
 def _any_value(value: Any) -> dict[str, Any]:
     """Encode a JSON scalar/collection as an OTLP ``AnyValue``.
 
@@ -197,9 +195,7 @@ def _signature(mapping: Mapping[str, Any]) -> str:
     return json.dumps(dict(mapping), sort_keys=True, ensure_ascii=False, default=repr)
 
 
-# --------------------------------------------------------------------------- #
 # Deterministic identity synthesis for records that carry no OTel identity
-# --------------------------------------------------------------------------- #
 def _synth_id(bundle_id: str, kind: str, *parts: str, nbytes: int) -> str:
     """Derive a stable, non-zero hex id from a bundle-scoped key.
 
@@ -216,9 +212,6 @@ def _synth_id(bundle_id: str, kind: str, *parts: str, nbytes: int) -> str:
     return value
 
 
-# --------------------------------------------------------------------------- #
-# Time projection
-# --------------------------------------------------------------------------- #
 def _wall_nano(point: TimePoint) -> tuple[str | None, str | None]:
     """Return ``point``'s Unix-epoch nanoseconds and the basis that supplied them.
 
@@ -285,9 +278,7 @@ def _operation_status(operation: Operation) -> dict[str, Any]:
     return {"code": _STATUS_UNSET}
 
 
-# --------------------------------------------------------------------------- #
 # Internal span record: an OTLP span plus its resource/scope provenance
-# --------------------------------------------------------------------------- #
 @dataclass
 class _SpanRecord:
     span: dict[str, Any]
@@ -366,9 +357,6 @@ class _Projection:
         return True
 
 
-# --------------------------------------------------------------------------- #
-# Core builder
-# --------------------------------------------------------------------------- #
 def _build_document(
     bundle: IncidentBundle,
     *,
@@ -869,9 +857,7 @@ def _resolve_links(
     return [entry for _, entry in sorted(links, key=lambda item: item[0])]
 
 
-# --------------------------------------------------------------------------- #
 # Resource projection: one ResourceSpans entry per declared resource
-# --------------------------------------------------------------------------- #
 def _resource_spans(bundle: IncidentBundle, projection: _Projection) -> list[dict[str, Any]]:
     """Group the projected spans by the resource each record actually declared.
 
@@ -990,9 +976,6 @@ def _resource_spans_entry(
     return resource_spans
 
 
-# --------------------------------------------------------------------------- #
-# Public API
-# --------------------------------------------------------------------------- #
 def to_otlp(bundle: IncidentBundle) -> dict[str, Any]:
     """Project ``bundle`` into a deterministic OTLP/JSON trace document.
 

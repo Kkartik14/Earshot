@@ -50,9 +50,6 @@ def _record_a_few(recorder: IncidentRecorder, count: int = 3) -> None:
         recorder.record_event("earshot.turn.start", turn_id=f"turn-{index}")
 
 
-# --------------------------------------------------------------- filesystem
-
-
 def test_the_journal_directory_and_file_are_owner_private(tmp_path: Path) -> None:
     writer = _writer(tmp_path / "journals")
     IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
@@ -105,9 +102,6 @@ def test_the_journal_inherits_the_spool_key_when_no_checkpoint_key_is_set(
     replay = JournalReader(_journal_path(tmp_path), key=key).read()
     assert replay.header.session_id == "s"
     writer.release()
-
-
-# ----------------------------------------------------------------- recovery
 
 
 def test_a_sigkilled_child_loses_zero_admitted_records(tmp_path: Path) -> None:
@@ -182,9 +176,6 @@ def test_a_hard_exit_child_loses_zero_admitted_records(tmp_path: Path) -> None:
     )
 
 
-# ------------------------------------------------------------------ failure
-
-
 def test_a_partial_write_degrades_the_writer_and_stops_further_frames(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -248,9 +239,6 @@ def test_reaching_the_record_cap_stops_the_journal(tmp_path: Path) -> None:
     assert isinstance(replay.entries[-1], JournalExhausted)
     assert writer.status().journal_complete is False
     writer.release()
-
-
-# -------------------------------------------------------------------- fsync
 
 
 @pytest.mark.parametrize(
@@ -387,9 +375,6 @@ def test_a_platform_that_cannot_fsync_a_directory_degrades_instead_of_crashing(
     writer.release(delivered=True)
 
 
-# --------------------------------------------------------------- encryption
-
-
 def test_a_frame_cannot_be_moved_between_journals_or_re_sequenced(tmp_path: Path) -> None:
     key = secrets.token_bytes(32)
     writer = _writer(tmp_path, checkpoint_key=key)
@@ -445,9 +430,6 @@ def test_the_wrong_key_is_unreadable_rather_than_half_decoded(tmp_path: Path) ->
         JournalReader(_journal_path(tmp_path), key=secrets.token_bytes(32)).read()
 
 
-# ------------------------------------------------------------------ privacy
-
-
 def test_no_governed_sensitive_source_reaches_the_journal_bytes(tmp_path: Path) -> None:
     """Only classes the policy already admits are journaled."""
 
@@ -489,9 +471,6 @@ def test_the_journal_holds_only_the_admitted_governed_record(tmp_path: Path) -> 
     writer.release()
 
 
-# ------------------------------------------------------------------ release
-
-
 def test_a_finalized_journal_is_removed_only_once_it_has_a_successor(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
@@ -507,9 +486,6 @@ def test_keeping_a_finalized_journal_is_an_explicit_choice(tmp_path: Path) -> No
 
     assert len(list(tmp_path.glob("*.eck"))) == 1
     assert JournalReader(_journal_path(tmp_path)).read().close_observed is True
-
-
-# ----------------------------------------------------------------- overhead
 
 
 def test_appending_a_frame_stays_off_the_voice_path_budget(tmp_path: Path) -> None:
@@ -534,9 +510,6 @@ def test_appending_a_frame_stays_off_the_voice_path_budget(tmp_path: Path) -> No
     # on the append path, which are milliseconds, not microseconds.
     assert p99 < 0.005, f"p99 append was {p99 * 1e6:.1f} us"
     writer.release()
-
-
-# ------------------------------------------------------------- sdk wiring
 
 
 def test_checkpointing_is_off_until_a_directory_is_configured(tmp_path: Path) -> None:

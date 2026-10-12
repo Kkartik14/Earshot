@@ -309,7 +309,6 @@ def _capture_event_member(kind: str, value: Any) -> Any | None:
     return None
 
 
-# -- batch-level allowlisting --------------------------------------------------
 #
 # These operate on plain mappings (a parsed browser batch), never on FastAPI
 # request models, so the HTTP endpoint and an in-process capture source enforce

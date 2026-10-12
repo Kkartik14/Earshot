@@ -1,11 +1,6 @@
 import type { TailEvent } from "../../api/tail";
 
-/** One operation the journal saw start and has not seen end.
- *
- *  It is a distinct shape from a completed operation on purpose. There is no
- *  `endedAt` and no `durationNano` field to accidentally fill in, so nothing
- *  downstream can render an extrapolated width or a ticking "duration" that
- *  would read as a measurement. */
+/** Operation start with no observed end; no duration is represented. */
 export interface LiveOpenOperation {
   sequence: number;
   operationId: string;
@@ -38,12 +33,7 @@ export interface LiveTruncation {
   availableFromSequence: number;
 }
 
-/** What this stream is not allowed to carry, and how much it has refused.
- *
- *  The tail is an export, so the server reapplies its destination policy before
- *  a record leaves the process. A record it may not carry still occupies its
- *  journal slot as a `withheld` event, and this is what keeps "restricted by
- *  policy" distinguishable from "nothing was recorded". */
+/** Policy refusals for this export stream. Withheld records keep their sequence slots. */
 export interface LiveRestriction {
   /** The export destination this stream declares itself to be. */
   destination: string | null;
@@ -70,13 +60,8 @@ export interface LiveFinalize {
   truncatedRecords: number;
 }
 
-/** Everything the viewer knows about a session that has not closed.
- *
- *  Deliberately not shaped like an incident: there is no manifest, no session
- *  status, no coverage roll-up and no metric anywhere in this type, because none
- *  of those are knowable before close. `unknownUntilClose` is the server's own
- *  enumeration of that, carried through so the UI states it rather than
- *  implying it by omission. */
+/** Live journal state. Final metrics and coverage rollups are unavailable until
+ * close; `unknownUntilClose` carries the server's declared gaps. */
 export interface LiveFacts {
   journalId: string | null;
   sessionId: string | null;
@@ -108,9 +93,7 @@ export interface LiveFacts {
   appliedEvents: number;
 }
 
-/** Cap on retained records so a long session cannot grow the tab without bound.
- *  Dropping the oldest is safe here and only here: the durable journal still
- *  holds them, and the artifact will carry all of them. */
+/** Retain only the newest records; the durable journal keeps the full history. */
 const MAX_RETAINED_RECORDS = 2_000;
 
 export function emptyFacts(): LiveFacts {
@@ -160,15 +143,10 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-/** Apply one tail event. Pure, total, and never throws on an unexpected shape.
- *
- *  Ordering and de-duplication both come from the journal sequence rather than
- *  from arrival order: a reconnect can only ever replay, never reorder, so an
- *  event at or below `asOfSequence` has already been applied and is dropped. */
+/** Apply one tail event, dropping journal sequences already seen after reconnect. */
 export function applyEvent(facts: LiveFacts, event: TailEvent): LiveFacts {
   if (event.name === "reset") {
-    // A different journal for the same session. Everything held is about the
-    // previous one and would be a splice of two conversations if kept.
+    // A replacement journal starts a fresh local view.
     return { ...emptyFacts(), appliedEvents: facts.appliedEvents + 1 };
   }
   if (event.sequence != null && event.sequence <= facts.asOfSequence) {
@@ -214,8 +192,7 @@ export function applyEvent(facts: LiveFacts, event: TailEvent): LiveFacts {
         destination: exportPolicy == null ? null : str(exportPolicy.destination),
         declaredClasses:
           exportPolicy == null ? [] : strings(exportPolicy.denied_capture_classes),
-        // Absent rather than false when the server never said: an older backend
-        // that does not declare this has not declared an unreadable policy.
+        // Preserve absence when an older server did not report this field.
         policyReadable: exportPolicy == null || exportPolicy.policy_readable !== false,
       };
       return next;
@@ -245,8 +222,7 @@ export function applyEvent(facts: LiveFacts, event: TailEvent): LiveFacts {
       return next;
     }
     case "withheld": {
-      // Counted, never reconstructed. The slot is accounted for and its content
-      // is not here, which is the whole point of the event existing.
+      // Count the withheld slot without adding its content to admitted records.
       const refusals = [...facts.restriction.refusals];
       for (const denial of Array.isArray(event.data.denied_capture_classes)
         ? event.data.denied_capture_classes
@@ -343,10 +319,7 @@ export function applyEvent(facts: LiveFacts, event: TailEvent): LiveFacts {
 
 type Listener = () => void;
 
-/** A tiny external store for `useSyncExternalStore`.
- *
- *  React Query is request/response and models a stream badly; a reducer over an
- *  append-only log is the shape the wire already has. */
+/** External store adapter for `useSyncExternalStore`. */
 export class LiveStore {
   private facts = emptyFacts();
   private readonly listeners = new Set<Listener>();

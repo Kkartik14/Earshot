@@ -46,11 +46,12 @@ directly. Before an artifact enters `fixtures/captured`:
    accept it without warnings or errors.
 
 Run `scripts/scrub_captured_fixture.py` for the pseudonymization and eligibility checks.
-The manifest pins SHA-256 digests of the ignored source artifact, public artifact,
-capture driver, and redaction tool. CI recomputes every digest it can access and checks
-the adapter version embedded in each public artifact. The source digest is an attestation
-that can be compared with the governed ignored capture during an audit; the source itself
-must not be committed.
+The manifest records SHA-256 digests of the ignored source artifact, public artifact,
+capture driver, and redaction tool as capture-time provenance. CI verifies the public
+artifact digest and checks the adapter version embedded in each artifact. The source,
+driver, and redaction-tool digests describe the bytes used when the capture was made;
+they are not checked against the current working tree. The source digest can be compared
+with the governed ignored capture during an audit; the source itself must not be committed.
 
 The committed artifact is evidence of the captured adapter behavior, not a recording of
 the conversation. Audio files used to drive provider checks, raw provider deliveries,

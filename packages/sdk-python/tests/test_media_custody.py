@@ -163,9 +163,6 @@ def session_relation(**overrides: object) -> ClockRelation:
     return ClockRelation(**fields)  # type: ignore[arg-type]
 
 
-# ---------------------------------------------------------------- integrity
-
-
 def test_both_integrity_modes_are_valid_custody(valid_bundle) -> None:
     granted = with_audio_capture(valid_bundle)
 
@@ -258,9 +255,6 @@ def test_the_shared_incoherence_rule_is_the_one_the_recorder_enforces() -> None:
     assert media_custody_incoherence(opaque_ref(custodian=None)) is not None
 
 
-# ------------------------------------------------------------ clock alignment
-
-
 def test_media_aligned_by_a_declared_clock_relation_is_not_warned_about(
     valid_bundle,
 ) -> None:
@@ -347,9 +341,6 @@ def test_custody_declares_no_second_synchronization_model() -> None:
         for name in field_names
         if any(token in name for token in ("offset", "drift", "sync", "skew"))
     }
-
-
-# ------------------------------------------------------- no media byte path
 
 
 def test_no_contract_record_can_carry_media_bytes() -> None:
@@ -464,9 +455,6 @@ def test_no_custody_path_dereferences_a_locator(valid_bundle, monkeypatch) -> No
     assert decode_incident_protobuf(encode_incident_protobuf(bundle)).profile.media_refs
 
 
-# --------------------------------------------------------- locator hygiene
-
-
 @pytest.mark.parametrize("integrity", ["content_digest", "opaque_handle"])
 def test_a_credential_bearing_locator_never_survives_admission(integrity: str) -> None:
     """Custody must not turn earshot into a holder of somebody else's keys."""
@@ -517,9 +505,6 @@ def test_the_recorder_refuses_an_incoherent_custody_claim_at_admission() -> None
                 size_bytes=len(MEDIA_BYTES),
             )
         )
-
-
-# --------------------------------------------------------------- versioning
 
 
 def test_the_default_integrity_mode_still_demands_a_digest(valid_bundle) -> None:

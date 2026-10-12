@@ -145,9 +145,6 @@ def fetch_bundle(client, headers, bundle_id: str) -> IncidentBundle:
     return IncidentBundle.model_validate(response.json())
 
 
-# -- one call, one artifact ---------------------------------------------------
-
-
 def test_many_drains_become_one_incident(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="t"))
     headers = {"Authorization": "Bearer t"}
@@ -179,29 +176,6 @@ def test_many_drains_become_one_incident(tmp_path) -> None:
     assert measurement_facts(many) == measurement_facts(single)
     assert event_facts(many) == event_facts(single)
     assert validate_incident(many).ok
-
-
-def test_the_assembled_incident_is_provisional_and_never_final(tmp_path) -> None:
-    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
-    headers = {"Authorization": "Bearer t"}
-    for index, snapshot in enumerate(series(10)):
-        response = client.post("/v1/capture", json=drain(index + 1, [snapshot]), headers=headers)
-    call_id = response.json()["call_id"]
-
-    sealed = seal(client, headers, call_id)
-    assert sealed["finality"] == "provisional"
-    assert sealed["close_observed"] is False
-    bundle = fetch_bundle(client, headers, sealed["bundle_id"])
-    manifest = bundle.profile.manifest
-    assert manifest.finality == "provisional"
-    assert bundle.profile.session.ended_at is None
-    assert manifest.recovery is not None
-    assert manifest.recovery.method == "browser_capture_journal"
-    assert manifest.recovery.close_observed is False
-    assert validate_incident(bundle).ok
-
-
-# -- idempotency by slot and content ------------------------------------------
 
 
 def test_a_retried_drain_is_applied_once(tmp_path) -> None:
@@ -282,9 +256,6 @@ def test_a_declared_drain_loss_is_accepted_and_ledgered(tmp_path) -> None:
     assert coverage["capture.stats_continuity"].reason == "carry_invalidated_by_drain_loss"
 
 
-# -- boundary reconnect -------------------------------------------------------
-
-
 def test_a_boundary_reconnect_is_observed(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="t"))
     headers = {"Authorization": "Bearer t"}
@@ -317,9 +288,6 @@ def test_a_boundary_reconnect_is_observed(tmp_path) -> None:
     assert any(diagnosis.code == "transport.reconnect" for diagnosis in analysis.diagnoses)
 
 
-# -- tenant isolation ---------------------------------------------------------
-
-
 def test_two_tenants_with_the_same_session_id_never_share_a_call(tmp_path) -> None:
     store, client = app_client(tmp_path, config=ApiConfig(token="t"))
     store.create_project("tenant-a", display_name="A")
@@ -348,9 +316,6 @@ def test_two_tenants_with_the_same_session_id_never_share_a_call(tmp_path) -> No
     assert cross.status_code == 404
 
 
-# -- live surface -------------------------------------------------------------
-
-
 def test_a_capture_call_is_visible_and_tailable_on_the_live_surface(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="t"))
     headers = {"Authorization": "Bearer t"}
@@ -375,26 +340,6 @@ def test_a_capture_call_is_visible_and_tailable_on_the_live_surface(tmp_path) ->
     names = [event.get("event") for event in events]
     assert names[0] == "open"
     assert "record" in names
-
-
-def test_sealing_mid_call_yields_a_provisional_artifact_under_a_sequence_suffix(tmp_path) -> None:
-    _, client = app_client(tmp_path, config=ApiConfig(token="t"))
-    headers = {"Authorization": "Bearer t"}
-    for index, snapshot in enumerate(series(5)):
-        response = client.post("/v1/capture", json=drain(index + 1, [snapshot]), headers=headers)
-    call_id = response.json()["call_id"]
-    accepted_through = response.json()["accepted_through"]
-
-    sealed = seal(client, headers, call_id)
-    assert sealed["bundle_id"] == f"{call_id}.s{accepted_through}"
-    assert sealed["finality"] == "provisional"
-
-    # The call is still live after a mid-call seal: nothing finalized it.
-    still_live = client.get("/v1/live/sessions", headers=headers).json()["items"]
-    assert [item["session_id"] for item in still_live] == [call_id]
-
-
-# -- Phase 2: observed close and honest duration ------------------------------
 
 
 def endcall(sequence: int, snapshots: list[dict], ts: float, **extra) -> dict:
@@ -501,17 +446,21 @@ def test_an_ended_call_with_lost_drains_is_final_but_incomplete(tmp_path) -> Non
     assert validate_incident(bundle).ok
 
 
-def test_a_closed_tab_never_becomes_a_finished_call(tmp_path) -> None:
+def test_a_closed_tab_stays_live_when_sealed_without_finalizing_the_call(tmp_path) -> None:
     _, client = app_client(tmp_path, config=ApiConfig(token="t"))
     headers = {"Authorization": "Bearer t"}
     # Twenty drains, then the tab simply closes: no ``end`` ever arrives.
     for index, snapshot in enumerate(series(20)):
         response = client.post("/v1/capture", json=drain(index + 1, [snapshot]), headers=headers)
     call_id = response.json()["call_id"]
+    accepted_through = response.json()["accepted_through"]
 
     sealed = seal(client, headers, call_id)
+    assert sealed["bundle_id"] == f"{call_id}.s{accepted_through}"
     assert sealed["finality"] == "provisional"
     assert sealed["close_observed"] is False
+    still_live = client.get("/v1/live/sessions", headers=headers).json()["items"]
+    assert [item["session_id"] for item in still_live] == [call_id]
     bundle = fetch_bundle(client, headers, sealed["bundle_id"])
     manifest = bundle.profile.manifest
     assert manifest.finality == "provisional"
@@ -520,6 +469,7 @@ def test_a_closed_tab_never_becomes_a_finished_call(tmp_path) -> None:
     assert bundle.profile.session.ended_at is None
     assert named_measurements(bundle, "client.observed_call_duration") == []
     assert manifest.recovery is not None
+    assert manifest.recovery.method == "browser_capture_journal"
     assert manifest.recovery.close_observed is False
     assert manifest.recovery.first_observation is not None
     assert manifest.recovery.last_observation is not None
@@ -621,9 +571,6 @@ def test_an_end_declaration_requires_capture_version_2(tmp_path) -> None:
     response = client.post("/v1/capture", json=body, headers=headers)
     assert response.status_code == 422
     assert code(response) == "EARSHOT_INVALID_CAPTURE"
-
-
-# -- a real loopback listener for the streaming assertion ---------------------
 
 
 def _free_port() -> int:

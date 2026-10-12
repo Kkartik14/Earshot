@@ -1,26 +1,7 @@
-/**
- * OpenAI Realtime mode: earshot capture wrapped around a RAW OpenAI Realtime
- * WebRTC voice connection — no OpenAI SDK, just `RTCPeerConnection` and the SDP
- * exchange OpenAI documents.
- *
- * The handshake (browser-native path):
- *  1. capture the real microphone and add its track to an `RTCPeerConnection`;
- *  2. open the `oai-events` data channel and render the model's audio track
- *     through a real `AudioContext`;
- *  3. create an SDP offer, `setLocalDescription`, and POST the offer SDP to
- *     `https://api.openai.com/v1/realtime?model=…` with
- *     `Authorization: Bearer <runtime key>` and `Content-Type: application/sdp`;
- *  4. `setRemoteDescription` with the SDP answer OpenAI returns.
- *
- * Credential handling: the key is read from the runtime UI (recommended: an
- * ephemeral client secret minted server-side with `POST /v1/realtime/sessions`).
- * It is NEVER hardcoded, NEVER read from build-time env, and NEVER committed —
- * the example builds and typechecks with no key present. No automated test in
- * this package ever calls the OpenAI API.
- *
- * WebSocket vs WebRTC: OpenAI's WebSocket transport is intended for server-side
- * use (a browser cannot set the `Authorization` header on a WebSocket handshake).
- * From the browser the correct raw transport is WebRTC, which is what this does.
+/** Raw browser WebRTC integration for OpenAI Realtime, using its SDP exchange.
+ * Read the key at runtime; never embed it in source or build-time configuration.
+ * Browser WebRTC is used because browser WebSocket handshakes cannot set the
+ * required Authorization header.
  */
 
 import type { VoiceModeHandle } from "./mode.js";
@@ -67,7 +48,6 @@ export async function startOpenAiRealtime(
   const key = requireRealtimeKey(options.apiKey);
   const { log } = options;
 
-  // Real Permissions API + devicechange, then the real getUserMedia mic path.
   await session.observeDevices();
   const micStream = await session.requestMicrophone({
     audio: { echoCancellation: true, noiseSuppression: true },
@@ -83,7 +63,6 @@ export async function startOpenAiRealtime(
   monitor.gain.value = 1;
   monitor.connect(audioCtx.destination);
 
-  // The model's audio arrives as a remote track; render it through the context.
   pc.addEventListener("track", (event) => {
     const stream = event.streams[0] ?? new MediaStream([event.track]);
     const source = audioCtx.createMediaStreamSource(stream);
@@ -94,7 +73,6 @@ export async function startOpenAiRealtime(
     log(`OpenAI peer connection: ${pc.connectionState}`);
   });
 
-  // The Realtime event channel (session config, transcripts, tool calls, …).
   const events = pc.createDataChannel("oai-events");
   events.addEventListener("open", () => log("oai-events data channel open"));
 

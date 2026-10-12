@@ -67,9 +67,6 @@ def _payload(event) -> dict:
     return json.loads(event.payload)
 
 
-# ------------------------------------------------------------ local journals
-
-
 def test_a_journal_in_the_directory_becomes_a_live_session(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
@@ -219,9 +216,6 @@ def test_a_new_journal_for_the_same_session_resets_subscribers(tmp_path: Path) -
     second.release()
 
 
-# ----------------------------------------------------------- resume + bounds
-
-
 def test_last_event_id_resumes_without_gaps_or_duplicates(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
@@ -369,9 +363,6 @@ def test_an_expired_session_is_dropped_and_says_so(tmp_path: Path) -> None:
     writer.release()
 
 
-# ------------------------------------------------------ uploaded checkpoints
-
-
 def _frames(path: Path) -> bytes:
     return path.read_bytes()
 
@@ -501,9 +492,6 @@ def _entry_frame(sequence: int, entry) -> bytes:
     return encode_frame(sequence, encode_entry(entry), max_body_bytes=DEFAULT_MAX_FRAME_BYTES)
 
 
-# ------------------------------------------------- per-tenant session identity
-
-
 def test_two_projects_hold_the_same_session_id_independently(tmp_path: Path) -> None:
     """A session id is a tenant's name for its own session, not a global one.
 
@@ -591,9 +579,6 @@ def test_tail_connections_are_bounded_per_project_not_only_per_server(
     beta_writer.release()
 
 
-# ----------------------------------------------- a finalized journal is closed
-
-
 def test_a_finalized_journal_refuses_a_later_frame(tmp_path: Path) -> None:
     """``finalize`` is the end of the journal, so nothing may follow it."""
 
@@ -674,9 +659,6 @@ def test_a_batch_that_appends_after_its_own_finalize_is_refused_whole(
     writer.release()
 
 
-# ------------------------------------------------------- retries never rewrite
-
-
 def test_a_retry_that_rewrites_an_accepted_frame_is_refused(tmp_path: Path) -> None:
     """A retry may repeat history idempotently; it may never edit it."""
 
@@ -749,9 +731,6 @@ def test_the_seal_source_of_a_local_journal_is_the_journal_itself(tmp_path: Path
     assert kind == "journal"
     assert Path(str(source)).is_file()
     writer.release()
-
-
-# ---------------------------------------------------- restricted egress
 
 
 def _restricted(directory: Path, export: ExportConfig, **kwargs):

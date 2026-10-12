@@ -556,9 +556,6 @@ class IncidentExportResponse(ApiModel):
     document: dict[str, Any]
 
 
-# ---------------------------------------------------------------------------
-# Browser capture transport (POST /v1/capture)
-# ---------------------------------------------------------------------------
 #
 # The request body is the ``CapturePayload`` the @earshot/browser capture kernel
 # drains (see ``packages/browser/src/types.ts``), so its envelope keys are the
@@ -1224,7 +1221,6 @@ def _decode_request(payload: bytes, content_type: str, config: ApiConfig) -> Inc
     raise ApiProblem(415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE", "unsupported incident media type")
 
 
-# -- browser capture: independent server-side enforcement ----------------------
 #
 # The per-stat / per-member / per-event allowlists and their pure sanitizers live
 # in ``earshot.capture.sanitize`` so the HTTP path and an in-process capture
@@ -1309,8 +1305,6 @@ def _capture_bundle_id(project_id: str, fingerprint: Mapping[str, Any]) -> str:
 
 
 def _capture_issue(item: Mapping[str, Any]) -> dict[str, object]:
-    # Stable code and path only. The path is the caller's own field location and
-    # is truncated; no payload value is reflected back.
     return {
         "code": "EARSHOT_INVALID_CAPTURE_FIELD",
         "path": [str(part)[:64] for part in item.get("loc", ())],
@@ -2915,10 +2909,6 @@ def create_app(
         suffix = None if summary.close_observed else f".s{summary.last_sequence}"
 
         def materialize() -> tuple[Any, Any]:
-            # A continuous browser call names its own reconstruction
-            # (``browser_capture_journal``); an ordinary checkpoint session keeps
-            # the assembler's default. Both are irrelevant once a close was
-            # observed, because a finalized replay carries no recovery record.
             if kind == SOURCE_CHECKPOINT:
                 with tempfile.TemporaryDirectory(prefix="earshot-seal-") as directory:
                     path = Path(directory) / "sealed.eck"

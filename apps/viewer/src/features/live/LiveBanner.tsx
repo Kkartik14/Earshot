@@ -2,11 +2,6 @@ import type { TailConnection } from "../../api/tail";
 import type { LiveFacts } from "./liveStore";
 import styles from "./LiveBanner.module.css";
 
-/** The one-line truth about what is being shown. Never decorative.
- *
- *  This is the discriminator between "an incident" and "a conversation still
- *  being written", and it is structural: the live view renders it above
- *  everything, always, and describes itself by it. */
 export type LiveStanding =
   | "in_progress"
   | "stalled"

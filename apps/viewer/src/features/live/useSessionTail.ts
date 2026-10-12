@@ -11,11 +11,7 @@ export interface SessionTail {
   reconnect(): void;
 }
 
-/** Subscribe one component to one live session.
- *
- *  The returned facts are only ever what the stream said. Nothing here derives,
- *  averages, or extrapolates: a live session has no digest, so anything computed
- *  from it would be a claim no artifact attests. */
+/** Subscribe to a live session's admitted journal facts. */
 export function useSessionTail(
   sessionId: string | undefined,
   options?: Pick<TailOptions, "eventSourceFactory" | "staleAfterMs" | "maxErrors">,
@@ -48,8 +44,7 @@ export function useSessionTail(
     return () => handle.close();
   }, [sessionId, attempt, store]);
 
-  // A ticking "seconds ago" is a fact about this page, not about the session, so
-  // it is computed here and never folded into the facts themselves.
+  // Keep page activity time separate from session facts.
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);

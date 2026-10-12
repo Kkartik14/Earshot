@@ -126,9 +126,6 @@ def continuity_reasons(bundle: IncidentBundle) -> set[str]:
     }
 
 
-# -- the core restart resume ---------------------------------------------------
-
-
 def test_a_call_survives_a_backend_restart_and_a_client_resumes(tmp_path) -> None:
     store = IncidentStore(tmp_path / "store")
     capture_dir = tmp_path / "capture"
@@ -289,9 +286,6 @@ def test_without_a_journal_directory_a_restart_drops_the_call(tmp_path) -> None:
     after_client = TestClient(after)
     listed = after_client.get("/v1/live/sessions", headers=HEADERS).json()["items"]
     assert all(item["session_id"] != call_id for item in listed)
-
-
-# -- a real crash --------------------------------------------------------------
 
 
 def _crash_script(capture_dir: Path, drains: int) -> str:

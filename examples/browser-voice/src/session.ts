@@ -1,27 +1,4 @@
-/**
- * The capture glue: everything both modes (loopback + OpenAI) share.
- *
- * A `CaptureSession` owns one `EarshotBrowserRecorder` and one
- * `EarshotCaptureTransport` from `@earshot/browser` and drives the REAL W3C code
- * paths the reviewer flagged as unexercised:
- *
- *  - `requestMicrophone(navigator.mediaDevices, …)` — the real `getUserMedia`
- *    microphone-permission path (granted/denied), not a synthesised source.
- *  - `observeMediaDevices(navigator.mediaDevices, { permissions })` — the real
- *    Permissions API `microphone` descriptor and `devicechange`.
- *  - `attachPeerConnection(pc)` — real `RTCPeerConnection.getStats()` sampling.
- *  - `attachAudioContext(ctx)` — real `AudioContext` state / `outputLatency` /
- *    `getOutputTimestamp()` render-queue / `sinkchange` observation.
- *
- * It NEVER fabricates a metric. Every value comes from a real browser object
- * handed to the SDK; where the running browser does not expose a signal, the SDK
- * records its own coverage note and this session does nothing to paper over it.
- *
- * Delivery goes to the earshot backend's `POST /v1/capture` via the SDK's
- * transport. The recorder is wired as the transport's coverage sink, so a batch
- * that fails to upload is declared as coverage on the next drain rather than
- * silently lost.
- */
+/** Shared recorder, transport, and lifecycle wiring for both capture modes. */
 
 import {
   CONTINUOUS_CAPTURE_VERSION,
@@ -78,9 +55,6 @@ export class CaptureSession {
     this.onDrain = options.onDrain;
     this.drainIntervalMs = options.drainIntervalMs ?? DEFAULT_DRAIN_INTERVAL_MS;
 
-    // `captureVersion: 2` (continuous capture) is exposed by this SDK, so each
-    // drain carries a monotonic drainSequence under one stable session and the
-    // server accumulates the whole call instead of a per-drain incident.
     this.recorder = createBrowserRecorder({
       captureVersion: CONTINUOUS_CAPTURE_VERSION,
       sessionId: options.sessionId,
@@ -92,8 +66,7 @@ export class CaptureSession {
       apiKey: options.endpoint.apiKey,
       csrfToken: options.endpoint.csrfToken,
       projectId: options.endpoint.projectId,
-      // An undelivered batch becomes coverage on the next drain — never a silent
-      // gap the server would read as a clean session.
+      // Report undelivered observations as coverage on the next drain.
       coverage: this.recorder,
       onFailure: (failure) => {
         this.log(

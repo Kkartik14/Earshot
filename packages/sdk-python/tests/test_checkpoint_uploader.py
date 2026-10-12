@@ -133,9 +133,6 @@ def test_the_batch_is_bounded_by_bytes_and_cut_at_a_frame(tmp_path: Path) -> Non
     writer.release()
 
 
-# ---------------------------------------------------------- the size ladder
-
-
 def _oversized_frame(sequence: int) -> bytes:
     """One whole frame the journal permits and the ingest API never will."""
 
@@ -304,9 +301,6 @@ def test_a_plaintext_remote_endpoint_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="userinfo"):
         CheckpointUploader("https://a:b@collector.example", _journal(tmp_path), "s-1")
     writer.release()
-
-
-# ------------------------------------------------------- durable resume offset
 
 
 def _offset_marker(journal: Path) -> Path:

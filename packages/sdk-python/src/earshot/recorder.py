@@ -1573,8 +1573,6 @@ class IncidentRecorder:
     ) -> QualitySample:
         """Retain a provider/transport sample after recursively filtering it."""
 
-        # Detach only after a bounded preflight. Attribute maps are shallowly
-        # narrowed first, so a single caller-owned payload cannot force a huge copy.
         if len(sample.measurements) > self.config.max_records:
             with self._lock:
                 self._note_omission_locked(
