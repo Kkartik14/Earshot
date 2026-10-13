@@ -75,6 +75,7 @@ TVICObservationName: TypeAlias = Literal[
     "turn.start",
 ]
 TVICScalar: TypeAlias = StrictBool | StrictInt | StrictFloat | StrictStr
+_Milliseconds: TypeAlias = int | float
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _MAX_ATTRIBUTE_NUMBER = 1_000_000_000_000
@@ -84,6 +85,17 @@ _MAX_AT_MS = UINT64_MAX // 1_000_000
 _MAX_ATTRIBUTES = 32
 _MAX_ENVELOPE_KEYS = 12
 _MAX_DIAGNOSTIC_FAILURE_REASONS = 8
+_ENVELOPE_KEYS = (
+    "schemaVersion",
+    "epoch",
+    "sequence",
+    "factId",
+    "name",
+    "sessionId",
+    "atMs",
+    "turnId",
+    "attributes",
+)
 _DIAGNOSTIC_FAILURE_SIGNALS = {
     "tvic_runtime_adapter_queue_diagnostic_failed": "tvic.ingress.queue.failure",
     "tvic_runtime_adapter_admission_failed": "tvic.ingress.admission.failure",
@@ -204,6 +216,21 @@ _ENUM_ATTRIBUTES = {
 
 class TVICObservationError(ValueError):
     """Raised when a TVIC envelope cannot be safely admitted."""
+
+
+def _milliseconds_to_nanoseconds(value: _Milliseconds) -> int:
+    if isinstance(value, int):
+        return value * 1_000_000
+    numerator, denominator = value.as_integer_ratio()
+    scaled, remainder = divmod(numerator * 1_000_000, denominator)
+    doubled_remainder = remainder * 2
+    if doubled_remainder > denominator or (doubled_remainder == denominator and scaled % 2):
+        scaled += 1
+    return scaled
+
+
+class _TVICObservationSessionMismatch(TVICObservationError):
+    """Raised when a valid fact belongs to a different session incident."""
 
 
 class _FrozenAttributes(dict[str, TVICScalar]):
@@ -330,10 +357,9 @@ class TVICObservation(BaseModel):
 def _parse_observation(value: TVICObservation | Mapping[str, object]) -> TVICObservation:
     try:
         if isinstance(value, TVICObservation):
-            # ``frozen=True`` does not freeze nested dicts. Round-tripping an
-            # existing model makes the adapter boundary revalidate a caller's
-            # post-construction mutation instead of trusting the instance.
-            value = value.model_dump(mode="python", by_alias=True)
+            # ``frozen=True`` does not freeze nested dicts. Snapshot bounded
+            # scalar fields and attributes instead of trusting the instance.
+            value = _snapshot_observation(value)
         return TVICObservation.model_validate(value)
     except ValidationError as error:
         codes = sorted(
@@ -347,10 +373,43 @@ def _parse_observation(value: TVICObservation | Mapping[str, object]) -> TVICObs
 
 
 def _preflight_observation(value: TVICObservation | Mapping[str, object]) -> None:
-    """Bound container work before the callback enqueues a value for parsing."""
+    """Bound the input containers before retaining a snapshot in the ingress queue."""
 
     if isinstance(value, TVICObservation):
-        attributes: Mapping[str, object] = value.attributes
+        if type(value) is not TVICObservation:
+            raise TVICObservationError("TVIC observation model must not be subclassed")
+        attributes_value = value.attributes
+        if type(attributes_value) is not _FrozenAttributes:
+            raise TVICObservationError(
+                "TVIC observation attributes must be immutable built-in data"
+            )
+        if type(value.schema_version) is not int or value.schema_version != 1:
+            raise TVICObservationError("TVIC observation schema version is invalid")
+        if (
+            type(value.sequence) is not int
+            or not 1 <= value.sequence <= _MAX_SEQUENCE
+            or type(value.name) is not str
+            or value.name not in _ALLOWED_ATTRIBUTES
+        ):
+            raise TVICObservationError("TVIC observation envelope is invalid")
+        for field in (value.epoch, value.fact_id, value.session_id):
+            if type(field) is not str or len(field) > 256:
+                raise TVICObservationError("TVIC observation identifier is too large")
+        if value.turn_id is not None and (
+            type(value.turn_id) is not str or len(value.turn_id) > 256
+        ):
+            raise TVICObservationError("TVIC observation turn identifier is too large")
+        if type(value.at_ms) is int:
+            if value.at_ms < 0 or value.at_ms > _MAX_AT_MS:
+                raise TVICObservationError("TVIC observation timestamp is out of range")
+        elif (
+            type(value.at_ms) is not float
+            or not math.isfinite(value.at_ms)
+            or value.at_ms < 0
+            or value.at_ms > _MAX_AT_MS
+        ):
+            raise TVICObservationError("TVIC observation timestamp is invalid")
+        attributes = attributes_value
         envelope_length = 0
     elif isinstance(value, Mapping):
         try:
@@ -365,22 +424,107 @@ def _preflight_observation(value: TVICObservation | Mapping[str, object]) -> Non
         attributes = attributes_value
     else:
         raise TVICObservationError("TVIC observation must be a mapping")
-    if envelope_length > _MAX_ENVELOPE_KEYS or len(attributes) > _MAX_ATTRIBUTES:
+    attributes_length = (
+        dict.__len__(attributes) if type(value) is TVICObservation else len(attributes)
+    )
+    if envelope_length > _MAX_ENVELOPE_KEYS or attributes_length > _MAX_ATTRIBUTES:
         raise TVICObservationError("TVIC observation envelope is too large")
-    for key, attribute in attributes.items():
-        if not isinstance(key, str) or len(key) > 128:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if type(key) is not str or len(key) > 256:
+                raise TVICObservationError("TVIC observation envelope key is too large")
+            if key == "attributes":
+                continue
+            if type(item) is str:
+                if len(item) > 256:
+                    raise TVICObservationError("TVIC observation envelope value is too large")
+            elif type(item) is int:
+                if item.bit_length() > 64:
+                    raise TVICObservationError(
+                        "TVIC observation validation failed: envelope number is too large"
+                    )
+            elif type(item) not in {bool, float, type(None)}:
+                raise TVICObservationError("TVIC observation envelope value must be scalar")
+    attribute_items = (
+        dict.items(attributes) if type(value) is TVICObservation else attributes.items()
+    )
+    for index, (key, attribute) in enumerate(attribute_items):
+        if index >= _MAX_ATTRIBUTES:
+            raise TVICObservationError("TVIC observation envelope is too large")
+        if type(key) is not str or len(key) > 128:
             raise TVICObservationError("TVIC observation attribute key is too large")
-        if isinstance(attribute, str) and len(attribute) > 128:
+        if type(attribute) is str and len(attribute) > 128:
             raise TVICObservationError("TVIC observation attribute value is too large")
-        if isinstance(attribute, int) and not isinstance(attribute, bool):
+        if type(attribute) is int:
             if attribute < 0 or attribute > _MAX_ATTRIBUTE_NUMBER:
                 raise TVICObservationError("TVIC observation attribute number is out of range")
-        elif isinstance(attribute, float) and (
+        elif type(attribute) is float and (
             not math.isfinite(attribute) or attribute < 0 or attribute > _MAX_ATTRIBUTE_NUMBER
         ):
             raise TVICObservationError("TVIC observation attribute number is out of range")
-        elif not isinstance(attribute, (bool, int, float, str)):
+        elif type(attribute) not in {bool, int, float, str}:
             raise TVICObservationError("TVIC observation attribute must be scalar")
+
+
+def _snapshot_observation(value: TVICObservation | dict[str, object]) -> dict[str, object]:
+    """Copy inert, bounded input so caller code cannot run in the runtime callback."""
+
+    if type(value) is TVICObservation:
+        _preflight_observation(value)
+        attributes = _snapshot_attributes(value.attributes)
+        snapshot = {
+            "schemaVersion": value.schema_version,
+            "epoch": value.epoch,
+            "sequence": value.sequence,
+            "factId": value.fact_id,
+            "name": value.name,
+            "sessionId": value.session_id,
+            "atMs": value.at_ms,
+            "turnId": value.turn_id,
+            "attributes": attributes,
+        }
+        _preflight_observation(snapshot)
+        return snapshot
+    if type(value) is not dict:
+        raise TVICObservationError("TVIC callback input must be a built-in dict or TVICObservation")
+    attributes = dict.get(value, "attributes", {})
+    if type(attributes) is not dict:
+        raise TVICObservationError("TVIC callback attributes must be a built-in dict")
+    if dict.__len__(value) > _MAX_ENVELOPE_KEYS:
+        raise TVICObservationError("TVIC observation envelope is too large")
+    try:
+        for index, key in enumerate(dict.__iter__(value)):
+            if index >= _MAX_ENVELOPE_KEYS:
+                raise TVICObservationError("TVIC observation envelope is too large")
+            if type(key) is not str or len(key) > 256 or key not in _ENVELOPE_KEYS:
+                raise TVICObservationError("TVIC observation envelope key is unsupported")
+    except RuntimeError:
+        raise TVICObservationError("TVIC observation changed during callback snapshot") from None
+    snapshot = {key: dict.get(value, key) for key in _ENVELOPE_KEYS if key in value}
+    if "attributes" in snapshot:
+        snapshot["attributes"] = _snapshot_attributes(attributes)
+    _preflight_observation(snapshot)
+    return snapshot
+
+
+def _snapshot_attributes(
+    value: dict[str, object] | _FrozenAttributes,
+) -> dict[str, object]:
+    if type(value) not in {dict, _FrozenAttributes}:
+        raise TVICObservationError("TVIC callback attributes must be a built-in dict")
+    if dict.__len__(value) > _MAX_ATTRIBUTES:
+        raise TVICObservationError("TVIC observation envelope is too large")
+    snapshot: dict[str, object] = {}
+    try:
+        for index, key in enumerate(dict.__iter__(value)):
+            if index >= _MAX_ATTRIBUTES:
+                raise TVICObservationError("TVIC observation envelope is too large")
+            if type(key) is not str or len(key) > 128:
+                raise TVICObservationError("TVIC observation attribute key is too large")
+            snapshot[key] = dict.__getitem__(value, key)
+    except (KeyError, RuntimeError):
+        raise TVICObservationError("TVIC observation changed during callback snapshot") from None
+    return snapshot
 
 
 class TVICRuntimeAdapter:
@@ -410,8 +554,8 @@ class TVICRuntimeAdapter:
         self._lock = RLock()
         self._seen_facts: dict[tuple[str, str], TVICObservation] = {}
         self._last_sequence: dict[tuple[str, str], int] = {}
-        self._last_at_ms: dict[tuple[str, str], float] = {}
-        self._turn_starts: dict[tuple[str, str], float] = {}
+        self._last_at_ms: dict[tuple[str, str], _Milliseconds] = {}
+        self._turn_starts: dict[tuple[str, str], _Milliseconds] = {}
         self._interrupted_turns: set[tuple[str, str]] = set()
         self._first_observation: TVICObservation | None = None
         self._last_observation: TVICObservation | None = None
@@ -420,11 +564,11 @@ class TVICRuntimeAdapter:
         self._closed_bundle: IncidentBundle | None = None
         self._accepted_observations = 0
         self._manual_clock = recorder.clock if isinstance(recorder.clock, ManualClock) else None
-        self._epoch_offsets: dict[str, float] = {}
+        self._epoch_offsets: dict[str, _Milliseconds] = {}
         self._epoch_uncertainty: dict[str, str] = {}
         self._rebased_epochs: set[str] = set()
-        self._normalized_at_ms: dict[tuple[str, str], float] = {}
-        self._last_normalized_at_ms: float | None = None
+        self._normalized_at_ms: dict[tuple[str, str], _Milliseconds] = {}
+        self._last_normalized_at_ms: _Milliseconds | None = None
         self._failed_facts: set[tuple[str, str]] = set()
         self._pending_ingress_failure_reasons: set[str] = set()
         self._diagnostic_failure_reasons: set[str] = set()
@@ -500,7 +644,7 @@ class TVICRuntimeAdapter:
         if self._closed_bundle is not None:
             raise TVICObservationError("cannot consume after the incident is closed")
         if observation.session_id != self.recorder.session_id:
-            raise TVICObservationError(
+            raise _TVICObservationSessionMismatch(
                 "observation sessionId does not match the adapter's incident session; "
                 "runtime-wide drops require a runtime-scoped sink"
             )
@@ -522,7 +666,7 @@ class TVICRuntimeAdapter:
         previous_sequence = self._last_sequence.get(sequence_key)
         if previous_sequence is not None and observation.sequence <= previous_sequence:
             raise TVICObservationError("TVIC sequence regressed within an observation epoch")
-        at_ms = float(observation.at_ms)
+        at_ms = observation.at_ms
         if observation.at_ms > self._max_at_ms:
             raise TVICObservationError("atMs plus started_at_unix_nano exceeds uint64 range")
         previous_at_ms = self._last_at_ms.get(sequence_key)
@@ -759,7 +903,7 @@ class TVICRuntimeAdapter:
         if observation.name == "turn.start":
             if observation.turn_id is None:
                 raise TVICObservationError("turn.start requires turnId")
-            self._turn_starts[(observation.epoch, observation.turn_id)] = float(observation.at_ms)
+            self._turn_starts[(observation.epoch, observation.turn_id)] = observation.at_ms
             self._record_event(
                 observation,
                 "earshot.turn.committed",
@@ -967,20 +1111,16 @@ class TVICRuntimeAdapter:
             availability="available",
         )
 
-    def _normalized_time(self, observation: TVICObservation, at_ms: float) -> float:
+    def _normalized_time(self, observation: TVICObservation, at_ms: _Milliseconds) -> _Milliseconds:
         epoch = observation.epoch
         offset = self._epoch_offsets.get(epoch)
         if offset is None:
-            offset = 0.0
+            offset = 0
             if self._last_normalized_at_ms is not None:
                 recovery_gap = observation.attributes.get("recovery_gap_ms")
-                gap_ms = (
-                    float(recovery_gap)
-                    if isinstance(recovery_gap, (int, float)) and not isinstance(recovery_gap, bool)
-                    else 0.0
-                )
+                gap_ms = recovery_gap if type(recovery_gap) in {int, float} else 0
                 target = self._last_normalized_at_ms + gap_ms
-                offset = max(0.0, target - at_ms)
+                offset = max(0, target - at_ms)
                 if offset > 0:
                     self._rebased_epochs.add(epoch)
                     uncertainty_nano = (
@@ -1003,7 +1143,7 @@ class TVICRuntimeAdapter:
         normalized_at_ms = self._normalized_at_ms.get((observation.epoch, observation.fact_id))
         if normalized_at_ms is None:
             raise TVICObservationError("observation lacks an admitted chronology coordinate")
-        monotonic_nano = round(normalized_at_ms * 1_000_000)
+        monotonic_nano = _milliseconds_to_nanoseconds(normalized_at_ms)
         if self._started_at_unix_nano + monotonic_nano > UINT64_MAX:
             raise TVICObservationError("observation timestamp exceeds uint64 range")
         return TimePoint(
@@ -1013,10 +1153,10 @@ class TVICRuntimeAdapter:
             uncertainty_nano=self._epoch_uncertainty.get(observation.epoch, "1000000"),
         )
 
-    def _advance_clock(self, at_ms: float) -> None:
+    def _advance_clock(self, at_ms: _Milliseconds) -> None:
         if self._manual_clock is None:
             return
-        target_nano = round(at_ms * 1_000_000)
+        target_nano = _milliseconds_to_nanoseconds(at_ms)
         current_nano = self._manual_clock.monotonic
         if target_nano > current_nano:
             self._manual_clock.advance(target_nano - current_nano)
@@ -1025,11 +1165,16 @@ class TVICRuntimeAdapter:
 class TVICRuntimeObservationSink:
     """Bounded non-blocking handoff from a TVIC callback into Earshot.
 
-    ``enqueue`` performs only a short deque admission under a lock. Validation,
-    journal work, and incident-record admission happen only when the owning
-    ingestion loop calls ``drain`` or ``close``. A TVIC runtime observation
+    ``enqueue`` accepts plain dictionaries or TVICObservation models, performs
+    bounded input checks, and takes a shallow snapshot before admitting it under
+    a lock. It rejects custom mappings rather than executing caller code on the
+    runtime callback. Full schema validation, journal work, and
+    incident-record admission happen only when the owning ingestion loop calls
+    ``drain`` or ``close``. A TVIC runtime observation
     callback therefore never performs synchronous Earshot I/O. Queue overflow
-    and admission failures are retained as coverage when the sink closes.
+    and admission failures before bundle publication are retained as coverage.
+    Rejected callbacks after publication remain visible in ``dropped_count`` but
+    cannot change the finalized incident.
     """
 
     def __init__(
@@ -1048,11 +1193,12 @@ class TVICRuntimeObservationSink:
         self._max_queue = max_queue
         self._lock = RLock()
         self._drain_lock = RLock()
-        self._queue: deque[TVICObservation | Mapping[str, object]] = deque()
+        self._queue: deque[dict[str, object]] = deque()
         self._closed = False
         self._closing = False
         self._dropped_count = 0
         self._error_code: str | None = None
+        self._routing_error_code: str | None = None
         self._closed_bundle: IncidentBundle | None = None
         self._close_error: BaseException | None = None
         self._close_done = Event()
@@ -1065,10 +1211,17 @@ class TVICRuntimeObservationSink:
     @property
     def error(self) -> str | None:
         with self._lock:
-            return self._error_code
+            # Routing mismatches are observable to the owner, but are not per-call
+            # evidence loss and therefore do not make this incident incomplete.
+            return self._error_code or self._routing_error_code
 
-    def enqueue(self, observation: TVICObservation | Mapping[str, object]) -> None:
-        """Admit without waiting; full or closed queues count a transport loss."""
+    def enqueue(self, observation: TVICObservation | dict[str, object]) -> None:
+        """Admit inert input without waiting; rejection counts as transport loss.
+
+        Losses before the close worker publishes its bundle are included in that
+        incident. Losses after publication are visible through ``dropped_count``
+        only because the finalized artifact cannot be revised.
+        """
 
         with self._lock:
             if self._closed or self._closing:
@@ -1078,8 +1231,7 @@ class TVICRuntimeObservationSink:
                 self._dropped_count += 1
                 return
             try:
-                _preflight_observation(observation)
-                queued_observation = _parse_observation(observation)
+                queued_observation = _snapshot_observation(observation)
             except Exception as error:
                 if self._error_code is None:
                     self._error_code = type(error).__name__
@@ -1106,21 +1258,28 @@ class TVICRuntimeObservationSink:
                 raise ValueError("timeout must be a non-negative finite number")
             deadline = monotonic() + float(timeout)
         admitted = 0
+        processed = 0
         with self._drain_lock:
-            while max_items is None or admitted < max_items:
+            while max_items is None or processed < max_items:
                 if deadline is not None and monotonic() >= deadline:
                     break
                 with self._lock:
                     if not self._queue:
                         break
                     observation = self._queue.popleft()
+                processed += 1
                 try:
                     self._adapter.consume(observation)
+                except _TVICObservationSessionMismatch as error:
+                    with self._lock:
+                        if self._routing_error_code is None:
+                            self._routing_error_code = type(error).__name__
+                    continue
                 except Exception as error:
                     with self._lock:
                         if self._error_code is None:
                             self._error_code = type(error).__name__
-                        self._dropped_count += len(self._queue)
+                        self._dropped_count += len(self._queue) + 1
                         self._queue.clear()
                     break
                 admitted += 1
@@ -1141,15 +1300,17 @@ class TVICRuntimeObservationSink:
             raise ValueError("timeout must be a non-negative finite number")
         deadline = monotonic() + float(timeout)
         with self._lock:
-            if self._closed_bundle is not None:
-                return self._closed_bundle.model_copy(deep=True)
-            if self._close_error is not None:
-                raise self._close_error
-            start_worker = not self._closing
-            if start_worker:
-                self._closing = True
-                self._closed = True
-                self._close_done.clear()
+            closed_bundle = self._closed_bundle
+            if closed_bundle is None:
+                if self._close_error is not None:
+                    raise self._close_error
+                start_worker = not self._closing
+                if start_worker:
+                    self._closing = True
+                    self._closed = True
+                    self._close_done.clear()
+        if closed_bundle is not None:
+            return closed_bundle.model_copy(deep=True)
         if start_worker:
             Thread(target=self._finish_close, name="earshot-tvic-close", daemon=True).start()
         if not self._close_done.wait(timeout=max(0.0, deadline - monotonic())):
@@ -1159,7 +1320,8 @@ class TVICRuntimeObservationSink:
                 raise self._close_error
             if self._closed_bundle is None:
                 raise TVICObservationError("TVIC sink close completed without a bundle")
-            return self._closed_bundle.model_copy(deep=True)
+            closed_bundle = self._closed_bundle
+        return closed_bundle.model_copy(deep=True)
 
     def _finish_close(self) -> None:
         try:
@@ -1199,9 +1361,15 @@ class TVICRuntimeObservationSink:
                     )
                     if not any(item.signal == queue_coverage.signal for item in coverage):
                         coverage = (*coverage, queue_coverage)
-                    bundle = bundle.model_copy(
-                        update={"profile": bundle.profile.model_copy(update={"coverage": coverage})}
+                    profile = bundle.profile.model_copy(
+                        update={
+                            "manifest": bundle.profile.manifest.model_copy(
+                                update={"completeness": "incomplete"}
+                            ),
+                            "coverage": coverage,
+                        }
                     )
+                    bundle = bundle.model_copy(update={"profile": profile})
                 self._closed_bundle = bundle
         except BaseException as error:
             with self._lock:

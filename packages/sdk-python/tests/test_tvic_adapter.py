@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from time import perf_counter, sleep
@@ -15,17 +16,34 @@ from earshot.adapters.tvic import (
 )
 from earshot.analysis import analyze_incident
 from earshot.codec import analysis_input_sha256
-from earshot.contract import UINT64_MAX
+from earshot.contract import UINT64_MAX, IncidentBundle
 from earshot.validation import validate_incident
 
 START = 1_752_800_000_000_000_000
+
+
+class _ObservedMapping(Mapping[str, object]):
+    def __init__(self) -> None:
+        self.accesses = 0
+
+    def __getitem__(self, key: str) -> object:
+        self.accesses += 1
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        self.accesses += 1
+        return iter(())
+
+    def __len__(self) -> int:
+        self.accesses += 1
+        return 0
 
 
 def _observation(
     sequence: int,
     name: str,
     *,
-    at_ms: int,
+    at_ms: int | float,
     fact_id: str | None = None,
     turn_id: str | None = None,
     attributes: dict[str, object] | None = None,
@@ -289,6 +307,25 @@ def test_numeric_bounds_fail_before_recorder_admission() -> None:
         )
 
 
+@pytest.mark.parametrize("as_float", [False, True])
+def test_maximum_millisecond_timestamp_preserves_uint64_range(as_float: bool) -> None:
+    at_ms = UINT64_MAX // 1_000_000
+    observation_at_ms = float(at_ms) if as_float else at_ms
+    started_at_unix_nano = UINT64_MAX - at_ms * 1_000_000 - 615
+    adapter = TVICRuntimeAdapter.create(
+        session_id="tvic-call",
+        started_at_unix_nano=started_at_unix_nano,
+    )
+
+    adapter.consume(_observation(1, "session.start", at_ms=observation_at_ms))
+    bundle = adapter.close()
+
+    event = next(event for event in bundle.profile.events if event.evidence is not None)
+    expected_time = started_at_unix_nano + at_ms * 1_000_000
+    assert event.time.source_time_unix_nano == str(expected_time)
+    assert event.time.monotonic_time_nano == str(at_ms * 1_000_000)
+
+
 def test_concurrent_replay_admission_is_idempotent() -> None:
     adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
     observation = _observation(
@@ -321,6 +358,27 @@ def test_mutated_model_is_revalidated_at_the_adapter_boundary() -> None:
 
     with pytest.raises(TVICObservationError, match="validation failed"):
         adapter.consume(observation)
+
+
+def test_sink_rejects_mutated_model_mapping_before_inspecting_it() -> None:
+    observation = TVICObservation.model_validate(
+        _observation(
+            1,
+            "session.start",
+            at_ms=0,
+            attributes={"agent_id": "agent-a", "channel": "simulated"},
+        )
+    )
+    attributes = _ObservedMapping()
+    object.__setattr__(observation, "attributes", attributes)
+    adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
+    sink = TVICRuntimeObservationSink(adapter)
+
+    sink.enqueue(observation)
+
+    assert attributes.accesses == 0
+    assert sink.error is not None
+    assert sink.dropped_count == 0
 
 
 def test_dispatch_failure_is_not_marked_as_a_successful_replay() -> None:
@@ -435,10 +493,82 @@ def test_sink_filters_invalid_input_and_closes_with_failure_coverage() -> None:
             attributes={"transcript": "must not cross the seam"},
         )
     )
+    assert sink.error is None
+    assert sink.drain() == 0
+    assert sink.dropped_count == 1
     bundle = sink.close()
 
     assert sink.error is not None
     assert any(coverage.signal == "tvic.ingress.failure" for coverage in bundle.profile.coverage)
+
+
+def test_sink_snapshots_mapping_before_deferred_validation() -> None:
+    adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
+    sink = TVICRuntimeObservationSink(adapter)
+    observation = _observation(
+        1,
+        "session.start",
+        at_ms=0,
+        attributes={"agent_id": "agent-a", "channel": "simulated"},
+    )
+    sink.enqueue(observation)
+    attributes = observation["attributes"]
+    assert isinstance(attributes, dict)
+    attributes["channel"] = "unsupported-after-enqueue"
+
+    assert sink.error is None
+    assert sink.drain() == 1
+    assert adapter.accepted_observations == 1
+    assert sink.error is None
+
+
+def test_sink_rejects_custom_mappings_without_executing_them() -> None:
+    adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
+    sink = TVICRuntimeObservationSink(adapter)
+    custom_envelope = _ObservedMapping()
+    custom_attributes = _ObservedMapping()
+    envelope_with_custom_attributes = _observation(1, "session.start", at_ms=0)
+    envelope_with_custom_attributes["attributes"] = custom_attributes
+
+    sink.enqueue(custom_envelope)  # type: ignore[arg-type]
+    sink.enqueue(envelope_with_custom_attributes)
+
+    assert custom_envelope.accesses == 0
+    assert custom_attributes.accesses == 0
+    assert sink.error is not None
+    assert sink.dropped_count == 0
+
+
+def test_sink_keeps_session_facts_after_an_unroutable_runtime_fact() -> None:
+    adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
+    sink = TVICRuntimeObservationSink(adapter)
+    sink.enqueue(
+        _observation(
+            1,
+            "observation.dropped",
+            at_ms=1,
+            attributes={
+                "drop_reason": "pending_session_limit",
+                "dropped_count": 3,
+                "queue_capacity": 256,
+            },
+            session_id="runtime-observation",
+        )
+    )
+    for observation in _complete_observations():
+        sink.enqueue(observation)
+
+    assert sink.drain() == len(_complete_observations())
+    bundle = sink.close()
+
+    assert sink.dropped_count == 0
+    assert sink.error is not None
+    assert adapter.accepted_observations == len(_complete_observations())
+    assert bundle.profile.manifest.completeness == "complete"
+    assert not any(
+        coverage.signal in {"tvic.ingress.queue", "tvic.ingress.failure"}
+        for coverage in bundle.profile.coverage
+    )
 
 
 def test_sink_close_survives_ingress_diagnostic_failure() -> None:
@@ -470,12 +600,53 @@ def test_sink_close_survives_ingress_diagnostic_failure() -> None:
 def test_sink_counts_enqueue_after_close_as_transport_loss() -> None:
     adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
     sink = TVICRuntimeObservationSink(adapter)
-    sink.close()
+    for observation in _complete_observations():
+        sink.enqueue(observation)
+    bundle = sink.close()
     before = sink.dropped_count
 
     sink.enqueue(_complete_observations()[0])
+    repeated_bundle = sink.close()
 
     assert sink.dropped_count == before + 1
+    assert bundle.profile.manifest.completeness == "complete"
+    assert repeated_bundle.profile.manifest.completeness == "complete"
+
+
+def test_sink_close_bundle_copy_does_not_block_runtime_enqueue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
+    sink = TVICRuntimeObservationSink(adapter)
+
+    copy_entered = Event()
+    allow_copy = Event()
+    original_model_copy = IncidentBundle.model_copy
+
+    def blocked_model_copy(
+        bundle: IncidentBundle, *args: object, **kwargs: object
+    ) -> IncidentBundle:
+        copy_entered.set()
+        if not allow_copy.wait(timeout=2):
+            raise TimeoutError("test did not release the bundle copy")
+        return original_model_copy(bundle, *args, **kwargs)
+
+    monkeypatch.setattr(IncidentBundle, "model_copy", blocked_model_copy)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            for sequence in (1, 2):
+                copy_entered.clear()
+                allow_copy.clear()
+                close_result = executor.submit(sink.close)
+                assert copy_entered.wait(timeout=1)
+                enqueue_result = executor.submit(
+                    sink.enqueue, _observation(sequence, "session.resume", at_ms=sequence)
+                )
+                enqueue_result.result(timeout=1)
+                allow_copy.set()
+                close_result.result(timeout=1)
+    finally:
+        allow_copy.set()
 
 
 @pytest.mark.parametrize("loss_kind", ["admission", "queue"])
@@ -760,3 +931,35 @@ def test_sink_reconciles_drops_arriving_during_finalization() -> None:
         coverage for coverage in bundle.profile.coverage if coverage.signal == "tvic.ingress.queue"
     )
     assert queue_coverage.dropped_count == sink.dropped_count == 2
+
+
+def test_sink_marks_zero_to_one_drop_during_finalization_incomplete() -> None:
+    adapter = TVICRuntimeAdapter.create(session_id="tvic-call", started_at_unix_nano=START)
+    original_close = adapter.close
+    entered = Event()
+    release = Event()
+
+    def blocked_close() -> IncidentBundle:
+        entered.set()
+        release.wait(timeout=1)
+        return original_close()
+
+    adapter.close = blocked_close  # type: ignore[method-assign]
+    sink = TVICRuntimeObservationSink(adapter)
+    for observation in _complete_observations():
+        sink.enqueue(observation)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        close_future = executor.submit(sink.close)
+        try:
+            assert entered.wait(timeout=1)
+            sink.enqueue(_observation(5, "session.resume", at_ms=500))
+        finally:
+            release.set()
+        bundle = close_future.result(timeout=1)
+
+    queue_coverage = next(
+        coverage for coverage in bundle.profile.coverage if coverage.signal == "tvic.ingress.queue"
+    )
+    assert queue_coverage.dropped_count == sink.dropped_count == 1
+    assert bundle.profile.manifest.completeness == "incomplete"
