@@ -43,8 +43,14 @@ def _fault(name: str):
 
 
 def test_viewer_fault_explanations_match_current_backend_projection() -> None:
-    viewer_fixtures = (
-        ROOT / "apps" / "viewer" / "src" / "features" / "inspector" / "__fixtures__" / "faults"
+    viewer_fixtures = ROOT.joinpath(
+        "packages",
+        "viewer-ui",
+        "src",
+        "features",
+        "inspector",
+        "__fixtures__",
+        "faults",
     )
     for path in sorted((ROOT / "fixtures" / "faults").glob("*.incident.json")):
         name = path.name.removesuffix(".incident.json")

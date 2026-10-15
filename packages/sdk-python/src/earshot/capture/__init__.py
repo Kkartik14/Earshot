@@ -28,18 +28,22 @@ from .calls import (
     CaptureCallCapacityError,
     CaptureCallClosedError,
     CaptureCallRegistry,
+    CaptureCallReplayExpiredError,
     CaptureDrain,
     CaptureEnd,
     CaptureError,
+    CaptureJournalUnavailableError,
+    CaptureJournalWriterConflictError,
     CaptureSequenceConflictError,
     CaptureSequenceGapError,
     DrainOutcome,
     ResyncClaim,
 )
-from .identity import call_key
+from .identity import CAPTURE_CALL_ID_PREFIX, call_key
 from .source import BrowserCaptureReport, BrowserCaptureSource
 
 __all__ = [
+    "CAPTURE_CALL_ID_PREFIX",
     "END_CALL_ENDED",
     "RECOVERY_METHOD",
     "RECOVERY_REASON_SEALED",
@@ -49,9 +53,12 @@ __all__ = [
     "CaptureCallCapacityError",
     "CaptureCallClosedError",
     "CaptureCallRegistry",
+    "CaptureCallReplayExpiredError",
     "CaptureDrain",
     "CaptureEnd",
     "CaptureError",
+    "CaptureJournalUnavailableError",
+    "CaptureJournalWriterConflictError",
     "CaptureSequenceConflictError",
     "CaptureSequenceGapError",
     "DrainOutcome",

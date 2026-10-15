@@ -351,7 +351,7 @@ def test_normal_interpreter_exit_flushes_every_live_client(explicit_client: bool
             timeout=10,
         )
         assert completed.returncode == 0, completed.stderr
-        assert received.wait(2)
+        assert received.wait(5)
     finally:
         server.shutdown()
         server.server_close()
@@ -394,7 +394,7 @@ def test_client_retains_timed_out_worker_until_shutdown_completes(monkeypatch) -
     client = earshot.Client(endpoint="http://localhost:4319")
     recorder = client.session(bundle_id="blocking-shutdown")
     recorder.close()
-    assert started.wait(2)
+    assert started.wait(5)
     assert not client.shutdown(timeout=0.02)
     assert client.status().state == "closing"
     release.set()

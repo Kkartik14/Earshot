@@ -64,6 +64,44 @@ _CAPTURE_NETWORK_TYPES = frozenset(
 _CAPTURE_PERMISSION_STATES = frozenset({"granted", "denied", "prompt"})
 _CAPTURE_CONTEXT_STATES = frozenset({"running", "suspended", "closed", "interrupted"})
 
+# Browser-client coverage is metadata too: its field values can otherwise act as
+# a free-form text channel even when the structure and lengths are bounded. The
+# hosted API admits only the finite values produced by the browser package.
+HOSTED_CAPTURE_COVERAGE_SIGNALS = frozenset(
+    {
+        "webrtc.snapshots",
+        "device.events",
+        "webrtc.getstats",
+        "webrtc.getstats_overlap",
+        "device.permission_query",
+        "audio.render_timing",
+        "capture.coverage",
+        "webrtc.audio_decode_time",
+        "webrtc.processing_delay",
+        "webrtc.playout",
+        "capture.upload",
+    }
+)
+HOSTED_CAPTURE_COVERAGE_REASONS = frozenset(
+    {
+        "buffer_overflow_oldest_dropped",
+        "getstats_failed",
+        "overlapping_sample_skipped",
+        "permission_query_failed",
+        "output_timestamp_unpopulated",
+        "coverage_buffer_overflow",
+        "getoutputtimestamp_unavailable",
+        "decode_time_is_video_only_in_w3c_stats",
+        "member_not_exposed",
+        "media_playout_stat_not_exposed",
+        "upload_failed_payload_dropped",
+        "upload_queue_overflow_oldest_dropped",
+    }
+)
+HOSTED_CAPTURE_RESYNC_REASONS = frozenset(
+    {"client_buffer_overflow", "upload_failed_payload_dropped"}
+)
+
 # How each governed stat member is validated. A member absent from this table is
 # not governed and is dropped; there is no pass-through path.
 _CAPTURE_STAT_MEMBER_KINDS: dict[str, str] = {

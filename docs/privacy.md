@@ -160,14 +160,21 @@ metadata.
 
 The store indexes the earliest absolute expiry or creation-time-plus-TTL across all
 captured classes. Because the artifact is immutable, the most restrictive retained
-class expires the whole bundle. Expiry is enforced on startup and before reads,
-analysis access, and listings—not merely by an optional maintenance job.
+class expires the whole bundle. Expired bundles are rejected at every direct read and
+excluded from incident, Turn Fact, and summary queries. The API lifespan runs a
+bounded reaper that removes expired rows and artifacts without making a listing wait for
+the full expiry backlog. Its interval and batch size can be set with
+`EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS` and
+`EARSHOT_RETENTION_CLEANUP_BATCH_SIZE`.
 
 SQLite uses `secure_delete=ON`, full synchronous writes, WAL checkpoint/truncation,
-`VACUUM`, file/directory fsync, and CAS unlinking. This is best-effort file-level
-erasure, not a physical-media guarantee: copy-on-write filesystems, SSD wear leveling,
-snapshots, and backups may retain old blocks. Deployments requiring a stronger claim
-must encrypt artifacts with disposable per-tenant or per-retention-domain keys and
+file/directory fsync, and CAS unlinking. The reaper compacts SQLite once its current
+expiry backlog drains, outside the cross-process mutation lock. A separate compaction
+lock coalesces scrub work across store workers, and a durable scrub generation causes a
+later pass to retry if compaction fails. This is best-effort
+file-level erasure, not a physical-media guarantee: copy-on-write filesystems, SSD wear
+leveling, snapshots, and backups may retain old blocks. Deployments requiring a stronger
+claim must encrypt artifacts with disposable per-tenant or per-retention-domain keys and
 govern snapshots/backups separately.
 
 The SDK's optional checkpoint directory (`checkpoint_dir` / `EARSHOT_CHECKPOINT_DIR`) is

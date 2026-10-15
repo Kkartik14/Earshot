@@ -1,0 +1,73 @@
+.chooser {
+  min-width: 0;
+  padding: 28px 24px;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.header p {
+  margin: 8px 0 20px;
+  color: var(--tx-low);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.list {
+  display: grid;
+  gap: 8px;
+  max-width: 760px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.link {
+  display: grid;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+  text-decoration: none;
+}
+
+.more {
+  width: min(100%, 760px);
+  color: var(--tx);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.link:hover {
+  border-color: var(--acc);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+.title {
+  color: var(--tx);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.meta {
+  color: var(--tx-low);
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.error {
+  max-width: 760px;
+  margin: 12px 0;
+  color: var(--crit);
+  font-size: 13px;
+}

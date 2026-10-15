@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
+import json
 import threading
 import time
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -24,7 +27,7 @@ from earshot.checkpoint.uploader import (
     DIAGNOSTIC_FRAME_UNDELIVERABLE,
     OFFSET_SUFFIX,
 )
-from earshot.live import LiveConfig, LiveSessionRegistry
+from earshot.live import CheckpointSequenceError, LiveConfig, LiveSessionRegistry
 from earshot.recorder import IncidentRecorder
 
 pytestmark = pytest.mark.unit
@@ -72,6 +75,63 @@ def test_uploaded_batches_reassemble_into_the_same_live_session(tmp_path: Path) 
     assert summary.bundle_id == "b-1"
     assert summary.last_sequence == 3
     assert uploader.status().batches == 2
+    writer.release()
+
+
+def test_restarted_backend_recovers_from_a_persisted_upload_offset(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(
+        session_id="s-restarted", bundle_id="b-restarted", checkpoint=writer
+    )
+    recorder.add_participant("caller", role="caller")
+    path = _journal(tmp_path)
+
+    first_registry = LiveSessionRegistry()
+    first_uploader = CheckpointUploader("http://127.0.0.1:9/", path, "s-restarted")
+    first_uploader._post = lambda batch: first_registry.accept_frames(  # type: ignore[method-assign]
+        "s-restarted", batch, project_id="p"
+    )
+    while first_uploader.flush():
+        pass
+    accepted_offset = path.with_name(path.name + OFFSET_SUFFIX).read_text()
+    assert int(accepted_offset) == path.stat().st_size
+
+    recorder.record_event("earshot.turn.start", turn_id="after-backend-restart")
+    restarted_registry = LiveSessionRegistry()
+    restarted_uploader = CheckpointUploader("http://127.0.0.1:9/", path, "s-restarted")
+
+    def post(batch: bytes) -> None:
+        try:
+            restarted_registry.accept_frames("s-restarted", batch, project_id="p")
+        except CheckpointSequenceError as error:
+            body = json.dumps(
+                {
+                    "error": {
+                        "code": "EARSHOT_CHECKPOINT_SEQUENCE_GAP",
+                        "issues": [
+                            {
+                                "path": ["expected_sequence"],
+                                "message": str(error.expected_sequence),
+                            }
+                        ],
+                    }
+                }
+            ).encode()
+            raise urllib.error.HTTPError(
+                restarted_uploader.endpoint,
+                409,
+                "Conflict",
+                {},
+                io.BytesIO(body),
+            ) from error
+
+    restarted_uploader._post = post  # type: ignore[method-assign]
+    while restarted_uploader.flush():
+        pass
+
+    assert restarted_uploader.status().state == "ready"
+    assert restarted_registry.summary("s-restarted", project_id="p").last_sequence == 3
+    assert int(path.with_name(path.name + OFFSET_SUFFIX).read_text()) == path.stat().st_size
     writer.release()
 
 

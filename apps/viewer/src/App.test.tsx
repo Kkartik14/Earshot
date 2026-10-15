@@ -1,11 +1,11 @@
 import { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { notifyViewerSessionInvalid } from "@earshot/viewer-ui";
 import { App } from "./App";
-import { notifyViewerSessionInvalid } from "./api/client";
 import { renderWithProviders } from "./test/utils";
 
-vi.mock("./api/hooks", () => ({
+vi.mock("@earshot/viewer-ui/api/hooks", () => ({
   useIncidents: () => ({
     isPending: false,
     isError: false,
@@ -47,6 +47,7 @@ describe("App", () => {
           authenticated: false,
           authentication_required: false,
           project_id: "default",
+          auth_context_id: "anonymous-default",
           csrf_token: null,
           expires_in_seconds: null,
         }),
@@ -70,6 +71,7 @@ describe("App", () => {
         new Response(
           JSON.stringify({
             project_id: "default",
+            auth_context_id: "auth-context-1",
             csrf_token: "csrf-token",
             expires_in_seconds: 3600,
           }),
@@ -98,13 +100,14 @@ describe("App", () => {
           authenticated: true,
           authentication_required: true,
           project_id: "default",
+          auth_context_id: "auth-context-expiry",
           csrf_token: "csrf-from-session",
           expires_in_seconds: 3600,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
-    const clear = vi.spyOn(QueryClient.prototype, "clear");
+    const removeQueries = vi.spyOn(QueryClient.prototype, "removeQueries");
     renderWithProviders(<App />);
     await screen.findByRole("heading", { name: "Fleet metrics" });
 
@@ -117,7 +120,7 @@ describe("App", () => {
     expect(
       screen.getByText("Your viewer session expired. Sign in again."),
     ).toBeInTheDocument();
-    expect(clear).toHaveBeenCalledTimes(1);
+    expect(removeQueries).toHaveBeenCalledWith({ queryKey: ["earshot"] });
   });
 
   it("logs out with the in-memory CSRF token", async () => {
@@ -129,6 +132,7 @@ describe("App", () => {
             authenticated: true,
             authentication_required: true,
             project_id: "default",
+            auth_context_id: "auth-context-logout",
             csrf_token: "csrf-from-session",
             expires_in_seconds: 3600,
           }),
@@ -154,6 +158,7 @@ describe("App", () => {
             authenticated: true,
             authentication_required: true,
             project_id: "default",
+            auth_context_id: "auth-context-logout-failure",
             csrf_token: "csrf-from-session",
             expires_in_seconds: 3600,
           }),

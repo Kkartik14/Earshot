@@ -1,0 +1,46 @@
+.page {
+  height: 100%;
+  overflow: auto;
+  padding: 28px;
+  color: var(--tx);
+}
+
+.eyebrow,
+.source {
+  color: var(--tx-mid);
+  font-size: 11px;
+}
+
+.title {
+  overflow-wrap: anywhere;
+  margin: 5px 0 20px;
+  font: 18px var(--mono);
+}
+
+.panel {
+  max-width: 760px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.panel h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.panel p {
+  color: var(--tx-mid);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.code {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+}
+
+.source {
+  margin-bottom: 0;
+}

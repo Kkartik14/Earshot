@@ -108,8 +108,9 @@ class.
 - CAS cleanup cannot race an in-flight ingest; startup reconciliation repairs derived
   graph/export/retention projections but preserves unreferenced evidence for explicit
   operator review. Missing catalog + nonempty CAS fails closed.
-- Expired incidents are purged on startup/read/list and cannot be returned in the
-  interval before a maintenance job runs.
+- Expired incidents are never returned from catalog, Turn Fact, or summary queries;
+  direct reads purge their target, and the API reaper physically removes expired data
+  in bounded batches between requests.
 - Secure purge scans find no sentinel in SQLite/WAL or live CAS files, subject to the
   physical-media caveats in the privacy document.
 - Duplicate JSON keys, invalid constants, excessive nesting, body overflow, malformed

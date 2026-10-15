@@ -185,6 +185,43 @@ function zeroAvailability(): SignalAvailability {
   };
 }
 
+/** Capture payloads are JSON wire values; copy them so callers cannot mutate a cached final drain. */
+function copyCapturePayload(payload: CapturePayload): CapturePayload {
+  return JSON.parse(JSON.stringify(payload)) as CapturePayload;
+}
+
+class DropOldestBuffer<T> {
+  private readonly items: Array<T | undefined>;
+  private head = 0;
+  private count = 0;
+
+  constructor(private readonly capacity: number) {
+    this.items = new Array<T | undefined>(capacity);
+  }
+
+  push(item: T): boolean {
+    if (this.count < this.capacity) {
+      this.items[(this.head + this.count) % this.capacity] = item;
+      this.count += 1;
+      return false;
+    }
+    this.items[this.head] = item;
+    this.head = (this.head + 1) % this.capacity;
+    return true;
+  }
+
+  drain(): T[] {
+    const result = new Array<T>(this.count);
+    for (let index = 0; index < this.count; index += 1) {
+      result[index] = this.items[(this.head + index) % this.capacity]!;
+    }
+    this.items.fill(undefined);
+    this.head = 0;
+    this.count = 0;
+    return result;
+  }
+}
+
 export class EarshotBrowserRecorder {
   readonly sessionId: string;
   readonly clockDomainId: string;
@@ -201,14 +238,16 @@ export class EarshotBrowserRecorder {
   private readonly captureVersion: CaptureVersion;
   private readonly capturerStartedAtMs: number;
 
-  private snapshots: WebRtcSnapshot[] = [];
-  private deviceEvents: DeviceEvent[] = [];
+  private readonly snapshots: DropOldestBuffer<WebRtcSnapshot>;
+  private readonly deviceEvents: DropOldestBuffer<DeviceEvent>;
   private counters: CoverageCounters = zeroCounters();
   private availability: SignalAvailability = zeroAvailability();
   private pendingCoverage: CaptureCoverage[] = [];
   private audioContext: AudioContextLike | null = null;
   private readonly teardowns: Array<() => void> = [];
   private stopped = false;
+  /** Exact terminal payload replayed by later `drain()` / `endCall()` calls. */
+  private finalPayload: CapturePayload | undefined;
   /** 1-based, monotonic per recorder; assigned inside `drain()` under version 2. */
   private drainSequence = 0;
 
@@ -228,6 +267,8 @@ export class EarshotBrowserRecorder {
       options.maxDeviceEvents,
       DEFAULT_MAX_DEVICE_EVENTS,
     );
+    this.snapshots = new DropOldestBuffer(this.maxSnapshots);
+    this.deviceEvents = new DropOldestBuffer(this.maxDeviceEvents);
     this.clockUncertaintyMs = this.nonNegativeOption(
       options.clockUncertaintyMs,
       DEFAULT_CLOCK_UNCERTAINTY_MS,
@@ -465,13 +506,14 @@ export class EarshotBrowserRecorder {
    * stopped, stamped in the same raw clock domain; ordinary drains do not close it.
    */
   drain(options: DrainOptions = {}): CapturePayload {
+    if (this.finalPayload) return copyCapturePayload(this.finalPayload);
     const payload: CapturePayload = {
       captureVersion: this.captureVersion,
       sessionId: this.sessionId,
       traceContext: this.trace,
       clockDomain: this.clockDomain(),
-      snapshots: this.snapshots,
-      deviceEvents: this.deviceEvents,
+      snapshots: this.snapshots.drain(),
+      deviceEvents: this.deviceEvents.drain(),
       coverage: this.buildCoverage(),
     };
     if (this.captureVersion === CONTINUOUS_CAPTURE_VERSION) {
@@ -488,20 +530,41 @@ export class EarshotBrowserRecorder {
         payload.end = { reason: options.end, timestampMs: this.clock() };
       }
     }
-    this.snapshots = [];
-    this.deviceEvents = [];
     this.counters = zeroCounters();
     this.availability = zeroAvailability();
     this.pendingCoverage = [];
+    if (
+      this.captureVersion === CONTINUOUS_CAPTURE_VERSION &&
+      options.end === "call_ended"
+    ) {
+      this.finalPayload = copyCapturePayload(payload);
+      this.stop();
+    }
     return payload;
   }
 
-  /** Flush a final drain with `call_ended`, then stop sampling. This explicit
-   * application signal closes a version 2 call; `stop()` and page lifecycle
-   * flushes do not. Version 1 simply drains and stops. Returns the payload to POST.
+  /**
+   * End the call: flush a FINAL drain declaring an explicit, application-observed
+   * close (`end.reason === "call_ended"`), then stop sampling. This is the one
+   * signal that finalizes a continuous capture — the server writes the journal's
+   * finalize frame at the observed coordinate and the sealed artifact is `final`,
+   * with a real, same-clock-domain call duration.
+   *
+   * It is deliberately distinct from `stop()`: the application is the best-placed
+   * observer of a browser call's end, so ending the call is an explicit act it
+   * takes, never something inferred from a lifecycle hook. `stop()`, `pagehide`,
+   * and `visibilitychange` tear the observer down without ending the call, and the
+   * server keeps such a call provisional forever.
+   *
+   * Returns the final payload for the caller to POST. Repeated calls, and later
+   * drains, replay that same payload so duplicate close notifications cannot
+   * create a post-finalization sequence. On a `captureVersion: 1` recorder there
+   * is no continuous call to close, so this drains and stops without an end signal.
    */
   endCall(): CapturePayload {
+    if (this.finalPayload) return copyCapturePayload(this.finalPayload);
     const payload = this.drain({ end: "call_ended" });
+    if (!this.finalPayload) this.finalPayload = copyCapturePayload(payload);
     this.stop();
     return payload;
   }
@@ -532,19 +595,11 @@ export class EarshotBrowserRecorder {
   }
 
   private pushSnapshot(snapshot: WebRtcSnapshot): void {
-    if (this.snapshots.length >= this.maxSnapshots) {
-      this.snapshots.shift(); // drop the OLDEST, keep the most recent window
-      this.counters.droppedSnapshots += 1;
-    }
-    this.snapshots.push(snapshot);
+    if (this.snapshots.push(snapshot)) this.counters.droppedSnapshots += 1;
   }
 
   private pushDeviceEvent(event: DeviceEvent): void {
-    if (this.deviceEvents.length >= this.maxDeviceEvents) {
-      this.deviceEvents.shift();
-      this.counters.droppedDeviceEvents += 1;
-    }
-    this.deviceEvents.push(event);
+    if (this.deviceEvents.push(event)) this.counters.droppedDeviceEvents += 1;
   }
 
   private buildCoverage(): CaptureCoverage[] {

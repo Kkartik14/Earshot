@@ -1,0 +1,28 @@
+.shell {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  height: 100vh;
+}
+
+.main {
+  min-width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+}
+
+.shell[data-embedded="true"] {
+  display: block;
+  height: auto;
+  min-height: 0;
+}
+
+.main[data-embedded="true"] {
+  overflow: visible;
+  border-left: 0;
+}
+
+@media (max-width: 640px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}

@@ -5,7 +5,9 @@ image="earshot:smoke"
 container="earshot-smoke-$$"
 volume="earshot-smoke-data-$$"
 port="${EARSHOT_SMOKE_PORT:-14319}"
-token="container-smoke-token"
+# Use an actual high-entropy credential for the authenticated service smoke; do
+# not normalize a known placeholder token into production configuration.
+token="$(openssl rand -hex 32)"
 
 cleanup() {
   docker rm --force "$container" >/dev/null 2>&1 || true
@@ -79,6 +81,18 @@ persisted="$(curl --silent --output /dev/null --write-out '%{http_code}' \
 test "$created" = "201"
 test "$persisted" = "200"
 
+reference_created="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  --request PUT \
+  --header "Authorization: Bearer $token" \
+  --header "Content-Type: application/json" \
+  --data '{"external_id":"call_smoke_01"}' \
+  "http://127.0.0.1:$port/v1/incidents/fixture-minimal/references/platform/call")"
+references="$(curl --fail --silent --show-error \
+  --header "Authorization: Bearer $token" \
+  "http://127.0.0.1:$port/v1/incidents/fixture-minimal/references")"
+test "$reference_created" = "200"
+printf '%s' "$references" | grep --quiet 'call_smoke_01'
+
 docker rm --force "$container" >/dev/null
 start_container
 wait_until_ready
@@ -87,3 +101,7 @@ after_replacement="$(curl --silent --output /dev/null --write-out '%{http_code}'
   --header "Authorization: Bearer $token" \
   "http://127.0.0.1:$port/v1/incidents/fixture-minimal")"
 test "$after_replacement" = "200"
+persisted_references="$(curl --fail --silent --show-error \
+  --header "Authorization: Bearer $token" \
+  "http://127.0.0.1:$port/v1/incidents/fixture-minimal/references")"
+printf '%s' "$persisted_references" | grep --quiet 'call_smoke_01'
