@@ -41,13 +41,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..checkpoint.framing import scan_frames
+from ..checkpoint.reader import JournalReader
 from ..checkpoint.records import (
-    JournalFormatError,
-    JournalOpen,
+    JournalEntry,
     JournalOperationOpen,
     JournalRecordEntry,
-    decode_entry,
 )
 from ..contract import TimePoint
 from ..engines.base import BrowserClockDomain
@@ -69,20 +67,20 @@ from .durable import (
     discard_rejected_first_drain,
     iter_sidecars,
     journal_path,
-    max_fact_sequence,
+    max_fact_sequence_from_entries,
     prune_sealed_sidecars,
     read_sidecar,
     recover_pending_sidecar,
     release_writer_lock,
     remove_sealed_journal,
-    replay_coverage,
+    replay_coverage_from_entries,
     sidecar_path,
     write_sidecar,
 )
 from .identity import call_key as derive_call_key
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, avoids importing live at module load
-    from ..live import LiveSessionRegistry
+    from ..live import LiveSealSnapshot, LiveSessionRegistry
 
 _NANOS_PER_MS = 1_000_000
 
@@ -336,6 +334,41 @@ class DrainOutcome:
     finalized: bool = False
 
 
+@dataclass(frozen=True)
+class _MemoryCallCheckpoint:
+    """Small pre-drain state needed to recover after a rejected memory append."""
+
+    call_metadata_digest: str
+    call_metadata_bound: bool
+    applied: int
+    digests: OrderedDict[int, str]
+    digest_versions: OrderedDict[int, int]
+    outcomes: OrderedDict[int, DrainOutcome]
+    identity_declared: bool
+    first_observed_ms: float | None
+    last_observed_ms: float | None
+    lossy: bool
+    finalized: bool
+    restarted: bool
+    carry: WebRtcCarry | None
+    retry_sequence: int | None
+    retry_digest: str | None
+    retry_digest_version: int | None
+    record_limit_refusal: tuple[int, str, int] | None
+    intent_pending: bool
+    writer_checkpoint: Any
+    recorder_checkpoint: Any
+    turn_cursor_ms: float
+    turn_max_ms: float
+    turn_sequence: int
+    turn_speech_end_ms: float | None
+    session_cursor_nano: int
+    session_turn_origins_nano: tuple[int, ...]
+    session_turn_ids: frozenset[str]
+    session_clock_domain_observers: tuple[tuple[str, str], ...]
+    session_closed: bool
+
+
 class CaptureCall:
     """One continuous call: its recorder, its turn, its carry, its sequencing."""
 
@@ -360,7 +393,10 @@ class CaptureCall:
         self._durable_path = (
             None if self._journal_dir is None else journal_path(self._journal_dir, self.call_key)
         )
-        self.lock = threading.Lock()
+        # ``process`` checkpoints while holding this lock and delegates to a
+        # lock-taking projection method. Reentrancy keeps the public operation
+        # atomic without exposing an unlocked call-level checkpoint API.
+        self.lock = threading.RLock()
         self._domain = BrowserClockDomain(
             clock_domain_id=drain.clock_domain_id,
             kind=_CAPTURE_CLOCK_KIND,
@@ -424,17 +460,90 @@ class CaptureCall:
         self._retry_digest: str | None = None
         self._retry_digest_version: int | None = None
         self._intent_pending = False
+        # A refusal fence remains the fail-closed fallback if an accepted memory
+        # prefix cannot be reconstructed after the live registry rejects a drain.
+        self._record_limit_refusal: tuple[int, str, int] | None = None
 
     @property
     def finalized(self) -> bool:
         return self._finalized
+
+    def memory_checkpoint(self) -> _MemoryCallCheckpoint:
+        """Capture call-level state before a speculative projection."""
+
+        with self.lock:
+            return _MemoryCallCheckpoint(
+                call_metadata_digest=self._call_metadata_digest,
+                call_metadata_bound=self._call_metadata_bound,
+                applied=self._applied,
+                digests=self._digests.copy(),
+                digest_versions=self._digest_versions.copy(),
+                outcomes=self._outcomes.copy(),
+                identity_declared=self._identity_declared,
+                first_observed_ms=self._first_observed_ms,
+                last_observed_ms=self._last_observed_ms,
+                lossy=self._lossy,
+                finalized=self._finalized,
+                restarted=self._restarted,
+                carry=self.carry,
+                retry_sequence=self._retry_sequence,
+                retry_digest=self._retry_digest,
+                retry_digest_version=self._retry_digest_version,
+                record_limit_refusal=self._record_limit_refusal,
+                intent_pending=self._intent_pending,
+                writer_checkpoint=self.writer.rollback_checkpoint(),
+                recorder_checkpoint=self.session.recorder.rollback_checkpoint(),
+                turn_cursor_ms=self.turn._cursor_ms,
+                turn_max_ms=self.turn._max_ms,
+                turn_sequence=self.turn._sequence,
+                turn_speech_end_ms=self.turn._speech_end_ms,
+                session_cursor_nano=self.session._cursor_nano,
+                session_turn_origins_nano=tuple(self.session._turn_origins_nano),
+                session_turn_ids=frozenset(self.session._turn_ids),
+                session_clock_domain_observers=tuple(self.session._clock_domain_observers.items()),
+                session_closed=self.session._closed,
+            )
+
+    def rollback_memory_checkpoint(self, checkpoint: _MemoryCallCheckpoint) -> None:
+        """Undo a failed memory append without replaying or copying the prefix."""
+
+        with self.lock:
+            self._call_metadata_digest = checkpoint.call_metadata_digest
+            self._call_metadata_bound = checkpoint.call_metadata_bound
+            self._applied = checkpoint.applied
+            self._digests = checkpoint.digests.copy()
+            self._digest_versions = checkpoint.digest_versions.copy()
+            self._outcomes = checkpoint.outcomes.copy()
+            self._identity_declared = checkpoint.identity_declared
+            self._first_observed_ms = checkpoint.first_observed_ms
+            self._last_observed_ms = checkpoint.last_observed_ms
+            self._lossy = checkpoint.lossy
+            self._finalized = checkpoint.finalized
+            self._restarted = checkpoint.restarted
+            self.carry = checkpoint.carry
+            self._retry_sequence = checkpoint.retry_sequence
+            self._retry_digest = checkpoint.retry_digest
+            self._retry_digest_version = checkpoint.retry_digest_version
+            self._intent_pending = checkpoint.intent_pending
+            self._record_limit_refusal = None
+            self.writer.restore_rollback_checkpoint(checkpoint.writer_checkpoint)
+            self.session.recorder.restore_rollback_checkpoint(checkpoint.recorder_checkpoint)
+            self.turn._cursor_ms = checkpoint.turn_cursor_ms
+            self.turn._max_ms = checkpoint.turn_max_ms
+            self.turn._sequence = checkpoint.turn_sequence
+            self.turn._speech_end_ms = checkpoint.turn_speech_end_ms
+            self.session._cursor_nano = checkpoint.session_cursor_nano
+            self.session._turn_origins_nano = list(checkpoint.session_turn_origins_nano)
+            self.session._turn_ids = set(checkpoint.session_turn_ids)
+            self.session._clock_domain_observers = dict(checkpoint.session_clock_domain_observers)
+            self.session._closed = checkpoint.session_closed
 
     @classmethod
     def rebuild(
         cls,
         drain: CaptureDrain,
         sidecar: CaptureSidecar,
-        journal_path_on_disk: Path,
+        entries: Sequence[JournalEntry],
         *,
         journal_dir: Path,
         finalized: bool,
@@ -475,6 +584,7 @@ class CaptureCall:
         # both are already durable and in the rebuilt live session, so appending
         # them again would duplicate frames.
         call.writer.take_new()
+        call.writer.restore_sequence(len(entries))
         call._applied = sidecar.applied
         call._digests = OrderedDict(sorted(sidecar.digests.items()))
         call._digest_versions = OrderedDict(sorted(sidecar.digest_versions.items()))
@@ -488,8 +598,8 @@ class CaptureCall:
         call._identity_declared = True
         call.carry = None
         call._restarted = True
-        call.turn._sequence = max_fact_sequence(journal_path_on_disk)
-        call.session.recorder._coverage = replay_coverage(journal_path_on_disk) or []
+        call.turn._sequence = max_fact_sequence_from_entries(entries)
+        call.session.recorder._coverage = replay_coverage_from_entries(entries)
         return call
 
     @classmethod
@@ -646,13 +756,50 @@ class CaptureCall:
         except FileNotFoundError:
             return 0
 
-    # -- projection ------------------------------------------------------------
-
     def process(self, drain: CaptureDrain, live: LiveSessionRegistry) -> DrainOutcome:
+        """Atomically project one drain, rolling back rejected memory appends."""
+
+        from ..live import LiveCapacityError, LiveCaptureJournalLimitError
+
+        with self.lock:
+            checkpoint = self.memory_checkpoint() if self._journal_dir is None else None
+            digest_version = self._digest_version_for(drain)
+            refusal = (
+                drain.drain_sequence,
+                drain.digest(version=digest_version),
+                digest_version,
+            )
+            try:
+                return self._process_drain(drain, live)
+            except (LiveCapacityError, LiveCaptureJournalLimitError) as error:
+                if checkpoint is None:
+                    raise
+                try:
+                    self.rollback_memory_checkpoint(checkpoint)
+                except Exception as rollback_error:
+                    self._record_limit_refusal = refusal
+                    self._finalized = True
+                    raise CaptureJournalUnavailableError(
+                        "the rejected capture drain could not be rolled back safely"
+                    ) from rollback_error
+                if isinstance(error, LiveCaptureJournalLimitError):
+                    self._record_limit_refusal = refusal
+                raise
+
+    def _process_drain(self, drain: CaptureDrain, live: LiveSessionRegistry) -> DrainOutcome:
         """Sequence, project, journal and append one drain. Holds the call lock."""
+
+        from ..live import LiveCaptureJournalLimitError
 
         with self.lock:
             decision = self._classify(drain)
+            refusal = self._record_limit_refusal
+            if refusal is not None and drain.drain_sequence == refusal[0]:
+                if drain.digest(version=refusal[2]) == refusal[1]:
+                    raise LiveCaptureJournalLimitError(
+                        "capture journal would exceed its configured record limit"
+                    )
+                self._record_limit_refusal = None
             # A retry of an already-applied drain -- including the endCall drain
             # itself -- is an idempotent no-op that echoes the stored outcome, even
             # after the call finalized. Only a genuinely NEW drain is refused once
@@ -663,7 +810,7 @@ class CaptureCall:
                 # A replay of a drain applied before a restart: its outcome was not
                 # persisted, so echo the call's current live state rather than a
                 # stored one. It is still a replay -- nothing is re-journaled.
-                return self._replay_outcome(live)
+                return self._replay_outcome(live, drain.drain_sequence)
             if self._finalized:
                 raise CaptureCallClosedError(
                     "this call was ended by an explicit endCall() and accepts no more drains"
@@ -784,6 +931,19 @@ class CaptureCall:
                     self._persist_sidecar()
                     self._intent_pending = False
 
+            def restore_capture_state() -> None:
+                self._first_observed_ms, self._last_observed_ms = previous_observed
+                self._lossy = previous_lossy
+                self._digests = previous_digests
+                self._digest_versions = previous_digest_versions
+                self._applied = previous_applied
+                self._finalized = previous_finalized
+                (
+                    self._retry_sequence,
+                    self._retry_digest,
+                    self._retry_digest_version,
+                ) = previous_retry
+
             try:
                 accepted = live.accept_records(
                     self.call_key,
@@ -797,17 +957,7 @@ class CaptureCall:
                     ),
                 )
             except OSError as error:
-                self._first_observed_ms, self._last_observed_ms = previous_observed
-                self._lossy = previous_lossy
-                self._digests = previous_digests
-                self._digest_versions = previous_digest_versions
-                self._applied = previous_applied
-                self._finalized = previous_finalized
-                (
-                    self._retry_sequence,
-                    self._retry_digest,
-                    self._retry_digest_version,
-                ) = previous_retry
+                restore_capture_state()
                 raise CaptureJournalUnavailableError(
                     "the durable capture journal could not append this drain"
                 ) from error
@@ -827,7 +977,7 @@ class CaptureCall:
             self._remember_outcome(drain.drain_sequence, outcome)
             return outcome
 
-    def _replay_outcome(self, live: LiveSessionRegistry) -> DrainOutcome:
+    def _replay_outcome(self, live: LiveSessionRegistry, drain_sequence: int) -> DrainOutcome:
         """Echo the call's current live state for a pre-restart drain's replay.
 
         A drain applied before a restart has no stored outcome to echo, but it is
@@ -859,6 +1009,7 @@ class CaptureCall:
             accepted_snapshots=0,
             accepted_device_events=0,
             accepted_coverage=0,
+            finalized=self._finalized and drain_sequence == self._applied,
         )
 
     def _journal_facts(self, drain: CaptureDrain) -> None:
@@ -903,8 +1054,6 @@ class CaptureCall:
                 self._first_observed_ms = reading
             if self._last_observed_ms is None or reading > self._last_observed_ms:
                 self._last_observed_ms = reading
-
-    # -- end of call -----------------------------------------------------------
 
     def _record_end(self, end: CaptureEnd) -> None:
         """Handle a declared end: finalize on ``call_ended``, ledger the extent else.
@@ -1040,29 +1189,29 @@ def _capture_journal_entries(
     *,
     call_key: str,
     max_frame_bytes: int,
-) -> list[object]:
+) -> list[JournalEntry]:
     """Decode a complete durable call journal before any live replay or append."""
 
-    scan = scan_frames(journal_bytes, max_body_bytes=max_frame_bytes)
-    if not scan.frames or scan.torn_tail_bytes or scan.stop_reason is not None:
-        raise ValueError("capture journal is not a complete frame sequence")
     try:
-        entries = [decode_entry(frame.body) for frame in scan.frames]
-    except JournalFormatError as error:
-        raise ValueError("capture journal contains an unreadable entry") from error
+        replay = JournalReader("<capture-journal>", max_frame_bytes=max_frame_bytes).read_bytes(
+            journal_bytes
+        )
+    except ValueError as error:
+        raise ValueError("capture journal has no readable header") from error
+    if replay.torn_tail_bytes or replay.stop_reason is not None:
+        raise ValueError("capture journal is not a complete frame sequence")
 
-    header = entries[0]
+    header = replay.header
     expected_journal_id = hashlib.sha256(
         b"earshot.capture.journal:" + call_key.encode("utf-8", errors="surrogatepass")
     ).hexdigest()[:32]
     if (
-        not isinstance(header, JournalOpen)
-        or header.session_id != call_key
+        header.session_id != call_key
         or header.bundle_id != call_key
         or header.journal_id != expected_journal_id
     ):
         raise ValueError("capture journal header does not match its call")
-    return entries
+    return [header, *replay.entries]
 
 
 def _legacy_call_metadata_from_journal(
@@ -1167,6 +1316,7 @@ class CaptureCallRegistry:
         )
         self._writer_lock_fd: int | None = None
         self._writer_lock_error: OSError | None = None
+        self._writer_directory_identity: tuple[int, int] | None = None
         self._correlation_key_id = correlation_key_id
         self._correlation_state_error: OSError | None = None
         self._hosted_inventory_error: OSError | None = None
@@ -1174,10 +1324,29 @@ class CaptureCallRegistry:
         self._hosted_inventory_failed_identity: tuple[int, int] | None = None
         if self._journal_dir is not None:
             try:
+                directory_stat = self._journal_dir.lstat()
+                if not stat.S_ISDIR(directory_stat.st_mode):
+                    raise OSError("capture journal path is not a real directory")
+                directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
                 self._writer_lock_fd = acquire_writer_lock(self._journal_dir, create=False)
+                confirmed_stat = self._journal_dir.lstat()
+                confirmed_identity = (confirmed_stat.st_dev, confirmed_stat.st_ino)
+                if confirmed_identity != directory_identity:
+                    raise OSError("capture journal directory changed while acquiring its lease")
+                self._writer_directory_identity = confirmed_identity
             except BlockingIOError as error:
+                descriptor = self._writer_lock_fd
+                self._writer_lock_fd = None
+                if descriptor is not None:
+                    with contextlib.suppress(OSError):
+                        release_writer_lock(descriptor)
                 raise CaptureJournalWriterConflictError(str(error)) from error
             except OSError as error:
+                descriptor = self._writer_lock_fd
+                self._writer_lock_fd = None
+                if descriptor is not None:
+                    with contextlib.suppress(OSError):
+                        release_writer_lock(descriptor)
                 # Keep unrelated API operations available so project deletion can
                 # remain pending until its capture journals are safely removable.
                 # Durable capture itself is fenced in drain() below.
@@ -1285,6 +1454,11 @@ class CaptureCallRegistry:
                 return False
             if (
                 not stat.S_ISDIR(directory_stat.st_mode)
+                or (
+                    self._writer_directory_identity is not None
+                    and (directory_stat.st_dev, directory_stat.st_ino)
+                    != self._writer_directory_identity
+                )
                 or not stat.S_ISREG(lock_stat.st_mode)
                 or (lock_stat.st_dev, lock_stat.st_ino)
                 != (descriptor_stat.st_dev, descriptor_stat.st_ino)
@@ -1298,11 +1472,40 @@ class CaptureCallRegistry:
             self._refresh_hosted_inventory()
             return True
         try:
-            self._writer_lock_fd = acquire_writer_lock(self._journal_dir, create=False)
+            directory_stat = self._journal_dir.lstat()
+            if not stat.S_ISDIR(directory_stat.st_mode):
+                raise OSError("capture journal path is not a real directory")
+            directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
+            if (
+                self._writer_directory_identity is not None
+                and directory_identity != self._writer_directory_identity
+            ):
+                raise OSError("capture journal directory changed while the process was active")
         except OSError as error:
             self._writer_lock_error = error
             return False
+        try:
+            descriptor = acquire_writer_lock(self._journal_dir, create=False)
+        except OSError as error:
+            self._writer_lock_error = error
+            return False
+        try:
+            confirmed_stat = self._journal_dir.lstat()
+            confirmed_identity = (confirmed_stat.st_dev, confirmed_stat.st_ino)
+            if confirmed_identity != directory_identity or (
+                self._writer_directory_identity is not None
+                and confirmed_identity != self._writer_directory_identity
+            ):
+                raise OSError("capture journal directory changed while acquiring its lease")
+        except OSError as error:
+            with contextlib.suppress(OSError):
+                release_writer_lock(descriptor)
+            self._writer_lock_error = error
+            return False
+        self._writer_lock_fd = descriptor
+        self._writer_directory_identity = confirmed_identity
         self._writer_lock_error = None
+        self._live.set_capture_expiry_handler(self._expiry_handler)
         self._refresh_hosted_inventory()
         return True
 
@@ -1778,7 +1981,7 @@ class CaptureCallRegistry:
     def _drain_serialized(self, drain: CaptureDrain) -> DrainOutcome:
         """Run lookup, append, and recovery as one same-call transaction."""
 
-        from ..live import LiveCaptureJournalLimitError
+        from ..live import LiveCapacityError, LiveCaptureJournalLimitError
 
         self._refuse_cached_journal_limit(drain)
         if self._correlation_state_error is not None:
@@ -1807,6 +2010,19 @@ class CaptureCallRegistry:
                         self._durable_call_keys.add(key)
             return outcome
         except Exception as error:
+            if (
+                self._journal_dir is None
+                and isinstance(error, (LiveCapacityError, LiveCaptureJournalLimitError))
+                and not self._live.contains(drain.call_key, project_id=drain.project_id)
+            ):
+                # A first in-memory drain may have fully projected its facts
+                # before live-session admission rejects it. With no live or
+                # durable prefix, discard its mutated recorder so an exact retry
+                # can start from the same sequence after the limit is addressed.
+                with self._lock:
+                    key = (drain.project_id, drain.call_key)
+                    if self._calls.get(key) is call:
+                        self._calls.pop(key, None)
             if self._journal_dir is not None:
                 ledger = sidecar_path(self._journal_dir, drain.call_key)
                 sidecar = read_sidecar(ledger)
@@ -1964,6 +2180,22 @@ class CaptureCallRegistry:
         try:
             with transaction_lock:
                 self._mark_sealed_serialized(project_id, call_key)
+        finally:
+            self._release_drain_lock(key, transaction_lock)
+
+    def seal_snapshot(self, project_id: str, call_key: str) -> LiveSealSnapshot:
+        """Snapshot a browser call while no drain can change its finality.
+
+        The lock is the same per-call transaction lock used by ``drain``. It
+        serializes the call ledger with the live registry's byte snapshot, so a
+        final drain is either wholly before the seal snapshot or wholly after it.
+        """
+
+        key = (project_id, call_key)
+        transaction_lock = self._retain_drain_lock(key)
+        try:
+            with transaction_lock:
+                return self._live.seal_snapshot(call_key, project_id=project_id)
         finally:
             self._release_drain_lock(key, transaction_lock)
 
@@ -2223,7 +2455,7 @@ class CaptureCallRegistry:
         except OSError as error:
             raise CaptureJournalUnavailableError("the capture journal could not be read") from error
         try:
-            _capture_journal_entries(
+            entries = _capture_journal_entries(
                 frames,
                 call_key=sidecar.call_key,
                 max_frame_bytes=self._live.config.max_frame_bytes,
@@ -2281,6 +2513,7 @@ class CaptureCallRegistry:
                     project_id=drain.project_id,
                     recovery_method=RECOVERY_METHOD,
                     recovery_reason=RECOVERY_REASON_SEALED,
+                    entries=entries,
                 )
             except LiveError as error:
                 if self._correlation_key_id is not None:
@@ -2305,7 +2538,7 @@ class CaptureCallRegistry:
         return CaptureCall.rebuild(
             drain,
             sidecar,
-            journal,
+            entries,
             journal_dir=self._journal_dir,
             finalized=finalized,
             correlation_key_id=self._correlation_key_id,

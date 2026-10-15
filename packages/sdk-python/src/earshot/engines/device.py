@@ -176,9 +176,6 @@ def apply_audio_graph(
     return facts
 
 
-# -- dispatch ------------------------------------------------------------------
-
-
 def _dispatch(
     event_type: str,
     event: Mapping[str, Any],
@@ -283,9 +280,6 @@ def _emit_latency(
         )
 
 
-# -- fact builders -------------------------------------------------------------
-
-
 def _device_event(name: str, at_ms: float, source_field: str) -> EngineEvent:
     return EngineEvent(
         name=name,
@@ -327,9 +321,6 @@ def _measurement(
         source_field=source_field,
         basis=basis,
     )
-
-
-# -- primitives ----------------------------------------------------------------
 
 
 def _normalize_events(

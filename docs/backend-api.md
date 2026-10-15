@@ -574,12 +574,12 @@ known journal state, the server emits `reset` first, so two sessions or an impos
 cursor cannot be spliced into one client-side timeline. Anything the replay window no
 longer holds is declared with `replay_truncated` rather than silently skipped.
 
-Backpressure is lossless by construction. Every buffer is bounded, and a subscriber that
-falls behind its per-connection queue receives `overflow` and has its stream closed
-rather than having events dropped: the durable journal still holds every record, so a
-reconnect with `Last-Event-ID` catches up exactly. Over-capacity connections are refused
-with `429 EARSHOT_TAIL_CAPACITY`, and an unknown or out-of-project session is
-`404 EARSHOT_SESSION_NOT_LIVE`.
+Every buffer is bounded. A subscriber that falls behind its per-connection queue receives
+`overflow` and has its stream closed rather than silently losing queued events. Reconnect
+replay is limited to facts still retained in the server's bounded live window; older facts
+may be unavailable after eviction or process restart, especially for sessions without a
+durable journal. Over-capacity connections are refused with `429 EARSHOT_TAIL_CAPACITY`,
+and an unknown or out-of-project session is `404 EARSHOT_SESSION_NOT_LIVE`.
 
 ### `POST /v1/live/sessions/{session_id}/checkpoints`
 

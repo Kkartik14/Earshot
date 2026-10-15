@@ -92,11 +92,9 @@ from .live import (
     END_FINAL_ARTIFACT_STORED,
     END_PROJECT_DELETED,
     END_SEALED,
-    END_SESSION_EXPIRED,
     EVENT_HEARTBEAT,
     LIVE_LIMITATIONS,
     SOURCE_CAPTURE,
-    SOURCE_CHECKPOINT,
     CheckpointDivergedError,
     CheckpointFinalizedError,
     CheckpointFramesInvalidError,
@@ -634,9 +632,6 @@ class IncidentExportResponse(ApiModel):
     document: dict[str, Any]
 
 
-# ---------------------------------------------------------------------------
-# Browser capture transport (POST /v1/capture)
-# ---------------------------------------------------------------------------
 #
 # The request body is the ``CapturePayload`` the @earshot/browser capture kernel
 # drains (see ``packages/browser/src/types.ts``), so its envelope keys are the
@@ -1000,8 +995,10 @@ _TAIL_RESPONSES: dict[int | str, dict[str, Any]] = {
             "A server-sent event stream of admitted journal facts in journal order. "
             "Event names are open, record, withheld, operation_open, limit, exhausted, "
             "finalize, replay_truncated, reset, overflow, heartbeat and end. Every "
-            "record-bearing event carries id: <journal_id>:<sequence>, so a dropped "
-            "connection resumes with Last-Event-ID. No analysis, diagnosis, or turn "
+            "record-bearing event carries id: <journal_id>:<sequence>, which a client "
+            "may send as Last-Event-ID to request replay. Replay is limited to facts "
+            "still retained in the server's bounded live window; older facts may be "
+            "unavailable after eviction or process restart. No analysis, diagnosis, or turn "
             "metric appears on this stream: derived analysis binds to the digest of a "
             "finished artifact and this session has none. This stream is an export "
             "under the destination name live_tail: a record whose capture class the "
@@ -1677,8 +1674,6 @@ def _capture_bundle_id(project_id: str, fingerprint: Mapping[str, Any]) -> str:
 
 
 def _capture_issue(item: Mapping[str, Any]) -> dict[str, object]:
-    # Stable code and path only. The path is the caller's own field location and
-    # is truncated; no payload value is reflected back.
     return {
         "code": "EARSHOT_INVALID_CAPTURE_FIELD",
         "path": [str(part)[:64] for part in item.get("loc", ())],
@@ -2071,7 +2066,7 @@ async def _capture_continuous(
         raise ApiProblem(
             413,
             "EARSHOT_CAPTURE_JOURNAL_LIMIT",
-            "this drain would exceed the configured per-call capture journal limit",
+            "this drain would exceed the configured per-call capture journal limits",
         ) from error
     except CaptureJournalUnavailableError as error:
         raise ApiProblem(
@@ -2275,11 +2270,10 @@ def create_app(
             # Acquire this before the per-call lock, matching capture drains.
             with repository.project_write_scope(project_id):
                 if not capture_calls.durable_configured:
-                    return live.drop_session(
-                        call_key,
-                        reason=END_SESSION_EXPIRED,
-                        project_id=project_id,
-                    )
+                    live.drop_capture_session_if_abandoned(call_key, project_id=project_id)
+                    # The stale-list entry has been handled whether or not the
+                    # session still qualified for expiry at the atomic check.
+                    return True
                 return capture_calls.expire_session(project_id, call_key)
         except ProjectInactiveError:
             # Deletion has fenced writes and owns the removal of this live view.
@@ -3046,7 +3040,7 @@ def create_app(
                 "model": ProblemResponse,
                 "description": (
                     "The payload exceeds a request bound, or a continuous call's "
-                    "durable journal would exceed its configured byte limit."
+                    "journal would exceed its configured record or byte limit."
                 ),
             },
         },
@@ -3071,8 +3065,8 @@ def create_app(
         Delivery is idempotent by batch content, so a transport retry after an
         unknown outcome resolves to the incident the first delivery created
         (``201`` when this call created it, ``200`` when it already existed).
-        A continuous call's durable journal is byte-bounded; a drain that would
-        exceed that bound is refused without changing its committed prefix, which
+        A continuous call's journal has record and byte bounds; a drain that would
+        exceed either bound is refused without changing its committed prefix, which
         stays visible to live-session readers.
         """
 
@@ -3668,11 +3662,23 @@ def create_app(
                 "hosted checkpoint sealing awaits an accepted runtime artifact contract",
             )
         try:
-            kind, source = live.seal_source(session_id, project_id=request.state.project_id)
-            summary = live.summary(session_id, project_id=request.state.project_id)
-            recovery_method, recovery_reason = live.seal_recovery(
-                session_id, project_id=request.state.project_id
-            )
+
+            def snapshot_live_session() -> Any:
+                # Serialize this bounded read with project deletion. The order
+                # matches capture/checkpoint writes: project fence, then the
+                # per-call/live-registry lock.
+                with repository.project_access_scope(request.state.project_id):
+                    if session_id.startswith(CAPTURE_CALL_ID_PREFIX):
+                        return capture_calls.seal_snapshot(
+                            request.state.project_id,
+                            session_id,
+                        )
+                    return live.seal_snapshot(
+                        session_id,
+                        project_id=request.state.project_id,
+                    )
+
+            snapshot = await run_in_threadpool(snapshot_live_session)
         except SessionNotLiveError as error:
             raise ApiProblem(
                 404,
@@ -3685,6 +3691,11 @@ def create_app(
                 "EARSHOT_SESSION_NOT_SEALABLE",
                 "this live session cannot be materialized into an artifact",
             ) from error
+        kind = snapshot.source
+        source = snapshot.data
+        summary = snapshot.summary
+        recovery_method = snapshot.recovery_method
+        recovery_reason = snapshot.recovery_reason
         if request.state.auth_method == "hosted_jwt" and kind != SOURCE_CAPTURE:
             raise ApiProblem(
                 409,
@@ -3699,24 +3710,15 @@ def create_app(
         suffix = None if summary.close_observed else f".s{summary.last_sequence}"
 
         def materialize() -> tuple[Any, Any]:
-            # A continuous browser call names its own reconstruction
-            # (``browser_capture_journal``); an ordinary checkpoint session keeps
-            # the assembler's default. Both are irrelevant once a close was
-            # observed, because a finalized replay carries no recovery record.
-            if kind in {SOURCE_CHECKPOINT, SOURCE_CAPTURE}:
-                with tempfile.TemporaryDirectory(prefix="earshot-seal-") as directory:
-                    path = Path(directory) / "sealed.eck"
-                    path.write_bytes(source if isinstance(source, bytes) else b"")
-                    path.chmod(0o600)
-                    result = assemble_incident(
-                        path,
-                        bundle_id_suffix=suffix,
-                        recovery_method=recovery_method,
-                        recovery_reason=recovery_reason,
-                    )
-            else:
+            # The snapshot is immutable bytes for every source. Capture identifies
+            # its browser-journal reconstruction; other sources keep the assembler's
+            # default. A finalized replay has a close, so neither needs recovery.
+            with tempfile.TemporaryDirectory(prefix="earshot-seal-") as directory:
+                path = Path(directory) / "sealed.eck"
+                path.write_bytes(source)
+                path.chmod(0o600)
                 result = assemble_incident(
-                    Path(str(source)),
+                    path,
                     bundle_id_suffix=suffix,
                     recovery_method=recovery_method,
                     recovery_reason=recovery_reason,

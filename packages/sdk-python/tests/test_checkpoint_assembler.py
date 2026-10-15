@@ -13,7 +13,15 @@ import pytest
 from earshot.analysis import analyze_incident
 from earshot.checkpoint import CheckpointConfig, CheckpointWriter, assemble_incident
 from earshot.checkpoint.assembler import AssemblyError
+from earshot.checkpoint.framing import encode_frame, scan_frames
 from earshot.checkpoint.reader import JournalReader
+from earshot.checkpoint.records import (
+    JournalFinalize,
+    JournalRecordEntry,
+    decode_entry,
+    encode_entry,
+)
+from earshot.checkpoint.writer import DEFAULT_MAX_FRAME_BYTES
 from earshot.codec import analysis_input_sha256, encode_incident_protobuf
 from earshot.contract import (
     Adapter,
@@ -54,7 +62,6 @@ def _point(recorder: IncidentRecorder, milliseconds: int) -> TimePoint:
     )
 
 
-# ------------------------------------------------------- scripted sessions
 #
 # Each script exercises a different admission path, because the byte-identity
 # guarantee is only worth what the least-covered path is worth.
@@ -249,7 +256,45 @@ def test_replaying_the_same_journal_twice_is_bit_for_bit_stable(tmp_path: Path) 
     assert first == second
 
 
-# ------------------------------------------------------------ crash recovery
+def test_assembly_derives_capture_classes_from_record_content(tmp_path: Path) -> None:
+    """The final privacy manifest cannot lose a class omitted from a journal delta."""
+
+    writer = _writer(tmp_path)
+    policy = CapturePolicy(enabled=frozenset({CaptureClass.METADATA, CaptureClass.TRANSCRIPT}))
+    recorder = IncidentRecorder(
+        session_id="s-underreported",
+        bundle_id="b-underreported",
+        config=RecorderConfig(capture_policy=policy),
+        checkpoint=writer,
+    )
+    recorder.record_event("stt.final", attributes={"transcript": "private words"})
+    recorder.close()
+
+    journal = _journal_path(tmp_path)
+    frames = scan_frames(journal.read_bytes(), max_body_bytes=DEFAULT_MAX_FRAME_BYTES).frames
+    rewritten: list[bytes] = []
+    for frame in frames:
+        entry = decode_entry(frame.body)
+        if isinstance(entry, JournalRecordEntry) and entry.kind == "event":
+            entry = entry.model_copy(update={"retained_classes": ()})
+        rewritten.append(
+            encode_frame(
+                frame.sequence,
+                encode_entry(entry),
+                max_body_bytes=DEFAULT_MAX_FRAME_BYTES,
+            )
+        )
+    journal.write_bytes(b"".join(rewritten))
+
+    result = assemble_incident(journal)
+    transcript_policy = next(
+        item
+        for item in result.bundle.profile.privacy.capture_classes
+        if item.capture_class == CaptureClass.TRANSCRIPT.value
+    )
+    assert transcript_policy.captured is True
+    assert result.report.counter_mismatch is False
+    writer.release()
 
 
 def _crash_after(directory: Path, script: str) -> Path:
@@ -371,9 +416,6 @@ def test_the_analyzer_reports_an_unfinished_operation_as_unavailable_not_zero(
     assert tools.limitation is not None
 
 
-# ---------------------------------------------------------------- torn tail
-
-
 def test_a_torn_tail_becomes_a_declared_limitation_rather_than_silence(tmp_path: Path) -> None:
     journal = _crash_after(
         tmp_path,
@@ -433,9 +475,6 @@ def _consumed(data: bytes, cut: int) -> int:
     return scan_frames(data[:cut], max_body_bytes=32 * 1024 * 1024).consumed_bytes
 
 
-# ---------------------------------------------------------- journal capacity
-
-
 def test_a_journal_that_hit_its_cap_declares_the_loss(tmp_path: Path) -> None:
     writer = _writer(tmp_path, max_journal_bytes=1400)
     recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
@@ -453,9 +492,6 @@ def test_a_journal_that_hit_its_cap_declares_the_loss(tmp_path: Path) -> None:
     assert coverage["recorder.checkpoint_journal"] == ("partial", "journal_full")
     assert_valid_incident(bundle)
     writer.release()
-
-
-# ------------------------------------------------------------ cross-checking
 
 
 def test_a_journal_whose_totals_disagree_with_its_records_fails_loudly(tmp_path: Path) -> None:
@@ -478,6 +514,37 @@ def test_a_journal_whose_totals_disagree_with_its_records_fails_loudly(tmp_path:
     assert result.bundle.profile.manifest.finality == "final"
 
 
+def test_assembly_rejects_finalize_attributes_the_recorder_would_omit(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
+    recorder.add_participant("caller", role="caller")
+    recorder.close()
+
+    source = _journal_path(tmp_path).read_bytes()
+    scanned = scan_frames(source, max_body_bytes=DEFAULT_MAX_FRAME_BYTES)
+    frames = []
+    for frame in scanned.frames:
+        entry = decode_entry(frame.body)
+        if isinstance(entry, JournalFinalize):
+            entry = entry.model_copy(
+                update={"status_attributes": {"earshot.metric.private_note": "Alice Smith"}}
+            )
+        frames.append(
+            encode_frame(
+                frame.sequence,
+                encode_entry(entry),
+                max_body_bytes=DEFAULT_MAX_FRAME_BYTES,
+            )
+        )
+    tampered = tmp_path / "unsafe-finalize.eck"
+    tampered.write_bytes(b"".join(frames))
+
+    with pytest.raises(AssemblyError, match="ungoverned metadata entry"):
+        assemble_incident(tampered)
+
+    writer.release()
+
+
 def _rewrite_last_frame(data: bytearray, destination: Path) -> None:
     """Re-checksum the final frame after editing its body in place."""
 
@@ -497,9 +564,6 @@ def _rewrite_last_frame(data: bytearray, destination: Path) -> None:
     checksum = (zlib.crc32(body) & 0xFFFFFFFF).to_bytes(4, "big")
     data[start + HEADER_SIZE + length : start + HEADER_SIZE + length + CHECKSUM_SIZE] = checksum
     destination.write_bytes(bytes(data))
-
-
-# ---------------------------------------------------------------- ingestion
 
 
 def test_a_recovered_bundle_ingests_and_lists_as_provisional(tmp_path: Path) -> None:

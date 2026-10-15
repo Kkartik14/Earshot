@@ -1,9 +1,3 @@
-/**
- * Tiny DOM helpers. No framework — this example keeps its dependency surface to
- * exactly `@earshot/browser` plus the Vite/TS toolchain, so what it exercises is
- * unambiguous.
- */
-
 /** Create an element with attributes and children in one call. */
 export function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,

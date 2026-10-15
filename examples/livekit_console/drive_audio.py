@@ -72,7 +72,7 @@ class WavAudioInput(vio.AudioInput):
 
 
 async def build_frames() -> list[rtc.AudioFrame]:
-    synth_utterance_wav(USER_WAV, UTTERANCE, sample_rate=SR)  # local macOS `say`, no API
+    synth_utterance_wav(USER_WAV, UTTERANCE, sample_rate=SR)
     lead = [silence_frame(0.1, SR) for _ in range(5)]  # 0.5s so VAD sees onset
     speech = [frame async for frame in audio_frames_from_file(str(USER_WAV), sample_rate=SR)]
     trail = [silence_frame(0.1, SR) for _ in range(25)]  # 2.5s so EOU fires
@@ -250,9 +250,6 @@ async def _run() -> int:
 
 
 async def main() -> int:
-    # Plugins that use aiohttp (e.g. Groq TTS) need LiveKit's http context when
-    # run outside the agent worker. Open it once for the whole headless run so the
-    # driver stays provider-agnostic instead of special-casing one vendor.
     from livekit.agents.utils import http_context
 
     async with http_context.open():

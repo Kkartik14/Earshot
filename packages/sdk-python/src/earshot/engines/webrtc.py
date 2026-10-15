@@ -258,7 +258,6 @@ def analyze_webrtc_stats(
             # last average makes the next interval report a level, not a trend.
             last_buffer_avg_ms.clear()
 
-        # --- transport reconnect: an ICE/DTLS drop then recovery --------------
         state = _connection_state(stats)
         if state is not None:
             if not ordered:
@@ -272,7 +271,6 @@ def analyze_webrtc_stats(
                 seen_down = False
             prev_state = state
 
-        # --- route change: a new selected pair or network type ----------------
         route = _selected_route(stats)
         if ordered:
             if prev_route is not None and _route_changed(prev_route, route):
@@ -282,7 +280,6 @@ def analyze_webrtc_stats(
         else:
             prev_route = route
 
-        # --- per-pair deltas + per-snapshot instants --------------------------
         if ordered and prev_stats is not None:
             grew = _emit_deltas(
                 prev_stats, stats, at_ms, measurements, events, coverage, last_buffer_avg_ms
@@ -334,9 +331,6 @@ def apply_webrtc_stats(
     facts = analyze_webrtc_stats(snapshots, clock_domain=clock_domain, carry=carry)
     facts.apply(sink)
     return facts
-
-
-# -- delta / instant emission --------------------------------------------------
 
 
 def _emit_deltas(
@@ -569,9 +563,6 @@ def _emit_instants(
         )
 
 
-# -- transport state machines --------------------------------------------------
-
-
 def _connection_state(stats: Mapping[str, Mapping[str, Any]]) -> str | None:
     """Normalized ICE/DTLS state, or a selected candidate-pair state, or None."""
 
@@ -679,9 +670,6 @@ def _round_trip_seconds(stats: Mapping[str, Mapping[str, Any]]) -> float | None:
             if value is not None:
                 return value
     return None
-
-
-# -- primitives ----------------------------------------------------------------
 
 
 class _Reset:

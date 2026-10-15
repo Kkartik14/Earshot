@@ -3,28 +3,14 @@
 PACKAGE_VERSION = "0.1.0"
 CONTRACT_VERSION = "0.2.0"
 SEMANTIC_PROFILE_VERSION = "0.2.0"
-# Producers always emit the current version; readers accept every version whose
-# artifacts they can interpret without misreading them. Shipping the read-side
-# tolerance with the bump is what makes the bump a migration rather than a break.
+# Producers emit the current version; readers accept every version they can
+# interpret. This keeps version bumps backward-compatible.
 SUPPORTED_CONTRACT_VERSIONS = ("0.1.0", "0.2.0")
 SUPPORTED_SEMANTIC_PROFILE_VERSIONS = ("0.1.0", "0.2.0")
-# 0.1.0 has no ``manifest.recovery`` member, so an artifact that claims 0.1.0 and
-# carries one is asserting a contract it cannot express.
+# Recovery, media custody, and coverage loss counts were added in 0.2.0. Reject
+# them when an artifact claims the older contract.
 RECOVERY_MIN_CONTRACT_VERSION = "0.2.0"
-# Same rule for media custody: 0.1.0 ``MediaRef`` was digest-and-size only, with
-# no integrity discriminator, custodian, media clock domain, consent, or
-# retention. Custody rides the same unreleased 0.2.0 bump rather than taking a
-# 0.3.0 of its own, because 0.2.0 has not shipped: two shapes claiming one
-# version is the failure mode worth avoiding, and there is no released 0.2.0
-# reader to surprise.
 MEDIA_CUSTODY_MIN_CONTRACT_VERSION = "0.2.0"
-# And again for ``Coverage.dropped_count``: 0.1.0 coverage could say a signal was
-# partial but never how many observations the source counted itself losing. An
-# artifact claiming 0.1.0 while carrying a count is asserting a member that
-# version does not have. It rides the same unreleased 0.2.0 bump for the same
-# reason media custody does -- 0.2.0 has not shipped, so there is no released
-# reader to surprise, and one version describing two shapes is the failure worth
-# avoiding.
 COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION = "0.2.0"
 API_VERSION = "0.12.0"
 ANALYZER_VERSION = "0.6.0"

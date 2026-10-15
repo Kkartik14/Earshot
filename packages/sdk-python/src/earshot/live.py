@@ -27,9 +27,11 @@ Four properties are load-bearing:
   reaches the wire; the ``withheld`` event says a fact existed there anyway,
   because a silently shortened stream is its own dishonesty.
 
-Backpressure is lossless by construction. Every buffer is bounded; when a
-subscriber falls behind, the server closes that connection with ``overflow``
-instead of dropping events, and the durable journal replays on reconnect.
+Every buffer is bounded. When a subscriber falls behind, the server closes that
+connection with ``overflow`` instead of silently trimming its queue. Reconnect
+replay is limited to facts still retained in the server's live window; older
+facts may be unavailable after eviction or process restart, especially when the
+session has no durable journal.
 """
 
 from __future__ import annotations
@@ -42,11 +44,12 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from .checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, encode_frame, scan_frames
+from .checkpoint.governance import validate_and_classify_record, validate_nonrecord_entry
 from .checkpoint.limits import (
     CHECKPOINT_COVERAGE_NOTE,
     DEFAULT_MAX_JOURNAL_BYTES,
@@ -169,7 +172,7 @@ class LiveCapacityError(LiveError):
 
 
 class LiveCaptureJournalLimitError(LiveError):
-    """A durable browser-capture append would exceed its per-call byte limit."""
+    """A browser-capture append would exceed its per-call journal limit."""
 
 
 class CheckpointSequenceError(LiveError):
@@ -336,6 +339,17 @@ class LiveSessionSummary:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class LiveSealSnapshot:
+    """One immutable source and the metadata derived from that exact source."""
+
+    source: str
+    data: bytes
+    summary: LiveSessionSummary
+    recovery_method: str | None
+    recovery_reason: str | None
+
+
 @dataclass(frozen=True)
 class LiveConfig:
     """Every bound the live surface runs under. All of them are enforced.
@@ -449,8 +463,6 @@ class Subscription:
         self.journal_id = session.journal_id
         self.last_delivered_sequence = resume_from
 
-    # ------------------------------------------------------------- producer
-
     def offer(self, events: Sequence[LiveEvent]) -> None:
         """Queue events for this connection, or mark it as fallen behind.
 
@@ -468,8 +480,9 @@ class Subscription:
                     len(self._queue) >= self._config.max_queue_records
                     or self._queued_bytes + event.size_bytes > self._config.max_queue_bytes
                 ):
-                    # Close rather than drop. The journal still holds every
-                    # record, so a reconnect with Last-Event-ID recovers them.
+                    # Close rather than silently trim this connection's queue.
+                    # A reconnect can replay only the bounded history still
+                    # retained by the live session.
                     self._overflowed = True
                     break
                 self._queue.append(event)
@@ -500,8 +513,6 @@ class Subscription:
         # nothing left to wake and nothing to report.
         with contextlib.suppress(RuntimeError):
             loop.call_soon_threadsafe(wakeup.set)
-
-    # ------------------------------------------------------------- consumer
 
     def attach(self, loop: Any, wakeup: Any) -> None:
         """Bind the asyncio primitives the serving coroutine waits on."""
@@ -574,8 +585,9 @@ class Subscription:
                         "last_sequence": last_delivered_sequence,
                         "resume_with": f"{self.journal_id}:{last_delivered_sequence}",
                         "note": (
-                            "nothing was dropped; the durable journal still holds every "
-                            "record, so reconnect with Last-Event-ID to catch up"
+                            "the stream closed when its queue filled; reconnect replay is "
+                            "limited to the server's bounded live window, and older "
+                            "events may be unavailable after eviction or restart"
                         ),
                     },
                 )
@@ -645,6 +657,14 @@ class _ExportGate:
     def policy_readable(self) -> bool:
         return self._policy is not None
 
+    @property
+    def policy(self) -> CapturePolicy | None:
+        return self._policy
+
+    @property
+    def captured_classes(self) -> frozenset[CaptureClass]:
+        return frozenset(self._captured)
+
     def declared(self) -> list[str]:
         """Enabled classes whose governance forbids this destination.
 
@@ -662,8 +682,13 @@ class _ExportGate:
             return sorted(item.value for item in self._policy.enabled)
         return [capture_class.value for capture_class, _ in denied]
 
-    def admit(self, entry: JournalEntry) -> tuple[dict[str, str | None], ...]:
-        """Absorb what ``entry`` retained, then say what forbids its egress."""
+    def admit(
+        self,
+        entry: JournalEntry,
+        *,
+        observed_classes: frozenset[CaptureClass] | None = None,
+    ) -> tuple[dict[str, str | None], ...]:
+        """Absorb derived and declared classes, then decide whether content can leave."""
 
         if isinstance(entry, JournalRecordEntry):
             for name in entry.retained_classes:
@@ -672,6 +697,13 @@ class _ExportGate:
                 except ValueError:
                     # A class this build cannot name is a class whose governance
                     # it cannot read. Withhold rather than assume it is benign.
+                    self._policy = None
+            if self._policy is not None:
+                try:
+                    if observed_classes is None:
+                        _, observed_classes = validate_and_classify_record(entry, self._policy)
+                    self._captured.update(observed_classes)
+                except (TypeError, ValueError):
                     self._policy = None
         if self._policy is None:
             return self._unreadable()
@@ -684,8 +716,31 @@ class _ExportGate:
             for capture_class, reason in denied
         )
 
+    def fail_closed(self) -> tuple[dict[str, str | None], ...]:
+        """Withhold the remainder of a stream when a record cannot be checked."""
+
+        self._policy = None
+        return self._unreadable()
+
     def _unreadable(self) -> tuple[dict[str, str | None], ...]:
         return ({"capture_class": None, "reason": self.UNREADABLE_POLICY},)
+
+
+def _preflight_live_entry(
+    entry: JournalEntry,
+    policy: CapturePolicy,
+    *,
+    allow_open: bool = False,
+) -> frozenset[CaptureClass]:
+    """Validate one entry before it can change live state or reach a subscriber."""
+
+    if isinstance(entry, JournalOpen) and not allow_open:
+        raise ValueError("journal header is only valid at sequence 1")
+    validate_nonrecord_entry(entry)
+    if isinstance(entry, JournalRecordEntry):
+        _, classes = validate_and_classify_record(entry, policy)
+        return classes
+    return frozenset()
 
 
 class _LiveSession:
@@ -874,8 +929,6 @@ class LiveSessionRegistry:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
-    # ----------------------------------------------------------- lifecycle
-
     def start(self) -> None:
         """Begin following the configured checkpoint directory, if any."""
 
@@ -933,8 +986,6 @@ class LiveSessionRegistry:
             if failure_logged:
                 _LOGGER.info("Live session polling recovered")
                 failure_logged = False
-
-    # -------------------------------------------------------------- reading
 
     def refresh(self) -> None:
         """Scan the checkpoint directory once and publish whatever is new.
@@ -1099,8 +1150,6 @@ class LiveSessionRegistry:
             self._deliver(session, batch)
             return not session.close_observed and published_through < len(entries) + 1
 
-    # --------------------------------------------------------------- upload
-
     def accept_frames(
         self,
         session_id: str,
@@ -1174,6 +1223,7 @@ class LiveSessionRegistry:
                 decoded.append((frame.sequence, entry, payload[offset:frame_end]))
                 offset = frame_end
             header: JournalOpen | None = None
+            replace_session = False
             if first_sequence == 1:
                 candidate = decoded[0][1]
                 if not isinstance(candidate, JournalOpen):
@@ -1186,11 +1236,41 @@ class LiveSessionRegistry:
                     )
                 header = candidate
                 if session is not None and session.journal_id != header.journal_id:
-                    self._reset_session(session, header.journal_id)
-                    session = None
+                    replace_session = True
+            candidate_session = None if replace_session else session
             # Everything that can refuse the batch is decided before anything is
             # recorded, so a refusal leaves the session exactly as it was.
-            _assert_continues(session, decoded)
+            _assert_continues(candidate_session, decoded)
+            if candidate_session is not None and candidate_session.export_gate.policy is not None:
+                capture_policy = candidate_session.export_gate.policy
+            elif header is not None:
+                try:
+                    capture_policy = header.capture_policy()
+                except (TypeError, ValueError):
+                    capture_policy = CapturePolicy.metadata_only()
+            else:
+                capture_policy = CapturePolicy.metadata_only()
+            preflight_classes: dict[int, frozenset[CaptureClass]] = {}
+            try:
+                for sequence, entry, _ in decoded:
+                    if (
+                        candidate_session is not None
+                        and sequence <= candidate_session.last_sequence
+                    ):
+                        continue
+                    preflight_classes[sequence] = _preflight_live_entry(
+                        entry,
+                        capture_policy,
+                        allow_open=candidate_session is None and sequence == 1,
+                    )
+            except (TypeError, ValueError) as error:
+                raise CheckpointFramesInvalidError(
+                    "checkpoint batch contains a record the recorder would not admit"
+                ) from error
+            if replace_session:
+                assert session is not None and header is not None
+                self._reset_session(session, header.journal_id)
+                session = None
             if session is None:
                 if header is None:  # pragma: no cover - guarded above
                     raise CheckpointFramesInvalidError("checkpoint batch has no journal header")
@@ -1214,7 +1294,14 @@ class LiveSessionRegistry:
                     self._retain_frame(session, frame_bytes)
                     session.remember_checksum(sequence, frame_bytes[-CHECKSUM_SIZE:])
                     if sequence > 1:
-                        batch.append(_governed_entry_event(session, entry, sequence))
+                        batch.append(
+                            _governed_entry_event(
+                                session,
+                                entry,
+                                sequence,
+                                observed_classes=preflight_classes[sequence],
+                            )
+                        )
                         _absorb(session, entry)
             if batch:
                 session.last_append_unix_nano = now_nano
@@ -1260,6 +1347,33 @@ class LiveSessionRegistry:
         now_nano = int(self._clock() * 1e9)
         with self._lock:
             session = self._sessions.get((project_id, session_id))
+            if session is not None and session.export_gate.policy is not None:
+                capture_policy = session.export_gate.policy
+            else:
+                header = entries[0] if entries else None
+                try:
+                    capture_policy = (
+                        header.capture_policy()
+                        if isinstance(header, JournalOpen)
+                        else CapturePolicy.metadata_only()
+                    )
+                except (TypeError, ValueError):
+                    capture_policy = CapturePolicy.metadata_only()
+            preflight_classes: list[frozenset[CaptureClass]] = []
+            try:
+                for index, entry in enumerate(entries):
+                    preflight_classes.append(
+                        _preflight_live_entry(
+                            entry,
+                            capture_policy,
+                            allow_open=session is None and index == 0,
+                        )
+                    )
+            except (TypeError, ValueError) as error:
+                raise CheckpointFramesInvalidError(
+                    "capture batch contains a record the recorder would not admit"
+                ) from error
+            created_session = session is None
             if durable_path is not None:
                 return self._accept_durable_records_locked(
                     session_id,
@@ -1270,6 +1384,7 @@ class LiveSessionRegistry:
                     durable_path=Path(durable_path),
                     now_nano=now_nano,
                     session=session,
+                    entry_classes=preflight_classes,
                     before_publish=before_publish,
                 )
             rest: Sequence[JournalEntry]
@@ -1281,6 +1396,38 @@ class LiveSessionRegistry:
                     raise CheckpointFramesInvalidError(
                         "capture header declares a different session"
                     )
+                header_frame = encode_frame(
+                    1, encode_entry(header), max_body_bytes=self.config.max_frame_bytes
+                )
+                rest = entries[1:]
+                first_sequence = 2
+            else:
+                if session.close_observed:
+                    raise CheckpointFinalizedError(
+                        "this journal is finalized and accepts no more entries"
+                    )
+                rest = entries
+                first_sequence = session.last_sequence + 1
+
+            # Pre-encode and check the complete drain before registering a new
+            # session or changing its accepted prefix. A record-cap failure must
+            # leave no prefix of this client transaction visible or sealable.
+            frames: list[bytes] = []
+            for offset, entry in enumerate(rest):
+                sequence = first_sequence + offset
+                if sequence > self.config.max_journal_records:
+                    raise LiveCaptureJournalLimitError(
+                        "capture journal would exceed its configured record limit"
+                    )
+                frames.append(
+                    encode_frame(
+                        sequence,
+                        encode_entry(entry),
+                        max_body_bytes=self.config.max_frame_bytes,
+                    )
+                )
+
+            if session is None:
                 self._enforce_quota(project_id)
                 session = self._register(
                     session_id=session_id,
@@ -1292,36 +1439,23 @@ class LiveSessionRegistry:
                 )
                 session.recovery_method = recovery_method
                 session.recovery_reason = recovery_reason
-                # Durability begins with the header: the file is opened before the
-                # first frame is retained, so a rebuild always has an
-                # interpretable journal or none at all, never a headerless prefix.
-                if durable_path is not None:
-                    self._open_durable(session, durable_path)
-                header_frame = encode_frame(
-                    1, encode_entry(header), max_body_bytes=self.config.max_frame_bytes
-                )
                 self._retain_frame(session, header_frame)
                 session.remember_checksum(1, header_frame[-CHECKSUM_SIZE:])
                 session.last_append_unix_nano = now_nano
                 self._deliver(session, [session.open_event])
-                rest = entries[1:]
-            else:
-                rest = entries
+
             batch: list[LiveEvent] = []
-            for entry in rest:
-                if session.close_observed:
-                    raise CheckpointFinalizedError(
-                        "this journal is finalized and accepts no more entries"
-                    )
+            entry_classes = preflight_classes[1:] if created_session else preflight_classes
+            for entry, frame, observed_classes in zip(rest, frames, entry_classes, strict=True):
                 sequence = session.last_sequence + 1
-                if sequence > self.config.max_journal_records:
-                    raise CheckpointFramesInvalidError("capture journal runs past the record cap")
-                frame = encode_frame(
-                    sequence, encode_entry(entry), max_body_bytes=self.config.max_frame_bytes
-                )
                 self._retain_frame(session, frame)
                 session.remember_checksum(sequence, frame[-CHECKSUM_SIZE:])
-                event = _governed_entry_event(session, entry, sequence)
+                event = _governed_entry_event(
+                    session,
+                    entry,
+                    sequence,
+                    observed_classes=observed_classes,
+                )
                 session.append(event)
                 _absorb(session, entry)
                 batch.append(event)
@@ -1348,6 +1482,7 @@ class LiveSessionRegistry:
         durable_path: Path,
         now_nano: int,
         session: _LiveSession | None,
+        entry_classes: Sequence[frozenset[CaptureClass]],
         before_publish: Callable[[], None] | None,
     ) -> AcceptedCheckpoint:
         """Append one capture drain to disk before publishing it in memory.
@@ -1397,19 +1532,31 @@ class LiveSessionRegistry:
         assert session is not None
         events: list[LiveEvent] = []
         try:
-            for offset, entry in enumerate(rest):
+            classes_for_rest = entry_classes[1:] if created_session else entry_classes
+            for offset, (entry, observed_classes) in enumerate(
+                zip(rest, classes_for_rest, strict=True)
+            ):
                 if session.close_observed:
                     raise CheckpointFinalizedError(
                         "this journal is finalized and accepts no more entries"
                     )
                 sequence = first_sequence + offset
                 if sequence > self.config.max_journal_records:
-                    raise CheckpointFramesInvalidError("capture journal runs past the record cap")
+                    raise LiveCaptureJournalLimitError(
+                        "capture journal would exceed its configured record limit"
+                    )
                 frame = encode_frame(
                     sequence, encode_entry(entry), max_body_bytes=self.config.max_frame_bytes
                 )
                 frames.append(frame)
-                events.append(_governed_entry_event(session, entry, sequence))
+                events.append(
+                    _governed_entry_event(
+                        session,
+                        entry,
+                        sequence,
+                        observed_classes=observed_classes,
+                    )
+                )
         except Exception:
             if created_session:
                 self._sessions.pop((project_id, session_id), None)
@@ -1544,6 +1691,7 @@ class LiveSessionRegistry:
         project_id: str,
         recovery_method: str | None = None,
         recovery_reason: str | None = None,
+        entries: Sequence[JournalEntry] | None = None,
     ) -> AcceptedCheckpoint:
         """Reconstruct a durable capture call's live session from its journal file.
 
@@ -1575,12 +1723,19 @@ class LiveSessionRegistry:
             )
             if not scan.frames:
                 raise CheckpointFramesInvalidError("durable capture journal has no intact frames")
-            try:
-                header = decode_entry(scan.frames[0].body)
-            except JournalFormatError as error:
+            if entries is not None and len(entries) != len(scan.frames):
                 raise CheckpointFramesInvalidError(
-                    "durable capture journal has no readable header"
-                ) from error
+                    "decoded journal entries do not match the durable frame count"
+                )
+            if entries is None:
+                try:
+                    header = decode_entry(scan.frames[0].body)
+                except JournalFormatError as error:
+                    raise CheckpointFramesInvalidError(
+                        "durable capture journal has no readable header"
+                    ) from error
+            else:
+                header = entries[0]
             if not isinstance(header, JournalOpen) or header.session_id != session_id:
                 raise CheckpointFramesInvalidError(
                     "durable capture journal declares a different session"
@@ -1605,12 +1760,15 @@ class LiveSessionRegistry:
                 self._retain_frame(session, frame_bytes)
                 session.remember_checksum(frame.sequence, frame_bytes[-CHECKSUM_SIZE:])
                 if frame.sequence > 1:
-                    try:
-                        entry = decode_entry(frame.body)
-                    except JournalFormatError as error:
-                        raise CheckpointFramesInvalidError(
-                            "durable capture journal holds a frame that is not an entry"
-                        ) from error
+                    if entries is None:
+                        try:
+                            entry = decode_entry(frame.body)
+                        except JournalFormatError as error:
+                            raise CheckpointFramesInvalidError(
+                                "durable capture journal holds a frame that is not an entry"
+                            ) from error
+                    else:
+                        entry = entries[frame.sequence - 1]
                     session.append(_governed_entry_event(session, entry, frame.sequence))
                     _absorb(session, entry)
                 offset = frame_end
@@ -1720,8 +1878,6 @@ class LiveSessionRegistry:
         if owned >= self.config.max_sessions_per_project:
             raise LiveCapacityError("this project is holding as many live sessions as it will")
 
-    # ------------------------------------------------------------- registry
-
     def _register(
         self,
         *,
@@ -1779,27 +1935,54 @@ class LiveSessionRegistry:
         """Forget one tenant's live buffer, because it ended, expired, or was replaced."""
 
         with self._lock:
-            session = self._sessions.pop((project_id, session_id), None)
+            session = self._sessions.get((project_id, session_id))
             if session is None:
                 return False
-            subscribers = list(session.subscribers)
-            session.subscribers.clear()
-            # Expiry only releases the volatile live buffer. A capture call's
-            # durable journal and ownership sidecar remain paired for an exact
-            # retry, restart recovery, and project deletion. Sealed or superseded
-            # sessions can remove their journal because their durable state says
-            # they must never resume.
-            retain_capture_for_retry = (
-                session.source == SOURCE_CAPTURE and reason == END_SESSION_EXPIRED
-            )
-            self._close_durable(session, unlink=not retain_capture_for_retry)
-            if project_id == self._project_id:
-                for tracked in self._tracked.values():
-                    if tracked.session_id == session_id:
-                        tracked.session_id = None
+            subscribers = self._detach_session_locked(session, reason=reason)
         for subscriber in subscribers:
             subscriber.finish(reason)
         return True
+
+    def drop_capture_session_if_abandoned(self, session_id: str, *, project_id: str) -> bool:
+        """Drop a capture only if it is still abandoned at the removal point.
+
+        ``expire`` discovers stale sessions before invoking the capture owner's
+        cleanup callback. A drain can refresh the session during that gap, so a
+        stale-list entry alone is not authority to discard its newly accepted
+        frames. Check the current state and detach under the same registry lock.
+        """
+
+        with self._lock:
+            session = self._sessions.get((project_id, session_id))
+            if (
+                session is None
+                or session.source != SOURCE_CAPTURE
+                or session.state(self._clock()) != STATE_ABANDONED
+            ):
+                return False
+            subscribers = self._detach_session_locked(session, reason=END_SESSION_EXPIRED)
+        for subscriber in subscribers:
+            subscriber.finish(END_SESSION_EXPIRED)
+        return True
+
+    def _detach_session_locked(self, session: _LiveSession, *, reason: str) -> list[Subscription]:
+        """Remove a session and close its resources while ``self._lock`` is held."""
+
+        self._sessions.pop((session.project_id, session.session_id), None)
+        subscribers = list(session.subscribers)
+        session.subscribers.clear()
+        # Expiry only releases the volatile live buffer. A capture call's durable
+        # journal and ownership sidecar remain paired for an exact retry, restart
+        # recovery, and project deletion. Other terminal removals can unlink them.
+        retain_capture_for_retry = (
+            session.source == SOURCE_CAPTURE and reason == END_SESSION_EXPIRED
+        )
+        self._close_durable(session, unlink=not retain_capture_for_retry)
+        if session.project_id == self._project_id:
+            for tracked in self._tracked.values():
+                if tracked.session_id == session.session_id:
+                    tracked.session_id = None
+        return subscribers
 
     def rollback_capture_session(
         self,
@@ -1906,8 +2089,6 @@ class LiveSessionRegistry:
 
         with self._lock:
             return (project_id, session_id) in self._sessions
-
-    # ------------------------------------------------------------ subscribe
 
     def subscribe(
         self,
@@ -2043,15 +2224,13 @@ class LiveSessionRegistry:
                 # and must not grow with every project that ever connected.
                 self._project_connections.pop(subscription.project_id, None)
 
-    # ----------------------------------------------------------------- seal
+    def seal_snapshot(self, session_id: str, *, project_id: str) -> LiveSealSnapshot:
+        """Capture source bytes and their finality/sequence metadata together.
 
-    def seal_source(self, session_id: str, *, project_id: str) -> tuple[str, Path | bytes]:
-        """What an explicit seal would read, or why it cannot be done.
-
-        Sealing is the only path from a live buffer to an artifact, and it is
-        always an operator action. The server never seals on its own: it cannot
-        distinguish a crashed producer from a slow one, and guessing would
-        manufacture an artifact nobody produced.
+        In-memory journals are protected by the registry lock. A locally watched
+        journal has its own append lock in the producer, so snapshot its current
+        file length and read exactly that prefix; later appends cannot change the
+        bytes or the metadata derived from them.
         """
 
         with self._lock:
@@ -2061,10 +2240,49 @@ class LiveSessionRegistry:
             if session.source == SOURCE_JOURNAL:
                 if session.path is None:  # pragma: no cover - journals always have a path
                     raise SessionNotSealableError("this session has no readable journal")
-                return SOURCE_JOURNAL, session.path
-            if session.frames is None or not session.frames_complete:
-                raise SessionNotSealableError("this session outgrew its retained frame window")
-            return session.source, bytes(session.frames)
+                with session.path.open("rb") as journal:
+                    size = os.fstat(journal.fileno()).st_size
+                    snapshot = bytearray(size)
+                    view = memoryview(snapshot)
+                    offset = 0
+                    while offset < size:
+                        read = journal.readinto(view[offset:])
+                        if not read:
+                            raise OSError("journal changed while a seal snapshot was read")
+                        offset += read
+                data = bytes(snapshot)
+                replay = JournalReader(session.path, key=self._key).read_bytes(data)
+                if (
+                    replay.header.session_id != session.session_id
+                    or replay.header.journal_id != session.journal_id
+                    or replay.header.bundle_id != session.bundle_id
+                    or replay.last_sequence < session.last_sequence
+                    or (session.close_observed and not replay.close_observed)
+                ):
+                    raise SessionNotSealableError(
+                        "journal changed or regressed while a seal snapshot was read"
+                    )
+                now = self._clock()
+                current_summary = session.summary(now)
+                summary = replace(
+                    current_summary,
+                    state=(STATE_FINALIZED if replay.close_observed else current_summary.state),
+                    last_sequence=replay.last_sequence,
+                    close_observed=replay.close_observed,
+                    journal_complete=replay.torn_tail_bytes == 0,
+                )
+            else:
+                if session.frames is None or not session.frames_complete:
+                    raise SessionNotSealableError("this session outgrew its retained frame window")
+                data = bytes(session.frames)
+                summary = session.summary(self._clock())
+            return LiveSealSnapshot(
+                source=session.source,
+                data=data,
+                summary=summary,
+                recovery_method=session.recovery_method,
+                recovery_reason=session.recovery_reason,
+            )
 
 
 def _frame_end(payload: bytes, offset: int) -> int:
@@ -2096,11 +2314,11 @@ def _assert_continues(
     wearing this one's name.
     """
 
-    if session is None:
-        return
-    closed = session.close_observed
+    closed = session is not None and session.close_observed
     for sequence, entry, frame in decoded:
-        if sequence <= session.last_sequence:
+        if isinstance(entry, JournalOpen) and sequence != 1:
+            raise CheckpointFramesInvalidError("journal header is only valid at sequence 1")
+        if session is not None and sequence <= session.last_sequence:
             recorded = session.checksum(sequence)
             if recorded is None:
                 raise CheckpointDivergedError(
@@ -2207,8 +2425,21 @@ def _withheld_payload(
     absence is declared, so a subscriber can never read this stream as complete.
     """
 
+    entry_name = (
+        EVENT_RECORD
+        if isinstance(entry, JournalRecordEntry)
+        else EVENT_OPERATION_OPEN
+        if isinstance(entry, JournalOperationOpen)
+        else EVENT_LIMIT
+        if isinstance(entry, JournalLimitEntry)
+        else EVENT_EXHAUSTED
+        if isinstance(entry, JournalExhausted)
+        else EVENT_FINALIZE
+        if isinstance(entry, JournalFinalize)
+        else "unknown"
+    )
     return {
-        "entry": EVENT_RECORD if isinstance(entry, JournalRecordEntry) else EVENT_OPERATION_OPEN,
+        "entry": entry_name,
         "kind": entry.kind if isinstance(entry, JournalRecordEntry) else None,
         "destination": LIVE_TAIL_DESTINATION,
         "denied_capture_classes": [dict(denial) for denial in denials],
@@ -2219,7 +2450,13 @@ def _withheld_payload(
     }
 
 
-def _governed_entry_event(session: _LiveSession, entry: JournalEntry, sequence: int) -> LiveEvent:
+def _governed_entry_event(
+    session: _LiveSession,
+    entry: JournalEntry,
+    sequence: int,
+    *,
+    observed_classes: frozenset[CaptureClass] | None = None,
+) -> LiveEvent:
     """Project one entry, withholding content this destination may not carry.
 
     Only the entries that carry captured evidence can be withheld. ``limit``,
@@ -2228,8 +2465,14 @@ def _governed_entry_event(session: _LiveSession, entry: JournalEntry, sequence: 
     and suppressing them would turn a governed stream into a silent one.
     """
 
-    denials = session.export_gate.admit(entry)
-    if denials and isinstance(entry, (JournalRecordEntry, JournalOperationOpen)):
+    invalid = False
+    try:
+        validate_nonrecord_entry(entry)
+        denials = session.export_gate.admit(entry, observed_classes=observed_classes)
+    except (TypeError, ValueError):
+        invalid = True
+        denials = session.export_gate.fail_closed()
+    if invalid or (denials and isinstance(entry, (JournalRecordEntry, JournalOperationOpen))):
         return make_event(
             EVENT_WITHHELD, session.journal_id, sequence, _withheld_payload(entry, denials)
         )
@@ -2311,8 +2554,8 @@ def _entry_event(entry: JournalEntry, journal_id: str, sequence: int) -> LiveEve
                 ),
             },
         )
-    if isinstance(entry, JournalOpen):  # pragma: no cover - a header never repeats
-        return make_event(EVENT_OPEN, journal_id, sequence, _open_payload(entry, SOURCE_JOURNAL))
+    if isinstance(entry, JournalOpen):
+        raise CheckpointFramesInvalidError("journal header cannot be emitted after sequence 1")
     raise CheckpointFramesInvalidError("unsupported journal entry kind")
 
 

@@ -32,9 +32,6 @@ from earshot.engines.webrtc import WebRtcCarry, WebRtcFacts, analyze_webrtc_stat
 pytestmark = pytest.mark.unit
 
 
-# -- builders ------------------------------------------------------------------
-
-
 def _inbound(
     *,
     received: float,
@@ -218,9 +215,6 @@ _SERIES: list[dict[str, Any]] = [
 ]
 
 
-# -- fold harness --------------------------------------------------------------
-
-
 def _fold(pieces: Sequence[Sequence[dict[str, Any]]]) -> WebRtcFacts:
     """Analyse ``pieces`` in order, threading the carry, and union the facts.
 
@@ -255,9 +249,6 @@ def _fold(pieces: Sequence[Sequence[dict[str, Any]]]) -> WebRtcFacts:
 
 
 def _assert_equivalent(folded: WebRtcFacts, single: WebRtcFacts) -> None:
-    # Measurements and events are byte-identical, in order and at the same raw
-    # coordinates (``at_ms``); a differing origin or a lost boundary interval
-    # would perturb either.
     assert folded.measurements == single.measurements
     assert folded.events == single.events
     # Coverage is order-free and de-duplicated per signal.
@@ -265,9 +256,6 @@ def _assert_equivalent(folded: WebRtcFacts, single: WebRtcFacts) -> None:
     assert folded.jitter_buffer_growth == single.jitter_buffer_growth
     assert folded.reconnected == single.reconnected
     assert folded.route_changed == single.route_changed
-
-
-# -- the fixed series is genuinely exercising every path -----------------------
 
 
 def test_the_fixture_series_exercises_every_stateful_path() -> None:
@@ -305,9 +293,6 @@ def test_the_fixture_series_exercises_every_stateful_path() -> None:
     }
 
 
-# -- fold-equivalence: split at every index, and one snapshot per piece --------
-
-
 def test_folding_through_the_carry_at_every_split_index_matches_single_shot() -> None:
     single = analyze_webrtc_stats(_SERIES)
     for split in range(len(_SERIES) + 1):
@@ -327,9 +312,6 @@ def test_folding_at_two_split_points_matches_single_shot() -> None:
         for second in range(first, len(_SERIES) + 1):
             folded = _fold([_SERIES[:first], _SERIES[first:second], _SERIES[second:]])
             _assert_equivalent(folded, single)
-
-
-# -- the two bugs the carry fixes ----------------------------------------------
 
 
 def test_the_boundary_delta_interval_is_recovered_not_dropped() -> None:
@@ -375,12 +357,7 @@ def test_a_reconnect_spanning_a_boundary_is_observed_only_with_the_carry() -> No
     assert fresh.reconnected is False
 
 
-# -- single-shot behaviour is byte-for-byte unchanged --------------------------
-
-
 def test_single_shot_with_no_carry_is_unchanged() -> None:
-    # An absent carry must reproduce today's engine exactly, and an empty series
-    # still yields the historical empty result (carry stays None).
     assert analyze_webrtc_stats([]) == WebRtcFacts((), (), ())
     assert analyze_webrtc_stats([]).carry is None
     # Threading an empty segment is a genuine no-op: the carry passes straight
@@ -389,9 +366,6 @@ def test_single_shot_with_no_carry_is_unchanged() -> None:
     passthrough = analyze_webrtc_stats([], carry=seeded.carry)
     assert passthrough.measurements == ()
     assert passthrough.carry is seeded.carry
-
-
-# -- Hypothesis: fold-equivalence over random monotonic series -----------------
 
 
 @st.composite

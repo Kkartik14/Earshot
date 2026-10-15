@@ -103,8 +103,6 @@ class _LifecycleClock:
 
 
 def _confidence_source(confidence: str) -> str:
-    # A measured latency is the provider's own reported number; anything the
-    # pipeline timed or deduced is an application-observed value.
     return "provider" if confidence == "measured" else "app"
 
 
@@ -582,8 +580,6 @@ class TurnRecorder:
             reason,
             dropped_count=dropped_count,
         )
-
-    # -- internals -----------------------------------------------------------
 
     def _operation(
         self,

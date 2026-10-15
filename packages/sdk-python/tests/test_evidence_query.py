@@ -41,11 +41,6 @@ def _clean_bundle():
     return decode_incident_json((ROOT / "fixtures" / "valid" / "minimal.json").read_bytes())
 
 
-# --------------------------------------------------------------------------- #
-# known_about_turn                                                            #
-# --------------------------------------------------------------------------- #
-
-
 def test_known_about_turn_returns_metrics_and_diagnoses() -> None:
     query = EvidenceQuery(_fault("render_delay"))
     knowledge = query.known_about_turn("turn-1")
@@ -77,11 +72,6 @@ def test_known_about_turn_reports_unknown_turn() -> None:
     assert knowledge.found is False
     assert knowledge.metrics == ()
     assert knowledge.diagnoses == ()
-
-
-# --------------------------------------------------------------------------- #
-# first_abnormal_boundary                                                     #
-# --------------------------------------------------------------------------- #
 
 
 def _with_device_permission_denied(bundle, *, monotonic_nano: int):
@@ -137,8 +127,6 @@ def test_first_abnormal_boundary_none_for_clean_incident() -> None:
 
 
 def test_first_abnormal_boundary_unknown_across_incomparable_clocks() -> None:
-    # A transport fault on the fixture clock and a device fault on a second,
-    # uncalibrated clock cannot be ordered against each other: say unknown.
     bundle = _fault("websocket_reconnect")
     clock = bundle.profile.clock_domains[0]
     other_clock = clock.model_copy(update={"clock_domain_id": "second-clock"})
@@ -174,11 +162,6 @@ def test_first_abnormal_boundary_unknown_across_incomparable_clocks() -> None:
     assert boundary.reason == "boundaries_span_incomparable_clocks"
 
 
-# --------------------------------------------------------------------------- #
-# not_observed / recomputable                                                 #
-# --------------------------------------------------------------------------- #
-
-
 def test_not_observed_unifies_coverage_gaps() -> None:
     not_observed = EvidenceQuery(_fault("device_unavailable")).not_observed()
     signals = {gap["signal"] for gap in not_observed.coverage_gaps}
@@ -204,11 +187,6 @@ def test_recomputable_resolves_diagnosis_and_metric_references() -> None:
     unknown = query.recomputable("not-a-real-reference")
     assert unknown.found is False
     assert unknown.recomputable is False
-
-
-# --------------------------------------------------------------------------- #
-# detect_contradictions                                                       #
-# --------------------------------------------------------------------------- #
 
 
 def test_detect_contradictions_finds_duplicate_and_out_of_order() -> None:
@@ -278,7 +256,6 @@ def _bundle_with_samples(samples):
 
 
 def test_detect_contradictions_provider_client_disagreement_beyond_uncertainty() -> None:
-    # 100ms vs 180ms with +/-5ms each: 80 > 10, so the observers truly disagree.
     bundle = _bundle_with_samples(
         (
             _rtt_sample("q-server", "server", 100.0, 5.0),
@@ -294,7 +271,6 @@ def test_detect_contradictions_provider_client_disagreement_beyond_uncertainty()
 
 
 def test_detect_contradictions_honors_uncertainty_within_bounds() -> None:
-    # 100ms vs 130ms with +/-40ms each: 30 <= 80, so it is within uncertainty.
     bundle = _bundle_with_samples(
         (
             _rtt_sample("q-server", "server", 100.0, 40.0),
@@ -342,9 +318,6 @@ def _scalar_sample(
 
 # F6(c): absent uncertainty is UNKNOWN, never an exact 0 that fakes precision.
 def test_missing_uncertainty_is_unknown_not_a_fabricated_zero() -> None:
-    # 100ms vs 180ms, but NEITHER sample states an uncertainty. The old code read
-    # the missing bound as 0 and reported a disagreement "beyond uncertainty"; an
-    # unknown bound cannot prove a disagreement, so nothing is asserted.
     bundle = _bundle_with_samples(
         (
             _scalar_sample("q-server", "server", "earshot.metric.round_trip_time", 100.0, "ms"),
@@ -359,9 +332,6 @@ def test_missing_uncertainty_is_unknown_not_a_fabricated_zero() -> None:
 
 # F6(d): measurements whose bases differ are incomparable, never compared.
 def test_incompatible_measurement_bases_are_not_compared() -> None:
-    # Same metric name, two observers, but one is in ms and the other a raw count.
-    # Both carry a known uncertainty (so F6(c) does not short-circuit); the old
-    # code dropped the unit and compared 100 against 5000 into a fake disagreement.
     bundle = _bundle_with_samples(
         (
             _scalar_sample(
@@ -425,8 +395,6 @@ def test_detect_contradictions_ignores_same_observer_disagreement() -> None:
 
 
 def test_detect_contradictions_finds_same_domain_time_reversed() -> None:
-    # Contradiction detection is a read-only lens: it can probe a suspect graph
-    # whose operation interval runs backwards within one clock domain.
     reversed_operation = Operation(
         operation_id="op-reversed",
         session_id="session-1",
@@ -456,11 +424,6 @@ def test_detect_contradictions_empty_on_clean_fixtures() -> None:
     assert detect_contradictions(_clean_bundle()) == []
     assert detect_contradictions(make_valid_bundle()) == []
     assert detect_contradictions(_fault("webrtc_degradation")) == []
-
-
-# --------------------------------------------------------------------------- #
-# compare_incidents                                                           #
-# --------------------------------------------------------------------------- #
 
 
 def _degraded_incident():
@@ -555,15 +518,7 @@ def test_compare_incidents_reports_availability_change_not_fabricated_delta() ->
     assert "first_token_latency" not in delta_metrics
 
 
-# --- P1#8(b): equal units are not equal measurement bases --------------------
-
-
 def test_compare_incidents_refuses_to_subtract_unlike_measurement_bases() -> None:
-    # The known-good session never observed audio render, so its response_latency is
-    # measured to the transport estimate; the incident's is measured all the way to
-    # render. Both are "ms" and both are available, and before the fix that was
-    # enough: the comparison reported a 200 ms delta that is really the render leg
-    # the known-good never observed, not a regression.
     known = make_valid_bundle(include_render=False)
     incident = make_valid_bundle()
 
@@ -587,8 +542,6 @@ def test_compare_incidents_refuses_to_subtract_unlike_measurement_bases() -> Non
 
 
 def test_compare_incidents_still_subtracts_like_bases() -> None:
-    # The refusal is about unlike bases, not about caution: a metric measured the
-    # same way on both sides still yields its arithmetic difference.
     known = make_valid_bundle()
     incident = _degraded_incident()
     render = next(
@@ -629,11 +582,6 @@ def test_compare_incidents_reports_unmatched_turns() -> None:
     assert comparison.unmatched_turns["only_in_known_good"] == ["turn-1"]
 
 
-# --------------------------------------------------------------------------- #
-# determinism                                                                 #
-# --------------------------------------------------------------------------- #
-
-
 def test_query_surface_is_deterministic() -> None:
     incident = _degraded_incident()
     known = make_valid_bundle()
@@ -651,11 +599,6 @@ def test_query_surface_is_deterministic() -> None:
     assert dumps(compare_incidents(incident, known).as_dict()) == dumps(
         compare_incidents(incident, known).as_dict()
     )
-
-
-# --------------------------------------------------------------------------- #
-# CLI                                                                          #
-# --------------------------------------------------------------------------- #
 
 
 @pytest.mark.integration

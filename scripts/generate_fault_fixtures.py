@@ -56,11 +56,8 @@ WALL_ORIGIN = 1_800_000_000_000_000_000
 CLOCK_DOMAIN = "fault-fixture-clock"
 TRACE_ID = "a" * 32
 
-# The corpus deliberately claims the supported floor rather than the current
-# producer version; see the module docstring. Dropping 0.1.0 from the supported
-# set must not silently relabel seventeen committed artifacts, so this fails
-# closed instead: someone has to decide what the corpus covers next, and add the
-# 0.1.0 read-tolerance fixtures elsewhere if it still needs them.
+# Keep the fixture corpus at the supported version floor. Changing that floor
+# requires an explicit decision about which compatibility cases the corpus covers.
 CORPUS_CONTRACT_VERSION = "0.1.0"
 CORPUS_SEMANTIC_PROFILE_VERSION = "0.1.0"
 if (

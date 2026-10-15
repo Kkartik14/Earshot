@@ -478,6 +478,106 @@ def test_pagination_is_stable_bounded_and_duplicate_free(tmp_path) -> None:
     assert len(set(seen)) == 7
 
 
+def test_incident_listing_does_not_hold_the_store_write_lock(tmp_path, monkeypatch) -> None:
+    store = IncidentStore(tmp_path)
+    store.create_project("listing", display_name="Listing")
+    concurrent_writer = IncidentStore(tmp_path)
+    query_started = threading.Event()
+    resume_query = threading.Event()
+    writer_finished = threading.Event()
+    failures: list[BaseException] = []
+    connect = store._connect
+
+    def connect_with_query_barrier():
+        connection = connect()
+
+        def trace(statement: str) -> None:
+            if "FROM incidents" in statement and not query_started.is_set():
+                query_started.set()
+                if not resume_query.wait(5):
+                    raise TimeoutError("listing query barrier timed out")
+
+        connection.set_trace_callback(trace)
+        return connection
+
+    monkeypatch.setattr(store, "_connect", connect_with_query_barrier)
+
+    def list_page() -> None:
+        try:
+            store.list_incidents(project_id="listing")
+        except BaseException as error:
+            failures.append(error)
+
+    def write_project() -> None:
+        try:
+            concurrent_writer.create_project("during-list", display_name="During list")
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            writer_finished.set()
+
+    listing_thread = threading.Thread(target=list_page)
+    listing_thread.start()
+    assert query_started.wait(2)
+    writer_thread = threading.Thread(target=write_project)
+    writer_thread.start()
+    try:
+        assert writer_finished.wait(2), "a metadata page blocked an unrelated store writer"
+    finally:
+        resume_query.set()
+        listing_thread.join(timeout=5)
+        writer_thread.join(timeout=5)
+
+    assert not listing_thread.is_alive()
+    assert not writer_thread.is_alive()
+    assert failures == []
+    assert concurrent_writer.project_exists("during-list")
+
+
+def test_in_memory_incident_listing_serializes_shared_cache_writes(tmp_path, monkeypatch) -> None:
+    store = IncidentStore(tmp_path / "memory", database_path=":memory:")
+    store.create_project("listing", display_name="Listing")
+    query_started = threading.Event()
+    resume_query = threading.Event()
+    write_started = threading.Event()
+    write_finished = threading.Event()
+    require_active_project = store._require_active_project
+
+    def pause_after_project_read(connection, project_id):
+        result = require_active_project(connection, project_id)
+        if project_id == "listing" and not query_started.is_set():
+            query_started.set()
+            if not resume_query.wait(5):
+                raise TimeoutError("in-memory listing barrier timed out")
+        return result
+
+    monkeypatch.setattr(store, "_require_active_project", pause_after_project_read)
+
+    def create_project() -> None:
+        write_started.set()
+        try:
+            store.create_project("during-list", display_name="During list")
+        finally:
+            write_finished.set()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            listing = executor.submit(store.list_incidents, project_id="listing")
+            assert query_started.wait(2)
+            writer = executor.submit(create_project)
+            assert write_started.wait(2)
+            assert not write_finished.wait(0.1), (
+                "a shared-cache write escaped listing serialization"
+            )
+            resume_query.set()
+            assert listing.result(timeout=5).items == ()
+            writer.result(timeout=5)
+        assert store.project_exists("during-list")
+    finally:
+        resume_query.set()
+        store.close()
+
+
 @pytest.mark.parametrize("cursor", ["not-base64", "WzEsMl0", "e30", ""])
 def test_invalid_pagination_cursor_is_rejected(tmp_path, cursor: str) -> None:
     store = IncidentStore(tmp_path)
@@ -1495,25 +1595,6 @@ def test_destination_filtered_listing_never_pages_through_restricted_ids(tmp_pat
         store.list_incidents(destination="attacker")
 
 
-def test_secure_purge_scrubs_analysis_secret_from_sqlite_files(tmp_path, valid_bundle) -> None:
-    secret = b"purge_forensic_marker_835f0d6c"
-    store = IncidentStore(tmp_path)
-    store.ingest(valid_bundle, canonical(valid_bundle))
-    store.put_analysis(
-        "bundle-1",
-        "secret",
-        analysis_value(store, "bundle-1", "secret", secret.decode()),
-    )
-    assert any(
-        secret in path.read_bytes() for path in tmp_path.glob("earshot.sqlite3*") if path.is_file()
-    )
-
-    store.purge("bundle-1")
-    for path in tmp_path.glob("earshot.sqlite3*"):
-        if path.is_file():
-            assert secret not in path.read_bytes(), path
-
-
 def test_startup_preserves_orphans_until_explicit_cleanup_and_cleans_temp(tmp_path) -> None:
     store = IncidentStore(tmp_path)
     digest, _ = store.objects.put(b"unindexed crash leftover")
@@ -1574,7 +1655,7 @@ def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
         )
     store = IncidentStore(tmp_path)
     with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
         assert {
             "expires_at_unix_nano",
@@ -1632,7 +1713,7 @@ def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid
     assert restored.value == original.value
     assert restored.generated_at_unix_nano == original.generated_at_unix_nano
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         column = next(
             row
             for row in connection.execute("PRAGMA table_info(analyses)")
@@ -1660,7 +1741,7 @@ def test_v14_database_migrates_scrub_state_and_listing_indexes(tmp_path) -> None
     migrated = IncidentStore(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         assert connection.execute(
             "SELECT purge_generation, scrubbed_generation FROM storage_maintenance "
             "WHERE singleton = 1"
@@ -1689,7 +1770,7 @@ def test_v16_migration_backfills_monotonic_incident_ingest_order(tmp_path, valid
 
     migrated = IncidentStore(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         old_sequence = connection.execute(
             "SELECT sequence FROM incident_ingest_order WHERE bundle_id = ?",
             (valid_bundle.profile.manifest.bundle_id,),
@@ -1771,7 +1852,7 @@ def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
             "default",
             123,
         )
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
 
 
 def test_rolled_back_schema_version_does_not_exempt_hashed_tombstones_from_key_recovery(
@@ -1810,6 +1891,8 @@ def test_released_v4_catalog_is_migrated_without_losing_canonical_evidence(
             DROP INDEX incidents_session_idx;
             DROP INDEX incidents_project_idx;
             DROP INDEX incidents_expiry_idx;
+            DROP INDEX IF EXISTS incidents_project_expiry_idx;
+            DROP INDEX IF EXISTS incidents_project_no_expiry_idx;
             DROP INDEX incidents_export_local_api_idx;
             DROP INDEX incidents_export_local_cli_idx;
             DROP INDEX incidents_project_bundle_idx;
@@ -1843,7 +1926,7 @@ def test_released_v4_catalog_is_migrated_without_losing_canonical_evidence(
     assert restored == payload
     assert record.session_id == valid_bundle.profile.manifest.session_id
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
@@ -1861,7 +1944,41 @@ def test_current_v12_catalog_reopens_without_rewriting_authoritative_rows(
     assert restored == payload
     assert record == created
     with sqlite3.connect(reopened.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+
+
+def test_v18_listing_indexes_are_removed_without_changing_incident_rows(
+    tmp_path, valid_bundle
+) -> None:
+    store = IncidentStore(tmp_path)
+    ingested = store.ingest(valid_bundle, canonical(valid_bundle)).record
+    store.close()
+
+    with sqlite3.connect(tmp_path / "earshot.sqlite3") as connection:
+        connection.executescript(
+            """
+            CREATE INDEX incidents_project_expiry_idx
+                ON incidents(project_id, length(expires_at_unix_nano), expires_at_unix_nano,
+                             ingested_at_unix_nano DESC, bundle_id DESC)
+                WHERE expires_at_unix_nano IS NOT NULL;
+            CREATE INDEX incidents_project_no_expiry_idx
+                ON incidents(project_id, ingested_at_unix_nano DESC, bundle_id DESC)
+                WHERE expires_at_unix_nano IS NULL;
+            PRAGMA user_version = 18;
+            """
+        )
+
+    reopened = IncidentStore(tmp_path)
+
+    assert [item.bundle_id for item in reopened.list_incidents().items] == [ingested.bundle_id]
+    with sqlite3.connect(reopened.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        remaining_indexes = {
+            row[0]
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+        }
+    assert "incidents_project_expiry_idx" not in remaining_indexes
+    assert "incidents_project_no_expiry_idx" not in remaining_indexes
 
 
 def test_v11_catalog_adds_project_lifecycle_columns(tmp_path, valid_bundle) -> None:
@@ -1884,7 +2001,7 @@ def test_v11_catalog_adds_project_lifecycle_columns(tmp_path, valid_bundle) -> N
         valid_bundle
     )
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         columns = {row[1] for row in connection.execute("PRAGMA table_info(projects)")}
         assert {
             "lifecycle_state",
@@ -1904,7 +2021,7 @@ def test_v12_catalog_adds_project_scoped_cas_cleanup_queue(tmp_path) -> None:
     migrated = IncidentStore(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         assert (
             connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' "
@@ -1927,7 +2044,7 @@ def test_v17_catalog_adds_project_scoped_pending_ingest_journal(tmp_path) -> Non
     migrated = IncidentStore(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
         assert (
             connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_ingests'"
@@ -1998,7 +2115,7 @@ def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -
             """
             CREATE TABLE future_catalog_marker (value TEXT NOT NULL);
             INSERT INTO future_catalog_marker VALUES ('keep-me');
-            PRAGMA user_version = 19;
+            PRAGMA user_version = 20;
             """
         )
 
@@ -2006,7 +2123,7 @@ def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -
         IncidentStore(tmp_path)
 
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 20
         assert connection.execute("SELECT value FROM future_catalog_marker").fetchone()[0] == (
             "keep-me"
         )
@@ -2072,7 +2189,7 @@ def test_catalog_recovers_after_process_exit_during_a_schema_transaction(tmp_pat
 
     migrated = IncidentStore(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 18
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
 
 
 def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None:

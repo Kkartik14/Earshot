@@ -19,7 +19,6 @@ incomplete, ``session.status="interrupted"``, and no session end at all.
 
 from __future__ import annotations
 
-import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -42,8 +41,15 @@ from ..contract import (
     RecoveryRecord,
     TimePoint,
 )
-from ..privacy import CaptureClass, Omission
+from ..privacy import CaptureClass, CapturePolicy, Omission
 from ..versions import PACKAGE_VERSION
+from .governance import (
+    RECORD_MODELS as _RECORD_MODELS,
+)
+from .governance import (
+    validate_and_classify_record,
+    validate_nonrecord_entry,
+)
 from .reader import JournalReader, JournalReplay
 from .records import (
     JournalExhausted,
@@ -59,19 +65,6 @@ if TYPE_CHECKING:  # pragma: no cover - avoids a module-level import cycle
 METHOD_CHECKPOINT_JOURNAL = "checkpoint_journal"
 REASON_BEFORE_CLOSE = "process_terminated_before_close"
 RECOVERED_SESSION_STATUS = "interrupted"
-
-_RECORD_MODELS = {
-    "adapter": Adapter,
-    "participant": Participant,
-    "stream": AudioStream,
-    "coverage": Coverage,
-    "operation": Operation,
-    "event": Event,
-    "quality_sample": QualitySample,
-    "media": MediaRef,
-    "clock_domain": ClockDomain,
-    "clock_relation": ClockRelation,
-}
 
 
 class AssemblyError(ValueError):
@@ -233,12 +226,23 @@ def assemble_incident(
     """
 
     replay = JournalReader(journal, key=key).read()
+    if replay.finalize is not None and replay.torn_tail_bytes > 0:
+        raise AssemblyError("finalized journal has trailing bytes after finalize")
     state = _ReplayState(replay.header.session_id)
+    try:
+        capture_policy = replay.header.capture_policy()
+        validate_nonrecord_entry(replay.header)
+    except (TypeError, ValueError) as error:
+        raise AssemblyError("journal header has an unreadable capture policy") from error
     discarded = 0
     journal_exhausted = False
     for entry in replay.entries:
+        try:
+            validate_nonrecord_entry(entry)
+        except (TypeError, ValueError) as error:
+            raise AssemblyError("journal holds an ungoverned metadata entry") from error
         if isinstance(entry, JournalRecordEntry):
-            discarded += _apply_record(state, entry)
+            discarded += _apply_record(state, entry, capture_policy)
         elif isinstance(entry, JournalLimitEntry):
             _apply_limit(state, entry)
         elif isinstance(entry, JournalOperationOpen):
@@ -297,7 +301,14 @@ def assemble_incident(
         )
 
     snapshot = _snapshot(
-        replay, state, status, status_attributes, ended_at, bundle_id, len(unfinished)
+        replay,
+        state,
+        capture_policy,
+        status,
+        status_attributes,
+        ended_at,
+        bundle_id,
+        len(unfinished),
     )
     from ..recorder import build_incident_profile  # lazy: keeps the import graph acyclic
 
@@ -323,28 +334,29 @@ def _default_recoverer() -> Producer:
     return Producer(name="earshot", version=PACKAGE_VERSION, sdk_version=PACKAGE_VERSION)
 
 
-def _apply_record(state: _ReplayState, entry: JournalRecordEntry) -> int:
+def _apply_record(
+    state: _ReplayState,
+    entry: JournalRecordEntry,
+    capture_policy: CapturePolicy,
+) -> int:
     """Apply one journaled mutation. Returns the number of records discarded."""
 
     discarded = 0
     if entry.value is not None:
+        try:
+            record, derived_classes = validate_and_classify_record(entry, capture_policy)
+        except ValueError as error:
+            raise AssemblyError("journal holds a record that is not recorder-governed") from error
         if entry.kind == "raw_otlp":
-            chunk = _decode_raw_otlp(entry.value)
-            if chunk is None:
+            if not isinstance(record, RawOtlpChunk):
                 return 1
-            state.raw_otlp_chunks.append(chunk)
+            state.raw_otlp_chunks.append(record)
         else:
-            model = _RECORD_MODELS.get(entry.kind)
-            if model is None:
+            if record is None or entry.kind not in _RECORD_MODELS:
                 return 1
-            try:
-                record = model.model_validate(entry.value)
-            except ValueError as error:
-                raise AssemblyError("journal holds a record that is not a contract record") from (
-                    error
-                )
             state.append(entry.kind, record, entry.replaces_index)
             _observe_time(state, record)
+        state.retained_classes.update(derived_classes)
     for omission in entry.omissions:
         try:
             state.omissions.append(
@@ -376,27 +388,6 @@ def _apply_limit(state: _ReplayState, entry: JournalLimitEntry) -> None:
         state.omitted_by_class.get(entry.capture_class, 0) + 1
     )
     state.estimated_omitted_bytes += entry.estimated_bytes
-
-
-def _decode_raw_otlp(value: dict[str, Any]) -> RawOtlpChunk | None:
-    payload_base64 = value.get("payload_base64")
-    if not isinstance(payload_base64, str):
-        return None
-    try:
-        payload = base64.b64decode(payload_base64, validate=True)
-    except ValueError:
-        return None
-    try:
-        return RawOtlpChunk(
-            chunk_id=value["chunk_id"],
-            signal=value["signal"],
-            content_type=value.get("content_type", "application/x-protobuf"),
-            compression=value.get("compression", "identity"),
-            payload=payload,
-            sha256=value.get("sha256"),
-        )
-    except (KeyError, ValueError):
-        return None
 
 
 def _observe_time(state: _ReplayState, record: Any) -> None:
@@ -493,13 +484,14 @@ def _cross_check(state: _ReplayState, finalize: JournalFinalize) -> bool:
 def _snapshot(
     replay: JournalReplay,
     state: _ReplayState,
+    capture_policy: CapturePolicy,
     status: str,
     status_attributes: dict[str, str],
     ended_at: TimePoint | None,
     bundle_id: str,
     unfinished_operations: int,
 ) -> RecorderSnapshot:
-    from ..recorder import RecorderSnapshot  # lazy: keeps the import graph acyclic
+    from ..recorder import RecorderSnapshot
 
     header = replay.header
     return RecorderSnapshot(
@@ -510,7 +502,7 @@ def _snapshot(
         clock_domain_id=header.clock_domain_id,
         started_wall=int(header.started_wall),
         started_mono=int(header.started_mono),
-        capture_policy=header.capture_policy(),
+        capture_policy=capture_policy,
         adapters=tuple(state.adapters),
         status=status,
         status_attributes=status_attributes,

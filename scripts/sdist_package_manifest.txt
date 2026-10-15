@@ -24,6 +24,7 @@ packages/sdk-python/src/earshot/capture/source.py
 packages/sdk-python/src/earshot/checkpoint/__init__.py
 packages/sdk-python/src/earshot/checkpoint/assembler.py
 packages/sdk-python/src/earshot/checkpoint/framing.py
+packages/sdk-python/src/earshot/checkpoint/governance.py
 packages/sdk-python/src/earshot/checkpoint/keys.py
 packages/sdk-python/src/earshot/checkpoint/limits.py
 packages/sdk-python/src/earshot/checkpoint/reader.py

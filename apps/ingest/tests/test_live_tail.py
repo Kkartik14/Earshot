@@ -332,9 +332,6 @@ def _data(event: dict[str, str]) -> dict:
     return json.loads(event["data"])
 
 
-# ------------------------------------------------------------- SSE contract
-
-
 def test_the_tail_opens_with_the_journal_header_and_stable_event_ids(
     tmp_path: Path,
 ) -> None:
@@ -421,9 +418,6 @@ def test_an_idle_tail_sends_a_heartbeat_instead_of_going_quiet(tmp_path: Path) -
     assert "id" not in events[1]
     assert _data(events[1]) == {"as_of_sequence": 1, "close_observed": False}
     writer.release()
-
-
-# ------------------------------------------------------- restricted export
 
 
 def test_a_class_forbidden_from_this_destination_never_reaches_a_subscriber(
@@ -539,9 +533,6 @@ def test_an_admitted_fact_reaches_a_live_subscriber(tmp_path: Path) -> None:
     assert _data(events[0])["kind"] == "event"
     harness.registry.close()
     writer.release()
-
-
-# ---------------------------------------------------------- resume + bounds
 
 
 def test_reconnecting_with_last_event_id_loses_and_repeats_nothing(
@@ -672,9 +663,6 @@ def test_an_unknown_session_is_not_live(tmp_path: Path) -> None:
     assert response.json()["error"]["code"] == "EARSHOT_SESSION_NOT_LIVE"
 
 
-# ---------------------------------------------------------------- auth path
-
-
 def test_the_tail_requires_the_same_credential_every_other_route_does(
     tmp_path: Path,
 ) -> None:
@@ -777,9 +765,6 @@ def test_the_live_listing_states_what_it_cannot_answer(tmp_path: Path) -> None:
     assert "no analysis" in joined
     assert body["items"][0]["close_observed"] is False
     writer.release()
-
-
-# ------------------------------------------------------- remote checkpoints
 
 
 def test_uploaded_checkpoints_feed_the_same_tail(tmp_path: Path) -> None:

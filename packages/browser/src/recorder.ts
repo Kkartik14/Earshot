@@ -1,40 +1,9 @@
-/**
- * `EarshotBrowserRecorder` — the client-side capture kernel.
- *
- * It observes the live W3C APIs (`RTCPeerConnection.getStats()`, `AudioContext`
- * state/latency/render position, `navigator.mediaDevices` + Permissions) and
- * buffers the results in the EXACT shapes the server engines consume, then
- * `drain()`s a `CapturePayload` the client POSTs (see `transport.ts`). The
- * server feeds `snapshots` to `analyze_webrtc_stats` and `deviceEvents` to
- * `analyze_audio_graph`.
- *
- * Coverage over completeness: every render-path signal the running browser does
- * not expose — `getOutputTimestamp`, the `media-playout` stats,
- * `totalProcessingDelay` — becomes an explicit coverage note. Nothing is
- * synthesised to fill the hole, and per-frame audio decode time is never
- * claimed at all because webrtc-stats only defines it for video.
- *
- * Design seams (all injectable, all defaulted): a monotonic `clock`, an interval
- * `scheduler`, and a `random` source. Injecting them is what lets the tests run
- * the whole kernel deterministically against mocked browser APIs.
- *
- * Bounds & honesty: the snapshot/event buffers are bounded — on overflow the
- * OLDEST observation is dropped and the loss is recorded as explicit coverage,
- * never lost silently. `getStats()`/permission errors and overlapping samples
- * are likewise recorded as coverage, not swallowed.
- *
- * Clock honesty: every buffered `timestamp_ms` is a RAW reading of the injected
- * monotonic clock (not rebased to zero), tagged by a stable per-recorder
- * `clockDomain` id so the server keeps browser time in its own clock domain.
- *
- * Trace honesty: the recorder JOINS an application-supplied trace context when
- * given one and only mints its own when none is supplied — it never overwrites
- * the app's trace.
- *
- * Privacy posture: metadata only. No audio samples are ever read or retained
- * (the observed APIs do not even expose them). Device labels/ids and ICE
- * candidate addresses never leave the client — device ids become opaque
- * per-session salted hashes and candidate addresses are scrubbed.
+/** Browser capture adapter for WebRTC stats, audio contexts, and media devices.
+ * `drain()` emits the payload consumed by the server's WebRTC and device engines.
+ * Unsupported signals, sampling failures, and dropped observations become
+ * coverage. Timestamps stay in one raw browser clock domain; device ids are
+ * session-salted, and audio samples are never read. Clock, scheduler, and random
+ * sources are injectable for deterministic tests.
  */
 
 import {
@@ -221,6 +190,38 @@ function copyCapturePayload(payload: CapturePayload): CapturePayload {
   return JSON.parse(JSON.stringify(payload)) as CapturePayload;
 }
 
+class DropOldestBuffer<T> {
+  private readonly items: Array<T | undefined>;
+  private head = 0;
+  private count = 0;
+
+  constructor(private readonly capacity: number) {
+    this.items = new Array<T | undefined>(capacity);
+  }
+
+  push(item: T): boolean {
+    if (this.count < this.capacity) {
+      this.items[(this.head + this.count) % this.capacity] = item;
+      this.count += 1;
+      return false;
+    }
+    this.items[this.head] = item;
+    this.head = (this.head + 1) % this.capacity;
+    return true;
+  }
+
+  drain(): T[] {
+    const result = new Array<T>(this.count);
+    for (let index = 0; index < this.count; index += 1) {
+      result[index] = this.items[(this.head + index) % this.capacity]!;
+    }
+    this.items.fill(undefined);
+    this.head = 0;
+    this.count = 0;
+    return result;
+  }
+}
+
 export class EarshotBrowserRecorder {
   readonly sessionId: string;
   readonly clockDomainId: string;
@@ -237,8 +238,8 @@ export class EarshotBrowserRecorder {
   private readonly captureVersion: CaptureVersion;
   private readonly capturerStartedAtMs: number;
 
-  private snapshots: WebRtcSnapshot[] = [];
-  private deviceEvents: DeviceEvent[] = [];
+  private readonly snapshots: DropOldestBuffer<WebRtcSnapshot>;
+  private readonly deviceEvents: DropOldestBuffer<DeviceEvent>;
   private counters: CoverageCounters = zeroCounters();
   private availability: SignalAvailability = zeroAvailability();
   private pendingCoverage: CaptureCoverage[] = [];
@@ -266,6 +267,8 @@ export class EarshotBrowserRecorder {
       options.maxDeviceEvents,
       DEFAULT_MAX_DEVICE_EVENTS,
     );
+    this.snapshots = new DropOldestBuffer(this.maxSnapshots);
+    this.deviceEvents = new DropOldestBuffer(this.maxDeviceEvents);
     this.clockUncertaintyMs = this.nonNegativeOption(
       options.clockUncertaintyMs,
       DEFAULT_CLOCK_UNCERTAINTY_MS,
@@ -277,8 +280,6 @@ export class EarshotBrowserRecorder {
     // start. Carried on every v2 drain so a later phase can bound the capture.
     this.capturerStartedAtMs = this.clock();
   }
-
-  // -- trace context ---------------------------------------------------------
 
   /** The session's W3C trace-context (stable for the recorder's lifetime). */
   traceContext(): TraceContext {
@@ -292,8 +293,6 @@ export class EarshotBrowserRecorder {
   injectTraceHeaders(headers?: Record<string, string>): Record<string, string> {
     return injectTraceHeaders(this.trace, headers);
   }
-
-  // -- WebRTC ----------------------------------------------------------------
 
   /**
    * Periodically sample `pc.getStats()` and buffer normalised snapshots. Each
@@ -346,23 +345,8 @@ export class EarshotBrowserRecorder {
     this.teardowns.push(() => this.scheduler.clearInterval(handle));
   }
 
-  // -- Web Audio -------------------------------------------------------------
-
-  /**
-   * Observe an `AudioContext` across the render path.
-   *
-   * Recorded on attach and then continuously:
-   *  - `baseLatency` (deterministic, `measured`) and `outputLatency` (a W3C
-   *    estimate) — the server keeps that distinction;
-   *  - the render queue's depth, sampled periodically from
-   *    `currentTime - getOutputTimestamp().contextTime` — the audio the graph
-   *    has rendered that the output device has not yet played;
-   *  - every `statechange` (a suspended/interrupted context is silence) and
-   *    `sinkchange` (the render device moved).
-   *
-   * Nothing here is derived from a signal the platform does not offer: a context
-   * without `getOutputTimestamp`, or one whose timestamp is not yet populated,
-   * yields an explicit coverage note instead of a fabricated queue depth.
+  /** Observe latency, render queue, state, and sink changes. Missing or
+   * unpopulated `getOutputTimestamp()` values are recorded as coverage.
    */
   attachAudioContext(
     ctx: AudioContextLike,
@@ -412,13 +396,8 @@ export class EarshotBrowserRecorder {
     this.teardowns.push(() => ctx.removeEventListener("sinkchange", onSinkChange));
   }
 
-  // -- media devices / permissions -------------------------------------------
-
-  /**
-   * Watch `devicechange`, and (when a Permissions API is supplied) read and
-   * watch the `microphone` permission. Returns once the initial permission
-   * query settles, so callers/tests can await a deterministic first reading. A
-   * rejected permission query is recorded as coverage, never swallowed silently.
+  /** Watch `devicechange` and optional microphone permission changes. Resolves
+   * after the initial permission query; failures are recorded as coverage.
    */
   async observeMediaDevices(
     mediaDevices: MediaDevicesLike,
@@ -454,11 +433,8 @@ export class EarshotBrowserRecorder {
     }
   }
 
-  /**
-   * Call `getUserMedia` and record the outcome: a `granted` permission event
-   * (carrying an opaque device hash) plus per-track lifecycle on success, or a
-   * `denied` permission event on a NotAllowed/Security rejection. Returns the
-   * stream on success, else `null` — never throws (fail-open).
+  /** Request audio and record permission plus hashed device metadata. Returns
+   * the stream or `null` on denial; permission errors do not propagate.
    */
   async requestMicrophone(
     mediaDevices: MediaDevicesLike,
@@ -486,8 +462,6 @@ export class EarshotBrowserRecorder {
     }
   }
 
-  // -- app-detected signals (no W3C event exists for these) ------------------
-
   /** Record a configured-vs-actual sample-rate mismatch the app detected. */
   recordSampleRateMismatch(configuredHz: number, actualHz: number): void {
     if (this.stopped) return;
@@ -500,15 +474,8 @@ export class EarshotBrowserRecorder {
     this.pushDeviceEvent(underrunEvent(this.clock(), kind));
   }
 
-  /**
-   * Ledger a gap someone else observed — most importantly the capture transport,
-   * which records the observations a payload it could not deliver took with it.
-   * The note joins the next `drain()`'s `coverage`, so a delivery failure is
-   * still visible as an explicit unknown rather than as clean-looking silence.
-   *
-   * Repeat notes with the same signal/availability/reason are merged (their
-   * `droppedCount`s add up) and the buffer is bounded, so an endlessly failing
-   * uploader cannot grow it without limit; overflow is itself recorded.
+  /** Queue an externally observed gap, usually a failed delivery, for the next
+   * drain. Matching notes merge counts; the bounded buffer records overflow.
    */
   recordCoverage(note: CaptureCoverage): void {
     if (this.stopped) return;
@@ -534,19 +501,9 @@ export class EarshotBrowserRecorder {
     this.pendingCoverage.push({ ...note });
   }
 
-  // -- drain / stop ----------------------------------------------------------
-
-  /**
-   * Hand the buffered payload to the caller and reset the buffers, so the next
-   * POST starts clean. The session id, trace-context and clock-domain id are
-   * stable across drains (so the browser timeline is continuous, not restarted),
-   * while the per-window coverage counters reset each drain.
-   *
-   * Passing `{ end }` marks this the call's FINAL drain and declares why the
-   * observer stopped (`captureVersion: 2` only). It is stamped with the clock
-   * reading taken now, in the payload's clock domain. Ending a call is an explicit
-   * act: this method never sets `end` on its own, so an ordinary periodic drain
-   * can never be mistaken for a close.
+  /** Return buffered observations and reset per-drain state. Session, trace, and
+   * clock-domain ids persist. Version 2 accepts `{ end }` to declare why capture
+   * stopped, stamped in the same raw clock domain; ordinary drains do not close it.
    */
   drain(options: DrainOptions = {}): CapturePayload {
     if (this.finalPayload) return copyCapturePayload(this.finalPayload);
@@ -555,8 +512,8 @@ export class EarshotBrowserRecorder {
       sessionId: this.sessionId,
       traceContext: this.trace,
       clockDomain: this.clockDomain(),
-      snapshots: this.snapshots,
-      deviceEvents: this.deviceEvents,
+      snapshots: this.snapshots.drain(),
+      deviceEvents: this.deviceEvents.drain(),
       coverage: this.buildCoverage(),
     };
     if (this.captureVersion === CONTINUOUS_CAPTURE_VERSION) {
@@ -573,8 +530,6 @@ export class EarshotBrowserRecorder {
         payload.end = { reason: options.end, timestampMs: this.clock() };
       }
     }
-    this.snapshots = [];
-    this.deviceEvents = [];
     this.counters = zeroCounters();
     this.availability = zeroAvailability();
     this.pendingCoverage = [];
@@ -614,12 +569,8 @@ export class EarshotBrowserRecorder {
     return payload;
   }
 
-  /**
-   * Stop all sampling and remove every listener. Idempotent; safe to re-call.
-   *
-   * Stopping capture is NOT ending the call: it emits no end signal, so a call a
-   * recorder merely `stop()`s stays provisional on the server forever. Use
-   * `endCall()` when the call actually ended.
+  /** Idempotently stop sampling and remove listeners. This does not close the
+   * call; use `endCall()` to declare an observed application close.
    */
   stop(): void {
     if (this.stopped) return;
@@ -633,8 +584,6 @@ export class EarshotBrowserRecorder {
     }
   }
 
-  // -- internals -------------------------------------------------------------
-
   private clockDomain(): BrowserClockDomain {
     return {
       id: this.clockDomainId,
@@ -646,19 +595,11 @@ export class EarshotBrowserRecorder {
   }
 
   private pushSnapshot(snapshot: WebRtcSnapshot): void {
-    if (this.snapshots.length >= this.maxSnapshots) {
-      this.snapshots.shift(); // drop the OLDEST, keep the most recent window
-      this.counters.droppedSnapshots += 1;
-    }
-    this.snapshots.push(snapshot);
+    if (this.snapshots.push(snapshot)) this.counters.droppedSnapshots += 1;
   }
 
   private pushDeviceEvent(event: DeviceEvent): void {
-    if (this.deviceEvents.length >= this.maxDeviceEvents) {
-      this.deviceEvents.shift();
-      this.counters.droppedDeviceEvents += 1;
-    }
-    this.deviceEvents.push(event);
+    if (this.deviceEvents.push(event)) this.counters.droppedDeviceEvents += 1;
   }
 
   private buildCoverage(): CaptureCoverage[] {

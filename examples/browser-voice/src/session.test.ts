@@ -3,11 +3,33 @@ import type {
   CaptureAcknowledgement,
   CaptureDeliveryResult,
   CaptureFlushResult,
+  CapturePayload,
 } from "@earshot/browser";
 
 const mocks = vi.hoisted(() => {
-  const finalPayload = { captureVersion: 2, sessionId: "sess_test", drainSequence: 9 };
-  const observerPayload = { captureVersion: 2, sessionId: "sess_test", drainSequence: 8 };
+  const finalPayload: CapturePayload = {
+    captureVersion: 2,
+    sessionId: "sess_test",
+    traceContext: { traceparent: "00-trace", traceId: "trace", spanId: "span" },
+    clockDomain: {
+      id: "clk_test",
+      kind: "browser_monotonic",
+      unit: "ms",
+      uncertaintyMs: 1,
+      wallOriginMs: 1_000,
+    },
+    drainSequence: 9,
+    snapshots: [{ timestamp_ms: 900, stats: { inbound: { packetsReceived: 9 } } }],
+    deviceEvents: [],
+    coverage: [],
+    end: { reason: "call_ended", timestampMs: 1000 },
+  };
+  const observerPayload = {
+    captureVersion: 2,
+    sessionId: "sess_test",
+    drainSequence: 8,
+    snapshots: [{ timestamp_ms: 800, stats: { inbound: { packetsReceived: 8 } } }],
+  };
   const recorder = {
     sessionId: "sess_test",
     traceContext: vi.fn(() => ({ traceparent: "00-trace" })),
@@ -59,6 +81,26 @@ describe("CaptureSession call lifecycle", () => {
     mocks.transport.send.mockResolvedValue({ delivered: true, attempts: 1, status: 202 });
   });
 
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1.5, 2_147_483_648])(
+    "rejects invalid drain intervals before creating capture resources (%s)",
+    (drainIntervalMs) => {
+      expect(
+        () =>
+          new CaptureSession({
+            endpoint: {
+              endpoint: "/api/earshot/v1/capture",
+              projectId: "project_test",
+              getAuthContextId: () => "authctx_test",
+            },
+            log: vi.fn(),
+            drainIntervalMs,
+          }),
+      ).toThrow(RangeError);
+      expect(mocks.createBrowserRecorder).not.toHaveBeenCalled();
+      expect(mocks.createCaptureTransport).not.toHaveBeenCalled();
+    },
+  );
+
   it("finalizes and delivers one final batch when the actual call ends", async () => {
     const onAccepted = vi.fn((_acknowledgement: CaptureAcknowledgement) => undefined);
     const onAcceptedFailure = vi.fn(
@@ -99,6 +141,44 @@ describe("CaptureSession call lifecycle", () => {
     };
     transportOptions?.onAcceptedFailure?.(acceptedAcknowledgement);
     expect(onAcceptedFailure).toHaveBeenCalledWith(acceptedAcknowledgement);
+  });
+
+  it("keeps inspector mutations away from ordinary and terminal requests", async () => {
+    vi.useFakeTimers();
+    try {
+      const onDrain = vi.fn((payload: import("@earshot/browser").CapturePayload) => {
+        payload.sessionId = "observer_changed_session";
+        payload.drainSequence = 0;
+        if (payload.snapshots[0]) {
+          payload.snapshots[0].timestamp_ms = -1;
+        }
+        payload.snapshots.pop();
+        payload.end = undefined;
+      });
+      const session = new CaptureSession({
+        endpoint: {
+          endpoint: "/api/earshot/v1/capture",
+          projectId: "project_test",
+          getAuthContextId: () => "authctx_test",
+        },
+        log: vi.fn(),
+        drainIntervalMs: 1,
+        onDrain,
+      });
+
+      session.start();
+      await vi.advanceTimersByTimeAsync(1);
+      const result = await session.endCall();
+
+      expect(onDrain).toHaveBeenCalledTimes(2);
+      expect(mocks.transport.send).toHaveBeenNthCalledWith(1, mocks.observerPayload);
+      expect(mocks.transport.send).toHaveBeenNthCalledWith(2, mocks.finalPayload);
+      expect(result.payload).toEqual(mocks.finalPayload);
+      expect(mocks.observerPayload.snapshots).toHaveLength(1);
+      expect(mocks.finalPayload.end).toEqual({ reason: "call_ended", timestampMs: 1000 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("stops observation without falsely marking the call ended", async () => {
@@ -173,7 +253,7 @@ describe("CaptureSession call lifecycle", () => {
   });
 
   it("sends a smaller terminal replacement after a permanent 413", async () => {
-    const finalPayload = {
+    const finalPayload: CapturePayload = {
       ...mocks.finalPayload,
       traceContext: { traceparent: "00-trace", traceId: "trace", spanId: "span" },
       clockDomain: {
@@ -249,7 +329,7 @@ describe("CaptureSession call lifecycle", () => {
     await expect(
       session.retryFinalWithReducedPayload({
         ...finalPayload,
-        drainSequence: finalPayload.drainSequence + 1,
+        drainSequence: 10,
         snapshots: [],
         deviceEvents: [],
       }),

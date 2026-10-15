@@ -1,27 +1,4 @@
-/**
- * The capture glue: everything both modes (loopback + OpenAI) share.
- *
- * A `CaptureSession` owns one `EarshotBrowserRecorder` and one
- * `EarshotCaptureTransport` from `@earshot/browser` and drives the REAL W3C code
- * paths the reviewer flagged as unexercised:
- *
- *  - `requestMicrophone(navigator.mediaDevices, …)` — the real `getUserMedia`
- *    microphone-permission path (granted/denied), not a synthesised source.
- *  - `observeMediaDevices(navigator.mediaDevices, { permissions })` — the real
- *    Permissions API `microphone` descriptor and `devicechange`.
- *  - `attachPeerConnection(pc)` — real `RTCPeerConnection.getStats()` sampling.
- *  - `attachAudioContext(ctx)` — real `AudioContext` state / `outputLatency` /
- *    `getOutputTimestamp()` render-queue / `sinkchange` observation.
- *
- * It NEVER fabricates a metric. Every value comes from a real browser object
- * handed to the SDK; where the running browser does not expose a signal, the SDK
- * records its own coverage note and this session does nothing to paper over it.
- *
- * Delivery goes to the earshot backend's `POST /v1/capture` via the SDK's
- * transport. The recorder is wired as the transport's coverage sink, so a batch
- * that fails to upload is declared as coverage on the next drain rather than
- * silently lost.
- */
+/** Shared recorder, transport, and lifecycle wiring for both capture modes. */
 
 import {
   CONTINUOUS_CAPTURE_VERSION,
@@ -197,6 +174,21 @@ function createReducedFinalPayload(
 }
 
 const DEFAULT_DRAIN_INTERVAL_MS = 10_000;
+const MAX_INTERVAL_MS = 2_147_483_647;
+
+function captureDrainInterval(value: number | undefined): number {
+  const intervalMs = value ?? DEFAULT_DRAIN_INTERVAL_MS;
+  if (
+    !Number.isSafeInteger(intervalMs) ||
+    intervalMs < 1 ||
+    intervalMs > MAX_INTERVAL_MS
+  ) {
+    throw new RangeError(
+      `drainIntervalMs must be an integer from 1 to ${MAX_INTERVAL_MS}`,
+    );
+  }
+  return intervalMs;
+}
 
 export class CaptureSession {
   readonly recorder: EarshotBrowserRecorder;
@@ -210,13 +202,10 @@ export class CaptureSession {
   private latestFinishResult: CaptureSessionFinishResult | undefined;
 
   constructor(options: CaptureSessionOptions) {
+    this.drainIntervalMs = captureDrainInterval(options.drainIntervalMs);
     this.log = options.log;
     this.onDrain = options.onDrain;
-    this.drainIntervalMs = options.drainIntervalMs ?? DEFAULT_DRAIN_INTERVAL_MS;
 
-    // `captureVersion: 2` (continuous capture) is exposed by this SDK, so each
-    // drain carries a monotonic drainSequence under one stable session and the
-    // server accumulates the whole call instead of a per-drain incident.
     this.recorder = createBrowserRecorder({
       captureVersion: CONTINUOUS_CAPTURE_VERSION,
       sessionId: options.sessionId,
@@ -228,8 +217,8 @@ export class CaptureSession {
       csrfToken: options.endpoint.csrfToken,
       projectId: options.endpoint.projectId,
       getAuthContextId: options.endpoint.getAuthContextId,
-      // An undelivered batch becomes coverage on the next drain — never a silent
-      // gap the server would read as a clean session.
+      // An undelivered batch becomes coverage on a later drain so loss cannot be
+      // mistaken for a clean session.
       coverage: this.recorder,
       onFailure: (failure) => {
         this.log(
@@ -553,7 +542,9 @@ export class CaptureSession {
 
   private notifyDrain(payload: CapturePayload): void {
     try {
-      this.onDrain?.(payload);
+      // The observer is diagnostic only: edits to its view must not change the
+      // request bytes, the recorder's cached terminal payload, or a retry.
+      this.onDrain?.(JSON.parse(JSON.stringify(payload)) as CapturePayload);
     } catch {
       this.log("capture drain observer failed; delivery continues");
     }

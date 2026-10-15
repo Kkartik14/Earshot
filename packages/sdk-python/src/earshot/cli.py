@@ -31,7 +31,7 @@ from .exporters.registry import export_incident, exporter_names
 from .privacy import ExportPolicyError, assert_export_allowed
 from .query import EvidenceQuery, compare_incidents
 from .storage import DEFAULT_PROJECT_ID, IncidentStore, StorageError
-from .validation import validate_incident
+from .validation import assert_valid_incident, validate_incident
 
 
 def _data_dir(value: str | None) -> Path:
@@ -343,6 +343,7 @@ def _recover_command(arguments: argparse.Namespace) -> int:
         best_effort=arguments.best_effort,
         bundle_id_suffix=arguments.bundle_id_suffix,
     )
+    assert_valid_incident(result.bundle)
     report = result.report
     payload = encode_incident_protobuf(result.bundle)
     created = None

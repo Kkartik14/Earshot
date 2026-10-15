@@ -16,7 +16,7 @@ import pytest
 
 from earshot.checkpoint import CheckpointConfig, CheckpointWriter
 from earshot.checkpoint.framing import CHECKSUM_SIZE, HEADER_SIZE, encode_frame
-from earshot.checkpoint.records import JournalRecordEntry, encode_entry
+from earshot.checkpoint.records import JournalRecordEntry, decode_entry, encode_entry
 from earshot.checkpoint.writer import DEFAULT_MAX_FRAME_BYTES
 from earshot.live import (
     END_PROJECT_DELETED,
@@ -78,9 +78,6 @@ def test_capture_journal_byte_limit_must_be_a_positive_integer(limit) -> None:
 
 def _payload(event) -> dict:
     return json.loads(event.payload)
-
-
-# ------------------------------------------------------------ local journals
 
 
 def test_a_journal_in_the_directory_becomes_a_live_session(tmp_path: Path) -> None:
@@ -249,9 +246,6 @@ def test_a_new_journal_for_the_same_session_resets_subscribers(tmp_path: Path) -
     delivered = _names(subscription.drain())
     assert EVENT_RESET in delivered or _names(subscription.terminal()) == [EVENT_END]
     second.release()
-
-
-# ----------------------------------------------------------- resume + bounds
 
 
 def test_last_event_id_resumes_without_gaps_or_duplicates(tmp_path: Path) -> None:
@@ -556,6 +550,33 @@ def test_a_subscriber_that_falls_behind_is_closed_not_silently_trimmed(
     writer.release()
 
 
+def test_uploaded_checkpoint_overflow_only_promises_bounded_replay(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path / "journals")
+    recorder = IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    initial = _frames(_journal_path(tmp_path / "journals"))
+    registry = LiveSessionRegistry(config=LiveConfig(max_queue_records=1))
+    registry.accept_frames("s-1", initial, project_id="p")
+    subscription = registry.subscribe("s-1", project_id="p")
+    assert _names(subscription.drain()) == [EVENT_OPEN]
+
+    recorder.record_event("earshot.turn.start", turn_id="turn-1")
+    recorder.record_event("earshot.turn.start", turn_id="turn-2")
+    grown = _frames(_journal_path(tmp_path / "journals"))
+    registry.accept_frames("s-1", grown[len(initial) :], project_id="p")
+
+    assert len(subscription.drain()) == 1
+    assert subscription.finished
+    overflow = subscription.terminal()
+    assert _names(overflow) == [EVENT_OVERFLOW]
+    note = _payload(overflow[0])["note"]
+    assert "bounded live window" in note
+    assert "may be unavailable after eviction or restart" in note
+    assert "durable journal still holds every record" not in note
+    writer.release()
+
+
 def test_tail_capacity_is_bounded_per_server_and_per_session(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
@@ -602,9 +623,6 @@ def test_an_expired_session_is_dropped_and_says_so(tmp_path: Path) -> None:
     assert registry.sessions(project_id="default") == ()
     assert _payload(subscription.terminal()[0])["reason"] == "session_expired"
     writer.release()
-
-
-# ------------------------------------------------------ uploaded checkpoints
 
 
 def _frames(path: Path) -> bytes:
@@ -699,6 +717,91 @@ def test_a_header_for_another_session_is_refused(tmp_path: Path) -> None:
     writer.release()
 
 
+@pytest.mark.parametrize(
+    "entry",
+    [
+        JournalRecordEntry(
+            kind="coverage",
+            value={
+                "signal": "capture",
+                "availability": "partial",
+                "reason": "Alice Smith",
+            },
+        ),
+        JournalRecordEntry(
+            kind="event",
+            value={
+                "event_id": "event-1",
+                "session_id": "s-1",
+                "event_name": "earshot.test",
+                "time": {"monotonic_time_nano": "1", "clock_domain_id": "clock-1"},
+                "attributes": {"earshot.metric.private_note": "Alice Smith"},
+            },
+        ),
+    ],
+)
+def test_live_upload_rejects_values_the_recorder_would_normalize_before_registration(
+    tmp_path: Path, entry: JournalRecordEntry
+) -> None:
+    writer = _writer(tmp_path / "journals")
+    IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    header_frame = _split_frames(_frames(_journal_path(tmp_path / "journals")))[0]
+    registry = LiveSessionRegistry()
+
+    with pytest.raises(CheckpointFramesInvalidError):
+        registry.accept_frames("s-1", header_frame + _entry_frame(2, entry), project_id="p")
+
+    assert registry.sessions(project_id="p") == ()
+    writer.release()
+
+
+def test_malformed_export_governance_is_rejected_before_live_registration(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path / "journals")
+    IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+    header_frame = _split_frames(_frames(_journal_path(tmp_path / "journals")))[0]
+    header = decode_entry(header_frame[HEADER_SIZE:-CHECKSUM_SIZE])
+    malformed_document = json.loads(encode_entry(header))
+    malformed_document["v"]["governance"] = {
+        "transcript": {"export": {"allowed": "false", "destinations": []}}
+    }
+    malformed_body = json.dumps(malformed_document, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
+    registry = LiveSessionRegistry()
+
+    with pytest.raises(CheckpointFramesInvalidError):
+        registry.accept_frames(
+            "s-1",
+            encode_frame(1, malformed_body, max_body_bytes=DEFAULT_MAX_FRAME_BYTES),
+            project_id="p",
+        )
+
+    assert registry.sessions(project_id="p") == ()
+    writer.release()
+
+
+def test_a_repeated_header_is_rejected_without_advancing_an_open_session(
+    tmp_path: Path,
+) -> None:
+    writer, payload = _uploadable(tmp_path / "journals", "s-1", "b-1", count=1)
+    header = decode_entry(_split_frames(payload)[0][HEADER_SIZE:-CHECKSUM_SIZE])
+    registry = LiveSessionRegistry()
+    accepted = registry.accept_frames("s-1", payload, project_id="p")
+    subscription = registry.subscribe("s-1", project_id="p")
+    subscription.drain()
+
+    with pytest.raises(CheckpointFramesInvalidError):
+        registry.accept_frames(
+            "s-1", _entry_frame(accepted.accepted_through + 1, header), project_id="p"
+        )
+
+    assert registry.summary("s-1", project_id="p").last_sequence == accepted.accepted_through
+    assert subscription.drain() == []
+    writer.release()
+
+
 def test_live_session_quota_is_enforced_per_project(tmp_path: Path) -> None:
     registry = LiveSessionRegistry(config=LiveConfig(max_sessions_per_project=1))
     for index in (1, 2):
@@ -734,9 +837,6 @@ def _uploadable(
 
 def _entry_frame(sequence: int, entry) -> bytes:
     return encode_frame(sequence, encode_entry(entry), max_body_bytes=DEFAULT_MAX_FRAME_BYTES)
-
-
-# ------------------------------------------------- per-tenant session identity
 
 
 def test_two_projects_hold_the_same_session_id_independently(tmp_path: Path) -> None:
@@ -826,9 +926,6 @@ def test_tail_connections_are_bounded_per_project_not_only_per_server(
     beta_writer.release()
 
 
-# ----------------------------------------------- a finalized journal is closed
-
-
 def test_a_finalized_journal_refuses_a_later_frame(tmp_path: Path) -> None:
     """``finalize`` is the end of the journal, so nothing may follow it."""
 
@@ -909,7 +1006,22 @@ def test_a_batch_that_appends_after_its_own_finalize_is_refused_whole(
     writer.release()
 
 
-# ------------------------------------------------------- retries never rewrite
+def test_an_initial_batch_cannot_append_records_after_finalize(tmp_path: Path) -> None:
+    writer, closed = _uploadable(
+        tmp_path / "journals", "s-initial-finalize", "b-initial-finalize", count=1, close=True
+    )
+    frames = _split_frames(closed)
+    after_finalize = _entry_frame(
+        len(frames) + 1,
+        JournalRecordEntry(kind="event", value={"name": "after-the-end"}),
+    )
+    registry = LiveSessionRegistry()
+
+    with pytest.raises(CheckpointFinalizedError):
+        registry.accept_frames("s-initial-finalize", closed + after_finalize, project_id="p")
+
+    assert registry.sessions(project_id="p") == ()
+    writer.release()
 
 
 def test_a_retry_that_rewrites_an_accepted_frame_is_refused(tmp_path: Path) -> None:
@@ -969,24 +1081,33 @@ def test_a_session_that_outgrew_its_frame_window_stops_being_sealable(
 
     assert accepted.sealable is False
     with pytest.raises(SessionNotSealableError):
-        registry.seal_source("s-1", project_id="p")
+        registry.seal_snapshot("s-1", project_id="p")
     writer.release()
 
 
-def test_the_seal_source_of_a_local_journal_is_the_journal_itself(tmp_path: Path) -> None:
-    writer = _writer(tmp_path)
-    IncidentRecorder(session_id="s-1", bundle_id="b-1", checkpoint=writer)
+def test_a_local_journal_seal_uses_one_immutable_source_and_summary(tmp_path: Path) -> None:
+    writer = _writer(tmp_path, keep_finalized=True)
+    recorder = IncidentRecorder(session_id="s-2", bundle_id="b-2", checkpoint=writer)
+    _record(recorder, count=1)
     registry = LiveSessionRegistry(journal_dir=tmp_path)
     registry.refresh()
 
-    kind, source = registry.seal_source("s-1", project_id="default")
+    snapshot = registry.seal_snapshot("s-2", project_id="default")
 
-    assert kind == "journal"
-    assert Path(str(source)).is_file()
+    assert snapshot.source == "journal"
+    assert isinstance(snapshot.data, bytes)
+    assert snapshot.summary.close_observed is False
+    assert snapshot.summary.last_sequence > 1
+
+    recorder.close()
+    registry.refresh()
+    finalized = registry.seal_snapshot("s-2", project_id="default")
+
+    assert finalized.summary.close_observed is True
+    assert finalized.summary.last_sequence > snapshot.summary.last_sequence
+    assert finalized.data.startswith(snapshot.data)
+    assert snapshot.summary.close_observed is False
     writer.release()
-
-
-# ---------------------------------------------------- restricted egress
 
 
 def _restricted(directory: Path, export: ExportConfig, **kwargs):
@@ -1020,6 +1141,38 @@ def test_uploaded_frames_obey_the_same_destination_policy(tmp_path: Path) -> Non
     assert SENTINEL not in json.dumps([_payload(event) for event in events])
     assert _names(events) == [EVENT_OPEN, EVENT_WITHHELD]
     writer.release()
+
+
+def test_live_tail_derives_capture_classes_from_the_record_body(tmp_path: Path) -> None:
+    """A journal cannot hide a denied class by omitting its ledger delta."""
+
+    journals = tmp_path / "journals"
+    writer, recorder = _restricted(journals, ExportConfig(allowed=False))
+    recorder.record_event("stt.final", attributes={"transcript": SENTINEL}, turn_id="t-0")
+    source = _frames(_journal_path(journals))
+    frames = _split_frames(source)
+    tampered_frames: list[bytes] = []
+    for frame in frames:
+        sequence = int.from_bytes(frame[1:5], "big")
+        entry = decode_entry(frame[HEADER_SIZE:-CHECKSUM_SIZE])
+        if isinstance(entry, JournalRecordEntry) and entry.kind == "event":
+            entry = entry.model_copy(update={"retained_classes": ()})
+        tampered_frames.append(_entry_frame(sequence, entry))
+    underreported = b"".join(tampered_frames)
+    writer.release()
+
+    uploaded = LiveSessionRegistry()
+    uploaded.accept_frames("s-1", underreported, project_id="p")
+    upload_events = uploaded.subscribe("s-1", project_id="p").drain()
+    assert _names(upload_events) == [EVENT_OPEN, EVENT_WITHHELD]
+    assert SENTINEL not in json.dumps([_payload(event) for event in upload_events])
+
+    _journal_path(journals).write_bytes(underreported)
+    tailed = LiveSessionRegistry(journal_dir=journals)
+    tailed.refresh()
+    file_events = tailed.subscribe("s-1", project_id="default").drain()
+    assert _names(file_events) == [EVENT_OPEN, EVENT_WITHHELD]
+    assert SENTINEL not in json.dumps([_payload(event) for event in file_events])
 
 
 def test_the_record_before_a_restricted_class_is_retained_still_streams(

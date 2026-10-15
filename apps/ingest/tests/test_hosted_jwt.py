@@ -1038,6 +1038,97 @@ def test_project_deletion_waits_for_capture_seal_fence(tmp_path, issuer, monkeyp
     store.close()
 
 
+def test_project_deletion_waits_for_a_live_seal_snapshot(tmp_path, issuer, monkeypatch) -> None:
+    project_id = "hosted-seal-snapshot-delete-race"
+    store = IncidentStore(tmp_path)
+    store.create_project(project_id, display_name="Hosted seal snapshot deletion race")
+    capture_dir = tmp_path / "capture-journals"
+    capture_dir.mkdir()
+    app = create_app(
+        store=store,
+        config=_hosted_config(issuer),
+        capture_journal_dir=capture_dir,
+    )
+    client = TestClient(app)
+    headers = {
+        "Authorization": f"Bearer {_token(issuer, project_id=project_id, scope='earshot:write')}"
+    }
+    body = {
+        "captureVersion": 2,
+        "sessionId": "sess-hosted-seal-snapshot-delete-race",
+        "clockDomain": {
+            "id": "clk-hosted-seal-snapshot-delete-race",
+            "kind": "browser_monotonic",
+            "unit": "ms",
+            "uncertaintyMs": 1,
+            "wallOriginMs": None,
+        },
+        "drainSequence": 1,
+        "snapshots": [],
+        "end": {"reason": "call_ended", "timestampMs": 1100},
+    }
+    accepted = client.post("/v1/capture", json=body, headers=headers)
+    assert accepted.status_code == 202, accepted.text
+    call_id = accepted.json()["call_id"]
+
+    snapshot_started = threading.Event()
+    resume_snapshot = threading.Event()
+    deletion_started = threading.Event()
+    deletion_fenced = threading.Event()
+    original_snapshot = app.state.live.seal_snapshot
+    original_begin_deletion = store.begin_project_deletion
+
+    def pause_snapshot(session_id: str, *, project_id: str):
+        snapshot = original_snapshot(session_id, project_id=project_id)
+        snapshot_started.set()
+        assert resume_snapshot.wait(timeout=5)
+        return snapshot
+
+    def observe_deletion_start(deleting_project_id: str) -> str:
+        deletion_started.set()
+        lifecycle = original_begin_deletion(deleting_project_id)
+        deletion_fenced.set()
+        return lifecycle
+
+    monkeypatch.setattr(app.state.live, "seal_snapshot", pause_snapshot)
+    monkeypatch.setattr(store, "begin_project_deletion", observe_deletion_start)
+    deletion_headers = {
+        "Authorization": (
+            f"Bearer {_token(issuer, project_id=project_id, scope='earshot:project:delete')}"
+        )
+    }
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            sealing = executor.submit(
+                client.post,
+                f"/v1/live/sessions/{call_id}/seal",
+                headers=headers,
+            )
+            assert snapshot_started.wait(timeout=5), "seal did not enter the snapshot read"
+            deleting = executor.submit(
+                client.delete,
+                f"/v1/projects/{project_id}",
+                headers=deletion_headers,
+            )
+            assert deletion_started.wait(timeout=5), "deletion did not attempt its fence"
+            deletion_waited_for_snapshot = not deletion_fenced.wait(timeout=0.2)
+            resume_snapshot.set()
+            sealed = sealing.result(timeout=5)
+            deleted = deleting.result(timeout=5)
+    finally:
+        resume_snapshot.set()
+
+    assert deletion_waited_for_snapshot
+    assert sealed.status_code in {201, 410}, sealed.text
+    assert deleted.status_code == 200, deleted.text
+    assert store.project_lifecycle(project_id) == "deleted"
+    app.state.live.close()
+    app.state.capture_calls.close()
+    client.close()
+    store.close()
+
+
 def test_project_deletion_waits_for_capture_expiry_fence(tmp_path, issuer, monkeypatch) -> None:
     from earshot.capture import calls as capture_calls_module
     from earshot.live import LiveConfig, LiveSessionRegistry

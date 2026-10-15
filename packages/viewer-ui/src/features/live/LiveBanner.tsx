@@ -2,11 +2,6 @@ import type { TailConnection } from "../../api/tail";
 import type { LiveFacts } from "./liveStore";
 import styles from "./LiveBanner.module.css";
 
-/** The one-line truth about what is being shown. Never decorative.
- *
- *  This is the discriminator between "an incident" and "a conversation still
- *  being written", and it is structural: the live view renders it above
- *  everything, always, and describes itself by it. */
 export type LiveStanding =
   | "in_progress"
   | "stalled"
@@ -32,8 +27,8 @@ const HEADLINE: Record<LiveStanding, string> = {
 
 const EXPLANATION: Record<LiveStanding, string> = {
   in_progress:
-    "This conversation has not closed. Everything below is what the recorder has " +
-    "durably admitted so far, and nothing more; facts that have not happened yet are " +
+    "This conversation has not closed. This view shows facts admitted to the live " +
+    "stream so far; facts that have not happened yet are " +
     "indistinguishable here from facts that never will.",
   stalled:
     "No fact and no heartbeat has arrived recently. The session may still be running, " +
@@ -107,8 +102,8 @@ export function LiveBanner({
       ) : null}
       {facts.overflowed ? (
         <p className={styles.asOf}>
-          This connection fell behind and the server closed it rather than dropping
-          records. Reconnecting resumes exactly where it stopped.
+          This connection fell behind and was closed. Reconnecting can replay events still
+          in the server&apos;s live window; earlier events may no longer be available.
         </p>
       ) : null}
     </section>

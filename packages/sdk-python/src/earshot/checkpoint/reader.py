@@ -95,11 +95,21 @@ class JournalReader:
         """Replay the journal, stopping at the first unreadable frame."""
 
         data = self.path.read_bytes()
+        return self.read_bytes(data)
+
+    def read_bytes(self, data: bytes) -> JournalReplay:
+        """Replay an immutable byte snapshot with the same rules as ``read``."""
+
         decoded: list[JournalEntry] = []
         journal_id: str | None = None
+        finalize_sequence: int | None = None
 
         def open_body(sequence: int, body: bytes) -> bytes | None:
-            nonlocal journal_id
+            nonlocal finalize_sequence, journal_id
+            if finalize_sequence is not None:
+                # Finalize is the terminal journal entry. Treat any following
+                # bytes as damaged suffix, even when they form valid frames.
+                return None
             plaintext = self._decrypt(sequence, body, journal_id)
             if plaintext is None:
                 return None
@@ -117,6 +127,8 @@ class JournalReader:
                 # A second header would mean two sessions spliced into one file.
                 return None
             decoded.append(entry)
+            if isinstance(entry, JournalFinalize):
+                finalize_sequence = sequence
             return plaintext
 
         scan = scan_frames(
@@ -128,15 +140,21 @@ class JournalReader:
             raise JournalUnreadableError("journal has no readable header")
         header = decoded[0]
         entries = tuple(decoded[1:])
-        # Frames after a finalize would mean the writer kept going past close.
-        entries = _stop_after_finalize(entries)
+        # A finalized journal with trailing bytes is damaged after close. Keep
+        # the committed prefix and expose the entire suffix as an incomplete
+        # tail so callers cannot mistake it for a clean close.
+        stop_reason = (
+            "after_finalize"
+            if finalize_sequence is not None and scan.torn_tail_bytes > 0
+            else scan.stop_reason
+        )
         return JournalReplay(
             path=self.path,
             header=header,
             entries=entries,
             last_sequence=scan.last_sequence,
             torn_tail_bytes=scan.torn_tail_bytes,
-            stop_reason=scan.stop_reason,
+            stop_reason=stop_reason,
             total_bytes=len(data),
         )
 
@@ -182,13 +200,6 @@ class JournalReader:
             )
         except Exception:
             return None
-
-
-def _stop_after_finalize(entries: tuple[JournalEntry, ...]) -> tuple[JournalEntry, ...]:
-    for index, entry in enumerate(entries):
-        if isinstance(entry, JournalFinalize):
-            return entries[: index + 1]
-    return entries
 
 
 def iter_journals(directory: Path | str) -> Iterator[Path]:

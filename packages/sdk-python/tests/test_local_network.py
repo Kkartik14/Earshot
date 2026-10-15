@@ -9,7 +9,6 @@ pytestmark = pytest.mark.integration
 
 
 def test_non_loopback_bind_is_rejected_by_default() -> None:
-    # Fail closed: a 0.0.0.0 listener needs an explicit trust decision.
     with pytest.raises(ValueError):
         ApiConfig(host="0.0.0.0")
 
@@ -45,8 +44,6 @@ def test_trusted_local_network_rejects_dns_rebinding_host(tmp_path) -> None:
 
 
 def test_trusted_local_network_needs_no_viewer_login(tmp_path) -> None:
-    # The viewer must load without a project-key login the fresh install lacks;
-    # the session endpoint has to honor trust_local_network like the middleware.
     app = create_app(
         data_dir=tmp_path / "data",
         config=ApiConfig(host="0.0.0.0", trust_local_network=True),
@@ -59,7 +56,6 @@ def test_trusted_local_network_needs_no_viewer_login(tmp_path) -> None:
 
 
 def test_trusted_local_network_with_token_still_requires_auth(tmp_path) -> None:
-    # Opting into a trusted network does not waive an explicitly configured token.
     app = create_app(
         data_dir=tmp_path / "data",
         config=ApiConfig(host="0.0.0.0", trust_local_network=True, token="s3cret"),
@@ -75,8 +71,6 @@ def _v1_security(app) -> list[dict]:
 
 
 def test_openapi_security_matches_runtime_trusted_local(tmp_path) -> None:
-    # Runtime permits anonymous access in trusted-local mode; the machine
-    # contract must advertise the same, i.e. include the empty-security option.
     app = create_app(
         data_dir=tmp_path / "data",
         config=ApiConfig(host="0.0.0.0", trust_local_network=True),
@@ -96,7 +90,6 @@ def test_openapi_security_requires_auth_when_token_set(tmp_path) -> None:
 
 
 def test_non_loopback_without_optin_or_token_fails_to_build(tmp_path) -> None:
-    # Even constructed directly, create_app refuses an unauthenticated remote bind.
     with pytest.raises(ValueError):
         create_app(
             data_dir=tmp_path / "data",

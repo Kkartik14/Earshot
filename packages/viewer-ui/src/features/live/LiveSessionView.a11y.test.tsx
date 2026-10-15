@@ -133,12 +133,8 @@ describe("live session view", () => {
 
     const banner = screen.getByRole("region", { name: /live session status/i });
     expect(within(banner).getByText(/LIVE — INCOMPLETE/)).toBeInTheDocument();
-    // The discrete standing is announced; the ticking as-of line is not, so a
-    // screen reader is told the state without a per-second flood.
     expect(within(banner).getByRole("status")).toHaveTextContent(/has not closed/i);
     expect(within(banner).getByText(/journal record #1/)).toBeInTheDocument();
-    // And the view describes itself by the banner, so the state is reachable
-    // from anywhere inside it.
     const view = banner.parentElement as HTMLElement;
     expect(view).toHaveAttribute(
       "aria-describedby",
@@ -182,8 +178,6 @@ describe("live session view", () => {
       `${JOURNAL}:2`,
     );
 
-    // "p95 first-token" appears only as a named unknown, never as a value, and
-    // no zero stands in for a measurement that has not been taken.
     const metrics = screen.getByText(/p95 first-token/i);
     expect(metrics.closest("div")).toHaveTextContent(/unknown/);
     expect(screen.queryByText("0ms")).not.toBeInTheDocument();
@@ -224,7 +218,6 @@ describe("live session view", () => {
     expect(
       within(panel).getByText(/not a complete account of the session/i),
     ).toBeInTheDocument();
-    // The withheld slot is not counted as an admitted fact anywhere.
     const admitted = screen.getByRole("region", { name: /admitted facts/i });
     expect(
       within(admitted).getByText(/No records have been admitted yet/i),
@@ -252,7 +245,6 @@ describe("live session view", () => {
     const panel = screen.getByRole("region", { name: /operations in progress/i });
     expect(within(panel).getByText("llm")).toBeInTheDocument();
     expect(within(panel).getByText("no end observed")).toBeInTheDocument();
-    // No duration anywhere: not a number, not a dash, not a ticking clock.
     expect(within(panel).queryByText(/ms$/)).not.toBeInTheDocument();
   });
 
@@ -331,7 +323,7 @@ describe("live session view", () => {
       `${JOURNAL}:2`,
     );
 
-    // The live view is never silently upgraded in place; the reader chooses.
+    // The live view leaves the final choice to the session artifact resolver.
     const link = screen.getByRole("link", { name: /review session artifacts/i });
     expect(link).toHaveAttribute("href", "/observe?sessionId=s-live");
     expect(screen.getByText(/CLOSED — ARTIFACT NOT YET STORED/)).toBeInTheDocument();
@@ -349,8 +341,27 @@ describe("live session view", () => {
     expect(screen.getByText(/STREAM ENDED — NO CLOSE RECORD/)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/evidence may be incomplete/i);
     expect(
-      screen.getByText(/one can be recovered from its checkpoint journal/i),
+      screen.getByText(
+        /a checkpoint journal may allow recovery, but this view cannot confirm whether one exists/i,
+      ),
     ).toBeInTheDocument();
+  });
+
+  it("states bounded replay after an overflow without promising exact recovery", () => {
+    const { source } = renderLive();
+    source.emit("open", OPEN_PAYLOAD, `${JOURNAL}:1`);
+    source.emit("overflow", { reason: "subscriber_fell_behind", last_sequence: 1 });
+
+    const banner = screen.getByRole("region", { name: /live session status/i });
+    expect(within(banner).getByRole("status")).toHaveTextContent(
+      /shows facts admitted to the live stream so far/i,
+    );
+    expect(
+      within(banner).getByText(
+        /reconnecting can replay events still in the server's live window/i,
+      ),
+    ).toBeInTheDocument();
+    expect(within(banner).queryByText(/durably admitted|resumes exactly/i)).toBeNull();
   });
 
   it("declares withheld replay and journal exhaustion rather than hiding them", () => {
@@ -374,14 +385,16 @@ describe("live session view", () => {
     for (let attempt = 0; attempt < 5; attempt += 1) source.fail();
 
     const panel = screen.getByRole("region", { name: /^connection$/i });
-    const button = within(panel).getByRole("button", { name: /reconnect and catch up/i });
+    const button = within(panel).getByRole("button", {
+      name: /reconnect to live stream/i,
+    });
     button.focus();
     expect(button).toHaveFocus();
-    expect(within(panel).getByText(/nothing was dropped/i)).toBeInTheDocument();
+    expect(
+      within(panel).getByText(/replay is limited to the server's live window/i),
+    ).toBeInTheDocument();
 
     fireEvent.click(button);
-    // A second EventSource means the tail really re-subscribed, and the browser
-    // resumes it with Last-Event-ID.
     expect(FakeEventSource.instances).toHaveLength(2);
   });
 

@@ -4,7 +4,8 @@
  * It POSTs drained `CapturePayload`s to the host application's authenticated BFF,
  * which forwards them to Earshot's `POST /v1/capture`, and is responsible for one
  * thing beyond the HTTP call: never letting a delivery failure look like a clean
- * session.
+ * session. Credentials stay in request options and never enter errors or failure
+ * records.
  *
  * Four properties hold by construction:
  *
@@ -59,6 +60,7 @@ export interface CaptureRequestInit {
   headers: Record<string, string>;
   body: string;
   credentials?: string;
+  redirect?: "error" | "follow" | "manual";
   keepalive?: boolean;
 }
 
@@ -177,6 +179,7 @@ const DEFAULT_MAX_RETRY_BACKOFF_MS = 30_000;
 const DEFAULT_MAX_RECOVERY_SESSIONS = 32;
 const UPLOAD_RESYNC_REASON = "upload_failed_payload_dropped";
 const MAX_SCOPE_ASSERTION_LENGTH = 256;
+const MAX_CSRF_TOKEN_LENGTH = 4096;
 
 /** Statuses worth another attempt: the same request could succeed later. */
 const RETRYABLE_STATUSES = new Set<number>([408, 425, 429, 500, 502, 503, 504]);
@@ -226,6 +229,44 @@ function isValidScopeAssertion(value: unknown): value is string {
     value === value.trim() &&
     !/[\r\n]/.test(value)
   );
+}
+
+function isValidCsrfToken(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_CSRF_TOKEN_LENGTH &&
+    value === value.trim() &&
+    !/[\r\n]/.test(value)
+  );
+}
+
+function assertSameOriginCsrfEndpoint(endpoint: string): void {
+  const location = (globalThis as { location?: { origin?: unknown } }).location;
+  const origin = location?.origin;
+  if (typeof origin !== "string" || origin.length === 0 || origin === "null") {
+    throw new TypeError(
+      "createCaptureTransport: csrfToken requires a verifiable same-origin browser URL",
+    );
+  }
+
+  let resolved: URL;
+  try {
+    resolved = new URL(endpoint, origin);
+  } catch {
+    throw new TypeError(
+      "createCaptureTransport: csrfToken requires a valid same-origin endpoint",
+    );
+  }
+  if (
+    resolved.origin !== origin ||
+    resolved.username.length > 0 ||
+    resolved.password.length > 0
+  ) {
+    throw new TypeError(
+      "createCaptureTransport: csrfToken may only be sent to a same-origin endpoint",
+    );
+  }
 }
 
 function snapshotPayload(payload: CapturePayload): {
@@ -291,6 +332,14 @@ export class EarshotCaptureTransport {
   constructor(options: CaptureTransportOptions) {
     if (typeof options?.endpoint !== "string" || options.endpoint.length === 0) {
       throw new TypeError("createCaptureTransport: endpoint is required");
+    }
+    if (options.csrfToken !== undefined && !isValidCsrfToken(options.csrfToken)) {
+      throw new TypeError(
+        "createCaptureTransport: csrfToken must be a nonempty header value",
+      );
+    }
+    if (options.csrfToken !== undefined) {
+      assertSameOriginCsrfEndpoint(options.endpoint);
     }
     if (!isValidScopeAssertion(options.projectId)) {
       throw new TypeError("createCaptureTransport: projectId is required");
@@ -457,93 +506,112 @@ export class EarshotCaptureTransport {
     if (this.draining) return this.draining;
     const run = (async () => {
       try {
+        let retryIdle = retryIdleRequests;
+        const attemptedExactRetries = new Set<string>();
         for (;;) {
-          const next = this.queue.shift();
-          if (!next) break;
-          if (!this.isAuthContextCurrent()) {
-            next.resolve(
-              this.giveUp(
-                next.payload,
-                { kind: "blocked", retryable: false, authContextChanged: true },
-                0,
-              ),
-            );
-            continue;
-          }
-          if (
-            this.recoverySaturated &&
-            this.drainSequence(next.payload) !== undefined &&
-            !this.hasRecoveryState(next.payload.sessionId)
-          ) {
-            next.resolve(
-              this.giveUp(next.payload, { kind: "blocked", retryable: false }, 0),
-            );
-            continue;
-          }
-          const pendingRetry = this.pendingExactRetry.get(next.payload.sessionId);
-          if (pendingRetry) {
-            const retryResult = await this.deliver(
-              pendingRetry.payload,
-              pendingRetry.body,
-            );
-            retryOutcomes?.push({
-              sessionId: next.payload.sessionId,
-              drainSequence: this.drainSequence(pendingRetry.payload),
-              delivery: retryResult,
-            });
-            if (retryResult.delivered) {
-              this.pendingExactRetry.delete(next.payload.sessionId);
-              this.clearResync(pendingRetry.payload);
-            } else if (
-              this.pendingExactRetry.has(next.payload.sessionId) ||
-              this.recoverySaturated
-            ) {
-              const authContextChanged = !this.isAuthContextCurrent();
+          for (;;) {
+            const next = this.queue.shift();
+            if (!next) break;
+            if (!this.isAuthContextCurrent()) {
               next.resolve(
                 this.giveUp(
                   next.payload,
                   {
                     kind: "blocked",
                     retryable: false,
-                    ...(authContextChanged ? { authContextChanged: true } : {}),
+                    authContextChanged: true,
                   },
                   0,
                 ),
               );
               continue;
             }
-            // A permanent rejection clears the exact-retry state and records the
-            // old sequence as a real loss. The current drain can then declare it.
+            if (
+              this.recoverySaturated &&
+              this.drainSequence(next.payload) !== undefined &&
+              !this.hasRecoveryState(next.payload.sessionId)
+            ) {
+              next.resolve(
+                this.giveUp(next.payload, { kind: "blocked", retryable: false }, 0),
+              );
+              continue;
+            }
+            const pendingRetry = this.pendingExactRetry.get(next.payload.sessionId);
+            if (pendingRetry && attemptedExactRetries.has(next.payload.sessionId)) {
+              next.resolve(
+                this.giveUp(next.payload, { kind: "blocked", retryable: false }, 0),
+              );
+              continue;
+            }
+            if (pendingRetry) {
+              attemptedExactRetries.add(next.payload.sessionId);
+              const retryResult = await this.deliver(
+                pendingRetry.payload,
+                pendingRetry.body,
+              );
+              retryOutcomes?.push({
+                sessionId: next.payload.sessionId,
+                drainSequence: this.drainSequence(pendingRetry.payload),
+                delivery: retryResult,
+              });
+              if (retryResult.delivered) {
+                this.pendingExactRetry.delete(next.payload.sessionId);
+                this.clearResync(pendingRetry.payload);
+              } else if (
+                this.pendingExactRetry.has(next.payload.sessionId) ||
+                this.recoverySaturated
+              ) {
+                const authContextChanged = !this.isAuthContextCurrent();
+                next.resolve(
+                  this.giveUp(
+                    next.payload,
+                    {
+                      kind: "blocked",
+                      retryable: false,
+                      ...(authContextChanged ? { authContextChanged: true } : {}),
+                    },
+                    0,
+                  ),
+                );
+                continue;
+              }
+              // A permanent rejection clears the exact-retry state and records
+              // the old sequence as a real loss. The current drain can declare it.
+            }
+            if (
+              this.recoverySaturated &&
+              this.drainSequence(next.payload) !== undefined &&
+              !this.hasRecoveryState(next.payload.sessionId)
+            ) {
+              next.resolve(
+                this.giveUp(next.payload, { kind: "blocked", retryable: false }, 0),
+              );
+              continue;
+            }
+            const payload = this.prepareResync(next.payload);
+            const body = payload === next.payload ? next.body : serializePayload(payload);
+            const result = await this.deliver(payload, body);
+            if (result.delivered) this.clearResync(payload);
+            next.resolve(result);
           }
-          if (
-            this.recoverySaturated &&
-            this.drainSequence(next.payload) !== undefined &&
-            !this.hasRecoveryState(next.payload.sessionId)
-          ) {
-            next.resolve(
-              this.giveUp(next.payload, { kind: "blocked", retryable: false }, 0),
-            );
-            continue;
-          }
-          const payload = this.prepareResync(next.payload);
-          const body = payload === next.payload ? next.body : serializePayload(payload);
-          const result = await this.deliver(payload, body);
-          if (result.delivered) this.clearResync(payload);
-          next.resolve(result);
-        }
-        if (retryIdleRequests) {
-          for (const [sessionId, pendingRetry] of [...this.pendingExactRetry]) {
-            const result = await this.deliver(pendingRetry.payload, pendingRetry.body);
-            retryOutcomes?.push({
-              sessionId,
-              drainSequence: this.drainSequence(pendingRetry.payload),
-              delivery: result,
-            });
-            if (result.delivered) {
-              this.pendingExactRetry.delete(sessionId);
-              this.clearResync(pendingRetry.payload);
+          if (retryIdle) {
+            retryIdle = false;
+            for (const [sessionId, pendingRetry] of [...this.pendingExactRetry]) {
+              if (attemptedExactRetries.has(sessionId)) continue;
+              attemptedExactRetries.add(sessionId);
+              const result = await this.deliver(pendingRetry.payload, pendingRetry.body);
+              retryOutcomes?.push({
+                sessionId,
+                drainSequence: this.drainSequence(pendingRetry.payload),
+                delivery: result,
+              });
+              if (result.delivered) {
+                this.pendingExactRetry.delete(sessionId);
+                this.clearResync(pendingRetry.payload);
+              }
             }
           }
+          if (this.queue.length === 0) break;
         }
       } finally {
         this.draining = null;
@@ -644,6 +712,9 @@ export class EarshotCaptureTransport {
       headers,
       body,
       credentials: this.credentials,
+      // A redirect can carry the CSRF header to a different origin. Require the
+      // configured same-origin BFF endpoint to answer directly.
+      ...(this.csrfToken === undefined ? {} : { redirect: "error" as const }),
     });
   }
 

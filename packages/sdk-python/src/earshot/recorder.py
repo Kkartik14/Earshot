@@ -289,6 +289,35 @@ class RecorderSnapshot:
     unfinished_operations: int = 0
 
 
+@dataclass(frozen=True)
+class RecorderRollbackCheckpoint:
+    """Bounded undo state for an append transaction such as browser capture."""
+
+    collection_lengths: tuple[tuple[str, int], ...]
+    coverage: tuple[Coverage, ...]
+    retained_classes: frozenset[CaptureClass]
+    journaled_classes: frozenset[CaptureClass]
+    journaled_omissions: int
+    omitted_by_kind: tuple[tuple[str, int], ...]
+    omitted_by_class: tuple[tuple[str, int], ...]
+    captured_records: int
+    captured_bytes: int
+    raw_otlp_bytes: int
+    truncated_records: int
+    estimated_omitted_bytes: int
+    first_limit_reason: str | None
+    admission_frozen: bool
+    pending_truncation_diagnostic: bool
+    truncation_diagnostic_emitted: bool
+    status: str
+    closed: bool
+    close_notified: bool
+    bundle: IncidentBundle | None
+    close_error: Exception | None
+    last_export_error: Exception | None
+    export_accepted: bool | None
+
+
 # Coverage signals a recovered artifact is authoritative about. They are
 # superseded rather than merged so a caller-recorded signal of the same name
 # cannot contradict what the journal actually shows.
@@ -668,6 +697,86 @@ class IncidentRecorder:
 
         with self._lock:
             return self._status_locked()
+
+    def rollback_checkpoint(self) -> RecorderRollbackCheckpoint:
+        """Capture O(1) append state before a caller-owned batch is projected.
+
+        Recorder facts are append-only except for coverage supersession. Lengths
+        undo ordinary appends without copying the growing fact lists; coverage is
+        the only list whose existing slots may be replaced, and is bounded by the
+        signal set for the capture source.
+        """
+
+        collection_names = (
+            "_participants",
+            "_streams",
+            "_operations",
+            "_events",
+            "_quality_samples",
+            "_media_refs",
+            "_omissions",
+            "_adapters",
+            "_raw_otlp_chunks",
+            "_extra_clock_domains",
+            "_clock_relations",
+        )
+        with self._lock:
+            return RecorderRollbackCheckpoint(
+                collection_lengths=tuple(
+                    (name, len(getattr(self, name))) for name in collection_names
+                ),
+                coverage=tuple(self._coverage),
+                retained_classes=frozenset(self._retained_classes),
+                journaled_classes=frozenset(self._journaled_classes),
+                journaled_omissions=self._journaled_omissions,
+                omitted_by_kind=tuple(self._omitted_records_by_kind.items()),
+                omitted_by_class=tuple(self._omitted_records_by_class.items()),
+                captured_records=self._captured_records,
+                captured_bytes=self._captured_bytes,
+                raw_otlp_bytes=self._raw_otlp_bytes,
+                truncated_records=self._truncated_records,
+                estimated_omitted_bytes=self._estimated_omitted_bytes,
+                first_limit_reason=self._first_limit_reason,
+                admission_frozen=self._admission_frozen,
+                pending_truncation_diagnostic=self._pending_truncation_diagnostic,
+                truncation_diagnostic_emitted=self._truncation_diagnostic_emitted,
+                status=self._status,
+                closed=self._closed,
+                close_notified=self._close_notified,
+                bundle=self._bundle,
+                close_error=self._close_error,
+                last_export_error=self.last_export_error,
+                export_accepted=self.export_accepted,
+            )
+
+    def restore_rollback_checkpoint(self, checkpoint: RecorderRollbackCheckpoint) -> None:
+        """Undo a rejected batch while retaining the prior accepted prefix."""
+
+        with self._lock:
+            for name, length in checkpoint.collection_lengths:
+                del getattr(self, name)[length:]
+            self._coverage = list(checkpoint.coverage)
+            self._retained_classes = set(checkpoint.retained_classes)
+            self._journaled_classes = set(checkpoint.journaled_classes)
+            self._journaled_omissions = checkpoint.journaled_omissions
+            self._omitted_records_by_kind = dict(checkpoint.omitted_by_kind)
+            self._omitted_records_by_class = dict(checkpoint.omitted_by_class)
+            self._captured_records = checkpoint.captured_records
+            self._captured_bytes = checkpoint.captured_bytes
+            self._raw_otlp_bytes = checkpoint.raw_otlp_bytes
+            self._truncated_records = checkpoint.truncated_records
+            self._estimated_omitted_bytes = checkpoint.estimated_omitted_bytes
+            self._first_limit_reason = checkpoint.first_limit_reason
+            self._admission_frozen = checkpoint.admission_frozen
+            self._pending_truncation_diagnostic = checkpoint.pending_truncation_diagnostic
+            self._truncation_diagnostic_emitted = checkpoint.truncation_diagnostic_emitted
+            self._status = checkpoint.status
+            self._closed = checkpoint.closed
+            self._close_notified = checkpoint.close_notified
+            self._bundle = checkpoint.bundle
+            self._close_error = checkpoint.close_error
+            self.last_export_error = checkpoint.last_export_error
+            self.export_accepted = checkpoint.export_accepted
 
     def _status_locked(self) -> RecorderStatus:
         return RecorderStatus(
@@ -1573,8 +1682,6 @@ class IncidentRecorder:
     ) -> QualitySample:
         """Retain a provider/transport sample after recursively filtering it."""
 
-        # Detach only after a bounded preflight. Attribute maps are shallowly
-        # narrowed first, so a single caller-owned payload cannot force a huge copy.
         if len(sample.measurements) > self.config.max_records:
             with self._lock:
                 self._note_omission_locked(
@@ -1970,9 +2077,16 @@ class IncidentRecorder:
             if self._closed or self._close_error is not None:
                 return
             safe_status = sanitize_semantic_label(status) or "unknown"
+            raw_status_attributes = dict(status_attributes or {})
+            safe_status_attributes, omissions = sanitize_attributes(
+                raw_status_attributes,
+                CapturePolicy.metadata_only(),
+            )
+            if omissions or safe_status_attributes != raw_status_attributes:
+                raise ValueError("finalize status attributes are not recorder-governed")
             self._journal.finalize(
                 status=safe_status,
-                status_attributes=dict(status_attributes or {}),
+                status_attributes=safe_status_attributes,
                 ended=ended,
                 first_limit_reason=self._first_limit_reason,
                 truncated_records=self._truncated_records,

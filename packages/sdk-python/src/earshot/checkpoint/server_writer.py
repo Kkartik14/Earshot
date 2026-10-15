@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
@@ -55,6 +56,12 @@ from .records import (
 from .writer import CheckpointStatus, RecordMutation
 
 
+@dataclass(frozen=True)
+class _WriterCheckpoint:
+    entry_count: int
+    pending_entries: tuple[JournalEntry, ...]
+
+
 class ServerJournalWriter:
     """A checkpoint-writer-shaped, in-memory collector of journal entries.
 
@@ -70,11 +77,9 @@ class ServerJournalWriter:
     def __init__(self) -> None:
         self.header: JournalOpen | None = None
         self._entries: list[JournalEntry] = []
-        self._taken = 0
+        self._entry_count = 0
         self._closed = False
         self._journal_id: str | None = None
-
-    # -- the recorder-facing checkpoint surface --------------------------------
 
     def open_journal(
         self,
@@ -132,7 +137,7 @@ class ServerJournalWriter:
             max_value_bytes=max_value_bytes,
         )
         self.header = header
-        self._entries.append(header)
+        self._append(header)
 
     def append_record(self, mutation: RecordMutation) -> None:
         """Collect one admitted mutation as a journal record entry.
@@ -154,7 +159,7 @@ class ServerJournalWriter:
             value["payload_base64"] = base64.b64encode(mutation.raw_payload).decode("ascii")
         elif mutation.record is not None:
             value = mutation.record.model_dump(mode="json")
-        self._entries.append(
+        self._append(
             JournalRecordEntry(
                 kind=mutation.kind,  # type: ignore[arg-type]
                 value=value,
@@ -185,7 +190,7 @@ class ServerJournalWriter:
     ) -> None:
         if self._closed:
             return
-        self._entries.append(
+        self._append(
             JournalLimitEntry(
                 reason=reason,
                 kind=kind,
@@ -213,7 +218,7 @@ class ServerJournalWriter:
     ) -> None:
         if self._closed:
             return
-        self._entries.append(
+        self._append(
             JournalOperationOpen(
                 operation_id=operation_id,
                 operation_name=operation_name,
@@ -247,7 +252,7 @@ class ServerJournalWriter:
 
         if self.header is None or self._closed:
             return
-        self._entries.append(
+        self._append(
             JournalFinalize(
                 status=status,
                 status_attributes=dict(status_attributes),
@@ -273,7 +278,7 @@ class ServerJournalWriter:
             state="closed" if self._closed else "open",
             journal_id=self._journal_id,
             path=None,
-            last_sequence=len(self._entries),
+            last_sequence=self._entry_count,
             journal_bytes=0,
             degraded=False,
             journal_complete=True,
@@ -281,14 +286,37 @@ class ServerJournalWriter:
             last_failure=None,
         )
 
-    # -- the registry-facing surface -------------------------------------------
-
     def take_new(self) -> list[JournalEntry]:
         """The entries admitted since the last call, in admission order."""
 
-        new = self._entries[self._taken :]
-        self._taken = len(self._entries)
+        new, self._entries = self._entries, []
         return new
+
+    def rollback_checkpoint(self) -> _WriterCheckpoint:
+        """Capture the sequence and pending entries before a speculative drain."""
+
+        return _WriterCheckpoint(self._entry_count, tuple(self._entries))
+
+    def restore_rollback_checkpoint(self, checkpoint: _WriterCheckpoint) -> None:
+        """Restore a rejected drain, including an unaccepted first journal header."""
+
+        if not isinstance(checkpoint, _WriterCheckpoint):
+            raise TypeError("writer checkpoint belongs to a different journal writer")
+        self._entry_count = checkpoint.entry_count
+        self._entries = list(checkpoint.pending_entries)
+
+    def restore_sequence(self, sequence: int) -> None:
+        """Seed the writer's status after replaying an already accepted prefix."""
+
+        if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+            raise ValueError("restored sequence must be a non-negative integer")
+        if self._entries:
+            raise RuntimeError("cannot restore a sequence while entries are pending")
+        self._entry_count = sequence
+
+    def _append(self, entry: JournalEntry) -> None:
+        self._entries.append(entry)
+        self._entry_count += 1
 
 
 __all__ = ["ServerJournalWriter"]

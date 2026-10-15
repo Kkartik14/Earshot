@@ -679,6 +679,35 @@ def test_a_capture_drain_cannot_grow_its_durable_journal_past_the_byte_limit(tmp
         assert len(list(capture_dir.glob("*.eck"))) == 1
 
 
+def test_active_capture_refuses_journal_directory_replacement_before_append(tmp_path) -> None:
+    from earshot.capture.durable import journal_path, sidecar_path
+
+    store = IncidentStore(tmp_path / "store")
+    capture_dir = tmp_path / "capture"
+    app = make_app(store, capture_dir)
+
+    with TestClient(app) as client:
+        accepted = client.post("/v1/capture", json=drain(1, [series(1)[0]]), headers=HEADERS)
+        assert accepted.status_code == 202, accepted.text
+        call_id = accepted.json()["call_id"]
+        original_journal = journal_path(capture_dir, call_id)
+        committed_prefix = original_journal.read_bytes()
+
+        displaced_dir = tmp_path / "capture-displaced"
+        capture_dir.rename(displaced_dir)
+        capture_dir.mkdir()
+
+        continuation = drain(2, [series(2)[1]])
+        for _ in range(2):
+            refused = client.post("/v1/capture", json=continuation, headers=HEADERS)
+            assert refused.status_code == 503, refused.text
+            assert code(refused) == "EARSHOT_CAPTURE_JOURNAL_UNAVAILABLE"
+
+        assert journal_path(displaced_dir, call_id).read_bytes() == committed_prefix
+        assert not journal_path(capture_dir, call_id).exists()
+        assert not sidecar_path(capture_dir, call_id).exists()
+
+
 def test_capture_journal_limit_allows_a_smaller_same_sequence_retry_after_restart(tmp_path) -> None:
     from dataclasses import replace
 
@@ -957,6 +986,83 @@ def test_memory_only_capture_expiry_drops_the_live_session(tmp_path) -> None:
     store.close()
 
 
+def test_memory_only_expiry_preserves_a_call_refreshed_after_stale_scan(
+    tmp_path, monkeypatch
+) -> None:
+    from earshot.live import STATE_FINALIZED, LiveConfig, LiveSessionRegistry
+    from earshot.storage import DEFAULT_PROJECT_ID
+
+    now = [1_000.0]
+    live = LiveSessionRegistry(
+        config=LiveConfig(
+            poll_interval_ms=3_600_000,
+            stale_after_seconds=2.0,
+            session_ttl_seconds=5.0,
+        ),
+        clock=lambda: now[0],
+    )
+    stale_scan_reached_handler = threading.Event()
+    resume_expiry = threading.Event()
+    original_set_handler = live.set_capture_expiry_handler
+
+    def gate_registered_handler(handler) -> None:
+        if handler is None:
+            original_set_handler(None)
+            return
+
+        def pause_before_project_fence(project_id: str, call_key: str) -> bool:
+            stale_scan_reached_handler.set()
+            if not resume_expiry.wait(timeout=5):
+                raise TimeoutError("test did not resume capture expiry")
+            return handler(project_id, call_key)
+
+        original_set_handler(pause_before_project_fence)
+
+    monkeypatch.setattr(live, "set_capture_expiry_handler", gate_registered_handler)
+    store = IncidentStore(tmp_path)
+    app = create_app(
+        store=store,
+        config=ApiConfig(token="t"),
+        analyzer=analyze_incident,
+        live_registry=live,
+    )
+
+    try:
+        with TestClient(app) as client:
+            first = client.post("/v1/capture", json=drain(1, [series(1)[0]]), headers=HEADERS)
+            assert first.status_code == 202, first.text
+            call_id = first.json()["call_id"]
+            now[0] += 6.0
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                expiring = pool.submit(live.expire)
+                try:
+                    assert stale_scan_reached_handler.wait(timeout=2)
+                    terminal = client.post(
+                        "/v1/capture",
+                        json=drain(
+                            2,
+                            [series(2)[1]],
+                            end={"reason": "call_ended", "timestampMs": 1200},
+                        ),
+                        headers=HEADERS,
+                    )
+                    assert terminal.status_code == 202, terminal.text
+                finally:
+                    resume_expiry.set()
+                expiring.result(timeout=3)
+
+            summary = live.summary(call_id, project_id=DEFAULT_PROJECT_ID)
+            assert summary.state == STATE_FINALIZED
+            assert summary.close_observed is True
+            sealed = client.post(f"/v1/live/sessions/{call_id}/seal", headers=HEADERS)
+            assert sealed.status_code == 201, sealed.text
+            assert sealed.json()["finality"] == "final"
+    finally:
+        resume_expiry.set()
+        store.close()
+
+
 def test_interrupted_resync_drain_fences_every_other_new_sequence(tmp_path, monkeypatch) -> None:
     capture_dir = tmp_path / "capture"
     client = TestClient(
@@ -1025,12 +1131,203 @@ def test_finalized_capture_retry_remains_idempotent_after_seal_and_restart(tmp_p
     retry = after.post("/v1/capture", json=ended, headers=HEADERS)
     assert retry.status_code == 200, retry.text
     assert retry.json()["replayed"] is True
+    assert retry.json()["finalized"] is True
 
     late = after.post(
         "/v1/capture", json=drain(2, [stats_snapshot(1200, 1200, 10)]), headers=HEADERS
     )
     assert late.status_code == 409
     assert code(late) == "EARSHOT_CAPTURE_CALL_CLOSED"
+
+
+def test_capture_restart_does_not_replay_frames_after_finalize(tmp_path) -> None:
+    from earshot.capture.durable import journal_path
+    from earshot.checkpoint.framing import encode_frame, scan_frames
+    from earshot.checkpoint.limits import MAX_CHECKPOINT_FRAME_BODY_BYTES
+    from earshot.checkpoint.records import JournalRecordEntry, encode_entry
+
+    store_dir = tmp_path / "store"
+    capture_dir = tmp_path / "capture"
+    with TestClient(make_app(IncidentStore(store_dir), capture_dir)) as client:
+        ended = drain(
+            1,
+            [series(1)[0]],
+            end={"reason": "call_ended", "timestampMs": 1100},
+        )
+        accepted = client.post("/v1/capture", json=ended, headers=HEADERS)
+        assert accepted.status_code == 202, accepted.text
+        call_id = accepted.json()["call_id"]
+        assert accepted.json()["finalized"] is True
+
+        journal = journal_path(capture_dir, call_id)
+        original = journal.read_bytes()
+        scan = scan_frames(original, max_body_bytes=MAX_CHECKPOINT_FRAME_BODY_BYTES)
+        assert scan.stop_reason is None
+        assert scan.torn_tail_bytes == 0
+        suffix = encode_frame(
+            scan.last_sequence + 1,
+            encode_entry(JournalRecordEntry(kind="event", value={"name": "after-finalize"})),
+            max_body_bytes=MAX_CHECKPOINT_FRAME_BODY_BYTES,
+        )
+        journal.write_bytes(original + suffix)
+        corrupted = journal.read_bytes()
+
+    with TestClient(make_app(IncidentStore(store_dir), capture_dir)) as restarted:
+        assert not restarted.app.state.live.contains(call_id, project_id="default")
+        assert journal.read_bytes() == corrupted
+
+
+def test_a_final_drain_cannot_split_a_capture_seal_snapshot(monkeypatch) -> None:
+    from earshot.capture.calls import CaptureCallRegistry, CaptureDrain, CaptureEnd
+    from earshot.live import STATE_FINALIZED, LiveSessionRegistry
+
+    live = LiveSessionRegistry()
+    capture_calls = CaptureCallRegistry(live)
+
+    def make_drain(sequence: int, *, end: CaptureEnd | None = None) -> CaptureDrain:
+        return CaptureDrain(
+            project_id="default",
+            session_id="sess_seal_drain_race",
+            capture_version=2,
+            clock_domain_id=CLOCK_ID,
+            clock_uncertainty_ms=1.0,
+            clock_wall_origin_ms=1_700_000_000_000.0,
+            trace_id=None,
+            span_id=None,
+            drain_sequence=sequence,
+            snapshots=[series(sequence)[-1]],
+            device_events=[],
+            coverage=(),
+            rejection_coverage=(),
+            resync=None,
+            end=end,
+        )
+
+    first = capture_calls.drain(make_drain(1))
+    call_id = first.call_id
+    snapshot_taken = threading.Event()
+    release_snapshot = threading.Event()
+    original_snapshot = live.seal_snapshot
+
+    def pause_after_snapshot(session_id: str, *, project_id: str):
+        snapshot = original_snapshot(session_id, project_id=project_id)
+        snapshot_taken.set()
+        if not release_snapshot.wait(timeout=3):
+            raise TimeoutError("test did not release capture seal snapshot")
+        return snapshot
+
+    retain_calls = 0
+    drain_lock_requested = threading.Event()
+    retained_locks = []
+    original_retain = capture_calls._retain_drain_lock
+
+    def observe_retain(key):
+        nonlocal retain_calls
+        lock = original_retain(key)
+        if key == ("default", call_id):
+            retain_calls += 1
+            retained_locks.append(lock)
+            if retain_calls == 2:
+                drain_lock_requested.set()
+        return lock
+
+    drain_entered = threading.Event()
+    original_drain = capture_calls._drain_serialized
+
+    def observe_drain_started(capture_drain):
+        drain_entered.set()
+        return original_drain(capture_drain)
+
+    monkeypatch.setattr(live, "seal_snapshot", pause_after_snapshot)
+    monkeypatch.setattr(capture_calls, "_retain_drain_lock", observe_retain)
+    monkeypatch.setattr(capture_calls, "_drain_serialized", observe_drain_started)
+
+    terminal = make_drain(
+        2,
+        end=CaptureEnd(reason="call_ended", timestamp_ms=1200),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        sealing = pool.submit(capture_calls.seal_snapshot, "default", call_id)
+        assert snapshot_taken.wait(timeout=2)
+        draining = pool.submit(capture_calls.drain, terminal)
+        try:
+            assert drain_lock_requested.wait(timeout=2)
+            seal_lock = retained_locks[0]
+            drain_waited_for_seal = (
+                seal_lock.locked()
+                and retained_locks[1] is seal_lock
+                and not drain_entered.is_set()
+                and not draining.done()
+            )
+        finally:
+            release_snapshot.set()
+
+        sealed_prefix = sealing.result(timeout=3)
+        accepted_terminal = draining.result(timeout=3)
+
+    assert drain_waited_for_seal
+    assert sealed_prefix.summary.close_observed is False
+    assert accepted_terminal.finalized is True
+
+    sealed_final = capture_calls.seal_snapshot("default", call_id)
+    assert sealed_final.summary.state == STATE_FINALIZED
+    assert sealed_final.summary.close_observed is True
+    assert sealed_final.summary.last_sequence > sealed_prefix.summary.last_sequence
+    capture_calls.close()
+    live.close()
+
+
+def test_a_rejected_memory_only_first_drain_is_not_replayed_as_finalized(tmp_path) -> None:
+    from earshot.checkpoint import CheckpointConfig, CheckpointWriter
+    from earshot.live import LiveConfig, LiveSessionRegistry
+    from earshot.recorder import IncidentRecorder
+    from earshot.storage import DEFAULT_PROJECT_ID
+
+    blocker_journals = tmp_path / "blocker-journals"
+    writer = CheckpointWriter(CheckpointConfig(checkpoint_dir=blocker_journals))
+    recorder = IncidentRecorder(
+        session_id="sess_capacity_blocker",
+        bundle_id="b_capacity_blocker",
+        checkpoint=writer,
+    )
+    recorder.add_participant("caller", role="caller")
+    writer.release()
+
+    live = LiveSessionRegistry(
+        config=LiveConfig(max_sessions=1),
+        journal_dir=blocker_journals,
+    )
+    live.refresh()
+    client = TestClient(
+        create_app(
+            store=IncidentStore(tmp_path / "store"),
+            config=ApiConfig(token="t"),
+            analyzer=analyze_incident,
+            live_registry=live,
+        )
+    )
+
+    terminal = drain(
+        1,
+        [series(1)[0]],
+        session_id="sess_capacity_retry",
+        end={"reason": "call_ended", "timestampMs": 1100},
+    )
+    refused = client.post("/v1/capture", json=terminal, headers=HEADERS)
+    assert refused.status_code == 429, refused.text
+    assert code(refused) == "EARSHOT_CAPTURE_CALL_CAPACITY"
+
+    live.drop_project(DEFAULT_PROJECT_ID)
+    retried = client.post("/v1/capture", json=terminal, headers=HEADERS)
+    assert retried.status_code == 202, retried.text
+    assert retried.json()["replayed"] is False
+    assert retried.json()["finalized"] is True
+
+    sealed = client.post(f"/v1/live/sessions/{retried.json()['call_id']}/seal", headers=HEADERS)
+    assert sealed.status_code == 201, sealed.text
+    assert sealed.json()["finality"] == "final"
+    client.app.state.live.close()
+    client.app.state.capture_calls.close()
 
 
 def test_sealed_capture_replay_retention_is_bounded_and_old_ids_stay_reserved(tmp_path) -> None:
@@ -1269,7 +1566,7 @@ def test_torn_capture_journal_fences_continuation_after_restart(tmp_path) -> Non
 def test_expired_hosted_capture_remains_retryable_after_restart(tmp_path, monkeypatch) -> None:
     from earshot.capture import calls as capture_calls
     from earshot.capture.calls import CaptureCallRegistry, CaptureDrain
-    from earshot.capture.durable import journal_path, read_sidecar, sidecar_path
+    from earshot.capture.durable import WRITER_LOCK_NAME, journal_path, read_sidecar, sidecar_path
     from earshot.live import LiveConfig, LiveSessionRegistry
 
     capture_dir = tmp_path / "capture"
@@ -1326,6 +1623,10 @@ def test_expired_hosted_capture_remains_retryable_after_restart(tmp_path, monkey
     assert failed_expiry is not None and failed_expiry.expired is False
     monkeypatch.undo()
 
+    (capture_dir / WRITER_LOCK_NAME).unlink()
+    assert registry.durable_available is False
+    assert registry.durable_available is True
+
     live.expire()
     assert not live.contains(first.call_id, project_id="tenant-a")
     assert journal.exists(), "expiry must retain durable capture ownership"
@@ -1367,6 +1668,204 @@ def test_expired_hosted_capture_remains_retryable_after_restart(tmp_path, monkey
 
     restarted_live.close()
     restarted.close()
+
+
+def test_memory_only_record_limit_rejects_a_terminal_drain_atomically(tmp_path) -> None:
+    from earshot.capture.calls import CaptureCall, CaptureCallRegistry, CaptureDrain, CaptureEnd
+    from earshot.live import (
+        LiveCapacityError,
+        LiveCaptureJournalLimitError,
+        LiveConfig,
+        LiveSessionRegistry,
+    )
+    from earshot.storage import DEFAULT_PROJECT_ID
+
+    def make_drain(
+        sequence: int,
+        *,
+        session_id: str = "sess_record_limit",
+        snapshots: list[dict] | None = None,
+        end: CaptureEnd | None = None,
+    ) -> CaptureDrain:
+        return CaptureDrain(
+            project_id=DEFAULT_PROJECT_ID,
+            session_id=session_id,
+            capture_version=2,
+            clock_domain_id=CLOCK_ID,
+            clock_uncertainty_ms=1.0,
+            clock_wall_origin_ms=1_700_000_000_000.0,
+            trace_id=None,
+            span_id=None,
+            drain_sequence=sequence,
+            snapshots=[] if snapshots is None else snapshots,
+            device_events=[],
+            coverage=(),
+            rejection_coverage=(),
+            resync=None,
+            end=end,
+        )
+
+    baseline_live = LiveSessionRegistry()
+    baseline_calls = CaptureCallRegistry(baseline_live)
+    prefix = baseline_calls.drain(make_drain(1, snapshots=[stats_snapshot(1000, 1000)]))
+    terminal = CaptureEnd(reason="call_ended", timestamp_ms=1200)
+    complete = baseline_calls.drain(
+        make_drain(2, snapshots=[stats_snapshot(1100, 1100)], end=terminal)
+    )
+    assert complete.accepted_through - prefix.accepted_through > 2
+    baseline_calls.close()
+    baseline_live.close()
+
+    large_live = LiveSessionRegistry()
+    large_calls = CaptureCallRegistry(large_live)
+    large_prefix = large_calls.drain(make_drain(1, snapshots=[stats_snapshot(1000, 1000)]))
+    assert large_prefix.accepted_through == prefix.accepted_through
+    large_terminal = large_calls.drain(
+        make_drain(
+            2,
+            snapshots=[stats_snapshot(1100, 1100), stats_snapshot(1200, 1200)],
+            end=terminal,
+        )
+    )
+    assert large_terminal.accepted_through > complete.accepted_through
+    large_calls.close()
+    large_live.close()
+
+    live = LiveSessionRegistry(config=LiveConfig(max_journal_records=complete.accepted_through))
+    store = IncidentStore(tmp_path / "store")
+    app = create_app(
+        store=store,
+        config=ApiConfig(token="t"),
+        analyzer=analyze_incident,
+        live_registry=live,
+    )
+
+    try:
+        with TestClient(app) as client:
+            first = client.post(
+                "/v1/capture",
+                json=drain(
+                    1,
+                    [stats_snapshot(1000, 1000)],
+                    session_id="sess_record_limit",
+                ),
+                headers=HEADERS,
+            )
+            assert first.status_code == 202, first.text
+            call_id = first.json()["call_id"]
+            before = live.summary(call_id, project_id=DEFAULT_PROJECT_ID)
+            assert before.last_sequence == prefix.accepted_through
+
+            terminal_body = drain(
+                2,
+                [stats_snapshot(1100, 1100), stats_snapshot(1200, 1200)],
+                session_id="sess_record_limit",
+                end={"reason": "call_ended", "timestampMs": 1200},
+            )
+            refused = client.post("/v1/capture", json=terminal_body, headers=HEADERS)
+            assert refused.status_code == 413, refused.text
+            assert code(refused) == "EARSHOT_CAPTURE_JOURNAL_LIMIT"
+
+            after_refusal = live.summary(call_id, project_id=DEFAULT_PROJECT_ID)
+            assert after_refusal.last_sequence == before.last_sequence
+            assert after_refusal.close_observed is False
+
+            exact_retry = client.post("/v1/capture", json=terminal_body, headers=HEADERS)
+            assert exact_retry.status_code == 413, exact_retry.text
+            assert code(exact_retry) == "EARSHOT_CAPTURE_JOURNAL_LIMIT"
+            after_retry = live.summary(call_id, project_id=DEFAULT_PROJECT_ID)
+            assert after_retry.last_sequence == before.last_sequence
+            assert after_retry.close_observed is False
+
+            reduced_terminal = drain(
+                2,
+                [stats_snapshot(1100, 1100)],
+                session_id="sess_record_limit",
+                end={"reason": "call_ended", "timestampMs": 1200},
+            )
+            accepted = client.post("/v1/capture", json=reduced_terminal, headers=HEADERS)
+            assert accepted.status_code == 202, accepted.text
+            after_reduced_retry = live.summary(call_id, project_id=DEFAULT_PROJECT_ID)
+            assert after_reduced_retry.last_sequence == complete.accepted_through
+            assert after_reduced_retry.close_observed is True
+
+            sealed_call = client.post(
+                f"/v1/live/sessions/{call_id}/seal",
+                headers=HEADERS,
+            )
+            assert sealed_call.status_code == 201, sealed_call.text
+            assert sealed_call.json()["finality"] == "final"
+            assert sealed_call.json()["close_observed"] is True
+            bundle_response = client.get(
+                f"/v1/incidents/{sealed_call.json()['bundle_id']}",
+                headers=HEADERS,
+            )
+            assert bundle_response.status_code == 200, bundle_response.text
+            bundle = IncidentBundle.model_validate(bundle_response.json())
+            packet_loss = [
+                measurement
+                for sample in bundle.profile.quality_samples
+                for measurement in sample.measurements
+                if measurement.name == "packet_loss_ratio"
+            ]
+            assert packet_loss
+            assert all(measurement.value == 0 for measurement in packet_loss)
+
+        direct_live = LiveSessionRegistry(
+            config=LiveConfig(max_journal_records=complete.accepted_through)
+        )
+        first_direct_drain = make_drain(1, snapshots=[stats_snapshot(1000, 1000)])
+        direct_call = CaptureCall(first_direct_drain)
+        direct_prefix = direct_call.process(first_direct_drain, direct_live)
+        assert direct_prefix.accepted_through == prefix.accepted_through
+
+        rejected_direct_drain = make_drain(
+            2,
+            snapshots=[stats_snapshot(1100, 1100), stats_snapshot(1200, 1200)],
+            end=terminal,
+        )
+        with pytest.raises(LiveCaptureJournalLimitError):
+            direct_call.process(rejected_direct_drain, direct_live)
+        assert (
+            direct_live.summary(direct_call.call_key, project_id=DEFAULT_PROJECT_ID).last_sequence
+            == direct_prefix.accepted_through
+        )
+
+        with pytest.raises(LiveCaptureJournalLimitError):
+            direct_call.process(rejected_direct_drain, direct_live)
+
+        reduced_direct_drain = make_drain(
+            2,
+            snapshots=[stats_snapshot(1100, 1100)],
+            end=terminal,
+        )
+        direct_reduced_retry = direct_call.process(reduced_direct_drain, direct_live)
+        assert direct_reduced_retry.accepted_through == complete.accepted_through
+        assert direct_reduced_retry.finalized is True
+        direct_live.close()
+
+        capacity_live = LiveSessionRegistry(config=LiveConfig(max_sessions=1))
+        occupying_drain = make_drain(1, session_id="sess_capacity_owner")
+        occupying_call = CaptureCall(occupying_drain)
+        occupying_call.process(occupying_drain, capacity_live)
+
+        waiting_drain = make_drain(1, session_id="sess_capacity_retry")
+        waiting_call = CaptureCall(waiting_drain)
+        with pytest.raises(LiveCapacityError):
+            waiting_call.process(waiting_drain, capacity_live)
+
+        assert capacity_live.drop_session(
+            occupying_call.call_key,
+            project_id=DEFAULT_PROJECT_ID,
+            reason="test_capacity_release",
+        )
+        capacity_retry = waiting_call.process(waiting_drain, capacity_live)
+        assert capacity_retry.replay is False
+        assert capacity_retry.accepted_snapshots == 0
+        assert capacity_live.contains(waiting_call.call_key, project_id=DEFAULT_PROJECT_ID)
+        capacity_live.close()
+    finally:
+        store.close()
 
 
 @pytest.mark.parametrize(
@@ -1839,9 +2338,6 @@ def test_without_a_journal_directory_a_restart_drops_the_call(tmp_path) -> None:
     after_client = TestClient(after)
     listed = after_client.get("/v1/live/sessions", headers=HEADERS).json()["items"]
     assert all(item["session_id"] != call_id for item in listed)
-
-
-# -- a real crash --------------------------------------------------------------
 
 
 def _crash_script(capture_dir: Path, drains: int) -> str:

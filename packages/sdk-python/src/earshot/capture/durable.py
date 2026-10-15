@@ -46,13 +46,13 @@ import json
 import math
 import os
 import stat
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from pathlib import Path
 
 from ..checkpoint.reader import JournalReader, JournalUnreadableError
-from ..checkpoint.records import JournalRecordEntry
+from ..checkpoint.records import JournalEntry, JournalRecordEntry
 from ..contract import Coverage
 
 try:  # Durable capture is a single-writer journal shared across processes.
@@ -668,8 +668,14 @@ def max_fact_sequence(path: Path, *, key: bytes | None = None) -> int:
         replay = JournalReader(path, key=key).read()
     except (JournalUnreadableError, OSError):
         return 0
+    return max_fact_sequence_from_entries(replay.entries)
+
+
+def max_fact_sequence_from_entries(entries: Sequence[JournalEntry]) -> int:
+    """Find the fact-id ceiling in already decoded journal entries."""
+
     highest = 0
-    for entry in replay.entries:
+    for entry in entries:
         if not isinstance(entry, JournalRecordEntry) or entry.value is None:
             continue
         for field in ("event_id", "sample_id", "operation_id"):
@@ -697,8 +703,14 @@ def replay_coverage(path: Path, *, key: bytes | None = None) -> list[Coverage] |
         replay = JournalReader(path, key=key).read()
     except (JournalUnreadableError, OSError):
         return None
+    return replay_coverage_from_entries(replay.entries)
+
+
+def replay_coverage_from_entries(entries: Sequence[JournalEntry]) -> list[Coverage]:
+    """Rebuild coverage from decoded entries without rereading the journal."""
+
     coverage: list[Coverage] = []
-    for entry in replay.entries:
+    for entry in entries:
         if not isinstance(entry, JournalRecordEntry) or entry.kind != "coverage":
             continue
         if entry.value is None:
@@ -723,8 +735,10 @@ __all__ = [
     "iter_sidecars",
     "journal_path",
     "max_fact_sequence",
+    "max_fact_sequence_from_entries",
     "read_sidecar",
     "replay_coverage",
+    "replay_coverage_from_entries",
     "sidecar_path",
     "write_sidecar",
 ]

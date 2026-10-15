@@ -9,7 +9,7 @@
  * code, and CSRF material must stay out of results, failures and logs.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CAPTURE_PROTOCOL_VERSION } from "./protocol.js";
 import { EarshotBrowserRecorder } from "./recorder.js";
@@ -20,6 +20,14 @@ import { FakeFetch, FakeSleep, sequentialRandom } from "./testing/fakes.js";
 
 const ENDPOINT = "https://collector.example/v1/capture";
 const CSRF_TOKEN = "SENTINEL-csrf-token-do-not-leak";
+
+beforeEach(() => {
+  vi.stubGlobal("location", { origin: "https://collector.example" });
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 type TestTransportOptions = Omit<
   CaptureTransportOptions,
@@ -141,9 +149,32 @@ describe("configuration is explicit, never implicit", () => {
       }),
     ).toThrow(TypeError);
   });
+
+  it("rejects an explicitly configured empty CSRF token", () => {
+    expect(() =>
+      createCaptureTransport({
+        endpoint: ENDPOINT,
+        csrfToken: "",
+        fetch: new FakeFetch().fetch,
+      }),
+    ).toThrow(/csrfToken/i);
+  });
 });
 
 describe("versioned, cookie-authenticated delivery", () => {
+  it("refuses to send a CSRF token to a cross-origin endpoint", () => {
+    const fetcher = new FakeFetch();
+
+    expect(() =>
+      createCaptureTransport({
+        endpoint: "https://attacker.example/collect",
+        csrfToken: CSRF_TOKEN,
+        fetch: fetcher.fetch,
+      }),
+    ).toThrow(/same-origin/i);
+    expect(fetcher.requests).toHaveLength(0);
+  });
+
   it("POSTs through the host BFF with CSRF, project assertion and trace", async () => {
     const fetcher = new FakeFetch([201]);
     const transport = createCaptureTransport({
@@ -162,6 +193,7 @@ describe("versioned, cookie-authenticated delivery", () => {
     expect(request.init.headers["content-type"]).toBe("application/json");
     expect(request.init.headers.authorization).toBeUndefined();
     expect(request.init.headers["x-earshot-csrf"]).toBe(CSRF_TOKEN);
+    expect(request.init.redirect).toBe("error");
     expect(request.init.headers["x-earshot-project-id"]).toBe("browser-app");
     expect(request.init.headers["x-earshot-auth-context-id"]).toBe("authctx_test");
     expect(request.init.headers.traceparent).toBe(payload().traceContext.traceparent);
@@ -1193,6 +1225,99 @@ describe("recorder integration", () => {
         finalized: true,
       },
     ]);
+  });
+
+  it("drains sends queued while flush is retrying an idle exact request", async () => {
+    let calls = 0;
+    let releaseRetry: ((response: { ok: boolean; status: number }) => void) | undefined;
+    let retryStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      retryStarted = resolve;
+    });
+    const transport = createCaptureTransport({
+      endpoint: ENDPOINT,
+      maxAttempts: 1,
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) return { ok: false, status: 503 };
+        if (calls === 2) {
+          retryStarted?.();
+          return new Promise((resolve) => {
+            releaseRetry = resolve;
+          });
+        }
+        return { ok: true, status: 202 };
+      },
+    });
+
+    const first = await transport.send(
+      payload({ captureVersion: 2, sessionId: "sess_retry", drainSequence: 1 }),
+    );
+    expect(first.failure?.retryRetained).toBe(true);
+
+    const flushing = transport.flush();
+    await started;
+    let queuedSendSettled = false;
+    const queuedSend = transport
+      .send(payload({ captureVersion: 2, sessionId: "sess_queued", drainSequence: 1 }))
+      .then((result) => {
+        queuedSendSettled = true;
+        return result;
+      });
+    releaseRetry?.({ ok: true, status: 202 });
+
+    const flushResult = await flushing;
+
+    expect(queuedSendSettled).toBe(true);
+    expect((await queuedSend).delivered).toBe(true);
+    expect(calls).toBe(3);
+    expect(flushResult.pendingExactRetryCount).toBe(0);
+  });
+
+  it("attempts one retained exact request only once per flush", async () => {
+    let calls = 0;
+    let releaseRetry: ((response: { ok: boolean; status: number }) => void) | undefined;
+    let retryStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      retryStarted = resolve;
+    });
+    const transport = createCaptureTransport({
+      endpoint: ENDPOINT,
+      maxAttempts: 1,
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) return { ok: false, status: 503 };
+        if (calls === 2) {
+          retryStarted?.();
+          return new Promise((resolve) => {
+            releaseRetry = resolve;
+          });
+        }
+        return { ok: true, status: 202 };
+      },
+    });
+
+    const first = await transport.send(
+      payload({ captureVersion: 2, sessionId: "sess_same", drainSequence: 1 }),
+    );
+    expect(first.failure?.retryRetained).toBe(true);
+
+    const flushing = transport.flush();
+    await started;
+    const queuedSend = transport.send(
+      payload({ captureVersion: 2, sessionId: "sess_same", drainSequence: 2 }),
+    );
+    releaseRetry?.({ ok: false, status: 503 });
+
+    const flushResult = await flushing;
+    const queuedResult = await queuedSend;
+    expect(calls).toBe(2);
+    expect(queuedResult.failure?.kind).toBe("blocked");
+    expect(flushResult.pendingExactRetryCount).toBe(1);
+
+    const nextFlush = await transport.flush();
+    expect(calls).toBe(3);
+    expect(nextFlush.pendingExactRetryCount).toBe(0);
   });
 
   it("notifies the host when flush later accepts a finalized request", async () => {

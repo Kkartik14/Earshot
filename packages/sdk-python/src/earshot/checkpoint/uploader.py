@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import ipaddress
+import json
 import os
 import threading
 import urllib.error
@@ -239,6 +240,26 @@ class CheckpointUploader:
         batch = data[offset : plan.end]
         try:
             self._post(batch)
+        except urllib.error.HTTPError as error:
+            if offset == 0 or not _backend_lost_session(error):
+                self._fail(error)
+                return False
+            # The offset proves what the previous backend acknowledged, not what
+            # a replacement backend still remembers. A sequence gap that expects
+            # the header means its in-memory session is gone; replay the journal
+            # from byte zero so the new backend can rebuild that accepted prefix.
+            with contextlib.suppress(Exception):
+                error.close()
+            plan = _plan_batch(data, 0, self._max_batch_bytes)
+            if plan.end <= 0:
+                self._fail(RuntimeError("checkpoint replay has no complete frame"))
+                return False
+            batch = data[: plan.end]
+            try:
+                self._post(batch)
+            except Exception as replay_error:
+                self._fail(replay_error)
+                return False
         except Exception as error:
             self._fail(error)
             return False
@@ -252,8 +273,6 @@ class CheckpointUploader:
         # already-accepted run -- a no-op replay on the server, never a gap.
         self._persist_offset(plan.end)
         return True
-
-    # -------------------------------------------------------------- internal
 
     def _load_offset(self) -> int:
         """The last acknowledged byte offset, or zero when there is nothing to trust.
@@ -408,6 +427,36 @@ def _plan_batch(data: bytes, offset: int, budget: int) -> _BatchPlan:
             break
         end = frame_end
     return _BatchPlan(end)
+
+
+def _backend_lost_session(error: urllib.error.HTTPError) -> bool:
+    """Recognize only the API's explicit missing-session sequence gap.
+
+    A gap above sequence one can be repaired by the next append; divergence,
+    authorization, finality, and malformed uploads must keep their existing
+    fail-closed behavior.
+    """
+
+    if error.code != 409:
+        return False
+    try:
+        payload = json.loads(error.read())
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    problem = payload.get("error")
+    if not isinstance(problem, dict) or problem.get("code") != "EARSHOT_CHECKPOINT_SEQUENCE_GAP":
+        return False
+    issues = problem.get("issues")
+    if not isinstance(issues, list):
+        return False
+    return any(
+        isinstance(issue, dict)
+        and issue.get("path") == ["expected_sequence"]
+        and issue.get("message") == "1"
+        for issue in issues
+    )
 
 
 __all__ = [

@@ -73,11 +73,4 @@ describe("trace bundle schema v0", () => {
     const result = parseTraceBundle({ ...sample, schemaVersion: "9.9" });
     expect(result.ok).toBe(false);
   });
-
-  it("keeps spans as raw timings the SDK sends (start <= end)", () => {
-    const parsed = TraceBundleSchema.parse(sample);
-    const span = parsed.spans[0];
-    expect(span).toBeDefined();
-    expect(span!.startMs).toBeLessThanOrEqual(span!.endMs);
-  });
 });

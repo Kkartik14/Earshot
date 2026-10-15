@@ -37,9 +37,9 @@ PLATFORM_ADAPTER_ENABLED = os.environ.get("EARSHOT_PLATFORM_ADAPTER_ENABLED", ""
     "yes",
 }
 DATA_DIR = Path(os.environ.get("EARSHOT_DATA_DIR", ".earshot"))
-# Opt-in durability for in-flight continuous browser calls. Hosted capture v2
-# fails closed unless this names an existing durable directory; operator-mode
-# capture may still use in-memory calls when it is unset.
+# Opt-in durability for continuous browser calls across backend restarts. Hosted
+# capture v2 fails closed unless this names an existing durable directory. Operator
+# mode capture may remain in memory when it is unset.
 CAPTURE_JOURNAL_DIR = os.environ.get("EARSHOT_CAPTURE_JOURNAL_DIR")
 BEHIND_TLS_PROXY = os.environ.get("EARSHOT_BEHIND_TLS_PROXY", "").lower() in {
     "1",

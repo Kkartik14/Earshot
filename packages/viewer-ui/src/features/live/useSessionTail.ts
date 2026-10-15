@@ -12,21 +12,32 @@ export interface SessionTail {
   reconnect(): void;
 }
 
-/** Subscribe one component to one live session.
- *
- *  The returned facts are only ever what the stream said. Nothing here derives,
- *  averages, or extrapolates: a live session has no digest, so anything computed
- *  from it would be a claim no artifact attests. */
+/** Subscribe to a live session's admitted journal facts. */
 export function useSessionTail(
   sessionId: string | undefined,
   options?: Pick<TailOptions, "eventSourceFactory" | "staleAfterMs" | "maxErrors">,
 ): SessionTail {
   const scope = useViewerQueryScope();
-  const store = useMemo(() => new LiveStore(), [scope.projectId, scope.authContextId]);
-  const [connection, setConnection] = useState<TailConnection>({ kind: "connecting" });
+  const store = useMemo(
+    () => new LiveStore(),
+    [scope.projectId, scope.authContextId, sessionId],
+  );
   const [attempt, setAttempt] = useState(0);
-  const [lastEventAt, setLastEventAt] = useState(() => Date.now());
+  const callbackIdentity = useMemo(() => ({ store, attempt }), [store, attempt]);
+  const [connectionState, setConnectionState] = useState<{
+    key: typeof callbackIdentity | null;
+    value: TailConnection;
+  }>({ key: null, value: { kind: "connecting" } });
+  const connection =
+    connectionState.key === callbackIdentity
+      ? connectionState.value
+      : ({ kind: "connecting" } as const);
+  const [lastEventState, setLastEventState] = useState(() => ({
+    key: null as LiveStore | null,
+    value: Date.now(),
+  }));
   const [now, setNow] = useState(() => Date.now());
+  const lastEventAt = lastEventState.key === store ? lastEventState.value : now;
   const settings = useRef(options);
   settings.current = options;
 
@@ -38,20 +49,26 @@ export function useSessionTail(
 
   useEffect(() => {
     if (sessionId == null) return;
+    let active = true;
     store.clear();
     const handle = openSessionTail(sessionId, {
       ...settings.current,
       onEvent: (event) => {
-        setLastEventAt(Date.now());
+        if (!active) return;
+        setLastEventState({ key: store, value: Date.now() });
         store.apply(event);
       },
-      onConnection: setConnection,
+      onConnection: (value) => {
+        if (active) setConnectionState({ key: callbackIdentity, value });
+      },
     });
-    return () => handle.close();
-  }, [sessionId, attempt, scope.projectId, scope.authContextId, store]);
+    return () => {
+      active = false;
+      handle.close();
+    };
+  }, [sessionId, attempt, callbackIdentity, store]);
 
-  // A ticking "seconds ago" is a fact about this page, not about the session, so
-  // it is computed here and never folded into the facts themselves.
+  // Keep page activity time separate from session facts.
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);

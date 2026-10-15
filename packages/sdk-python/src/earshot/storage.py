@@ -384,7 +384,7 @@ class StoredAnalysis:
         }
 
 
-_SCHEMA_VERSION = 18
+_SCHEMA_VERSION = 19
 _MAX_CURSOR_ENCODED_CHARS = 4096
 _MAX_CURSOR_DECODED_BYTES = 512
 _SQLITE_INT64_MAX = (1 << 63) - 1
@@ -1367,6 +1367,24 @@ class IncidentStore:
         self._configure_connection(connection)
         return connection
 
+    @contextlib.contextmanager
+    def _listing_connection(self) -> Iterator[sqlite3.Connection]:
+        """Open a listing snapshot with the locking its SQLite mode requires."""
+
+        # WAL readers do not block file-backed writers, so only hold the local
+        # guard while opening their snapshot connection. Shared-cache in-memory
+        # databases have table locks instead; serialize the complete read with
+        # this store's writes to avoid SQLITE_LOCKED races.
+        serialization = self._write_lock if self._database_uri else contextlib.nullcontext()
+        with serialization:
+            with self._write_lock:
+                self._ensure_process_ownership()
+                connection = self._connect()
+            try:
+                yield connection
+            finally:
+                connection.close()
+
     def _initialize(self) -> None:
         with self._mutation(), self._connect() as connection:
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -1374,6 +1392,12 @@ class IncidentStore:
                 raise StorageError("incident database schema is newer than this binary")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("BEGIN IMMEDIATE")
+            if version < 19:
+                # Listing scans in result order and filters expiry as a residual
+                # predicate. The expiry-first indexes forced a sort across live
+                # rows and added write work without a remaining query owner.
+                connection.execute("DROP INDEX IF EXISTS incidents_project_expiry_idx")
+                connection.execute("DROP INDEX IF EXISTS incidents_project_no_expiry_idx")
             # Project ownership is needed by later migrations (notably scoped
             # tombstones), so establish the authorization root before inspecting
             # or rebuilding any legacy table that now references it.
@@ -3674,7 +3698,6 @@ class IncidentStore:
         *,
         project_id: str = DEFAULT_PROJECT_ID,
     ) -> tuple[IncidentRecord, bytes]:
-        # Keep the index lookup and object read coherent with concurrent purge.
         with self._mutation():
             record = self.get_record(bundle_id, project_id=project_id)
             return record, self.objects.get(record.digest)
@@ -3707,27 +3730,33 @@ class IncidentStore:
             parameters.append(session_id)
         if cursor is not None:
             cursor_time, cursor_bundle_id = _decode_cursor(cursor)
-            clauses.append(
-                "(ingested_at_unix_nano < ? OR (ingested_at_unix_nano = ? AND bundle_id < ?))"
-            )
-            parameters.extend((cursor_time, cursor_time, cursor_bundle_id))
+            clauses.append("(ingested_at_unix_nano, bundle_id) < (?, ?)")
+            parameters.extend((cursor_time, cursor_bundle_id))
+        now = str(time.time_ns())
         clauses.append(_not_expired_sql("expires_at_unix_nano"))
-
-        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-        with self._mutation():
-            with self._connect() as connection:
-                self._require_active_project(connection, project_id)
-            # Export policy and expiry are catalog predicates, so metadata reads
-            # do not need to load artifacts or run retention cleanup.
-            now = str(time.time_ns())
-            query_parameters = (*parameters, len(now), len(now), now, limit + 1)
-            with self._connect() as connection:
-                rows = connection.execute(
-                    "SELECT * FROM incidents"
-                    + where
-                    + " ORDER BY ingested_at_unix_nano DESC, bundle_id DESC LIMIT ?",
-                    query_parameters,
-                ).fetchall()
+        parameters.extend((len(now), len(now), now))
+        index_name = (
+            "incidents_session_idx"
+            if session_id is not None
+            else (
+                f"incidents_export_{destination}_idx"
+                if destination is not None
+                else "incidents_project_idx"
+            )
+        )
+        query = (
+            f"SELECT * FROM incidents INDEXED BY {index_name} "
+            f"WHERE {' AND '.join(clauses)} "
+            "ORDER BY ingested_at_unix_nano DESC, bundle_id DESC LIMIT ?"
+        )
+        # The chosen index carries page order and avoids a temporary sort. SQLite
+        # stops after limit+1 visible rows, but may scan an unbounded number of
+        # expired catalog rows first. Listing never decodes artifacts or mutates
+        # retention state.
+        with self._listing_connection() as connection:
+            connection.execute("BEGIN")
+            self._require_active_project(connection, project_id)
+            rows = connection.execute(query, (*parameters, limit + 1)).fetchall()
             has_more = len(rows) > limit
             records = tuple(_record(row) for row in rows[:limit])
             next_cursor = _encode_cursor(records[-1]) if has_more and records else None
