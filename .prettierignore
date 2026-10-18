@@ -8,5 +8,5 @@ pnpm-lock.yaml
 spec/*.json
 fixtures/conformance/canonical-vector.*.json
 fixtures/valid/complete.json
-apps/viewer/src/api/schema.d.ts
-apps/viewer/src/features/inspector/__fixtures__/faults/*.explanation.json
+packages/viewer-ui/src/api/schema.d.ts
+packages/viewer-ui/src/features/inspector/__fixtures__/faults/*.explanation.json

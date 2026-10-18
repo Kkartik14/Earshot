@@ -48,7 +48,9 @@ current gaps are recorded in [the capture inventory](docs/captured-fixtures.md).
   omissions, and limitations without manufacturing durations.
 - FastAPI backend with project-scoped API keys, immutable SQLite/content-addressed
   storage, JSON/protobuf negotiation, fleet Turn Facts, analysis caching, corruption
-  checks, and privacy purge/tombstones.
+  checks, privacy purge/tombstones, and mutable project-scoped Platform/Voice Labs links.
+- Shared `@earshot/viewer-ui` Observe feature mounted by the standalone Vite app and an
+  App Router Next.js host; Platform supplies its own authenticated shell and API proxy.
 - Signed finalized-delivery Connectors for ElevenLabs Agents (JSON and OTLP-shaped),
   Vapi, Retell, and Ringg. Provider transcript/tool/dynamic-variable bodies are not
   retained.
@@ -72,9 +74,14 @@ catalog and evidence in the named `earshot-data` volume. The container runs with
 port mapping is the trust boundary. To expose it beyond localhost, drop that line from
 `compose.yaml` and instead set `EARSHOT_TOKEN` (a high-entropy secret) plus
 `EARSHOT_BEHIND_TLS_PROXY=true`, and front it with your own TLS proxy.
-On a protected deployment, the viewer exchanges the entered project API key or legacy
-token for an expiring HttpOnly session cookie; it never saves the credential in browser
-storage.
+The standalone viewer exchanges an entered project API key or legacy token for an
+expiring HttpOnly session cookie; it never saves the credential in browser storage.
+Hosted deployments use short-lived, project-scoped JWTs verified against the
+configured issuer and HTTPS JWKS. Platform's token issuer stays server-side; its
+backend-for-frontend (BFF) proxies authenticated detail and live/SSE requests to
+Earshot. The optional Platform summary adapter is disabled by default and uses
+the same project-scoped JWT authorization. The browser never receives an Earshot
+service token or signing credential.
 
 Load a session to look at:
 
@@ -97,6 +104,12 @@ earshot serve --data-dir .earshot                       # http://127.0.0.1:4319
 Applications that only emit Earshot evidence install the lightweight base package.
 Running the local API/CLI server from a non-development installation requires the
 server extra: `pip install 'earshot-observability[server]'`.
+
+For the standalone App Router host, start the API separately and run
+`EARSHOT_API_URL=http://127.0.0.1:4319 pnpm --filter @earshot/viewer-next dev`.
+The Python wheel and single-image Docker path continue to serve the packaged Vite static
+viewer. See [Platform integration](docs/platform-integration.md) for the host auth,
+reference-link, and TVIC artifact contract.
 
 Without the `bundle` step the API still runs; it just serves no UI. During UI
 development, run `pnpm --filter @earshot/viewer dev` for a hot-reloading server that
@@ -168,6 +181,8 @@ a system can prove a human **heard** the audio.
 | `packages/sdk-python`                  | Contract, SDK, adapters, analysis, storage, and API.              |
 | `apps/ingest`                          | ASGI deployment entry point.                                      |
 | `apps/viewer`                          | React viewer SPA, bundled into the Python wheel.                  |
+| `apps/viewer-next`                     | Standalone Next.js App Router host for the same Observe feature.  |
+| `packages/viewer-ui`                   | Earshot-owned framework-neutral Observe feature and API client.   |
 | `packages/browser`                     | Browser-side capture SDK (unpublished; not yet viewer-rendered).  |
 | `fixtures/`                            | Shared valid/invalid/golden/fault artifacts.                      |
 | `examples/pipecat_headless`            | Roomless real STT → LLM → TTS evidence harness.                   |

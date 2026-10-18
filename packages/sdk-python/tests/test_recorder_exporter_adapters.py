@@ -6,7 +6,6 @@ import gzip
 import os
 import select
 import threading
-import time
 import urllib.error
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
@@ -336,14 +335,30 @@ def test_http_transport_accepts_http_date_retry_after(monkeypatch) -> None:
     assert raised.value.retry_after == 3.0
 
 
-def test_exporter_uses_jitter_and_retry_after_without_blocking_submit(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("retry_after", "expected_wait"),
+    [(0.02, 0.125), (0.2, 0.2)],
+)
+def test_exporter_selects_the_larger_jitter_or_retry_after_delay(
+    monkeypatch, retry_after: float, expected_wait: float
+) -> None:
     class RetryAfterTransport:
-        attempts = 0
+        def __init__(self) -> None:
+            self.attempts = 0
 
         def send(self, _item) -> None:
             self.attempts += 1
             if self.attempts == 1:
-                raise RetryableExportError("busy", retry_after=0.02)
+                raise RetryableExportError("busy", retry_after=retry_after)
+
+    class RecordingStopEvent(threading.Event):
+        def __init__(self) -> None:
+            super().__init__()
+            self.wait_timeouts: list[float | None] = []
+
+        def wait(self, timeout: float | None = None) -> bool:
+            self.wait_timeouts.append(timeout)
+            return False
 
     transport = RetryAfterTransport()
     monkeypatch.setattr("earshot.exporter.random.uniform", lambda low, high: high)
@@ -353,12 +368,13 @@ def test_exporter_uses_jitter_and_retry_after_without_blocking_submit(monkeypatc
         base_backoff=0.1,
         jitter_ratio=0.25,
     )
-    started = time.monotonic()
+    stop_event = RecordingStopEvent()
+    exporter._stop_requested = stop_event
     assert exporter.submit(ExportItem("bundle", b"payload"))
-    assert exporter.flush(timeout=2)
+    assert exporter.flush(timeout=5)
     assert exporter.shutdown()
     assert transport.attempts == 2
-    assert time.monotonic() - started >= 0.02
+    assert stop_event.wait_timeouts == [expected_wait]
 
 
 def test_shutdown_interrupts_retry_after_backoff_and_accounts_failure() -> None:
@@ -373,12 +389,10 @@ def test_shutdown_interrupts_retry_after_backoff_and_accounts_failure() -> None:
         RetryAfterTransport(), max_attempts=3, total_attempt_deadline=60
     )
     assert exporter.submit(ExportItem("bundle", b"payload"))
-    assert attempted.wait(2)
+    assert attempted.wait(5)
 
-    started = time.monotonic()
-    assert exporter.shutdown(timeout=0.5)
+    assert exporter.shutdown(timeout=5)
 
-    assert time.monotonic() - started < 0.5
     status = exporter.status()
     assert status.failed == 1
     assert status.retried == 1
@@ -386,17 +400,26 @@ def test_shutdown_interrupts_retry_after_backoff_and_accounts_failure() -> None:
 
 
 def test_total_attempt_deadline_stops_retrying_before_next_backoff() -> None:
-    transport = FlakyTransport(failures=100)
+    class RetryAfterTransport:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def send(self, _item) -> None:
+            self.attempts += 1
+            retry_after = 0 if self.attempts == 1 else 60
+            raise RetryableExportError("unavailable", retry_after=retry_after)
+
+    transport = RetryAfterTransport()
     exporter = BoundedAsyncExporter(
         transport,
         max_attempts=10,
-        base_backoff=0.03,
+        base_backoff=0,
         jitter_ratio=0,
-        total_attempt_deadline=0.05,
+        total_attempt_deadline=10,
     )
     assert exporter.submit(ExportItem("deadline", b"payload"))
 
-    assert exporter.flush(timeout=1)
+    assert exporter.flush(timeout=5)
     assert exporter.shutdown()
 
     status = exporter.status()

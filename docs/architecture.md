@@ -114,7 +114,8 @@ fills a dict and nothing else -- no network, no environment, no import-order eff
 - Evidence is immutable; legal/privacy deletion physically purges it and leaves a
   content-free tombstone.
 - The earliest retention deadline of any captured class governs the immutable bundle
-  and is enforced on startup and every read/list boundary.
+  and is rejected at every read boundary; the API reaps expired data in bounded batches
+  outside listing work.
 - Object digests are rechecked on every read.
 
 ## Time and causality

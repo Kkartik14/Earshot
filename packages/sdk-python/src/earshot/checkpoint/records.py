@@ -24,6 +24,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    StrictStr,
     StringConstraints,
     model_validator,
 )
@@ -97,13 +98,41 @@ class JournalOmission(JournalModel):
     reason: str
 
 
+class JournalConsent(JournalModel):
+    status: StrictStr
+    legal_basis: StrictStr | None = None
+    recorded_at_unix_nano: DecimalNanoText | None = None
+    authority: StrictStr | None = None
+
+
+class JournalRedaction(JournalModel):
+    policy_id: StrictStr
+    policy_version: StrictStr
+    status: StrictStr
+    findings_count: StrictInt | None = Field(default=None, ge=0)
+    redacted_count: StrictInt | None = Field(default=None, ge=0)
+    executed_at_unix_nano: DecimalNanoText | None = None
+
+
+class JournalRetention(JournalModel):
+    expires_at_unix_nano: DecimalNanoText | None = None
+    ttl_nano: DecimalNanoText | None = None
+    policy_id: StrictStr | None = None
+
+
+class JournalExport(JournalModel):
+    allowed: StrictBool
+    destinations: tuple[StrictStr, ...] = ()
+    policy_id: StrictStr | None = None
+
+
 class JournalGovernance(JournalModel):
     """The governance a capture class was configured with, as declared."""
 
-    consent: dict[str, Any] | None = None
-    redaction: dict[str, Any] | None = None
-    retention: dict[str, Any] | None = None
-    export: dict[str, Any] | None = None
+    consent: JournalConsent | None = None
+    redaction: JournalRedaction | None = None
+    retention: JournalRetention | None = None
+    export: JournalExport | None = None
 
 
 class JournalOpen(JournalModel):
@@ -267,15 +296,24 @@ def governance_to_journal(governance: CaptureGovernance) -> JournalGovernance:
 
 
 def _governance_from_journal(value: JournalGovernance) -> CaptureGovernance:
-    export = value.export
     return CaptureGovernance(
-        consent=None if value.consent is None else ConsentConfig(**value.consent),
-        redaction=None if value.redaction is None else RedactionConfig(**value.redaction),
-        retention=None if value.retention is None else RetentionConfig(**value.retention),
-        export=(
+        consent=(
             None
-            if export is None
-            else ExportConfig(**{**export, "destinations": tuple(export.get("destinations", ()))})
+            if value.consent is None
+            else ConsentConfig(**value.consent.model_dump(mode="python"))
+        ),
+        redaction=(
+            None
+            if value.redaction is None
+            else RedactionConfig(**value.redaction.model_dump(mode="python"))
+        ),
+        retention=(
+            None
+            if value.retention is None
+            else RetentionConfig(**value.retention.model_dump(mode="python"))
+        ),
+        export=(
+            None if value.export is None else ExportConfig(**value.export.model_dump(mode="python"))
         ),
     )
 

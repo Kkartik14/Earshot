@@ -14,6 +14,7 @@ packages/sdk-python/src/earshot/adapters/routing.py
 packages/sdk-python/src/earshot/adapters/tvic.py
 packages/sdk-python/src/earshot/analysis.py
 packages/sdk-python/src/earshot/api.py
+packages/sdk-python/src/earshot/auth.py
 packages/sdk-python/src/earshot/browser_session.py
 packages/sdk-python/src/earshot/capture/__init__.py
 packages/sdk-python/src/earshot/capture/calls.py
@@ -24,6 +25,7 @@ packages/sdk-python/src/earshot/capture/source.py
 packages/sdk-python/src/earshot/checkpoint/__init__.py
 packages/sdk-python/src/earshot/checkpoint/assembler.py
 packages/sdk-python/src/earshot/checkpoint/framing.py
+packages/sdk-python/src/earshot/checkpoint/governance.py
 packages/sdk-python/src/earshot/checkpoint/keys.py
 packages/sdk-python/src/earshot/checkpoint/limits.py
 packages/sdk-python/src/earshot/checkpoint/reader.py
@@ -59,6 +61,9 @@ packages/sdk-python/src/earshot/generated/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/incident_pb2.py
+packages/sdk-python/src/earshot/integrations/__init__.py
+packages/sdk-python/src/earshot/integrations/platform/__init__.py
+packages/sdk-python/src/earshot/integrations/platform/adapter.py
 packages/sdk-python/src/earshot/live.py
 packages/sdk-python/src/earshot/measurement_semantics.py
 packages/sdk-python/src/earshot/observation.py
@@ -69,5 +74,6 @@ packages/sdk-python/src/earshot/query.py
 packages/sdk-python/src/earshot/recorder.py
 packages/sdk-python/src/earshot/sdk.py
 packages/sdk-python/src/earshot/storage.py
+packages/sdk-python/src/earshot/summary.py
 packages/sdk-python/src/earshot/validation.py
 packages/sdk-python/src/earshot/versions.py

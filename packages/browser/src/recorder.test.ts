@@ -116,11 +116,16 @@ describe("endCall vs stop: only an explicit end finalizes", () => {
     const recorder = createBrowserRecorder({ captureVersion: 2, clock: clock.now });
     recorder.drain(); // an ordinary drain carries no end
     const closing = recorder.endCall();
+    const repeatedClose = recorder.endCall();
+    const afterClose = recorder.drain();
 
     expect(closing.end).toEqual({ reason: "call_ended", timestampMs: 7000 });
     expect(closing.drainSequence).toBe(2);
-    // The call ended: sampling is torn down like stop().
-    expect(recorder.drain().snapshots).toHaveLength(0);
+    expect(repeatedClose).toMatchObject(closing);
+    expect(afterClose).toMatchObject(closing);
+    expect(repeatedClose.drainSequence).toBe(2);
+    expect(afterClose.drainSequence).toBe(2);
+    expect(afterClose.end).toEqual({ reason: "call_ended", timestampMs: 7000 });
   });
 
   it("stop() finalizes nothing: it emits no end signal at all", () => {

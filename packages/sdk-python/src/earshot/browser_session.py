@@ -15,6 +15,7 @@ from dataclasses import dataclass
 class BrowserSession:
     project_id: str
     key_id: str | None
+    auth_context_id: str
     csrf_token: str
     expires_at: float
 
@@ -53,6 +54,7 @@ class BrowserSessionStore:
         session = BrowserSession(
             project_id=project_id,
             key_id=key_id,
+            auth_context_id=secrets.token_urlsafe(16),
             csrf_token=secrets.token_urlsafe(32),
             expires_at=now + self.ttl_seconds,
         )

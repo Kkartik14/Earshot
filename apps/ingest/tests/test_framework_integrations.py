@@ -200,7 +200,9 @@ def test_pipecat_real_pipeline_normal_end_frame_does_not_create_interruption() -
         check=True,
         capture_output=True,
         text=True,
-        timeout=10,
+        # The isolated child has cold Pipecat imports; the three-second
+        # shutdown assertion above remains the behavioral completion bound.
+        timeout=30,
     )
     result_line = next(
         line for line in completed.stdout.splitlines() if line.startswith("EARSHOT_RESULT=")

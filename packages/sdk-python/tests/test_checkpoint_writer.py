@@ -13,11 +13,15 @@ from pathlib import Path
 import pytest
 
 from earshot.checkpoint import (
+    AssemblyError,
     CheckpointConfig,
     CheckpointWriter,
     JournalReader,
     RecordMutation,
+    assemble_incident,
+    scan_frames,
 )
+from earshot.checkpoint.framing import encode_frame
 from earshot.checkpoint.keys import AT_REST_NONCE_BYTES
 from earshot.checkpoint.reader import JournalUnreadableError
 from earshot.checkpoint.records import (
@@ -375,6 +379,36 @@ def test_a_platform_that_cannot_fsync_a_directory_degrades_instead_of_crashing(
     writer.release(delivered=True)
 
 
+def test_a_finalized_journal_rejects_and_reports_every_byte_after_its_close(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path, keep_finalized=True)
+    recorder = IncidentRecorder(session_id="s", bundle_id="b", checkpoint=writer)
+    _record_a_few(recorder, count=1)
+    recorder.close()
+    writer.release(delivered=True)
+
+    path = _journal_path(tmp_path)
+    data = path.read_bytes()
+    scan = scan_frames(data, max_body_bytes=1024 * 1024)
+    finalized_sequence = scan.last_sequence
+    assert finalized_sequence > 1
+    appended_finalize = encode_frame(
+        finalized_sequence + 1,
+        scan.frames[-1].body,
+        max_body_bytes=1024 * 1024,
+    )
+    path.write_bytes(data + appended_finalize)
+
+    replay = JournalReader(path).read()
+    assert replay.close_observed
+    assert replay.last_sequence == finalized_sequence
+    assert replay.torn_tail_bytes == len(appended_finalize)
+    assert replay.stop_reason == "after_finalize"
+    with pytest.raises(AssemblyError, match="trailing bytes after finalize"):
+        assemble_incident(path)
+
+
 def test_a_frame_cannot_be_moved_between_journals_or_re_sequenced(tmp_path: Path) -> None:
     key = secrets.token_bytes(32)
     writer = _writer(tmp_path, checkpoint_key=key)
@@ -488,6 +522,9 @@ def test_keeping_a_finalized_journal_is_an_explicit_choice(tmp_path: Path) -> No
     assert JournalReader(_journal_path(tmp_path)).read().close_observed is True
 
 
+# ------------------------------------------------------------- sdk wiring
+
+
 def test_appending_a_frame_stays_off_the_voice_path_budget(tmp_path: Path) -> None:
     """A journal append is one ``os.write`` into the page cache, not an fsync."""
 
@@ -498,18 +535,19 @@ def test_appending_a_frame_stays_off_the_voice_path_budget(tmp_path: Path) -> No
     event = recorder.record_event("earshot.turn.start", turn_id="warmup")
 
     samples: list[float] = []
-    for _ in range(500):
-        started = time.perf_counter()
-        writer.append_record(RecordMutation(kind="event", record=event))
-        samples.append(time.perf_counter() - started)
-    samples.sort()
-    p99 = samples[int(len(samples) * 0.99)]
+    try:
+        for _ in range(500):
+            started = time.perf_counter()
+            writer.append_record(RecordMutation(kind="event", record=event))
+            samples.append(time.perf_counter() - started)
+        samples.sort()
+        p99 = samples[int(len(samples) * 0.99)]
 
-    # Generous versus the design's 100 us reference-machine gate so a loaded CI
-    # box cannot make this flaky; it still catches an fsync or a lock appearing
-    # on the append path, which are milliseconds, not microseconds.
-    assert p99 < 0.005, f"p99 append was {p99 * 1e6:.1f} us"
-    writer.release()
+        # This loose upper bound catches synchronous flushes without treating the
+        # 100 us reference measurement as a portable latency guarantee.
+        assert p99 < 0.005, f"p99 append was {p99 * 1e6:.1f} us"
+    finally:
+        writer.release()
 
 
 def test_checkpointing_is_off_until_a_directory_is_configured(tmp_path: Path) -> None:

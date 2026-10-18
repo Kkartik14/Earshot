@@ -139,12 +139,39 @@ pnpm install
 pnpm --filter @earshot/example-browser-voice dev
 ```
 
-Then open the printed URL. For **loopback** mode you need nothing else. For
-delivery to succeed you need an earshot backend reachable at the capture endpoint
-(the dev server proxies `/v1` to `http://127.0.0.1:8000`, overridable with
-`EARSHOT_API_URL`); start one with `pnpm serve` (or point the endpoint field at a
-hosted backend and supply a project API key). Loopback still runs and captures
-without a backend — the SDK simply records undelivered batches as coverage.
+Then open the printed URL. For **loopback** mode you need nothing else. Local
+delivery uses the Vite proxy from `/v1` to `http://127.0.0.1:8000` (overridable
+with `EARSHOT_API_URL`); start that backend with `pnpm serve`. For a hosted
+deployment, point the endpoint field at the host application's authenticated
+BFF route and provide its CSRF token if required. The form's project id is an
+assertion; the BFF must derive and verify project scope from its session. The
+opaque auth-context field is a local demo value. A hosted integration must
+replace it with the host's dynamic, nonsecret `getAuthContextId()` value, which
+changes whenever the effective user/project grant changes. It must not contain a
+raw user id or credential. The browser example has no Earshot project API key
+option; the host BFF supplies Earshot service credentials on the server.
+Loopback still runs and captures without a backend — the SDK records
+undelivered batches as coverage.
+
+The Stop button closes the voice mode first, then calls `CaptureSession.endCall()`
+to send the v2 finality marker. The result reports the final delivery outcome,
+acceptance-observer failures, and any exact retry still retained after the
+bounded flush. The example shows an error if the final drain is unaccepted or an
+observer failed. `CaptureSession.stop()` is observer-only and does not claim that
+a call ended. A hosted application must persist finalized `call_id` values in
+its durable seal outbox and reconcile ambiguous seal responses as described in
+[`platform-integration.md`](../../docs/platform-integration.md). This sample
+does not implement that host-owned outbox.
+
+If the final batch receives `413`, the example keeps its transport available and
+offers **Drop snapshots/events; send final marker**. That sends a smaller replacement at
+the same session and drain sequence, preserving the clock and recorded end reason
+while declaring omitted snapshots/events in `capture.upload` coverage. This is
+an explicit evidence-loss recovery. The action appears only when the final batch
+contains observations that can be removed to make a smaller body. If no smaller
+body can be made, or the reduced marker also receives `413`, the example reports
+host repair required; the server may have exhausted its cumulative journal
+capacity or another configured capture limit.
 
 Other scripts:
 
@@ -157,12 +184,17 @@ pnpm --filter @earshot/example-browser-voice run selfcheck
 
 ## Privacy
 
-Metadata only. This app reads no audio samples and sends none; it hands real
-browser objects to `@earshot/browser`, which emits counters/states/timings and
-replaces device/sink ids with opaque per-session salted hashes before anything
-leaves the client. Output-device **labels** shown in the dropdown are read
-locally for the UI and are never sent. See the SDK's privacy posture in
-`packages/browser/README.md`.
+The Earshot capture upload is metadata only: `@earshot/browser` reads browser
+statistics, states, and timings, not audio samples, and does not send audio,
+transcripts, or tool payloads to Earshot. It replaces device and sink ids with
+opaque per-session salted hashes before telemetry leaves the client.
+
+Audio routing depends on the selected mode. **Local WebRTC loopback** keeps
+microphone audio within the browser. **OpenAI Realtime** sends the microphone
+stream and SDP offer to OpenAI for processing; that provider audio is separate
+from the metadata sent to Earshot. Output-device **labels** shown in the
+dropdown are read locally for the UI and are never sent to Earshot. See the
+SDK's telemetry privacy posture in `packages/browser/README.md`.
 
 ```
 
