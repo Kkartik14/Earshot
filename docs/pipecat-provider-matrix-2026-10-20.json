@@ -1,0 +1,840 @@
+{
+  "cells": [
+    {
+      "artifact_sha256": "15d518b28c9c6f8f462d82549ff7c0db45097e9ecbe59b6f62898e18c1e2ce9d",
+      "cell": "deepgram__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 1010.4,
+          "min_ms": 1010.4
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 103.8,
+          "min_ms": 103.8
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6562.4,
+          "min_ms": 6562.4
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "00261d7638502f3ef80704a7e8ca441ca92c9fc321e38430614e6fc9129c475b",
+      "cell": "deepgram__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 559.3,
+          "min_ms": 559.3
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "runtime_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "4e394899412acb63f8c596a441ce10dbbf1d3db0797a7ff51f03e5524b718113",
+      "cell": "deepgram__groq__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 691.1,
+          "min_ms": 691.1
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 201.7,
+          "min_ms": 201.7
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6309.3,
+          "min_ms": 6309.3
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "45e0f1c9c1bbcc28df9670b9ef526d378bfa97d8d7e2f8d00e79e62a63e498b4",
+      "cell": "deepgram__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4356.7,
+          "min_ms": 4356.7
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "f6e53ee77b88a39280a4be7f367cf7c43b7b6bf0b16ea15b6fd1e2bcdffd8325",
+      "cell": "deepgram__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4321.2,
+          "min_ms": 4321.2
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "382adb2d3c7e5393bd490aeedd52e4bd89b043408390adddc3ec5ab984dd4abe",
+      "cell": "deepgram__openai__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3700.0,
+          "min_ms": 3700.0
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "68bd0cc06283a67be1d37129a175693e3e2b1875e03009fe26a3186f45af4da0",
+      "cell": "cartesia__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 1152.8,
+          "min_ms": 1152.8
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 88.2,
+          "min_ms": 88.2
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6423.5,
+          "min_ms": 6423.5
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "b1341a5d6d4714f76279aacffba905debf24be9a654e1f44df1558d0352f0e38",
+      "cell": "cartesia__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 551.0,
+          "min_ms": 551.0
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "runtime_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "87fa27babe2ca731e1b3976a7a52b146e8798b350a76a9e6807d44f838f210a7",
+      "cell": "cartesia__groq__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 729.5,
+          "min_ms": 729.5
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 154.6,
+          "min_ms": 154.6
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6083.1,
+          "min_ms": 6083.1
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "8faea06a0c6aa1eff420f87a438eac096c62f373f203c3367da8d5da24f35062",
+      "cell": "cartesia__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 5209.4,
+          "min_ms": 5209.4
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "86414dd099ba34baf16425564f64eb6ef7db2a383afbfbc09f9ec54cee95c781",
+      "cell": "cartesia__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4745.3,
+          "min_ms": 4745.3
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "3c3298d358f364ddd1dd8572b4a1beaac55b6d0c020713da3014ba3fde5b4713",
+      "cell": "cartesia__openai__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4599.0,
+          "min_ms": 4599.0
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "f43f4f42409951c5419ee591e1a2c87fa285a20ff996da6d66e8c3595213c5e3",
+      "cell": "sarvam__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 655.1,
+          "min_ms": 655.1
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 155.3,
+          "min_ms": 155.3
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 2070.5,
+          "min_ms": 2070.5
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "211fa5f6256c81b563771e773d2a3582f73036b29a26af3154d0202214917c8d",
+      "cell": "sarvam__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 307.8,
+          "min_ms": 307.8
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "runtime_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "1da49d623cfa2d6bd0bfefdddb538100989f880ce54ec2fe681fb0ba45e6bd35",
+      "cell": "sarvam__groq__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 710.7,
+          "min_ms": 710.7
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 167.1,
+          "min_ms": 167.1
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 2184.8,
+          "min_ms": 2184.8
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "1096da3075f2d33cedc2804e1560f96215912aae2295d59026195047377c9e95",
+      "cell": "sarvam__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4181.9,
+          "min_ms": 4181.9
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "82552a5be0440b74a985d8ca00e37e5c91f4265a795f725c6f580fde1696d08e",
+      "cell": "sarvam__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3808.2,
+          "min_ms": 3808.2
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "1ddc2d1baf8bab0eb6ab9aea5f6912a5a12a3b628b38f43d5f904c5b74770c8d",
+      "cell": "sarvam__openai__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4875.6,
+          "min_ms": 4875.6
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "5074fcc78cba314cf15028743b5c9e0055214dfab563254d4777da0d1b5c3588",
+      "cell": "elevenlabs__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 640.1,
+          "min_ms": 640.1
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 89.4,
+          "min_ms": 89.4
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6245.3,
+          "min_ms": 6245.3
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "56f6dfbeb2681beff0435ba0cc1dd5f9185bcf71f4b3ea1f7ac84652e710d356",
+      "cell": "elevenlabs__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 629.0,
+          "min_ms": 629.0
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "runtime_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "7a94684299390ab7e6c28cea98b959a2bc3134c20a5056c14be8c08676347d35",
+      "cell": "elevenlabs__groq__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 766.1,
+          "min_ms": 766.1
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 183.7,
+          "min_ms": 183.7
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 6337.6,
+          "min_ms": 6337.6
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "3dea5ed455cd289babfb1c4c30a573e2c531715bcb58fe5b9b34b57b30255c76",
+      "cell": "elevenlabs__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 3733.3,
+          "min_ms": 3733.3
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "3c530be9d23c972a431f85d6d9ead95b008c5affe36c5dff946ea72299c93ca3",
+      "cell": "elevenlabs__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4713.7,
+          "min_ms": 4713.7
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "983e5b8c1a47daa7c5663583cb68fc6b1e2d0fe477069852b4cc1af49b7690cd",
+      "cell": "elevenlabs__openai__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 5506.6,
+          "min_ms": 5506.6
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "6773146e73d701c1e57770abe545097a7d261a70b494ce092ae35ba87808045a",
+      "cell": "assemblyai__groq__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 662.1,
+          "min_ms": 662.1
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 88.9,
+          "min_ms": 88.9
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 1123.5,
+          "min_ms": 1123.5
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "a93809d092cbf17f3037ed538acd6b23465a3177ba5cd6891964f5d5857652ee",
+      "cell": "assemblyai__groq__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 615.9,
+          "min_ms": 615.9
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "runtime_failure": "error",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 4,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "10d10a6b7ba3f026f85b1b84e5aa86db27ac0e56a7d2726d6191c1c111932a56",
+      "cell": "assemblyai__groq__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 615.8,
+          "min_ms": 615.8
+        },
+        "pipecat.tts.ttfb": {
+          "count": 1,
+          "max_ms": 178.2,
+          "min_ms": 178.2
+        },
+        "pipecat.turn.user_bot_latency": {
+          "count": 1,
+          "max_ms": 1228.5,
+          "min_ms": 1228.5
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "unset",
+        "stt": "unset",
+        "tts": "unset"
+      },
+      "quality_samples": 7,
+      "raw_otlp_chunks": 0,
+      "status": "completed",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "119ff3ab9c9f484751d5955f6c5b90748fba6455533dd1d107b678f1601d971f",
+      "cell": "assemblyai__openai__cartesia",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4441.8,
+          "min_ms": 4441.8
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "df06125812cbed1d6c331610bc9fce8e7422e6abbd0d7ea8805b46241c316f96",
+      "cell": "assemblyai__openai__elevenlabs",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 4372.9,
+          "min_ms": 4372.9
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "f72760de987e673289adc24399444670f349cfdd5b18c795e8e88621cbf1fa1f",
+      "cell": "assemblyai__openai__sarvam",
+      "measurements_ms": {
+        "pipecat.llm.ttfb": {
+          "count": 1,
+          "max_ms": 8304.4,
+          "min_ms": 8304.4
+        }
+      },
+      "operations": {
+        "framework_operation": "unset",
+        "llm": "error",
+        "runtime_failure": "error",
+        "stt": "unset"
+      },
+      "quality_samples": 1,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "f9196aa96d434d5811f6bbb68454020773f496a5818844e4fb072c3c46ebf070",
+      "cell": "soniox__groq__cartesia",
+      "measurements_ms": {},
+      "operations": {
+        "framework_operation": "unset",
+        "runtime_failure": "error"
+      },
+      "quality_samples": 0,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "6ef34e6b75bb2e6966dcbe2149302018b348265966a2269a33780e65ba1b50a7",
+      "cell": "soniox__groq__elevenlabs",
+      "measurements_ms": {},
+      "operations": {
+        "framework_operation": "unset",
+        "runtime_failure": "error"
+      },
+      "quality_samples": 0,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "0e8720343c4fa6d9c6f0b7500781f2027b1a8067c32293fd10b4b939a6e83bca",
+      "cell": "soniox__groq__sarvam",
+      "measurements_ms": {},
+      "operations": {
+        "framework_operation": "unset",
+        "runtime_failure": "error"
+      },
+      "quality_samples": 0,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "b1e7759f957f7a6c8e4c9c786a38cc9ef5c5eb0c209962818317c3a140254da7",
+      "cell": "soniox__openai__cartesia",
+      "measurements_ms": {},
+      "operations": {
+        "framework_operation": "unset",
+        "runtime_failure": "error"
+      },
+      "quality_samples": 0,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "a64232ec8ede6a85ee1e02c127c6e3282c5c5c090055b8a9e228d25087fe135c",
+      "cell": "soniox__openai__elevenlabs",
+      "measurements_ms": {},
+      "operations": {
+        "framework_operation": "unset",
+        "runtime_failure": "error"
+      },
+      "quality_samples": 0,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    },
+    {
+      "artifact_sha256": "072646785198776eba04c542bfe91dd70442253f992239a8ec5eb0414c69048a",
+      "cell": "soniox__openai__sarvam",
+      "measurements_ms": {},
+      "operations": {
+        "framework_operation": "unset",
+        "runtime_failure": "error"
+      },
+      "quality_samples": 0,
+      "raw_otlp_chunks": 0,
+      "status": "timed_out",
+      "valid": true
+    }
+  ],
+  "dimensions": {
+    "llm": ["groq", "openai"],
+    "stt": ["deepgram", "cartesia", "sarvam", "elevenlabs", "assemblyai", "soniox"],
+    "total_cells": 36,
+    "tts": ["cartesia", "elevenlabs", "sarvam"]
+  },
+  "framework": "pipecat-ai==1.5.0",
+  "latency_policy": {
+    "observer_budget_ms": 250,
+    "reason": "Provider network latency is evidence, not Earshot observer overhead.",
+    "remote_provider_ttfb": "advisory_not_pass_fail"
+  },
+  "matrix_version": 1,
+  "provider_probes": {
+    "elevenlabs": {
+      "status_code": 402
+    },
+    "openai": {
+      "status_code": 429
+    }
+  },
+  "runner": "scripts/run_pipecat_matrix.py",
+  "unavailable": []
+}

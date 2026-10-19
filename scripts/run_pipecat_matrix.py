@@ -22,7 +22,6 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib.metadata import version
 from typing import Any
@@ -73,7 +72,7 @@ class Cell:
 
 STT_PROVIDERS = ("deepgram", "cartesia", "sarvam", "elevenlabs", "assemblyai", "soniox")
 LLM_PROVIDERS = ("groq", "openai")
-TTS_PROVIDERS = ("cartesia", "elevenlabs")
+TTS_PROVIDERS = ("cartesia", "elevenlabs", "sarvam")
 
 CELLS = tuple(
     Cell(stt, llm, tts) for stt in STT_PROVIDERS for llm in LLM_PROVIDERS for tts in TTS_PROVIDERS
@@ -105,6 +104,15 @@ def _missing_credentials(cell: Cell) -> tuple[str, ...]:
     if cell.tts == "elevenlabs":
         names.append("ELEVENLABS_VOICE_ID")
     return tuple(dict.fromkeys(name for name in names if not os.environ.get(name)))
+
+
+def _missing_dependencies(cell: Cell) -> tuple[str, ...]:
+    requirements = []
+    if cell.stt == "deepgram" and importlib.util.find_spec("deepgram") is None:
+        requirements.append("pipecat-ai[deepgram]")
+    if cell.stt == "sarvam" and importlib.util.find_spec("sarvamai") is None:
+        requirements.append("pipecat-ai[sarvam]")
+    return tuple(requirements)
 
 
 def _http_probe(
@@ -172,23 +180,6 @@ def _provider_probes() -> dict[str, dict[str, Any]]:
             )
         )
     return results
-
-
-def _failure_hint(cell: Cell, probes: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
-    """Choose the first known failed boundary in pipeline order."""
-
-    for provider, stage in ((cell.llm, "llm"), (cell.tts, "tts")):
-        probe = probes.get(provider, {})
-        status_code = probe.get("status_code")
-        if isinstance(status_code, int) and status_code >= 400:
-            return {
-                "provider": provider,
-                "stage": stage,
-                "error_type": f"provider_http_{status_code}",
-                "status_code": status_code,
-                "source": "direct_provider_probe",
-            }
-    return {}
 
 
 def _stt(drive: Any, provider: str) -> Any:
@@ -277,7 +268,7 @@ def _llm(drive: Any, provider: str) -> Any:
     raise ValueError(f"unsupported LLM provider: {provider}")
 
 
-def _tts(drive: Any, provider: str) -> Any:
+def _tts(drive: Any, provider: str, *, sample_rate: int) -> Any:
     if provider == "cartesia":
         from pipecat.services.cartesia.tts import CartesiaTTSService
 
@@ -286,7 +277,7 @@ def _tts(drive: Any, provider: str) -> Any:
             raise RuntimeError("CARTESIA_VOICE_ID is missing")
         return CartesiaTTSService(
             api_key=_key(provider),
-            sample_rate=drive.TTS_SR,
+            sample_rate=sample_rate,
             cartesia_version="2026-08-14",
             settings=CartesiaTTSService.Settings(model="sonic-3.6", voice=voice),
         )
@@ -298,8 +289,20 @@ def _tts(drive: Any, provider: str) -> Any:
             raise RuntimeError("ELEVENLABS_VOICE_ID is missing")
         return ElevenLabsTTSService(
             api_key=_key(provider),
-            sample_rate=drive.TTS_SR,
+            sample_rate=sample_rate,
             settings=ElevenLabsTTSService.Settings(model="eleven_flash_v2_5", voice=voice),
+        )
+    if provider == "sarvam":
+        from pipecat.services.sarvam.tts import SarvamTTSService
+
+        return SarvamTTSService(
+            api_key=_key(provider),
+            sample_rate=sample_rate,
+            settings=SarvamTTSService.Settings(
+                model="bulbul:v3",
+                voice=os.environ.get("SARVAM_TTS_VOICE_ID", "aditya"),
+                language="en-IN",
+            ),
         )
     raise ValueError(f"unsupported TTS provider: {provider}")
 
@@ -310,12 +313,10 @@ class MatrixRuntime:
         drive: Any,
         cell: Cell,
         recorder: Any,
-        failure_hint: Mapping[str, Any] | None = None,
     ) -> None:
         self._drive = drive
         self._cell = cell
         self._recorder = recorder
-        self._failure_hint = dict(failure_hint or {})
         self._failure_recorded = False
         self._provider = TracerProvider()
         self._adapter = None
@@ -335,7 +336,8 @@ class MatrixRuntime:
             self._routing_handle = self._adapter.attach(self._provider)
             stt = _stt(drive, cell.stt)
             llm = _llm(drive, cell.llm)
-            tts = _tts(drive, cell.tts)
+            tts_sample_rate = 24_000 if cell.tts == "sarvam" else drive.TTS_SR
+            tts = _tts(drive, cell.tts, sample_rate=tts_sample_rate)
             from pipecat.pipeline.pipeline import Pipeline
             from pipecat.pipeline.worker import PipelineWorker
             from pipecat.processors.aggregators.llm_context import LLMContext
@@ -348,13 +350,13 @@ class MatrixRuntime:
                 messages=[{"role": "system", "content": "Answer in one short word."}]
             )
             aggregator = LLMContextAggregatorPair(context)
-            self._sink = drive.DiscardOutputTransport()
+            self._sink = drive.DiscardOutputTransport(sample_rate=tts_sample_rate)
             pipeline = Pipeline(
                 [stt, aggregator.user(), llm, tts, aggregator.assistant(), self._sink]
             )
             self._worker = PipelineWorker(
                 pipeline,
-                params=drive._pipeline_params(),
+                params=drive._pipeline_params(audio_out_sample_rate=tts_sample_rate),
                 enable_tracing=True,
                 enable_turn_tracking=True,
                 enable_rtvi=False,
@@ -392,15 +394,11 @@ class MatrixRuntime:
         if self._failure_recorded:
             return
         self._failure_recorded = True
-        hint = self._failure_hint
-        provider = str(hint.get("provider") or self._cell.llm)
-        stage = str(hint.get("stage") or "runtime")
-        error_type = str(hint.get("error_type") or "provider_runtime_failure")
+        error_type = "provider_runtime_failure"
         attributes: dict[str, Any] = {
             "error.type": error_type,
-            "gen_ai.provider.name": provider,
-            "gen_ai.operation.name": stage,
-            "earshot.framework.operation.name": "provider_failure",
+            "gen_ai.operation.name": "runtime",
+            "earshot.framework.operation.name": "runtime_failure",
         }
         now = earshot.TimePoint(
             monotonic_time_nano=str(time.monotonic_ns()),
@@ -408,8 +406,8 @@ class MatrixRuntime:
         )
         try:
             self._recorder.record_operation(
-                operation_id=f"matrix-provider-failure-{self._cell.name}",
-                operation_name="provider_failure",
+                operation_id=f"matrix-runtime-failure-{self._cell.name}",
+                operation_name="runtime_failure",
                 status="error",
                 started_at=now,
                 ended_at=now,
@@ -543,14 +541,9 @@ def _child(cell: Cell) -> int:
     _load_dotenv()
     drive = _load_drive()
     output = ARTIFACT_DIR / f"{cell.name}.json"
-    raw_hint = os.environ.get("EARSHOT_MATRIX_FAILURE_HINT", "{}")
-    try:
-        failure_hint = json.loads(raw_hint)
-    except json.JSONDecodeError:
-        failure_hint = {}
 
     def factory(_api_key: str, recorder: Any) -> MatrixRuntime:
-        return MatrixRuntime(drive, cell, recorder, failure_hint=failure_hint)
+        return MatrixRuntime(drive, cell, recorder)
 
     key = os.environ.get(KEYS[cell.llm], "")
     return asyncio.run(
@@ -626,6 +619,10 @@ def _artifact_summary(cell: Cell) -> dict[str, Any]:
     }
 
 
+def _cell_failed(summary: dict[str, Any]) -> bool:
+    return summary.get("status") != "completed" or summary.get("valid") is not True
+
+
 def _parent(*, force: bool) -> int:
     _load_dotenv()
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
@@ -634,26 +631,31 @@ def _parent(*, force: bool) -> int:
     unavailable: list[dict[str, Any]] = []
     cells: list[dict[str, Any]] = []
     for cell in CELLS:
-        missing = _missing_credentials(cell)
-        if missing:
-            unavailable.append(
-                {
-                    "cell": cell.name,
-                    "status": "unavailable",
-                    "missing_environment": list(missing),
-                }
-            )
+        missing_environment = _missing_credentials(cell)
+        missing_dependencies = _missing_dependencies(cell)
+        if missing_environment or missing_dependencies:
+            unavailable_entry: dict[str, Any] = {
+                "cell": cell.name,
+                "status": "unavailable",
+            }
+            if missing_environment:
+                unavailable_entry["missing_environment"] = list(missing_environment)
+            if missing_dependencies:
+                unavailable_entry["missing_dependencies"] = list(missing_dependencies)
+            unavailable.append(unavailable_entry)
+            reasons = [*missing_environment, *missing_dependencies]
             print(
-                f"CELL {cell.name} unavailable=missing:{','.join(missing)}",
+                f"CELL {cell.name} unavailable=missing:{','.join(reasons)}",
                 flush=True,
             )
             continue
         if not force and (ARTIFACT_DIR / f"{cell.name}.json").exists():
             print(f"CELL {cell.name} reused=existing-artifact", flush=True)
-            cells.append(_artifact_summary(cell))
+            summary = _artifact_summary(cell)
+            cells.append(summary)
+            failures += _cell_failed(summary)
             continue
         child_env = os.environ.copy()
-        child_env["EARSHOT_MATRIX_FAILURE_HINT"] = json.dumps(_failure_hint(cell, probes))
         process = subprocess.run(
             [sys.executable, str(pathlib.Path(__file__).resolve()), "--cell", cell.name],
             cwd=ROOT,
@@ -664,8 +666,9 @@ def _parent(*, force: bool) -> int:
         output = f"{process.stdout}\n{process.stderr}"
         _summary(cell, output, process.returncode)
         sys.stdout.flush()
-        failures += process.returncode != 0
-        cells.append(_artifact_summary(cell))
+        summary = _artifact_summary(cell)
+        cells.append(summary)
+        failures += process.returncode != 0 or _cell_failed(summary)
     report = {
         "matrix_version": 1,
         "runner": "scripts/run_pipecat_matrix.py",

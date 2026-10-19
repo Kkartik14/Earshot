@@ -1,5 +1,9 @@
 # Pipecat provider matrix — 2026-09-28
 
+> Historical 24-cell snapshot. The current 36-cell run is documented in the
+> [2026-10-20 matrix](./pipecat-provider-matrix-2026-10-20.md); keep this page and its
+> report only as dated evidence, not as the current provider catalog or test fixture.
+
 This is the live Cartesian-product run for the Pipecat path used by TVIC. The
 tracked runner is [`scripts/run_pipecat_matrix.py`](../scripts/run_pipecat_matrix.py);
 the machine-readable result, including incident hashes and unavailable cells, is

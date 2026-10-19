@@ -19,6 +19,7 @@ Framework extras are deliberately optional:
 ```bash
 pip install -e '.[pipecat]'
 pip install -e '.[pipecat-groq]'
+pip install -e '.[pipecat-matrix]'
 pip install -e '.[livekit]'
 pip install -e '.[otel]'
 ```
@@ -26,6 +27,8 @@ pip install -e '.[otel]'
 Importing `earshot` must work without either runtime installed.
 The provider-neutral `pipecat` extra installs tracing only. The `pipecat-groq` extra
 adds the Groq service dependency used by the checked-in real STT, LLM, and TTS driver.
+The `pipecat-matrix` extra pins Pipecat 1.5.0 and installs the optional clients needed
+to run every supported provider combination in `scripts/run_pipecat_matrix.py`.
 
 Editable installs use the repository path, but built/published package metadata uses
 the collision-free distribution name `earshot-observability`. See
@@ -171,6 +174,12 @@ python examples/pipecat_headless/drive.py
 It exits successfully only after a valid completed incident contains real STT, LLM,
 and TTS operations plus TTS audio accepted by the discard output transport. This is
 server-side output evidence; client render remains explicitly unobserved.
+
+The full provider matrix uses the optional `pipecat-matrix` extra and real credentials
+for each configured cell. It is a live, potentially billable run; timed-out or failed
+cells are not converted into synthetic passes. See the dated
+[36-cell results and limits](./pipecat-provider-matrix-2026-10-20.md) before running
+`python scripts/run_pipecat_matrix.py --force`.
 
 ## Add an adapter
 

@@ -95,11 +95,11 @@ _FAILED_STAGE_STATUSES = {
 class DiscardOutputTransport(BaseOutputTransport):
     """Drain Pipecat TTS audio while retaining proof that audio was emitted."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, sample_rate: int = TTS_SR) -> None:
         super().__init__(
             TransportParams(
                 audio_out_enabled=True,
-                audio_out_sample_rate=TTS_SR,
+                audio_out_sample_rate=sample_rate,
                 audio_out_end_silence_secs=0,
             )
         )
@@ -275,12 +275,12 @@ async def synth_user_pcm(*, timeout: float = SYNTH_TIMEOUT_S) -> bytes:
             return handle.readframes(handle.getnframes())
 
 
-def _pipeline_params() -> PipelineParams:
+def _pipeline_params(*, audio_out_sample_rate: int = TTS_SR) -> PipelineParams:
     return PipelineParams(
         enable_metrics=True,
         enable_usage_metrics=True,
         audio_in_sample_rate=SR,
-        audio_out_sample_rate=TTS_SR,
+        audio_out_sample_rate=audio_out_sample_rate,
     )
 
 
