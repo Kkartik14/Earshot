@@ -10,7 +10,7 @@ import pytest
 
 import earshot
 from adapter_conformance import assert_capture_conforms, assert_native_trace_topology
-from earshot.adapters import LiveKitAdapter, PipecatAdapter
+from earshot.adapters import LiveKitAdapter, PipecatAdapter, TVICRuntimeAdapter
 from earshot.adapters.providers import (
     CartesiaAdapter,
     DeepgramAdapter,
@@ -212,6 +212,70 @@ def _capture_livekit(status: str = "completed"):
     return recorder.close(status)
 
 
+def _capture_tvic():
+    adapter = TVICRuntimeAdapter.create(
+        session_id="conformance-tvic",
+        started_at_unix_nano=START,
+        bundle_id="conformance-tvic-bundle",
+    )
+    adapter.consume_many(
+        (
+            {
+                "schemaVersion": 1,
+                "epoch": "runtime-epoch-a",
+                "sequence": 1,
+                "factId": "tvic-session-start",
+                "name": "session.start",
+                "sessionId": "conformance-tvic",
+                "atMs": 0,
+                "attributes": {"agent_id": "agent-a", "channel": "simulated"},
+            },
+            {
+                "schemaVersion": 1,
+                "epoch": "runtime-epoch-a",
+                "sequence": 2,
+                "factId": "tvic-turn-start",
+                "name": "turn.start",
+                "sessionId": "conformance-tvic",
+                "atMs": 50,
+                "turnId": "turn-0",
+                "attributes": {"turn_sequence": 1},
+            },
+            {
+                "schemaVersion": 1,
+                "epoch": "runtime-epoch-a",
+                "sequence": 3,
+                "factId": "tvic-turn-end",
+                "name": "turn.end",
+                "sessionId": "conformance-tvic",
+                "atMs": 700,
+                "turnId": "turn-0",
+                "attributes": {
+                    "first_token_ms": 180,
+                    "first_audio_ms": 360,
+                    "status": "completed",
+                    "terminal_persisted": True,
+                    "total_ms": 650,
+                },
+            },
+            {
+                "schemaVersion": 1,
+                "epoch": "runtime-epoch-a",
+                "sequence": 4,
+                "factId": "tvic-session-end",
+                "name": "session.end",
+                "sessionId": "conformance-tvic",
+                "atMs": 700,
+                "attributes": {
+                    "status": "completed",
+                    "terminal_source": "normal_completion",
+                },
+            },
+        )
+    )
+    return adapter.close()
+
+
 def test_deepgram_sanitized_synthetic_capture_meets_shared_conformance() -> None:
     bundle = assert_capture_conforms(
         _capture_deepgram,
@@ -300,6 +364,24 @@ def test_livekit_public_consume_surfaces_meet_shared_conformance() -> None:
         trace_id="4" * 32,
         root_span_id="a" * 16,
         child_span_ids=("b" * 16,),
+    )
+
+
+def test_tvic_runtime_observations_meet_shared_conformance() -> None:
+    bundle = assert_capture_conforms(
+        _capture_tvic,
+        forbidden_values=(PRIVATE_TRANSCRIPT, PRIVATE_AUDIO),
+        require_omission=False,
+    )
+
+    assert {
+        "earshot.response.first_token",
+        "earshot.response.first_audio_generated",
+    } <= {event.event_name for event in bundle.profile.events}
+    assert not any(
+        measurement.name == "earshot.llm.ttft"
+        for sample in bundle.profile.quality_samples
+        for measurement in sample.measurements
     )
 
 

@@ -85,6 +85,10 @@
   ],
   "unavailable_real_captures": [
     {
+      "surface": "tvic-runtime",
+      "reason": "no retained cross-runtime TVIC-to-Earshot incident capture; synthetic conformance is not source evidence"
+    },
+    {
       "surface": "openai-realtime",
       "reason": "no retained real provider capture; regeneration requires an external provider session"
     },

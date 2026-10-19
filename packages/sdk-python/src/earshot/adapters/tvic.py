@@ -44,11 +44,8 @@ from ..contract import (
     Evidence,
     IncidentBundle,
     Producer,
-    QualityMeasurement,
-    QualitySample,
     RecoveryRecord,
     TimePoint,
-    TimeRange,
 )
 from ..recorder import IncidentRecorder, RecorderConfig
 from ..versions import TVIC_RUNTIME_ADAPTER_VERSION
@@ -159,6 +156,7 @@ _ALLOWED_ATTRIBUTES: dict[str, frozenset[str]] = {
             "error_category",
             "error_code",
             "error_retriable",
+            "at_ms_estimated",
             "sequence_discontinuity",
             "status",
             "terminal_source",
@@ -172,6 +170,7 @@ _ALLOWED_ATTRIBUTES: dict[str, frozenset[str]] = {
         {
             "audio_delivered",
             "audio_error_code",
+            "at_ms_estimated",
             "cancel_reason",
             "endpoint_ms",
             "error_category",
@@ -198,6 +197,7 @@ _BOOLEAN_ATTRIBUTES = frozenset(
     {
         "audio_delivered",
         "error_retriable",
+        "at_ms_estimated",
         "sequence_discontinuity",
         "terminal_persisted",
         "text_delivered",
@@ -231,6 +231,10 @@ def _milliseconds_to_nanoseconds(value: _Milliseconds) -> int:
 
 class _TVICObservationSessionMismatch(TVICObservationError):
     """Raised when a valid fact belongs to a different session incident."""
+
+
+class _TVICObservationDispatchError(TVICObservationError):
+    """Raised after an admitted fact fails while writing recorder evidence."""
 
 
 class _FrozenAttributes(dict[str, TVICScalar]):
@@ -555,22 +559,27 @@ class TVICRuntimeAdapter:
         self._seen_facts: dict[tuple[str, str], TVICObservation] = {}
         self._last_sequence: dict[tuple[str, str], int] = {}
         self._last_at_ms: dict[tuple[str, str], _Milliseconds] = {}
-        self._turn_starts: dict[tuple[str, str], _Milliseconds] = {}
-        self._interrupted_turns: set[tuple[str, str]] = set()
+        self._turn_starts: dict[str, _Milliseconds] = {}
+        self._interrupted_turns: set[str] = set()
+        self._provisional_turn_failures: dict[str, tuple[str | None, str | None]] = {}
         self._first_observation: TVICObservation | None = None
         self._last_observation: TVICObservation | None = None
         self._last_session_sequence: int | None = None
         self._terminal_status: str | None = None
+        self._terminal_cancel_reason: str | None = None
+        self._sequence_discontinuity_observed = False
+        self._required_observation_missing = False
         self._closed_bundle: IncidentBundle | None = None
         self._accepted_observations = 0
         self._manual_clock = recorder.clock if isinstance(recorder.clock, ManualClock) else None
-        self._epoch_offsets: dict[str, _Milliseconds] = {}
-        self._epoch_uncertainty: dict[str, str] = {}
-        self._rebased_epochs: set[str] = set()
         self._normalized_at_ms: dict[tuple[str, str], _Milliseconds] = {}
         self._last_normalized_at_ms: _Milliseconds | None = None
+        self._last_epoch: str | None = None
         self._failed_facts: set[tuple[str, str]] = set()
-        self._pending_ingress_failure_reasons: set[str] = set()
+        self._sequence_gap_count = 0
+        self._observation_drop_counts: dict[str, int] = {}
+        self._ingress_failure_counts: dict[str, int] = {}
+        self._pending_ingress_failure_reasons: dict[str, int] = {}
         self._diagnostic_failure_reasons: set[str] = set()
         self._ingress_loss_observed = False
         self.recorder.register_adapter(
@@ -648,12 +657,12 @@ class TVICRuntimeAdapter:
                 "observation sessionId does not match the adapter's incident session; "
                 "runtime-wide drops require a runtime-scoped sink"
             )
-        fact_key = (observation.epoch, observation.fact_id)
+        fact_key = (observation.session_id, observation.fact_id)
         existing = self._seen_facts.get(fact_key)
         if existing is not None:
             if existing != observation:
                 raise TVICObservationError(
-                    "factId was reused with different observation content in one epoch"
+                    "factId was reused with different observation content in one session"
                 )
             return False
         if fact_key in self._failed_facts:
@@ -673,61 +682,79 @@ class TVICRuntimeAdapter:
         if previous_at_ms is not None and at_ms < previous_at_ms:
             raise TVICObservationError("TVIC atMs regressed within an observation epoch")
         normalized_at_ms = self._normalized_time(observation, at_ms)
-        previous_terminal_status = self._terminal_status
-        turn_key = (
-            (
-                observation.epoch,
-                observation.turn_id,
-            )
-            if observation.turn_id is not None
-            else None
+        sequence_gap_count = (
+            observation.sequence - 1
+            if previous_sequence is None
+            else observation.sequence - previous_sequence - 1
         )
+        if observation.name == "observation.dropped":
+            dropped_count = observation.attributes.get("dropped_count")
+            if type(dropped_count) is int:
+                sequence_gap_count = max(
+                    0,
+                    sequence_gap_count - max(0, dropped_count - 1),
+                )
+        coordinate_key = (observation.epoch, observation.fact_id)
+        previous_terminal_status = self._terminal_status
+        turn_key = observation.turn_id
         previous_turn_start = None if turn_key is None else self._turn_starts.get(turn_key)
         previous_interrupted = turn_key is not None and turn_key in self._interrupted_turns
-        self._normalized_at_ms[fact_key] = normalized_at_ms
+        self._normalized_at_ms[coordinate_key] = normalized_at_ms
         try:
             self._dispatch(observation)
             self._advance_clock(normalized_at_ms)
-        except TVICObservationError:
+        except TVICObservationError as error:
             self._rollback_failed_dispatch(
                 fact_key,
+                coordinate_key,
                 previous_terminal_status,
                 turn_key,
                 previous_turn_start,
                 previous_interrupted,
             )
-            raise
+            raise _TVICObservationDispatchError(
+                f"TVIC observation dispatch failed: {type(error).__name__}"
+            ) from None
         except Exception as error:
             self._rollback_failed_dispatch(
                 fact_key,
+                coordinate_key,
                 previous_terminal_status,
                 turn_key,
                 previous_turn_start,
                 previous_interrupted,
             )
-            raise TVICObservationError(
+            raise _TVICObservationDispatchError(
                 f"TVIC observation dispatch failed: {type(error).__name__}"
             ) from None
         self._seen_facts[fact_key] = observation
         self._last_sequence[sequence_key] = observation.sequence
         self._last_at_ms[sequence_key] = at_ms
+        if sequence_gap_count:
+            self._sequence_gap_count = min(
+                _MAX_ATTRIBUTE_NUMBER,
+                self._sequence_gap_count + sequence_gap_count,
+            )
+            self._ingress_loss_observed = True
         if self._first_observation is None:
             self._first_observation = observation
         self._last_observation = observation
         self._last_session_sequence = observation.sequence
         self._last_normalized_at_ms = normalized_at_ms
+        self._last_epoch = observation.epoch
         self._accepted_observations += 1
         return True
 
     def _rollback_failed_dispatch(
         self,
         fact_key: tuple[str, str],
+        coordinate_key: tuple[str, str],
         previous_terminal_status: str | None,
-        turn_key: tuple[str, str] | None,
+        turn_key: str | None,
         previous_turn_start: float | None,
         previous_interrupted: bool,
     ) -> None:
-        self._normalized_at_ms.pop(fact_key, None)
+        self._normalized_at_ms.pop(coordinate_key, None)
         self._terminal_status = previous_terminal_status
         if turn_key is not None:
             if previous_turn_start is None:
@@ -739,7 +766,7 @@ class TVICRuntimeAdapter:
             else:
                 self._interrupted_turns.discard(turn_key)
         self._failed_facts.add(fact_key)
-        self._try_record_ingress_failure("tvic_runtime_dispatch_failed")
+        self._accumulate_ingress_failure("tvic_runtime_dispatch_failed", 1)
 
     def consume_many(self, values: Iterable[TVICObservation | Mapping[str, object]]) -> int:
         """Consume an ordered batch and return the number of newly admitted facts."""
@@ -777,37 +804,54 @@ class TVICRuntimeAdapter:
                 self._remember_diagnostic_failure("tvic_runtime_adapter_queue_diagnostic_failed")
                 raise
 
-    def record_ingress_failure(self) -> None:
+    def record_ingress_failure(self, dropped_count: int = 1) -> None:
         """Record that a queued fact failed admission without exposing its payload."""
 
+        if (
+            isinstance(dropped_count, bool)
+            or not isinstance(dropped_count, int)
+            or not 1 <= dropped_count <= _MAX_ATTRIBUTE_NUMBER
+        ):
+            raise ValueError("dropped_count must be a bounded positive integer")
         with self._lock:
             if self._closed_bundle is not None:
                 return
-            self._ingress_loss_observed = True
-            if not self._try_record_ingress_failure("tvic_runtime_adapter_admission_failed"):
-                raise TVICObservationError("TVIC ingress failure diagnostic could not be recorded")
+            self._accumulate_ingress_failure(
+                "tvic_runtime_adapter_admission_failed",
+                dropped_count,
+            )
 
-    def _try_record_ingress_failure(self, reason: str) -> bool:
+    def _accumulate_ingress_failure(self, reason: str, dropped_count: int) -> None:
+        self._ingress_loss_observed = True
+        self._ingress_failure_counts[reason] = min(
+            _MAX_ATTRIBUTE_NUMBER,
+            self._ingress_failure_counts.get(reason, 0) + dropped_count,
+        )
+
+    def _try_record_ingress_failure(self, reason: str, dropped_count: int | None = None) -> bool:
         try:
             self.recorder.record_coverage(
                 "tvic.ingress.failure",
                 "unavailable",
                 reason,
+                dropped_count=dropped_count,
             )
         except Exception:
-            self._remember_diagnostic_failure(reason)
+            self._remember_diagnostic_failure(reason, dropped_count)
             return False
-        self._pending_ingress_failure_reasons.discard(reason)
+        self._pending_ingress_failure_reasons.pop(reason, None)
         return True
 
-    def _remember_diagnostic_failure(self, reason: str) -> None:
+    def _remember_diagnostic_failure(self, reason: str, dropped_count: int | None = None) -> None:
         if len(self._diagnostic_failure_reasons) < _MAX_DIAGNOSTIC_FAILURE_REASONS:
             self._diagnostic_failure_reasons.add(reason)
-        self._pending_ingress_failure_reasons.add(reason)
+        self._pending_ingress_failure_reasons[reason] = max(
+            self._pending_ingress_failure_reasons.get(reason, 0), dropped_count or 0
+        )
 
     def _flush_pending_ingress_failure(self) -> None:
-        for reason in tuple(self._pending_ingress_failure_reasons):
-            self._try_record_ingress_failure(reason)
+        for reason, dropped_count in tuple(self._pending_ingress_failure_reasons.items()):
+            self._try_record_ingress_failure(reason, dropped_count or None)
 
     def close(self) -> IncidentBundle:
         """Close on an observed TVIC session end, otherwise return a provisional incident."""
@@ -815,6 +859,16 @@ class TVICRuntimeAdapter:
         with self._lock:
             if self._closed_bundle is not None:
                 return self._closed_bundle.model_copy(deep=True)
+            if self._ingress_failure_counts:
+                if len(self._ingress_failure_counts) == 1:
+                    reason, dropped_count = next(iter(self._ingress_failure_counts.items()))
+                else:
+                    reason = "tvic_runtime_multiple_ingress_failures"
+                    dropped_count = min(
+                        _MAX_ATTRIBUTE_NUMBER,
+                        sum(self._ingress_failure_counts.values()),
+                    )
+                self._try_record_ingress_failure(reason, dropped_count)
             self._flush_pending_ingress_failure()
             if self._turn_starts:
                 with suppress(Exception):
@@ -822,6 +876,40 @@ class TVICRuntimeAdapter:
                         "tvic.turn.end",
                         "partial",
                         "tvic_runtime_turn_end_not_observed",
+                    )
+                self._required_observation_missing = True
+            for reason, count in sorted(self._observation_drop_counts.items()):
+                try:
+                    self.recorder.record_coverage(
+                        f"tvic.observation.{reason}",
+                        "partial",
+                        "tvic_runtime_observation_dropped",
+                        dropped_count=count,
+                    )
+                except Exception:
+                    self._remember_diagnostic_failure(
+                        "tvic_runtime_observation_drop_diagnostic_failed"
+                    )
+            if self._sequence_gap_count:
+                try:
+                    self.recorder.record_coverage(
+                        "tvic.observation.sequence_gap",
+                        "partial",
+                        "tvic_runtime_sequence_gap",
+                        dropped_count=self._sequence_gap_count,
+                    )
+                except Exception:
+                    self._remember_diagnostic_failure("tvic_runtime_sequence_gap_diagnostic_failed")
+            if self._sequence_discontinuity_observed:
+                try:
+                    self.recorder.record_coverage(
+                        "tvic.observation.sequence_discontinuity",
+                        "partial",
+                        "tvic_runtime_observation_sequence_discontinuity",
+                    )
+                except Exception:
+                    self._remember_diagnostic_failure(
+                        "tvic_runtime_sequence_discontinuity_diagnostic_failed"
                     )
             if self._terminal_status is not None:
                 bundle = self.recorder.close(status=self._terminal_status)
@@ -854,7 +942,12 @@ class TVICRuntimeAdapter:
                     ),
                 )
                 bundle = self.recorder.close_partial(recovery, status="interrupted")
-            if self._ingress_loss_observed or self._diagnostic_failure_reasons:
+            if (
+                self._ingress_loss_observed
+                or self._diagnostic_failure_reasons
+                or self._sequence_discontinuity_observed
+                or self._required_observation_missing
+            ):
                 coverage = tuple(bundle.profile.coverage)
                 for reason in sorted(self._diagnostic_failure_reasons):
                     signal = _DIAGNOSTIC_FAILURE_SIGNALS.get(
@@ -877,33 +970,70 @@ class TVICRuntimeAdapter:
                     }
                 )
                 bundle = bundle.model_copy(update={"profile": profile})
+            if (
+                self._terminal_status == "cancelled"
+                and self._terminal_cancel_reason == "caller_hangup"
+                and not self._turn_starts
+                and not self._ingress_loss_observed
+                and not self._diagnostic_failure_reasons
+                and not self._sequence_discontinuity_observed
+                and not self._required_observation_missing
+                and bundle.profile.manifest.finality == "final"
+            ):
+                profile = bundle.profile.model_copy(
+                    update={
+                        "manifest": bundle.profile.manifest.model_copy(
+                            update={"completeness": "complete"}
+                        )
+                    }
+                )
+                bundle = bundle.model_copy(update={"profile": profile})
             self._closed_bundle = bundle
             return self._closed_bundle.model_copy(deep=True)
 
     def _dispatch(self, observation: TVICObservation) -> None:
         if observation.name == "session.end":
             terminal_status = str(observation.attributes["status"])
-            if terminal_status in {"failed", "cancelled"}:
+            if observation.attributes.get("at_ms_estimated") is True:
+                self.recorder.record_coverage(
+                    "tvic.session.end.time",
+                    "partial",
+                    "tvic_runtime_session_end_time_estimated",
+                )
+                self._required_observation_missing = True
+            if terminal_status == "failed":
                 self.recorder.record_coverage(
                     "tvic.session.result",
                     "unavailable",
                     f"tvic_runtime_session_{terminal_status}",
                 )
-                if terminal_status == "failed":
-                    self._record_event(observation, "framework.error")
+                self._record_event(observation, "framework.error")
+            if terminal_status == "cancelled":
+                cancel_reason = observation.attributes.get("cancel_reason")
+                self._terminal_cancel_reason = (
+                    cancel_reason if isinstance(cancel_reason, str) else None
+                )
             self._record_event(observation, "framework.event")
             self._terminal_status = terminal_status
+            self._sequence_discontinuity_observed = (
+                observation.attributes.get("sequence_discontinuity") is True
+            ) or self._sequence_discontinuity_observed
             return
         if observation.name == "session.start":
             self._record_event(observation, "framework.event")
             return
         if observation.name == "session.resume":
             self._record_event(observation, "framework.event")
+            if observation.attributes.get("sequence_discontinuity") is True:
+                self._sequence_discontinuity_observed = True
             return
         if observation.name == "turn.start":
             if observation.turn_id is None:
                 raise TVICObservationError("turn.start requires turnId")
-            self._turn_starts[(observation.epoch, observation.turn_id)] = observation.at_ms
+            normalized_at_ms = self._normalized_at_ms.get((observation.epoch, observation.fact_id))
+            if normalized_at_ms is None:
+                raise TVICObservationError("turn.start lacks an admitted chronology coordinate")
+            self._turn_starts[observation.turn_id] = normalized_at_ms
             self._record_event(
                 observation,
                 "earshot.turn.committed",
@@ -911,35 +1041,57 @@ class TVICRuntimeAdapter:
             )
             return
         if observation.name == "turn.interruption":
+            cause = observation.attributes.get("cause")
             self._record_event(
                 observation,
                 "earshot.interruption.accepted",
-                participant_id="participant-user",
+                participant_id=("participant-user" if cause in {"barge_in", "dtmf"} else None),
             )
             if observation.turn_id is not None:
-                self._interrupted_turns.add((observation.epoch, observation.turn_id))
+                self._interrupted_turns.add(observation.turn_id)
             return
         if observation.name == "observation.dropped":
             reason = observation.attributes.get("drop_reason", "queue_overflow")
             count = observation.attributes.get("dropped_count")
             if not isinstance(reason, str) or not isinstance(count, int):
                 raise TVICObservationError("observation.dropped has invalid reason or count")
-            self.recorder.record_coverage(
-                f"tvic.observation.{reason}",
-                "partial",
-                "tvic_runtime_observation_dropped",
-                dropped_count=count,
-            )
             self._record_event(observation, "framework.event")
+            self._observation_drop_counts[reason] = min(
+                _MAX_ATTRIBUTE_NUMBER,
+                self._observation_drop_counts.get(reason, 0) + count,
+            )
+            self._ingress_loss_observed = True
             return
         if observation.name != "turn.end" or observation.turn_id is None:
             raise TVICObservationError("turn.end requires turnId")
-        self._record_turn_metrics(observation)
+        if observation.turn_id not in self._turn_starts:
+            self.recorder.record_coverage(
+                "tvic.turn.start",
+                "not_observed",
+                "tvic_runtime_turn_start_not_observed",
+            )
+            self._required_observation_missing = True
+        terminal_persisted = observation.attributes.get("terminal_persisted")
+        if terminal_persisted is None:
+            self.recorder.record_coverage(
+                "tvic.turn.terminal_persistence",
+                "partial",
+                "tvic_runtime_terminal_persistence_unknown",
+            )
+            self._required_observation_missing = True
+        elif terminal_persisted is False:
+            self.recorder.record_coverage(
+                "tvic.turn.terminal_persistence",
+                "partial",
+                "tvic_runtime_terminal_not_persisted",
+            )
+            self._record_turn_outcome_coverage(observation)
+            return
+        self._record_turn_events(observation)
         self._record_turn_outcome_coverage(observation)
         self._record_event(observation, "framework.event", participant_id="participant-agent")
-        turn_key = (observation.epoch, observation.turn_id)
-        self._turn_starts.pop(turn_key, None)
-        self._interrupted_turns.discard(turn_key)
+        self._turn_starts.pop(observation.turn_id, None)
+        self._interrupted_turns.discard(observation.turn_id)
 
     def _record_event(
         self,
@@ -947,81 +1099,88 @@ class TVICRuntimeAdapter:
         event_name: str,
         *,
         participant_id: str | None = None,
+        at_ms: _Milliseconds | None = None,
+        source_field: str | None = None,
     ) -> None:
         self.recorder.record_event(
             event_name,
             event_id=self._event_id(observation, event_name),
-            time=self._point(observation),
+            time=(
+                self._point(observation) if at_ms is None else self._point_at_ms(observation, at_ms)
+            ),
             participant_id=participant_id,
             turn_id=observation.turn_id,
-            evidence=self._evidence(observation),
+            evidence=self._evidence(observation, source_field=source_field),
             attributes=self._metadata(observation),
         )
 
-    def _record_turn_metrics(self, observation: TVICObservation) -> None:
+    def _record_turn_events(self, observation: TVICObservation) -> None:
         if observation.turn_id is None:
-            raise TVICObservationError("turn metrics require turnId")
+            raise TVICObservationError("turn events require turnId")
         attributes = observation.attributes
-        for attribute, measurement_name in (
-            ("endpoint_ms", "earshot.turn.endpointing_delay"),
-            ("first_token_ms", "earshot.llm.ttft"),
-            ("interruption_tail_ms", "earshot.turn.interruption_tail_latency"),
-            ("listened_ms", "earshot.turn.listened_duration"),
-            ("tool_ms", "earshot.turn.tool_latency"),
-            ("total_ms", "earshot.turn.total_latency"),
+        turn_start_ms = self._turn_starts.get(observation.turn_id)
+        for attribute, event_name in (
+            ("first_token_ms", "earshot.response.first_token"),
+            ("first_audio_ms", "earshot.response.first_audio_generated"),
         ):
             value = attributes.get(attribute)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                participant_id = {
-                    "endpoint_ms": "participant-user",
-                    "listened_ms": "participant-user",
-                    "first_token_ms": "participant-agent",
-                    "interruption_tail_ms": "participant-agent",
-                    "tool_ms": "participant-agent",
-                }.get(attribute)
-                self._record_measurement(
-                    observation,
-                    measurement_name,
-                    float(value),
-                    participant_id=participant_id,
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                continue
+            if turn_start_ms is None:
+                self.recorder.record_coverage(
+                    "tvic.turn.start",
+                    "not_observed",
+                    "tvic_runtime_turn_start_not_observed_for_latency_event",
                 )
-
-        first_audio = attributes.get("first_audio_ms")
-        if isinstance(first_audio, (int, float)) and not isinstance(first_audio, bool):
-            self._record_measurement(
+                self._required_observation_missing = True
+                continue
+            self._record_event(
                 observation,
-                "tvic.turn.first_audio_latency",
-                float(first_audio),
+                event_name,
                 participant_id="participant-agent",
+                at_ms=turn_start_ms + value,
+                source_field=f"tvic.runtime.turn.end.{attribute}",
             )
 
     def _record_turn_outcome_coverage(self, observation: TVICObservation) -> None:
         attributes = observation.attributes
         status = attributes.get("status")
-        if status in {"failed", "cancelled"}:
+        provisional = attributes.get("terminal_persisted") is False
+        error_code = attributes.get("error_code")
+        error_category = attributes.get("error_category")
+        error_identity = (
+            error_code if isinstance(error_code, str) else None,
+            error_category if isinstance(error_category, str) else None,
+        )
+        if status == "failed":
             self.recorder.record_coverage(
                 "tvic.turn.result",
                 "unavailable",
                 f"tvic_runtime_turn_{status}",
             )
-            if status == "failed":
+            if not (
+                not provisional
+                and observation.turn_id is not None
+                and self._provisional_turn_failures.get(observation.turn_id) == error_identity
+            ):
                 self._record_event(
                     observation,
                     "framework.error",
                     participant_id="participant-agent",
                 )
-            elif (
-                attributes.get("cancel_reason") in {"barge_in", "dtmf"}
-                and observation.turn_id is not None
-                and (observation.epoch, observation.turn_id) not in self._interrupted_turns
-            ):
-                self._record_event(
-                    observation,
-                    "earshot.interruption.accepted",
-                    participant_id="participant-user",
-                )
-                self._interrupted_turns.add((observation.epoch, observation.turn_id))
-        if attributes.get("audio_delivered") is False:
+        elif (
+            status == "cancelled"
+            and attributes.get("cancel_reason") in {"barge_in", "dtmf", "explicit"}
+            and observation.turn_id is not None
+            and observation.turn_id not in self._interrupted_turns
+        ):
+            self.recorder.record_coverage(
+                "tvic.turn.interruption",
+                "not_observed",
+                "tvic_runtime_interruption_fact_not_observed",
+            )
+            self._required_observation_missing = True
+        if attributes.get("audio_delivered") is False and status != "cancelled":
             self.recorder.record_coverage(
                 "tvic.output.audio",
                 "unavailable",
@@ -1033,49 +1192,17 @@ class TVICRuntimeAdapter:
                 "partial",
                 "tvic_runtime_audio_error",
             )
-        if attributes.get("text_delivered") is False:
+        if attributes.get("text_delivered") is False and status != "cancelled":
             self.recorder.record_coverage(
                 "tvic.output.text",
                 "unavailable",
                 "tvic_runtime_text_not_delivered",
             )
-        if attributes.get("terminal_persisted") is False:
-            self.recorder.record_coverage(
-                "tvic.turn.terminal_persistence",
-                "partial",
-                "tvic_runtime_terminal_not_persisted",
-            )
-
-    def _record_measurement(
-        self,
-        observation: TVICObservation,
-        name: str,
-        value: float,
-        *,
-        participant_id: str | None,
-    ) -> None:
-        if observation.turn_id is None:
-            raise TVICObservationError("turn measurements require turnId")
-        self.recorder.record_quality_sample(
-            QualitySample(
-                sample_id=stable_id("tvic-quality", observation.epoch, observation.fact_id, name),
-                session_id=self.recorder.session_id,
-                quality_kind="tvic_runtime",
-                sample_window=TimeRange(
-                    start=self._point(observation),
-                    end=self._point(observation),
-                ),
-                measurements=(QualityMeasurement(name=name, value=value, unit="ms"),),
-                evidence=self._evidence(observation),
-                participant_id=participant_id,
-                attributes={
-                    **self._metadata(observation),
-                    "earshot.turn.id": observation.turn_id,
-                    "earshot.correlation": "tvic_runtime_observation",
-                    "earshot.chronology": "turn_relative",
-                },
-            )
-        )
+        if observation.turn_id is not None:
+            if provisional and status == "failed":
+                self._provisional_turn_failures[observation.turn_id] = error_identity
+            elif not provisional:
+                self._provisional_turn_failures.pop(observation.turn_id, None)
 
     def _metadata(self, observation: TVICObservation) -> dict[str, TVICScalar | str]:
         metadata: dict[str, TVICScalar | str] = {
@@ -1085,72 +1212,66 @@ class TVICRuntimeAdapter:
             "earshot.integration.tvic.sequence": observation.sequence,
             "earshot.integration.tvic.fact_id": observation.fact_id,
         }
-        if observation.epoch in self._rebased_epochs:
-            metadata["earshot.integration.tvic.epoch_rebased"] = True
         for key, value in observation.attributes.items():
             metadata[f"earshot.integration.tvic.{key}"] = value
         return metadata
 
     @staticmethod
     def _event_id(observation: TVICObservation, event_name: str) -> str:
-        return stable_id(
-            "tvic-event",
-            observation.epoch,
-            observation.fact_id,
-            event_name,
-        )
+        return stable_id("tvic-event", observation.fact_id, event_name)
 
-    def _evidence(self, observation: TVICObservation) -> Evidence:
+    def _evidence(
+        self,
+        observation: TVICObservation,
+        *,
+        source_field: str | None = None,
+    ) -> Evidence:
+        at_ms_estimated = observation.attributes.get("at_ms_estimated") is True
         return Evidence(
             source="tvic_runtime",
             observer="tvic_runtime",
             method="runtime_observation",
             method_version=TVIC_RUNTIME_ADAPTER_VERSION,
-            source_field=f"tvic.runtime.{observation.name}",
-            confidence=("estimated" if observation.epoch in self._rebased_epochs else "measured"),
+            source_field=source_field or f"tvic.runtime.{observation.name}",
+            confidence="estimated" if at_ms_estimated else "measured",
             availability="available",
         )
 
-    def _normalized_time(self, observation: TVICObservation, at_ms: _Milliseconds) -> _Milliseconds:
-        epoch = observation.epoch
-        offset = self._epoch_offsets.get(epoch)
-        if offset is None:
-            offset = 0
-            if self._last_normalized_at_ms is not None:
-                recovery_gap = observation.attributes.get("recovery_gap_ms")
-                gap_ms = recovery_gap if type(recovery_gap) in {int, float} else 0
-                target = self._last_normalized_at_ms + gap_ms
-                offset = max(0, target - at_ms)
-                if offset > 0:
-                    self._rebased_epochs.add(epoch)
-                    uncertainty_nano = (
-                        round((gap_ms + 1.0) * 1_000_000) if gap_ms > 0 else UINT64_MAX
-                    )
-                    self._epoch_uncertainty[epoch] = str(min(UINT64_MAX, uncertainty_nano))
-                    with suppress(Exception):
-                        self.recorder.record_coverage(
-                            "tvic.runtime.epoch",
-                            "partial",
-                            "tvic_runtime_epoch_boundary_rebased",
-                        )
-            self._epoch_offsets[epoch] = offset
-        normalized = offset + at_ms
-        if self._last_normalized_at_ms is not None and normalized < self._last_normalized_at_ms:
-            raise TVICObservationError("TVIC chronology regressed across observation epochs")
-        return normalized
+    def _normalized_time(
+        self,
+        observation: TVICObservation,
+        at_ms: _Milliseconds,
+    ) -> _Milliseconds:
+        if self._last_normalized_at_ms is None:
+            return at_ms
+        if observation.epoch == self._last_epoch:
+            if at_ms < self._last_normalized_at_ms:
+                raise TVICObservationError("TVIC atMs regressed within an observation epoch")
+            return at_ms
+        if observation.name == "session.resume" or (
+            observation.name == "session.end"
+            and observation.attributes.get("sequence_discontinuity") is True
+        ):
+            return max(self._last_normalized_at_ms, at_ms)
+        raise TVICObservationError("TVIC chronology regressed across observation epochs")
 
     def _point(self, observation: TVICObservation) -> TimePoint:
         normalized_at_ms = self._normalized_at_ms.get((observation.epoch, observation.fact_id))
         if normalized_at_ms is None:
             raise TVICObservationError("observation lacks an admitted chronology coordinate")
-        monotonic_nano = _milliseconds_to_nanoseconds(normalized_at_ms)
+        return self._point_at_ms(observation, normalized_at_ms)
+
+    def _point_at_ms(self, observation: TVICObservation, at_ms: _Milliseconds) -> TimePoint:
+        monotonic_nano = _milliseconds_to_nanoseconds(at_ms)
         if self._started_at_unix_nano + monotonic_nano > UINT64_MAX:
             raise TVICObservationError("observation timestamp exceeds uint64 range")
         return TimePoint(
             source_time_unix_nano=str(self._started_at_unix_nano + monotonic_nano),
             monotonic_time_nano=str(monotonic_nano),
             clock_domain_id=self.recorder.clock_domain_id,
-            uncertainty_nano=self._epoch_uncertainty.get(observation.epoch, "1000000"),
+            uncertainty_nano=(
+                None if observation.attributes.get("at_ms_estimated") is True else "1000000"
+            ),
         )
 
     def _advance_clock(self, at_ms: _Milliseconds) -> None:
@@ -1197,6 +1318,9 @@ class TVICRuntimeObservationSink:
         self._closed = False
         self._closing = False
         self._dropped_count = 0
+        self._queue_overflow_count = 0
+        self._admission_failure_count = 0
+        self._closed_drop_count = 0
         self._error_code: str | None = None
         self._routing_error_code: str | None = None
         self._closed_bundle: IncidentBundle | None = None
@@ -1226,13 +1350,18 @@ class TVICRuntimeObservationSink:
         with self._lock:
             if self._closed or self._closing:
                 self._dropped_count += 1
+                if self._closed_bundle is None:
+                    self._closed_drop_count += 1
                 return
             if len(self._queue) >= self._max_queue:
                 self._dropped_count += 1
+                self._queue_overflow_count += 1
                 return
             try:
                 queued_observation = _snapshot_observation(observation)
             except Exception as error:
+                self._dropped_count += 1
+                self._admission_failure_count += 1
                 if self._error_code is None:
                     self._error_code = type(error).__name__
                 return
@@ -1275,13 +1404,19 @@ class TVICRuntimeObservationSink:
                         if self._routing_error_code is None:
                             self._routing_error_code = type(error).__name__
                     continue
+                except _TVICObservationDispatchError as error:
+                    with self._lock:
+                        if self._error_code is None:
+                            self._error_code = type(error).__name__
+                        self._dropped_count += 1
+                    continue
                 except Exception as error:
                     with self._lock:
                         if self._error_code is None:
                             self._error_code = type(error).__name__
-                        self._dropped_count += len(self._queue) + 1
-                        self._queue.clear()
-                    break
+                        self._dropped_count += 1
+                        self._admission_failure_count += 1
+                    continue
                 admitted += 1
         return admitted
 
@@ -1327,46 +1462,67 @@ class TVICRuntimeObservationSink:
         try:
             self.drain()
             with self._lock:
-                self._dropped_count += len(self._queue)
-                self._queue.clear()
-                dropped_count = self._dropped_count
-                error_code = self._error_code
-            if dropped_count:
+                queue_overflow_count = self._queue_overflow_count
+                admission_failure_count = self._admission_failure_count
+                closed_drop_count = self._closed_drop_count
+            if queue_overflow_count:
                 try:
-                    self._adapter.record_ingress_drop(dropped_count)
+                    self._adapter.record_ingress_drop(
+                        min(queue_overflow_count, _MAX_ATTRIBUTE_NUMBER)
+                    )
                 except Exception as error:
                     with self._lock:
                         if self._error_code is None:
                             self._error_code = type(error).__name__
-                    error_code = self._error_code
-            if error_code is not None:
+            failure_count = admission_failure_count + closed_drop_count
+            failure_count_at_finalize = failure_count
+            if failure_count:
                 try:
-                    self._adapter.record_ingress_failure()
+                    self._adapter.record_ingress_failure(min(failure_count, _MAX_ATTRIBUTE_NUMBER))
                 except Exception as error:
                     with self._lock:
                         if self._error_code is None:
                             self._error_code = type(error).__name__
             bundle = self._adapter.close()
             with self._lock:
-                if self._dropped_count:
+                coverage = list(bundle.profile.coverage)
+                if self._queue_overflow_count:
                     queue_coverage = Coverage(
                         signal="tvic.ingress.queue",
                         availability="partial",
                         reason="tvic_runtime_adapter_queue_overflow",
-                        dropped_count=self._dropped_count,
+                        dropped_count=min(self._queue_overflow_count, _MAX_ATTRIBUTE_NUMBER),
                     )
-                    coverage = tuple(
-                        queue_coverage if item.signal == queue_coverage.signal else item
-                        for item in bundle.profile.coverage
+                    self._replace_coverage(coverage, queue_coverage)
+                failure_count = self._admission_failure_count + self._closed_drop_count
+                if failure_count:
+                    prior_failure = next(
+                        (item for item in coverage if item.signal == "tvic.ingress.failure"),
+                        None,
                     )
-                    if not any(item.signal == queue_coverage.signal for item in coverage):
-                        coverage = (*coverage, queue_coverage)
+                    prior_count = 0 if prior_failure is None else prior_failure.dropped_count or 0
+                    late_failure_count = max(0, failure_count - failure_count_at_finalize)
+                    failure_coverage = Coverage(
+                        signal="tvic.ingress.failure",
+                        availability="unavailable",
+                        reason=(
+                            "tvic_runtime_adapter_admission_failed"
+                            if prior_failure is None
+                            else prior_failure.reason
+                        ),
+                        dropped_count=min(
+                            max(prior_count + late_failure_count, failure_count),
+                            _MAX_ATTRIBUTE_NUMBER,
+                        ),
+                    )
+                    self._replace_coverage(coverage, failure_coverage)
+                if self._dropped_count:
                     profile = bundle.profile.model_copy(
                         update={
                             "manifest": bundle.profile.manifest.model_copy(
                                 update={"completeness": "incomplete"}
                             ),
-                            "coverage": coverage,
+                            "coverage": tuple(coverage),
                         }
                     )
                     bundle = bundle.model_copy(update={"profile": profile})
@@ -1378,6 +1534,14 @@ class TVICRuntimeObservationSink:
             with self._lock:
                 self._closing = False
             self._close_done.set()
+
+    @staticmethod
+    def _replace_coverage(coverage: list[Coverage], replacement: Coverage) -> None:
+        for index, item in enumerate(coverage):
+            if item.signal == replacement.signal:
+                coverage[index] = replacement
+                return
+        coverage.append(replacement)
 
 
 def ingest_tvic_observations(
