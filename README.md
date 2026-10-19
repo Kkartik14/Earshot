@@ -21,7 +21,7 @@ each release; see the [alpha compatibility policy](docs/release.md#alpha-compati
 
 | Maturity                                           | Surfaces                                                                                                                                                                       |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Implemented; retained real-capture fixture         | LiveKit 1.6, Pipecat 1.5, Deepgram, Cartesia, and Sarvam adapters                                                                                                              |
+| Implemented; retained real-capture fixture         | LiveKit 1.6, Pipecat 1.6 (retained 1.5 capture), Deepgram, Cartesia, and Sarvam adapters                                                                                       |
 | Implemented; synthetic conformance only            | OpenAI Realtime event mapper and ElevenLabs, Vapi, Retell, and Ringg finalized-delivery Connectors                                                                             |
 | Implemented core                                   | Contract/codecs, recorder/export, privacy validation, local API/storage, deterministic analysis/explanation, and generic viewer                                                |
 | Implemented; unpublished, single-browser validated | Browser capture SDK (`packages/browser`) and its `/v1/capture` ingest endpoint                                                                                                 |

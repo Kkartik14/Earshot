@@ -14,7 +14,9 @@ python3.11 -m venv .venv
 pip install -e '.[dev]'
 ```
 
-Framework extras are deliberately optional:
+Framework extras are deliberately optional. These `pip` installs are convenient local
+setups, but `pip` does not consume `uv.lock`; use the locked instructions below for a
+reproducible provider-matrix run:
 
 ```bash
 pip install -e '.[pipecat]'
@@ -27,7 +29,7 @@ pip install -e '.[otel]'
 Importing `earshot` must work without either runtime installed.
 The provider-neutral `pipecat` extra installs tracing only. The `pipecat-groq` extra
 adds the Groq service dependency used by the checked-in real STT, LLM, and TTS driver.
-The `pipecat-matrix` extra pins Pipecat 1.5.0 and installs the optional clients needed
+The `pipecat-matrix` extra pins Pipecat 1.6.0 and installs the optional clients needed
 to run every supported provider combination in `scripts/run_pipecat_matrix.py`.
 
 Editable installs use the repository path, but built/published package metadata uses
@@ -35,7 +37,7 @@ the collision-free distribution name `earshot-observability`. See
 [release packaging](./release.md); `pip install earshot` installs an unrelated VAD
 project even though this repository also uses `import earshot`.
 
-The compatibility lane is bounded to Pipecat `>=1.5.0,<1.6` and LiveKit Agents
+The compatibility lane is bounded to Pipecat `>=1.6.0,<1.7` and LiveKit Agents
 `>=1.6.5,<1.7`. Unit tests remain duck typed; installing both extras activates the
 real-package integration tests in `apps/ingest/tests/test_framework_integrations.py`.
 
@@ -94,7 +96,7 @@ regression, not merely assert that its own valid sample is valid.
 
 The checked-in [CI workflow](../.github/workflows/ci.yml) runs these gates on every
 push and pull request. Its Python lane installs both bounded framework extras so the
-LiveKit 1.6 and Pipecat 1.5 real-object integration tests cannot silently skip. A
+LiveKit 1.6 and Pipecat 1.6 real-object integration tests cannot silently skip. A
 separate clean-artifact lane bundles the viewer, builds the wheel and sdist together,
 and installs both in isolated base and `[server]` environments. Its TypeScript lane uses
 the committed pnpm lockfile and the Node version in `.nvmrc`.
@@ -178,8 +180,8 @@ server-side output evidence; client render remains explicitly unobserved.
 The full provider matrix uses the optional `pipecat-matrix` extra and real credentials
 for each configured cell. It is a live, potentially billable run; timed-out or failed
 cells are not converted into synthetic passes. See the dated
-[36-cell results and limits](./pipecat-provider-matrix-2026-10-20.md) before running
-`python scripts/run_pipecat_matrix.py --force`.
+[36-cell results and limits](./pipecat-provider-matrix-2026-10-20.md) for the locked
+setup and invocation commands before running it.
 
 ## Add an adapter
 

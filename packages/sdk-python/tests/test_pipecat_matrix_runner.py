@@ -3,7 +3,10 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "scripts" / "run_pipecat_matrix.py"
@@ -78,3 +81,34 @@ def test_cached_runtime_failure_makes_matrix_exit_nonzero(tmp_path, monkeypatch)
     report = json.loads((tmp_path / "report.json").read_text())
     assert report["cells"][0]["status"] == "interrupted"
     assert report["cells"][0]["valid"] is True
+
+
+@pytest.mark.parametrize("installed_version", ["1.5.0", "1.6.1", None])
+@pytest.mark.parametrize(
+    "arguments",
+    [[], ["--cell", "deepgram__groq__cartesia"]],
+    ids=["matrix", "single-cell"],
+)
+def test_matrix_cli_rejects_missing_or_unpinned_pipecat(
+    installed_version, arguments, monkeypatch
+) -> None:
+    runner = _runner_module()
+
+    def distribution_version(name: str) -> str:
+        assert name == "pipecat-ai"
+        if installed_version is None:
+            raise PackageNotFoundError(name)
+        return installed_version
+
+    def unexpected_setup() -> None:
+        raise AssertionError("Pipecat version must be validated before provider setup")
+
+    monkeypatch.setattr(runner, "version", distribution_version)
+    monkeypatch.setattr(runner, "_load_dotenv", unexpected_setup)
+    monkeypatch.setattr(sys, "argv", ["run_pipecat_matrix.py", *arguments])
+
+    with pytest.raises(
+        SystemExit,
+        match=r"Pipecat provider matrix requires pipecat-ai==1\.6\.0",
+    ):
+        runner.main()

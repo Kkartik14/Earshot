@@ -1,7 +1,7 @@
 # Pipecat provider matrix — 2026-10-20
 
 This live run exercised the full TVIC Pipecat provider product using Pipecat
-`1.5.0` and real configured credentials. The checked-in runner is
+`1.6.0` and real configured credentials. The checked-in runner is
 [`scripts/run_pipecat_matrix.py`](../scripts/run_pipecat_matrix.py); the sanitized
 machine-readable report is
 [`pipecat-provider-matrix-2026-10-20.json`](./pipecat-provider-matrix-2026-10-20.json).
@@ -40,22 +40,23 @@ provider-specific stage failure, so that path remains unresolved by this run.
 
 The 250 ms review target applies to local observation overhead, not remote-provider
 response time. The run records Pipecat pipeline measurements; across the artifacts,
-LLM TTFB ranged from 307.8 to 8,304.4 ms and TTS TTFB from 88.2 to 201.7 ms. These
+LLM TTFB ranged from 155.7 to 9,420.4 ms and TTS TTFB from 89.2 to 278.5 ms. These
 remote/pipeline measurements do not establish the Earshot observer's own overhead.
 That specific under-250-ms claim remains unverified by this matrix.
 
 ## Reproduction
 
-Install the lock-backed matrix dependencies with `pip install -e '.[pipecat-matrix]'`,
-then source the TVIC and Earshot environment files in that order so Earshot's shared
-keys take precedence and TVIC-only provider keys remain available:
+Install the exact lock-backed matrix environment with
+`uv sync --locked --extra pipecat-matrix`, then source the TVIC and Earshot environment
+files in that order so Earshot's shared keys take precedence and TVIC-only provider
+keys remain available:
 
 ```bash
 set -a
 source /path/to/TVIC/.env
 source /path/to/earshot/.env
 set +a
-python scripts/run_pipecat_matrix.py --force
+uv run --locked --extra pipecat-matrix python scripts/run_pipecat_matrix.py --force
 ```
 
 This makes real provider requests and may incur charges or encounter account limits.

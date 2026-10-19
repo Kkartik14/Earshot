@@ -3,9 +3,12 @@
 Status: implemented pre-v1 normalization adapter with a
 [privacy-scrubbed retained real capture](../captured-fixtures.md).
 
-Verified against `pipecat-ai==1.5.0`, tag commit
-`f97595f9ccdec52ece7561ecf642c0eec63fdefe` on 2026-07-11. The supported package
-range is `>=1.5.0,<1.6`.
+Verified against `pipecat-ai==1.6.0`, tag commit
+`08e871599904080cedad7ce5683676ab8481fa59`. The supported package range is
+`>=1.6.0,<1.7`; the minimum was raised in response to the upstream development-runner
+advisory. Pipecat 1.6.0 adds a warning and documents the boundary; the runner remains
+unauthenticated and must not be exposed to untrusted networks. Earshot's adapter does not
+start or expose that runner.
 
 Pipecat is first because its broad transport/service matrix and native OTel hierarchy
 force the contract to remain framework-neutral.
@@ -25,7 +28,7 @@ force the contract to remain framework-neutral.
   and TTS spans. It is classified as `framework_operation`, never `turn_detection`.
 - `turn.was_interrupted=true` accompanied by
   `turn.ended_by_conversation_end=true` is shutdown state, not user barge-in.
-- `turn.was_interrupted` alone is not accepted-interruption evidence. Pipecat 1.5 can
+- `turn.was_interrupted` alone is not accepted-interruption evidence. Pipecat 1.6 can
   publish that shape while processing a normal terminal `EndFrame`, so Earshot requires
   an unambiguous interruption source before authoring `earshot.interruption.accepted`.
 
@@ -34,7 +37,7 @@ normalizer testable without importing Pipecat. Use the process-scoped router aro
 the work that starts the Pipecat pipeline, then flush before closing the handle:
 
 ```python
-adapter = PipecatAdapter(recorder, framework_version="1.5.0")
+adapter = PipecatAdapter(recorder, framework_version="1.6.0")
 handle = adapter.attach(existing_tracer_provider)
 
 try:
@@ -55,7 +58,7 @@ retain the dropped span's attributes. `create_span_processor()` now raises an
 explicit migration error because a recorder-bound processor bypasses session
 isolation; use `attach(existing_tracer_provider)`.
 
-`create_observer()` supplies a Pipecat 1.5 frame observer. It authors an accepted
+`create_observer()` supplies a Pipecat 1.6 frame observer. It authors an accepted
 interruption only when a native `InterruptionFrame` is observed while native
 `BotStartedSpeakingFrame`/`BotStoppedSpeakingFrame` state says bot playout is active.
 Pipecat also broadcasts `InterruptionFrame` at the start of an ordinary first user
@@ -104,7 +107,7 @@ normalized view, not a replacement.
 - **Aggregation is source-accurate.** TTFB is an instantaneous per-stage duration;
   token usage and TTS character counts are per-operation deltas, so repeated
   operations sum with all contributing evidence instead of acting like gauges.
-- **User-to-bot latency is an honest server-output fallback.** Pipecat 1.5 measures
+- **User-to-bot latency is an honest server-output fallback.** Pipecat 1.6 measures
   `turn.user_bot_latency_seconds` from actual user-speech stop to its native
   `BotStartedSpeakingFrame`. Earshot exposes it as
   `pipecat.turn.user_bot_latency` and may use it for response latency when no stronger
@@ -119,7 +122,7 @@ resource keys may differ, but both first adapters must agree on shared response-
 classification, turn-correlated response work, timing-basis vocabulary, interruption
 phases, coverage, privacy, and provenance.
 
-Pipecat 1.5 assigns an integer `turn.number`; it is not expected to equal a LiveKit
+Pipecat 1.6 assigns an integer `turn.number`; it is not expected to equal a LiveKit
 speech ID. The analyzer propagates ownership through the parent graph. When native
 Pipecat tracing provides no independent end-of-user-turn commitment point, derived
 anchor-to-stage latency and first-token breakdowns remain `not_observed`; the lifecycle

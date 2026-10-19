@@ -23,7 +23,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from opentelemetry import trace as otel_trace
@@ -73,6 +73,24 @@ class Cell:
 STT_PROVIDERS = ("deepgram", "cartesia", "sarvam", "elevenlabs", "assemblyai", "soniox")
 LLM_PROVIDERS = ("groq", "openai")
 TTS_PROVIDERS = ("cartesia", "elevenlabs", "sarvam")
+MATRIX_PIPECAT_VERSION = "1.6.0"
+
+
+def _require_matrix_pipecat_version() -> str:
+    try:
+        framework_version = version("pipecat-ai")
+    except PackageNotFoundError:
+        raise SystemExit(
+            f"Pipecat provider matrix requires pipecat-ai=={MATRIX_PIPECAT_VERSION}; "
+            "install the [pipecat-matrix] extra"
+        ) from None
+    if framework_version != MATRIX_PIPECAT_VERSION:
+        raise SystemExit(
+            f"Pipecat provider matrix requires pipecat-ai=={MATRIX_PIPECAT_VERSION}; "
+            f"found {framework_version}"
+        )
+    return framework_version
+
 
 CELLS = tuple(
     Cell(stt, llm, tts) for stt in STT_PROVIDERS for llm in LLM_PROVIDERS for tts in TTS_PROVIDERS
@@ -538,6 +556,7 @@ class MatrixRuntime:
 
 
 def _child(cell: Cell) -> int:
+    _require_matrix_pipecat_version()
     _load_dotenv()
     drive = _load_drive()
     output = ARTIFACT_DIR / f"{cell.name}.json"
@@ -624,6 +643,7 @@ def _cell_failed(summary: dict[str, Any]) -> bool:
 
 
 def _parent(*, force: bool) -> int:
+    framework_version = _require_matrix_pipecat_version()
     _load_dotenv()
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
     probes = _provider_probes()
@@ -672,7 +692,7 @@ def _parent(*, force: bool) -> int:
     report = {
         "matrix_version": 1,
         "runner": "scripts/run_pipecat_matrix.py",
-        "framework": "pipecat-ai==1.5.0",
+        "framework": f"pipecat-ai=={framework_version}",
         "dimensions": {
             "stt": list(STT_PROVIDERS),
             "llm": list(LLM_PROVIDERS),
