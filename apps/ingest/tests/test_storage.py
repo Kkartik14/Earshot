@@ -18,9 +18,11 @@ import pytest
 
 import earshot.storage as storage_module
 from earshot.analysis import analyze_incident
+from earshot.clock import ManualClock
 from earshot.codec import decode_incident_protobuf, encode_incident_protobuf
 from earshot.contract import DerivedAnalysis, ExportPolicy, RetentionPolicy
 from earshot.storage import (
+    DATABASE_ERRORS,
     ArtifactCorruptionError,
     IncidentConflictError,
     IncidentNotFoundError,
@@ -29,7 +31,10 @@ from earshot.storage import (
     InvalidCursorError,
     StorageError,
 )
+from earshot.storage_calls import CallStore
+from earshot.storage_deliveries import DeliveryDigests, DeliveryStore
 from incident_factory import make_valid_bundle
+from store_support import catalog, catalog_rows, drop_post_v19_objects, make_store
 
 pytestmark = pytest.mark.integration
 
@@ -88,7 +93,7 @@ def with_metadata_retention(bundle, retention: RetentionPolicy):
 
 
 def test_ingest_get_and_exact_retry_are_immutable_and_idempotent(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     payload = canonical(valid_bundle)
     first = store.ingest(valid_bundle, payload)
     second = store.ingest(valid_bundle, payload)
@@ -100,8 +105,9 @@ def test_ingest_get_and_exact_retry_are_immutable_and_idempotent(tmp_path, valid
     assert record.size_bytes == len(payload)
 
 
+@pytest.mark.sqlite_only
 def test_same_bundle_id_with_different_facts_conflicts_and_leaves_no_orphan(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     original = make_valid_bundle(bundle_id="conflict")
     conflicting = with_status(original, "failed")
     store.ingest(original, canonical(original))
@@ -115,10 +121,10 @@ def test_same_bundle_id_with_different_facts_conflicts_and_leaves_no_orphan(tmp_
 
 def test_store_survives_real_close_and_restart(tmp_path, valid_bundle) -> None:
     payload = canonical(valid_bundle)
-    first = IncidentStore(tmp_path)
+    first = make_store(tmp_path)
     first.ingest(valid_bundle, payload)
     first.close()
-    restarted = IncidentStore(tmp_path)
+    restarted = make_store(tmp_path)
     record, retrieved = restarted.get_artifact("bundle-1")
     assert retrieved == payload
     assert record.bundle_id == "bundle-1"
@@ -127,7 +133,7 @@ def test_store_survives_real_close_and_restart(tmp_path, valid_bundle) -> None:
 def test_external_references_are_project_scoped_catalog_data_and_survive_restart(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(valid_bundle, canonical(valid_bundle))
     first = store.set_external_reference(
         result.record.bundle_id,
@@ -166,20 +172,19 @@ def test_external_references_are_project_scoped_catalog_data_and_survive_restart
     store.create_project("other-project", display_name="Other project")
     with pytest.raises(IncidentNotFoundError):
         store.get_external_references("bundle-1", project_id="other-project")
-    with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
-        connection.execute("PRAGMA foreign_keys = ON")
-        with pytest.raises(sqlite3.IntegrityError):
-            connection.execute(
-                """
-                INSERT INTO incident_external_references(
-                    project_id, bundle_id, namespace, record_type,
-                    external_id, linked_at_unix_nano
-                ) VALUES ('other-project', 'bundle-1', 'platform', 'call', 'call_123', 1)
-                """
-            )
+    # The composite foreign key itself refuses a reference across projects.
+    with pytest.raises(DATABASE_ERRORS), catalog(tmp_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO incident_external_references(
+                project_id, bundle_id, namespace, record_type,
+                external_id, linked_at_unix_nano
+            ) VALUES ('other-project', 'bundle-1', 'platform', 'call', 'call_123', 1)
+            """
+        )
 
     store.close()
-    restarted = IncidentStore(tmp_path)
+    restarted = make_store(tmp_path)
     assert [item.external_id for item in restarted.get_external_references("bundle-1")] == [
         "call_123",
         "run_789",
@@ -187,7 +192,7 @@ def test_external_references_are_project_scoped_catalog_data_and_survive_restart
 
 
 def test_purge_cascades_to_external_references(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.set_external_reference(
         "bundle-1",
@@ -198,17 +203,13 @@ def test_purge_cascades_to_external_references(tmp_path, valid_bundle) -> None:
 
     store.purge("bundle-1")
 
-    with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
-        assert (
-            connection.execute("SELECT COUNT(*) FROM incident_external_references").fetchone()[0]
-            == 0
-        )
+    assert catalog_rows(tmp_path, "SELECT COUNT(*) FROM incident_external_references") == [(0,)]
 
 
 def test_external_reference_write_purges_expired_incident_atomically(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.set_external_reference(
         "bundle-1",
@@ -216,7 +217,7 @@ def test_external_reference_write_purges_expired_incident_atomically(
         record_type="call",
         external_id="call_old",
     )
-    with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
+    with catalog(tmp_path) as connection:
         connection.execute(
             "UPDATE incidents SET expires_at_unix_nano = ? WHERE bundle_id = ?",
             (str(time.time_ns() - 1), "bundle-1"),
@@ -232,27 +233,20 @@ def test_external_reference_write_purges_expired_incident_atomically(
 
     with pytest.raises(IncidentPurgedError):
         store.get_record("bundle-1")
-    with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM incident_external_references WHERE bundle_id = ?",
-                ("bundle-1",),
-            ).fetchone()[0]
-            == 0
-        )
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM tombstones WHERE project_id = ?",
-                ("default",),
-            ).fetchone()[0]
-            == 1
-        )
+    assert catalog_rows(
+        tmp_path,
+        "SELECT COUNT(*) FROM incident_external_references WHERE bundle_id = ?",
+        ("bundle-1",),
+    ) == [(0,)]
+    assert catalog_rows(
+        tmp_path, "SELECT COUNT(*) FROM tombstones WHERE project_id = ?", ("default",)
+    ) == [(1,)]
 
 
 def test_external_reference_delete_purges_expired_incident_atomically(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.set_external_reference(
         "bundle-1",
@@ -260,7 +254,7 @@ def test_external_reference_delete_purges_expired_incident_atomically(
         record_type="call",
         external_id="call_old",
     )
-    with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
+    with catalog(tmp_path) as connection:
         connection.execute(
             "UPDATE incidents SET expires_at_unix_nano = ? WHERE bundle_id = ?",
             (str(time.time_ns() - 1), "bundle-1"),
@@ -275,27 +269,21 @@ def test_external_reference_delete_purges_expired_incident_atomically(
 
     with pytest.raises(IncidentPurgedError):
         store.get_record("bundle-1")
-    with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM incident_external_references WHERE bundle_id = ?",
-                ("bundle-1",),
-            ).fetchone()[0]
-            == 0
-        )
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM tombstones WHERE project_id = ?",
-                ("default",),
-            ).fetchone()[0]
-            == 1
-        )
+    assert catalog_rows(
+        tmp_path,
+        "SELECT COUNT(*) FROM incident_external_references WHERE bundle_id = ?",
+        ("bundle-1",),
+    ) == [(0,)]
+    assert catalog_rows(
+        tmp_path, "SELECT COUNT(*) FROM tombstones WHERE project_id = ?", ("default",)
+    ) == [(1,)]
 
 
+@pytest.mark.sqlite_only
 def test_purge_physically_removes_artifact_and_leaves_nonreusable_tombstone(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     payload = canonical(valid_bundle)
     result = store.ingest(valid_bundle, payload)
     store.put_analysis("bundle-1", "1", analysis_value(store, "bundle-1", "1", "derived"))
@@ -317,8 +305,9 @@ def test_purge_physically_removes_artifact_and_leaves_nonreusable_tombstone(
     store.purge("bundle-1")  # Purge is idempotent.
 
 
+@pytest.mark.sqlite_only
 def test_purge_preserves_unattributed_cas_orphans(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     orphan_digest, _ = store.objects.put(b"unattributed crash-left evidence")
     orphan_path = store.objects.path_for(orphan_digest)
@@ -328,10 +317,11 @@ def test_purge_preserves_unattributed_cas_orphans(tmp_path, valid_bundle) -> Non
     assert orphan_path.read_bytes() == b"unattributed crash-left evidence"
 
 
+@pytest.mark.sqlite_only
 def test_retention_maintenance_retries_failed_pending_ingest_cleanup(
     tmp_path, valid_bundle, monkeypatch, caplog
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     payload = canonical(valid_bundle)
     digest = hashlib.sha256(payload).hexdigest()
     object_path = store.objects.path_for(digest)
@@ -365,21 +355,23 @@ def test_retention_maintenance_retries_failed_pending_ingest_cleanup(
 
 
 def test_purge_unknown_incident_is_not_silently_tombstoned(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     with pytest.raises(IncidentNotFoundError):
         store.purge("never-seen")
 
 
+@pytest.mark.sqlite_only
 def test_artifact_digest_is_verified_on_every_read(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(valid_bundle, canonical(valid_bundle))
     store.objects.path_for(result.record.digest).write_bytes(b"corrupt")
     with pytest.raises(ArtifactCorruptionError):
         store.get_artifact("bundle-1")
 
 
+@pytest.mark.sqlite_only
 def test_missing_artifact_is_reported_as_corruption_not_not_found(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(valid_bundle, canonical(valid_bundle))
     store.objects.path_for(result.record.digest).unlink()
     with pytest.raises(ArtifactCorruptionError):
@@ -389,7 +381,7 @@ def test_missing_artifact_is_reported_as_corruption_not_not_found(tmp_path, vali
 def test_analysis_is_versioned_separately_and_first_write_is_immutable(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     first = store.put_analysis("bundle-1", "1", analysis_value(store, "bundle-1", "1", "answer_1"))
     second = store.put_analysis(
@@ -406,14 +398,14 @@ def test_analysis_is_versioned_separately_and_first_write_is_immutable(
 
 @pytest.mark.parametrize("bad", [{"value": float("nan")}, {"value": object()}])
 def test_analysis_storage_accepts_only_strict_json(tmp_path, valid_bundle, bad) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     with pytest.raises(StorageError):
         store.put_analysis("bundle-1", "bad", bad)
 
 
 def test_analysis_storage_rejects_inner_digest_or_version_mismatch(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     correct = analysis_value(store, "bundle-1", "1", "ok")
     with pytest.raises(StorageError, match="input digest"):
@@ -427,7 +419,7 @@ def test_analysis_storage_rejects_inner_digest_or_version_mismatch(tmp_path, val
 
 
 def test_analysis_storage_preserves_full_uint64_generation_time(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     maximum = "18446744073709551615"
     analysis = analysis_value(store, "bundle-1", "max", "uint64_boundary").model_copy(
@@ -452,17 +444,17 @@ def test_corrupt_analysis_json_is_detected(
     valid_bundle,
     corrupt_output: bytes,
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.put_analysis("bundle-1", "1", analysis_value(store, "bundle-1", "1", "ok"))
-    with sqlite3.connect(store.database_path, uri=store._database_uri) as connection:
+    with catalog(tmp_path) as connection:
         connection.execute("UPDATE analyses SET output_json = ?", (corrupt_output,))
     with pytest.raises(ArtifactCorruptionError):
         store.get_analysis("bundle-1", "1")
 
 
 def test_pagination_is_stable_bounded_and_duplicate_free(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     for index in range(7):
         bundle = make_valid_bundle(bundle_id=f"bundle-{index}")
         store.ingest(bundle, canonical(bundle))
@@ -478,10 +470,11 @@ def test_pagination_is_stable_bounded_and_duplicate_free(tmp_path) -> None:
     assert len(set(seen)) == 7
 
 
+@pytest.mark.sqlite_only
 def test_incident_listing_does_not_hold_the_store_write_lock(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("listing", display_name="Listing")
-    concurrent_writer = IncidentStore(tmp_path)
+    concurrent_writer = make_store(tmp_path)
     query_started = threading.Event()
     resume_query = threading.Event()
     writer_finished = threading.Event()
@@ -534,8 +527,9 @@ def test_incident_listing_does_not_hold_the_store_write_lock(tmp_path, monkeypat
     assert concurrent_writer.project_exists("during-list")
 
 
+@pytest.mark.sqlite_only
 def test_in_memory_incident_listing_serializes_shared_cache_writes(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path / "memory", database_path=":memory:")
+    store = make_store(tmp_path / "memory", database_path=":memory:")
     store.create_project("listing", display_name="Listing")
     query_started = threading.Event()
     resume_query = threading.Event()
@@ -580,13 +574,13 @@ def test_in_memory_incident_listing_serializes_shared_cache_writes(tmp_path, mon
 
 @pytest.mark.parametrize("cursor", ["not-base64", "WzEsMl0", "e30", ""])
 def test_invalid_pagination_cursor_is_rejected(tmp_path, cursor: str) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     with pytest.raises(InvalidCursorError):
         store.list_incidents(cursor=cursor)
 
 
 def test_oversized_cursor_is_rejected_before_json_parsing(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     raw = b"[" + (b" " * 600) + b"]"
     cursor = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
@@ -599,7 +593,7 @@ def test_oversized_cursor_is_rejected_before_json_parsing(tmp_path, monkeypatch)
 
 
 def test_cursor_recursion_error_is_normalized(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     small_cursor = base64.urlsafe_b64encode(b'["1","bundle-1"]').rstrip(b"=").decode("ascii")
 
     def recurse(_value: object) -> object:
@@ -611,7 +605,7 @@ def test_cursor_recursion_error_is_normalized(tmp_path, monkeypatch) -> None:
 
 
 def test_oversized_cursor_timestamp_is_rejected(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     oversized_time = (
         base64.urlsafe_b64encode(('["' + ("9" * 100) + '","bundle-1"]').encode("utf-8"))
         .rstrip(b"=")
@@ -624,11 +618,11 @@ def test_oversized_cursor_timestamp_is_rejected(tmp_path) -> None:
 @pytest.mark.parametrize("limit", [0, 101, -1])
 def test_storage_limit_is_bounded(tmp_path, limit: int) -> None:
     with pytest.raises(ValueError):
-        IncidentStore(tmp_path).list_incidents(limit=limit)
+        make_store(tmp_path).list_incidents(limit=limit)
 
 
 def test_session_filter_is_parameterized_against_sql_metacharacters(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     injection = "session' OR 1=1 --"
     special = make_valid_bundle(bundle_id="special")
     manifest = special.profile.manifest.model_copy(update={"session_id": injection})
@@ -664,7 +658,7 @@ def test_session_filter_is_parameterized_against_sql_metacharacters(tmp_path) ->
 
 
 def test_concurrent_identical_ingest_creates_one_record(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     payload = canonical(valid_bundle)
     with ThreadPoolExecutor(max_workers=12) as pool:
         results = list(pool.map(lambda _: store.ingest(valid_bundle, payload), range(40)))
@@ -674,7 +668,7 @@ def test_concurrent_identical_ingest_creates_one_record(tmp_path, valid_bundle) 
 
 
 def test_concurrent_conflicting_ingest_has_one_winner_and_no_partial_rows(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     completed = make_valid_bundle(bundle_id="race")
     failed = with_status(completed, "failed")
     candidates = [(completed, canonical(completed)), (failed, canonical(failed))] * 10
@@ -693,20 +687,22 @@ def test_concurrent_conflicting_ingest_has_one_winner_and_no_partial_rows(tmp_pa
     assert results.count("conflict") >= 1
 
 
+@pytest.mark.sqlite_only
 def test_named_shared_memory_database_works_across_operation_connections(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path, database_path=":memory:")
+    store = make_store(tmp_path, database_path=":memory:")
     store.ingest(valid_bundle, canonical(valid_bundle))
     assert store.get_record("bundle-1").session_id == "session-1"
     assert store.ready()
 
 
+@pytest.mark.sqlite_only
 def test_cas_publication_is_locked_through_indexing_against_cleanup(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
-    writer = IncidentStore(tmp_path)
-    cleaner = IncidentStore(tmp_path)
+    writer = make_store(tmp_path)
+    cleaner = make_store(tmp_path)
     payload = canonical(valid_bundle)
     published = threading.Event()
     release = threading.Event()
@@ -734,23 +730,24 @@ def test_cas_publication_is_locked_through_indexing_against_cleanup(
     assert cleaner.get_artifact("bundle-1")[1] == payload
 
 
+@pytest.mark.sqlite_only
 @pytest.mark.skipif(
     not hasattr(os, "fork") or storage_module.fcntl is None,
     reason="requires POSIX fork and advisory file locks",
 )
 def test_forked_store_reopens_its_advisory_lock(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     read_fd, write_fd = os.pipe()
     child_pid = -1
     entered_while_parent_held_lock = False
     try:
-        with store._mutation():
+        with store._mutation("fork_probe"):
             child_pid = os.fork()
             if child_pid == 0:
                 os.close(read_fd)
                 try:
                     os.write(write_fd, b"trying")
-                    with store._mutation():
+                    with store._mutation("fork_probe"):
                         os.write(write_fd, b"entered")
                     os._exit(0)
                 except BaseException:
@@ -778,12 +775,13 @@ def test_forked_store_reopens_its_advisory_lock(tmp_path) -> None:
     )
 
 
+@pytest.mark.sqlite_only
 @pytest.mark.skipif(
     not hasattr(os, "fork") or storage_module.fcntl is None,
     reason="requires POSIX fork and advisory file locks",
 )
 def test_forked_in_memory_store_reports_not_ready(tmp_path) -> None:
-    store = IncidentStore(tmp_path, database_path=":memory:")
+    store = make_store(tmp_path, database_path=":memory:")
     read_fd, write_fd = os.pipe()
     child_pid = -1
     try:
@@ -793,7 +791,7 @@ def test_forked_in_memory_store_reports_not_ready(tmp_path) -> None:
             try:
                 is_ready = store.ready()
                 try:
-                    with store._mutation():
+                    with store._mutation("fork_probe"):
                         mutation_rejected = False
                 except StorageError:
                     mutation_rejected = True
@@ -814,8 +812,11 @@ def test_forked_in_memory_store_reports_not_ready(tmp_path) -> None:
     assert result == bytes((False, True))
 
 
-def test_ingest_populates_and_restart_reconciles_graph_projection(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+@pytest.mark.sqlite_only
+def test_ingest_populates_and_reprojection_restores_a_stale_graph_projection(
+    tmp_path, valid_bundle
+) -> None:
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     expected_links = sum(len(operation.links) for operation in valid_bundle.profile.operations)
     with sqlite3.connect(store.database_path) as connection:
@@ -844,9 +845,13 @@ def test_ingest_populates_and_restart_reconciles_graph_projection(tmp_path, vali
         connection.execute("DELETE FROM events")
         connection.execute("DELETE FROM causal_links")
         connection.execute("DELETE FROM operations")
+        connection.execute("UPDATE incidents SET projection_version = NULL")
     store.close()
 
-    restarted = IncidentStore(tmp_path)
+    restarted = make_store(tmp_path)
+    # Opening re-projects nothing (AC1.10); the stale incident converges afterwards.
+    assert catalog_rows(tmp_path, "SELECT COUNT(*) FROM operations") == [(0,)]
+    assert restarted.converge_projections().pending == 0
     with sqlite3.connect(restarted.database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == len(
             valid_bundle.profile.operations
@@ -859,53 +864,7 @@ def test_ingest_populates_and_restart_reconciles_graph_projection(tmp_path, vali
         )
 
 
-def test_reconciliation_rolls_back_partial_repairs_and_retries_after_cas_restore(
-    tmp_path,
-) -> None:
-    repairable = make_valid_bundle(bundle_id="a-repairable")
-    temporarily_corrupt = make_valid_bundle(bundle_id="z-temporarily-corrupt")
-    repairable_payload = canonical(repairable)
-    corrupt_payload = canonical(temporarily_corrupt)
-    store = IncidentStore(tmp_path)
-    store.ingest(repairable, repairable_payload)
-    corrupt_record = store.ingest(temporarily_corrupt, corrupt_payload).record
-    corrupt_path = store.objects.path_for(corrupt_record.digest)
-    with sqlite3.connect(store.database_path) as connection:
-        connection.execute("DELETE FROM events WHERE bundle_id = 'a-repairable'")
-        connection.execute("DELETE FROM causal_links WHERE bundle_id = 'a-repairable'")
-        connection.execute("DELETE FROM operations WHERE bundle_id = 'a-repairable'")
-        connection.execute("DELETE FROM turn_metrics WHERE bundle_id = 'a-repairable'")
-    store.close()
-    corrupt_path.write_bytes(b"crash-left partial object")
-
-    with pytest.raises(ArtifactCorruptionError, match="digest mismatch"):
-        IncidentStore(tmp_path)
-
-    with sqlite3.connect(tmp_path / "earshot.sqlite3") as connection:
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM operations WHERE bundle_id = 'a-repairable'"
-            ).fetchone()[0]
-            == 0
-        )
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM turn_metrics WHERE bundle_id = 'a-repairable'"
-            ).fetchone()[0]
-            == 0
-        )
-
-    corrupt_path.write_bytes(corrupt_payload)
-    restarted = IncidentStore(tmp_path)
-
-    assert restarted.get_artifact("a-repairable")[1] == repairable_payload
-    assert restarted.get_artifact("z-temporarily-corrupt")[1] == corrupt_payload
-    assert {fact.bundle_id for fact in restarted.list_turn_facts()} == {
-        "a-repairable",
-        "z-temporarily-corrupt",
-    }
-
-
+@pytest.mark.sqlite_only
 def test_retention_deadline_is_indexed_and_expired_incidents_are_purged(
     tmp_path, valid_bundle
 ) -> None:
@@ -920,7 +879,7 @@ def test_retention_deadline_is_indexed_and_expired_incidents_are_purged(
     bundle = valid_bundle.model_copy(
         update={"profile": valid_bundle.profile.model_copy(update={"privacy": privacy})}
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(bundle, canonical(bundle))
     with sqlite3.connect(store.database_path) as connection:
         assert connection.execute(
@@ -932,8 +891,9 @@ def test_retention_deadline_is_indexed_and_expired_incidents_are_purged(
         store.get_record("bundle-1")
 
 
+@pytest.mark.sqlite_only
 def test_expiry_batch_removes_each_unreferenced_artifact(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundles = tuple(
         with_metadata_retention(
             make_valid_bundle(bundle_id=f"expired-batch-{index}"),
@@ -956,10 +916,11 @@ def test_expiry_batch_removes_each_unreferenced_artifact(tmp_path) -> None:
         )
 
 
+@pytest.mark.sqlite_only
 def test_batched_expiry_cleanup_securely_scrubs_large_backlogs(tmp_path) -> None:
     secret = "expiry_batch_scrub_marker_6d06ac0d"
     bundle = make_valid_bundle(bundle_id="expired-multibatch-secret")
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(bundle, canonical(bundle))
     store.put_analysis(
         bundle.profile.manifest.bundle_id,
@@ -1010,11 +971,12 @@ def test_batched_expiry_cleanup_securely_scrubs_large_backlogs(tmp_path) -> None
         )
 
 
+@pytest.mark.sqlite_only
 def test_project_incident_list_hides_only_that_projects_expired_records(tmp_path) -> None:
     retention = RetentionPolicy(expires_at_unix_nano="0")
     first = with_metadata_retention(make_valid_bundle(bundle_id="expired-first"), retention)
     second = with_metadata_retention(make_valid_bundle(bundle_id="expired-second"), retention)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("first-project", display_name="First")
     store.create_project("second-project", display_name="Second")
     store.ingest(first, project_id="first-project")
@@ -1030,12 +992,13 @@ def test_project_incident_list_hides_only_that_projects_expired_records(tmp_path
     }
 
 
+@pytest.mark.sqlite_only
 def test_expired_incident_is_physically_purged_at_direct_read_boundary(tmp_path) -> None:
     bundle = with_metadata_retention(
         make_valid_bundle(bundle_id="expired-read"),
         RetentionPolicy(expires_at_unix_nano="0"),
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(bundle, canonical(bundle))
     object_path = store.objects.path_for(result.record.digest)
 
@@ -1044,6 +1007,7 @@ def test_expired_incident_is_physically_purged_at_direct_read_boundary(tmp_path)
     assert not object_path.exists()
 
 
+@pytest.mark.sqlite_only
 def test_expired_direct_read_defers_database_compaction_to_maintenance(
     tmp_path, monkeypatch
 ) -> None:
@@ -1051,7 +1015,7 @@ def test_expired_direct_read_defers_database_compaction_to_maintenance(
         make_valid_bundle(bundle_id="expired-direct-read-compaction"),
         RetentionPolicy(expires_at_unix_nano="0"),
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(bundle, canonical(bundle))
     original_scrub = store._scrub_deleted_pages
     scrub_calls = 0
@@ -1071,10 +1035,11 @@ def test_expired_direct_read_defers_database_compaction_to_maintenance(
     assert scrub_calls == 1
 
 
+@pytest.mark.sqlite_only
 def test_explicit_purge_compacts_after_releasing_the_store_lock(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     original_scrub = store._scrub_deleted_pages
     compaction_started = threading.Event()
@@ -1100,6 +1065,7 @@ def test_explicit_purge_compacts_after_releasing_the_store_lock(
     assert page.items == ()
 
 
+@pytest.mark.sqlite_only
 def test_successful_purge_retry_and_restart_do_not_revacuum(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
@@ -1116,7 +1082,7 @@ def test_successful_purge_retry_and_restart_do_not_revacuum(
         )
 
     monkeypatch.setattr(IncidentStore, "_scrub_deleted_pages", count_scrubs)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.purge("bundle-1")
     assert scrub_calls == 1
@@ -1125,15 +1091,16 @@ def test_successful_purge_retry_and_restart_do_not_revacuum(
     assert scrub_calls == 1
     store.close()
 
-    restarted = IncidentStore(tmp_path)
+    restarted = make_store(tmp_path)
     assert scrub_calls == 1
     restarted.close()
 
 
+@pytest.mark.sqlite_only
 def test_startup_compaction_does_not_hold_the_store_lock(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     with sqlite3.connect(store.database_path) as connection:
         connection.execute(
@@ -1157,7 +1124,7 @@ def test_startup_compaction_does_not_hold_the_store_lock(
 
     monkeypatch.setattr(IncidentStore, "_scrub_deleted_pages", pause_compaction)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        startup = executor.submit(IncidentStore, tmp_path)
+        startup = executor.submit(make_store, tmp_path)
         assert compaction_started.wait(5)
         listing = executor.submit(store.list_incidents)
         try:
@@ -1171,11 +1138,12 @@ def test_startup_compaction_does_not_hold_the_store_lock(
     store.close()
 
 
+@pytest.mark.sqlite_only
 def test_concurrent_compactions_share_a_lock_and_recheck_the_scrub_generation(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
-    first_store = IncidentStore(tmp_path)
-    second_store = IncidentStore(tmp_path)
+    first_store = make_store(tmp_path)
+    second_store = make_store(tmp_path)
     first_store.ingest(valid_bundle, canonical(valid_bundle))
     with sqlite3.connect(first_store.database_path) as connection:
         connection.execute(
@@ -1215,12 +1183,13 @@ def test_concurrent_compactions_share_a_lock_and_recheck_the_scrub_generation(
         second_store.close()
 
 
+@pytest.mark.sqlite_only
 @pytest.mark.skipif(
     not hasattr(os, "fork") or storage_module.fcntl is None,
     reason="requires POSIX fork and advisory file locks",
 )
 def test_forked_compaction_reopens_its_advisory_lock(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     with sqlite3.connect(store.database_path) as connection:
         connection.execute(
@@ -1267,8 +1236,9 @@ def test_forked_compaction_reopens_its_advisory_lock(tmp_path, valid_bundle) -> 
     )
 
 
+@pytest.mark.sqlite_only
 def test_scrub_racing_store_close_fails_with_storage_error(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     original_ensure = store._ensure_process_ownership
     ownership_checked = threading.Event()
     resume_scrub = threading.Event()
@@ -1292,12 +1262,48 @@ def test_scrub_racing_store_close_fails_with_storage_error(tmp_path, monkeypatch
         store.close()
 
 
+@pytest.mark.sqlite_only
+def test_retention_compacts_after_a_drain_at_most_once_every_ten_minutes(tmp_path) -> None:
+    minute = 60 * 1_000_000_000
+    clock = ManualClock(wall=1_800_000_000 * 1_000_000_000, monotonic=0)
+    store = make_store(tmp_path, clock=clock)
+
+    def ingest_expired(bundle_id: str) -> None:
+        bundle = with_metadata_retention(
+            make_valid_bundle(bundle_id=bundle_id), RetentionPolicy(expires_at_unix_nano="0")
+        )
+        store.ingest(bundle, canonical(bundle))
+
+    def scrub_pending() -> bool:
+        """Whether purged pages still wait for a VACUUM (the durable generations)."""
+
+        [(purged, scrubbed)] = catalog_rows(
+            tmp_path,
+            "SELECT purge_generation, scrubbed_generation FROM storage_maintenance",
+        )
+        return purged > scrubbed
+
+    ingest_expired("first")
+    assert store.purge_expired(compact_when_drained=True) == 1
+    assert not scrub_pending()  # the first drain compacts
+
+    clock.advance(5 * minute)
+    ingest_expired("second")
+    assert store.purge_expired(compact_when_drained=True) == 1
+    assert scrub_pending()  # drained, but the last compaction was 5 min ago
+
+    clock.advance(5 * minute)
+    assert store.purge_expired(compact_when_drained=True) == 0
+    assert not scrub_pending()  # the pending scrub runs once 10 min have passed
+
+
+@pytest.mark.sqlite_only
 def test_list_hides_expired_incidents_until_the_expiry_reaper_runs(tmp_path) -> None:
     bundle = with_metadata_retention(
         make_valid_bundle(bundle_id="expired-list"),
         RetentionPolicy(expires_at_unix_nano="0"),
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(bundle, canonical(bundle))
     object_path = store.objects.path_for(result.record.digest)
 
@@ -1322,20 +1328,40 @@ def test_startup_purges_incidents_that_expired_while_store_was_offline(tmp_path)
         make_valid_bundle(bundle_id="expired-startup"),
         RetentionPolicy(expires_at_unix_nano="0"),
     )
-    store = IncidentStore(tmp_path)
-    result = store.ingest(bundle, canonical(bundle))
-    object_path = store.objects.path_for(result.record.digest)
+    store = make_store(tmp_path)
+    store.ingest(bundle, canonical(bundle))
     store.close()
 
-    restarted = IncidentStore(tmp_path)
-    assert not object_path.exists()
+    restarted = make_store(tmp_path)
+
+    # Purged by the open itself, before any read could purge it at the boundary.
+    assert catalog_rows(tmp_path, "SELECT COUNT(*) FROM incidents") == [(0,)]
+    assert catalog_rows(tmp_path, "SELECT COUNT(*) FROM tombstones") == [(1,)]
+    assert catalog_rows(tmp_path, "SELECT COUNT(*) FROM artifacts") == [(0,)]
     with pytest.raises(IncidentPurgedError):
         restarted.get_record("expired-startup")
 
 
+@pytest.mark.sqlite_only
+def test_startup_purge_unlinks_the_expired_cas_object(tmp_path) -> None:
+    bundle = with_metadata_retention(
+        make_valid_bundle(bundle_id="expired-startup"),
+        RetentionPolicy(expires_at_unix_nano="0"),
+    )
+    store = make_store(tmp_path)
+    result = store.ingest(bundle, canonical(bundle))
+    object_path = store.objects.path_for(result.record.digest)
+    store.close()
+
+    make_store(tmp_path)
+
+    assert not object_path.exists()
+
+
+@pytest.mark.sqlite_only
 def test_startup_expiry_cleanup_releases_store_lock_between_batches(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(storage_module, "_STARTUP_EXPIRED_PURGE_BATCH_SIZE", 1)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     for bundle_id in ("expired-startup-batch-a", "expired-startup-batch-b"):
         bundle = with_metadata_retention(
             make_valid_bundle(bundle_id=bundle_id),
@@ -1366,7 +1392,7 @@ def test_startup_expiry_cleanup_releases_store_lock_between_batches(tmp_path, mo
     monkeypatch.setattr(IncidentStore, "_purge_expired_reconciliation_batch", one_at_a_time)
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            startup = executor.submit(IncidentStore, tmp_path)
+            startup = executor.submit(make_store, tmp_path)
             assert first_batch_finished.wait(5)
             listing = executor.submit(store.list_incidents)
             assert listing.result(timeout=5).items == ()
@@ -1379,10 +1405,11 @@ def test_startup_expiry_cleanup_releases_store_lock_between_batches(tmp_path, mo
         store.close()
 
 
+@pytest.mark.sqlite_only
 def test_startup_expiry_selection_releases_store_lock_during_index_scan(
     tmp_path, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     expired = with_metadata_retention(
         make_valid_bundle(bundle_id="expired-selection-lock"),
         RetentionPolicy(expires_at_unix_nano="0"),
@@ -1415,7 +1442,7 @@ def test_startup_expiry_selection_releases_store_lock_during_index_scan(
     monkeypatch.setattr(IncidentStore, "_expired_bundle_ids", pause_after_selection)
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
-            startup = executor.submit(IncidentStore, tmp_path)
+            startup = executor.submit(make_store, tmp_path)
             assert selection_finished.wait(5)
             listing = executor.submit(store.list_incidents)
             assert listing.result(timeout=5).items == ()
@@ -1427,11 +1454,12 @@ def test_startup_expiry_selection_releases_store_lock_during_index_scan(
         store.close()
 
 
+@pytest.mark.sqlite_only
 def test_startup_expiry_sweep_excludes_earlier_arrivals_from_initial_backlog(
     tmp_path, monkeypatch
 ) -> None:
     monkeypatch.setattr(storage_module, "_STARTUP_EXPIRED_PURGE_BATCH_SIZE", 1)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     original = IncidentStore._purge_expired_reconciliation_batch
     initial_ids: list[str] = []
     initial_objects: list[Path] = []
@@ -1488,58 +1516,7 @@ def test_startup_expiry_sweep_excludes_earlier_arrivals_from_initial_backlog(
         store.close()
 
 
-def test_startup_skips_expired_artifact_arriving_during_reconciliation_decode(
-    tmp_path, monkeypatch
-) -> None:
-    store = IncidentStore(tmp_path)
-    original_sweep = IncidentStore._purge_expired_for_reconciliation
-    injected = False
-    expired_object_path: Path | None = None
-
-    def inject_expired_corrupt_artifact(instance, now):
-        nonlocal injected, expired_object_path
-        removed = original_sweep(instance, now)
-        if instance is not store and not injected:
-            injected = True
-            bundle = with_metadata_retention(
-                make_valid_bundle(bundle_id="expired-arrived-during-startup"),
-                RetentionPolicy(expires_at_unix_nano="0"),
-            )
-            result = store.ingest(bundle, canonical(bundle))
-            expired_object_path = store.objects.path_for(result.record.digest)
-            expired_object_path.write_bytes(b"corrupt but already expired")
-        return removed
-
-    monkeypatch.setattr(
-        IncidentStore, "_purge_expired_for_reconciliation", inject_expired_corrupt_artifact
-    )
-    try:
-        restarted = IncidentStore(tmp_path)
-        assert injected
-        assert expired_object_path is not None
-        assert not expired_object_path.exists()
-        with sqlite3.connect(restarted.database_path) as connection:
-            assert (
-                connection.execute(
-                    "SELECT COUNT(*) FROM incidents "
-                    "WHERE bundle_id = 'expired-arrived-during-startup'"
-                ).fetchone()[0]
-                == 0
-            )
-            assert (
-                connection.execute(
-                    "SELECT COUNT(*) FROM tombstones WHERE bundle_id_sha256 = ?",
-                    (hashlib.sha256(b"expired-arrived-during-startup").hexdigest(),),
-                ).fetchone()[0]
-                == 1
-            )
-        with pytest.raises(IncidentPurgedError):
-            restarted.get_record("expired-arrived-during-startup")
-        restarted.close()
-    finally:
-        store.close()
-
-
+@pytest.mark.sqlite_only
 def test_startup_retention_purges_expired_artifact_even_if_bytes_are_corrupt(
     tmp_path,
 ) -> None:
@@ -1547,20 +1524,20 @@ def test_startup_retention_purges_expired_artifact_even_if_bytes_are_corrupt(
         make_valid_bundle(bundle_id="expired-corrupt-startup"),
         RetentionPolicy(expires_at_unix_nano="0"),
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(bundle, canonical(bundle))
     object_path = store.objects.path_for(result.record.digest)
     object_path.write_bytes(b"corrupt but already expired")
     store.close()
 
-    restarted = IncidentStore(tmp_path)
+    restarted = make_store(tmp_path)
     assert not object_path.exists()
     with pytest.raises(IncidentPurgedError):
         restarted.get_record("expired-corrupt-startup")
 
 
 def test_destination_filtered_listing_never_pages_through_restricted_ids(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     restricted = make_valid_bundle(bundle_id="restricted")
     policies = tuple(
         policy.model_copy(update={"export": ExportPolicy(allowed=False)})
@@ -1595,14 +1572,15 @@ def test_destination_filtered_listing_never_pages_through_restricted_ids(tmp_pat
         store.list_incidents(destination="attacker")
 
 
+@pytest.mark.sqlite_only
 def test_startup_preserves_orphans_until_explicit_cleanup_and_cleans_temp(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     digest, _ = store.objects.put(b"unindexed crash leftover")
     temporary = store.objects.tmp / "object-crash-leftover"
     temporary.write_bytes(b"partial")
     store.close()
 
-    restarted = IncidentStore(tmp_path)
+    restarted = make_store(tmp_path)
     assert restarted.objects.path_for(digest).exists()
     assert not temporary.exists()
     assert tmp_path.stat().st_mode & 0o777 == 0o700
@@ -1614,8 +1592,9 @@ def test_startup_preserves_orphans_until_explicit_cleanup_and_cleans_temp(tmp_pa
     assert not restarted.objects.path_for(digest).exists()
 
 
+@pytest.mark.sqlite_only
 def test_missing_sqlite_catalog_fails_closed_without_deleting_cas(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     record = store.ingest(valid_bundle, canonical(valid_bundle)).record
     object_path = store.objects.path_for(record.digest)
     database_path = Path(store.database_path)
@@ -1624,12 +1603,13 @@ def test_missing_sqlite_catalog_fails_closed_without_deleting_cas(tmp_path, vali
         Path(f"{database_path}{suffix}").unlink(missing_ok=True)
 
     with pytest.raises(StorageError, match="restore the SQLite catalog"):
-        IncidentStore(tmp_path)
+        make_store(tmp_path)
 
     assert object_path.exists()
     assert object_path.read_bytes() == canonical(valid_bundle)
 
 
+@pytest.mark.sqlite_only
 def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -1653,9 +1633,9 @@ def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
                 ON incidents(session_id, ingested_at_unix_nano DESC, bundle_id DESC);
             """
         )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         columns = {row[1] for row in connection.execute("PRAGMA table_info(incidents)")}
         assert {
             "expires_at_unix_nano",
@@ -1675,8 +1655,9 @@ def test_v1_empty_database_is_migrated_to_current_schema(tmp_path) -> None:
         assert "project_id" in session_index_sql
 
 
+@pytest.mark.sqlite_only
 def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     original = store.put_analysis(
         "bundle-1",
@@ -1703,17 +1684,19 @@ def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid
                    CAST(generated_at_unix_nano AS INTEGER), output_json
             FROM analyses_text_time;
             DROP TABLE analyses_text_time;
-            PRAGMA user_version = 2;
             """
         )
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
+        connection.execute("PRAGMA user_version = 2")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
     restored = migrated.get_analysis("bundle-1", "v2-analysis")
     assert restored is not None
     assert restored.value == original.value
     assert restored.generated_at_unix_nano == original.generated_at_unix_nano
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         column = next(
             row
             for row in connection.execute("PRAGMA table_info(analyses)")
@@ -1723,8 +1706,9 @@ def test_v2_integer_analysis_time_is_atomically_migrated_to_text(tmp_path, valid
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+@pytest.mark.sqlite_only
 def test_v14_database_migrates_scrub_state_and_listing_indexes(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.close()
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -1736,12 +1720,14 @@ def test_v14_database_migrates_scrub_state_and_listing_indexes(tmp_path) -> None
                 f"ON incidents(export_allowed_local_{column}, "
                 "ingested_at_unix_nano DESC, bundle_id DESC)"
             )
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 14")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         assert connection.execute(
             "SELECT purge_generation, scrubbed_generation FROM storage_maintenance "
             "WHERE singleton = 1"
@@ -1754,23 +1740,26 @@ def test_v14_database_migrates_scrub_state_and_listing_indexes(tmp_path) -> None
             assert "project_id" in index_sql
 
 
+@pytest.mark.sqlite_only
 def test_v16_migration_backfills_monotonic_incident_ingest_order(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.close()
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.executescript(
             """
-            DROP TRIGGER incidents_track_ingest_order;
+            DROP TRIGGER IF EXISTS incidents_track_ingest_order;
             DROP TABLE incident_ingest_order;
-            PRAGMA user_version = 16;
             """
         )
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
+        connection.execute("PRAGMA user_version = 16")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         old_sequence = connection.execute(
             "SELECT sequence FROM incident_ingest_order WHERE bundle_id = ?",
             (valid_bundle.profile.manifest.bundle_id,),
@@ -1788,8 +1777,9 @@ def test_v16_migration_backfills_monotonic_incident_ingest_order(tmp_path, valid
     migrated.close()
 
 
+@pytest.mark.sqlite_only
 def test_legacy_tombstones_seed_one_scrub_generation_on_migration(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.close()
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -1798,6 +1788,8 @@ def test_legacy_tombstones_seed_one_scrub_generation_on_migration(tmp_path, monk
             "VALUES (?, 'default', 1)",
             ("a" * 64,),
         )
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 14")
 
     original_scrub = IncidentStore._scrub_deleted_pages
@@ -1813,7 +1805,7 @@ def test_legacy_tombstones_seed_one_scrub_generation_on_migration(tmp_path, monk
         )
 
     monkeypatch.setattr(IncidentStore, "_scrub_deleted_pages", count_scrubs)
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
 
     assert scrub_calls == 1
     with sqlite3.connect(migrated.database_path) as connection:
@@ -1824,6 +1816,7 @@ def test_legacy_tombstones_seed_one_scrub_generation_on_migration(tmp_path, monk
     migrated.close()
 
 
+@pytest.mark.sqlite_only
 def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
     database = tmp_path / "earshot.sqlite3"
     sensitive_id = "alice.example.com"
@@ -1842,7 +1835,7 @@ def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
             (sensitive_id, 123),
         )
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
         row = connection.execute(
             "SELECT bundle_id_sha256, project_id, purged_at_unix_nano FROM tombstones"
@@ -1852,13 +1845,14 @@ def test_v3_plaintext_tombstone_id_is_migrated_to_a_digest(tmp_path) -> None:
             "default",
             123,
         )
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
 
 
+@pytest.mark.sqlite_only
 def test_rolled_back_schema_version_does_not_exempt_hashed_tombstones_from_key_recovery(
     tmp_path,
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.close()
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -1869,18 +1863,21 @@ def test_rolled_back_schema_version_does_not_exempt_hashed_tombstones_from_key_r
         )
         # A restored or manually edited version integer must not make modern
         # digest rows look like the legacy plaintext layout.
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 3")
     (tmp_path / "instance-correlation.key").unlink()
 
     with pytest.raises(StorageError, match="missing its correlation key"):
-        IncidentStore(tmp_path)
+        make_store(tmp_path)
 
 
+@pytest.mark.sqlite_only
 def test_released_v4_catalog_is_migrated_without_losing_canonical_evidence(
     tmp_path, valid_bundle
 ) -> None:
     payload = canonical(valid_bundle)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, payload)
     store.close()
     database = tmp_path / "earshot.sqlite3"
@@ -1909,48 +1906,70 @@ def test_released_v4_catalog_is_migrated_without_losing_canonical_evidence(
             INSERT INTO tombstones(bundle_id_sha256, purged_at_unix_nano)
             SELECT bundle_id_sha256, purged_at_unix_nano FROM tombstones_scoped;
             DROP TABLE tombstones_scoped;
-            ALTER TABLE incidents DROP COLUMN project_id;
-            ALTER TABLE incidents DROP COLUMN expires_at_unix_nano;
-            ALTER TABLE incidents DROP COLUMN export_allowed_local_api;
-            ALTER TABLE incidents DROP COLUMN export_allowed_local_cli;
+            -- Rebuild incidents without its post-v4 columns (SQLite cannot drop a
+            -- column that a table-level foreign key names).
+            CREATE TABLE incidents_v4 (
+                bundle_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                schema_version TEXT NOT NULL,
+                object_digest TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                status TEXT NOT NULL,
+                finality TEXT NOT NULL,
+                completeness TEXT NOT NULL,
+                framework TEXT,
+                created_at_unix_nano TEXT NOT NULL,
+                ingested_at_unix_nano INTEGER NOT NULL
+            );
+            INSERT INTO incidents_v4
+            SELECT bundle_id, session_id, schema_version, object_digest, size_bytes,
+                   status, finality, completeness, framework, created_at_unix_nano,
+                   ingested_at_unix_nano
+            FROM incidents;
+            DROP TABLE incidents;
+            ALTER TABLE incidents_v4 RENAME TO incidents;
             DROP TABLE projects;
             CREATE INDEX incidents_session_idx
                 ON incidents(session_id, ingested_at_unix_nano DESC, bundle_id DESC);
-            PRAGMA user_version = 4;
             """
         )
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
+        connection.execute("PRAGMA user_version = 4")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
 
     record, restored = migrated.get_artifact("bundle-1")
     assert restored == payload
     assert record.session_id == valid_bundle.profile.manifest.session_id
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+@pytest.mark.sqlite_only
 def test_current_v12_catalog_reopens_without_rewriting_authoritative_rows(
     tmp_path, valid_bundle
 ) -> None:
     payload = canonical(valid_bundle)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     created = store.ingest(valid_bundle, payload).record
     store.close()
 
-    reopened = IncidentStore(tmp_path)
+    reopened = make_store(tmp_path)
 
     record, restored = reopened.get_artifact("bundle-1")
     assert restored == payload
     assert record == created
     with sqlite3.connect(reopened.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
 
 
+@pytest.mark.sqlite_only
 def test_v18_listing_indexes_are_removed_without_changing_incident_rows(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     ingested = store.ingest(valid_bundle, canonical(valid_bundle)).record
     store.close()
 
@@ -1964,15 +1983,17 @@ def test_v18_listing_indexes_are_removed_without_changing_incident_rows(
             CREATE INDEX incidents_project_no_expiry_idx
                 ON incidents(project_id, ingested_at_unix_nano DESC, bundle_id DESC)
                 WHERE expires_at_unix_nano IS NULL;
-            PRAGMA user_version = 18;
             """
         )
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
+        connection.execute("PRAGMA user_version = 18")
 
-    reopened = IncidentStore(tmp_path)
+    reopened = make_store(tmp_path)
 
     assert [item.bundle_id for item in reopened.list_incidents().items] == [ingested.bundle_id]
     with sqlite3.connect(reopened.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         remaining_indexes = {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
@@ -1981,8 +2002,9 @@ def test_v18_listing_indexes_are_removed_without_changing_incident_rows(
     assert "incidents_project_no_expiry_idx" not in remaining_indexes
 
 
+@pytest.mark.sqlite_only
 def test_v11_catalog_adds_project_lifecycle_columns(tmp_path, valid_bundle) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-migrated", display_name="Migrated tenant")
     store.ingest(valid_bundle, canonical(valid_bundle), project_id="tenant-migrated")
     store.close()
@@ -1992,16 +2014,18 @@ def test_v11_catalog_adds_project_lifecycle_columns(tmp_path, valid_bundle) -> N
         connection.execute("ALTER TABLE projects DROP COLUMN lifecycle_state")
         connection.execute("ALTER TABLE projects DROP COLUMN delete_started_at_unix_nano")
         connection.execute("ALTER TABLE projects DROP COLUMN deleted_at_unix_nano")
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 11")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
 
     assert migrated.project_lifecycle("tenant-migrated") == "active"
     assert migrated.get_artifact("bundle-1", project_id="tenant-migrated")[1] == canonical(
         valid_bundle
     )
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         columns = {row[1] for row in connection.execute("PRAGMA table_info(projects)")}
         assert {
             "lifecycle_state",
@@ -2010,18 +2034,21 @@ def test_v11_catalog_adds_project_lifecycle_columns(tmp_path, valid_bundle) -> N
         } <= columns
 
 
+@pytest.mark.sqlite_only
 def test_v12_catalog_adds_project_scoped_cas_cleanup_queue(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.close()
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.execute("DROP TABLE pending_object_deletions")
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 12")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         assert (
             connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' "
@@ -2031,20 +2058,23 @@ def test_v12_catalog_adds_project_scoped_cas_cleanup_queue(tmp_path) -> None:
         )
 
 
+@pytest.mark.sqlite_only
 def test_v17_catalog_adds_project_scoped_pending_ingest_journal(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.close()
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.execute("DROP INDEX pending_ingests_project_idx")
         connection.execute("DROP INDEX pending_ingests_digest_idx")
         connection.execute("DROP TABLE pending_ingests")
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 17")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
 
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
         assert (
             connection.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_ingests'"
@@ -2059,6 +2089,7 @@ def test_v17_catalog_adds_project_scoped_pending_ingest_journal(tmp_path) -> Non
         }
 
 
+@pytest.mark.sqlite_only
 def test_failed_migration_rolls_back_every_catalog_change(tmp_path) -> None:
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -2094,7 +2125,7 @@ def test_failed_migration_rolls_back_every_catalog_change(tmp_path) -> None:
         )
 
     with pytest.raises(sqlite3.IntegrityError):
-        IncidentStore(tmp_path)
+        make_store(tmp_path)
 
     with sqlite3.connect(database) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
@@ -2108,6 +2139,7 @@ def test_failed_migration_rolls_back_every_catalog_change(tmp_path) -> None:
         }["generated_at_unix_nano"] == "INTEGER"
 
 
+@pytest.mark.sqlite_only
 def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -> None:
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -2120,7 +2152,7 @@ def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -
         )
 
     with pytest.raises(StorageError, match="schema is newer than this binary"):
-        IncidentStore(tmp_path)
+        make_store(tmp_path)
 
     with sqlite3.connect(database) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 20
@@ -2135,6 +2167,7 @@ def test_newer_catalog_is_refused_without_downgrading_or_mutating_it(tmp_path) -
         )
 
 
+@pytest.mark.sqlite_only
 def test_catalog_recovers_after_process_exit_during_a_schema_transaction(tmp_path) -> None:
     database = tmp_path / "earshot.sqlite3"
     with sqlite3.connect(database) as connection:
@@ -2187,17 +2220,18 @@ def test_catalog_recovers_after_process_exit_during_a_schema_transaction(tmp_pat
             is None
         )
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
 
 
+@pytest.mark.sqlite_only
 def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     before = store.fingerprint("test", "provider-value")
     store.close()
 
-    restarted = IncidentStore(tmp_path)
+    restarted = make_store(tmp_path)
 
     assert restarted.fingerprint("test", "provider-value") == before
     key_path = tmp_path / "instance-correlation.key"
@@ -2205,6 +2239,7 @@ def test_instance_correlation_key_is_a_stable_backup_component(tmp_path) -> None
     assert len(key_path.read_bytes()) == 32
 
 
+@pytest.mark.sqlite_only
 def test_complete_persistence_unit_backup_restores_identity_authority_and_evidence(
     tmp_path,
 ) -> None:
@@ -2213,7 +2248,7 @@ def test_complete_persistence_unit_backup_restores_identity_authority_and_eviden
     restored_path = tmp_path / "restored"
     bundle = make_valid_bundle(bundle_id="restored-sales-incident")
     payload = canonical(bundle)
-    store = IncidentStore(source)
+    store = make_store(source)
     store.create_project("sales", display_name="Sales")
     store.ingest(bundle, payload, project_id="sales")
     issued = store.issue_api_key("sales", label="restored key")
@@ -2225,26 +2260,24 @@ def test_complete_persistence_unit_backup_restores_identity_authority_and_eviden
     )
     identity_before = store.fingerprint("vapi.call", "provider-call-123")
     delivery_identity = store.fingerprint("vapi.delivery", "delivery-123")
-    claim = store.claim_delivery(
+    digests = DeliveryDigests(evidence="a" * 64, body="b" * 64)
+    claim = DeliveryStore(store, calls=CallStore(store)).claim(
         connector,
         delivery_key_hmac=delivery_identity,
-        body_sha256="a" * 64,
+        digests=digests,
         event_type="end-of-call-report",
         now_unix_nano=100,
     )
     assert claim.lease_token is not None
-    store.complete_delivery(
-        claim.receipt_id,
-        state="ignored",
-        completed_at_unix_nano=200,
-        lease_token=claim.lease_token,
+    DeliveryStore(store, calls=CallStore(store)).fail(
+        claim.receipt_id, lease_token=claim.lease_token, failure_code="INTERRUPTED"
     )
     store.close()
 
     shutil.copytree(source, backup)
     shutil.copytree(backup, restored_path)
 
-    restored = IncidentStore(restored_path)
+    restored = make_store(restored_path)
 
     assert restored.get_artifact("restored-sales-incident", project_id="sales")[1] == payload
     principal = restored.authenticate_api_key(issued.credential)
@@ -2252,25 +2285,26 @@ def test_complete_persistence_unit_backup_restores_identity_authority_and_eviden
     assert principal.project_id == "sales"
     assert restored.get_connector(connector.endpoint_id) == connector
     assert restored.fingerprint("vapi.call", "provider-call-123") == identity_before
-    replay = restored.claim_delivery(
+    retry = DeliveryStore(restored, calls=CallStore(restored)).claim(
         connector,
         delivery_key_hmac=restored.fingerprint("vapi.delivery", "delivery-123"),
-        body_sha256="a" * 64,
+        digests=digests,
         event_type="end-of-call-report",
         now_unix_nano=300,
     )
-    assert replay.disposition == "replayed"
-    assert replay.receipt_id == claim.receipt_id
+    # The restored store recognises the delivery: its retry takes over the receipt.
+    assert (retry.receipt_id, retry.lease_token) == (claim.receipt_id, 2)
     assert (restored_path / "instance-correlation.key").read_bytes() == (
         backup / "instance-correlation.key"
     ).read_bytes()
 
 
+@pytest.mark.sqlite_only
 @pytest.mark.parametrize("retain_cas", [True, False])
 def test_existing_catalog_without_instance_correlation_key_fails_closed(
     tmp_path, valid_bundle, retain_cas: bool
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     record = store.ingest(valid_bundle, canonical(valid_bundle)).record
     store.close()
     if not retain_cas:
@@ -2278,13 +2312,14 @@ def test_existing_catalog_without_instance_correlation_key_fails_closed(
     (tmp_path / "instance-correlation.key").unlink()
 
     with pytest.raises(StorageError, match=r"restore instance-correlation\.key"):
-        IncidentStore(tmp_path)
+        make_store(tmp_path)
 
 
+@pytest.mark.sqlite_only
 def test_tombstone_only_catalog_without_instance_correlation_key_fails_closed(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.purge(valid_bundle.profile.manifest.bundle_id)
     store.close()
@@ -2293,15 +2328,16 @@ def test_tombstone_only_catalog_without_instance_correlation_key_fails_closed(
     (tmp_path / "instance-correlation.key").unlink()
 
     with pytest.raises(StorageError, match=r"restore instance-correlation\.key"):
-        IncidentStore(tmp_path)
+        make_store(tmp_path)
 
 
+@pytest.mark.sqlite_only
 def test_uncertain_correlation_catalog_read_does_not_regenerate_missing_key(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
     import earshot.storage as storage_module
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, canonical(valid_bundle))
     store.purge(valid_bundle.profile.manifest.bundle_id)
     store.close()
@@ -2317,5 +2353,5 @@ def test_uncertain_correlation_catalog_read_does_not_regenerate_missing_key(
     monkeypatch.setattr(storage_module.sqlite3, "connect", fail_read_only_catalog_open)
 
     with pytest.raises(StorageError, match=r"restore instance-correlation\.key"):
-        IncidentStore(tmp_path)
+        make_store(tmp_path)
     assert not key_path.exists()
