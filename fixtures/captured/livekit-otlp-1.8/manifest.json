@@ -1,0 +1,774 @@
+{
+  "description": "OTLP/HTTP protobuf requests exported by one real LiveKit Agents call, in arrival order, plus that call's RecorderIO stereo recording.",
+  "provenance": {
+    "captured_on": "2026-10-19",
+    "source_kind": "real_call",
+    "session_key": "livekit-otlp-6c8a5afc-6785-497f-8eee-c7612151abf6",
+    "session_key_attribute": "earshot.session.id",
+    "mode": "headless Tier A: an in-process fake job (AgentServer.simulate_job(fake_job=True), THREAD executor, unregistered); no LiveKit server, no room, no WebRTC",
+    "room_sid": "SRM_e4e2551e28a8",
+    "caller_script": [
+      "Hi, I would like to book a table for two people tomorrow evening.",
+      "Seven thirty works for us. Could we sit somewhere quiet near the window?",
+      "Perfect, that is everything I needed. Thank you very much, goodbye."
+    ],
+    "caller_audio": "examples/pipecat_otlp/make_caller_audio.py",
+    "providers": {
+      "stt": {
+        "provider": "deepgram",
+        "model": "nova-3"
+      },
+      "llm": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b"
+      },
+      "tts": {
+        "provider": "cartesia",
+        "model": "sonic-3"
+      },
+      "vad": {
+        "provider": "silero"
+      }
+    },
+    "versions": {
+      "livekit-agents": "1.8.8",
+      "livekit-plugins-deepgram": "1.8.8",
+      "livekit-plugins-groq": "1.8.8",
+      "livekit-plugins-cartesia": "1.8.8",
+      "livekit-plugins-silero": "1.8.8",
+      "livekit": "1.1.20",
+      "opentelemetry-sdk": "1.45.1",
+      "opentelemetry-exporter-otlp-proto-http": "1.45.1",
+      "av": "18.1.0",
+      "python": "3.11.15"
+    },
+    "builder_versions": {
+      "opentelemetry-proto": "1.44.0",
+      "protobuf": "6.33.6",
+      "av": "18.1.0"
+    },
+    "exported_span_count_tee": 58,
+    "driver": "examples/livekit_otlp/run_call.py",
+    "sink": "scripts/otlp_capture_sink.py",
+    "builder": "scripts/build_livekit_otlp_fixture.py"
+  },
+  "scrub_rules": [
+    "Resource attribute service.instance.id is replaced with 'captured-instance'.",
+    "Resource attributes under host.* and process.* (if any) become 'captured-<key>'.",
+    "Any string value equal to CARTESIA_VOICE_ID becomes 'captured-cartesia-voice'.",
+    "Inside every string value (resource, scope, span, event and link attributes, recursing into array and kvlist values): any absolute path up to site-packages/ becomes '/captured-site-packages/', the home directory becomes '/captured-home', and the local username and hostname become 'captured-user' / 'captured-host' (LiveKit's event_loop_blocked spans carry stack traces with local paths).",
+    "Each request is re-serialized with SerializeToString(deterministic=True).",
+    "The build aborts if any .env value (except GROQ_MODEL and CARTESIA_MODEL, public model ids that LiveKit records as gen_ai.request.model) occurs anywhere in the fixture bytes.",
+    "Trace/span ids, timestamps, the fake job's room SID and job id, provider request ids, transcripts and LLM/TTS text are kept as captured: the caller is a fixed synthetic script and the agent text is model output.",
+    "audio/recording.ogg is the RecorderIO file byte for byte (no re-encode, no trim)."
+  ],
+  "requests": [
+    {
+      "file": "001.pb",
+      "sha256": "924082f41d2e1f1b0a78391d2d066204abd16da493068f593d3d5afa7070f94b",
+      "span_count": 9,
+      "span_names": {
+        "eou_detection": 1,
+        "eou_wait": 1,
+        "on_enter": 1,
+        "on_user_turn_completed": 1,
+        "session_start": 1,
+        "setup_toolsets": 1,
+        "start_agent_activity": 1,
+        "user_speaking": 1,
+        "user_turn": 1
+      },
+      "received_unix_nano": "1792407991574171000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 4282
+      }
+    },
+    {
+      "file": "002.pb",
+      "sha256": "d5417de9a253ad0657aa77529b0d14b174a9c077bf57e958c6d7aac5021b40f6",
+      "span_count": 8,
+      "span_names": {
+        "agent_speaking": 1,
+        "agent_turn": 1,
+        "llm_node": 1,
+        "llm_request": 1,
+        "llm_request_run": 1,
+        "tts_node": 1,
+        "tts_request": 1,
+        "tts_request_run": 1
+      },
+      "received_unix_nano": "1792407996579510000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 7043
+      }
+    },
+    {
+      "file": "003.pb",
+      "sha256": "49d1de9d5262d2161a0374bf55fc33845f5a886b112486dcc9ed22d6f7dc6bba",
+      "span_count": 3,
+      "span_names": {
+        "llm_node": 1,
+        "llm_request": 1,
+        "llm_request_run": 1
+      },
+      "received_unix_nano": "1792408001585159000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 4653
+      }
+    },
+    {
+      "file": "004.pb",
+      "sha256": "b398ef734a9c9a66d90f1473ff3095bd1bf7016dafcac37068a8e59769d6bc84",
+      "span_count": 11,
+      "span_names": {
+        "eou_detection": 1,
+        "eou_wait": 1,
+        "llm_node": 1,
+        "llm_request": 1,
+        "llm_request_run": 1,
+        "on_user_turn_completed": 1,
+        "tts_node": 1,
+        "tts_request": 1,
+        "tts_request_run": 1,
+        "user_speaking": 1,
+        "user_turn": 1
+      },
+      "received_unix_nano": "1792408006591193000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 9827
+      }
+    },
+    {
+      "file": "005.pb",
+      "sha256": "e8b3819544cd662e032ba090f60a06bdd63cfc48166276d742ef50643e232232",
+      "span_count": 5,
+      "span_names": {
+        "agent_speaking": 1,
+        "agent_turn": 1,
+        "llm_node": 1,
+        "llm_request": 1,
+        "llm_request_run": 1
+      },
+      "received_unix_nano": "1792408011600904000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 6671
+      }
+    },
+    {
+      "file": "006.pb",
+      "sha256": "be1b9c3eae9d0cba8ed8d8279971785d3ff883f29b97d73f965cb3140578f53f",
+      "span_count": 11,
+      "span_names": {
+        "eou_detection": 1,
+        "eou_wait": 1,
+        "llm_node": 1,
+        "llm_request": 1,
+        "llm_request_run": 1,
+        "on_user_turn_completed": 1,
+        "tts_node": 1,
+        "tts_request": 1,
+        "tts_request_run": 1,
+        "user_speaking": 1,
+        "user_turn": 1
+      },
+      "received_unix_nano": "1792408016607188000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 10805
+      }
+    },
+    {
+      "file": "007.pb",
+      "sha256": "92cbc79012b98edd3ada4cd68a82bf75760b2e7afb35e706e274689dd4fd1e4d",
+      "span_count": 11,
+      "span_names": {
+        "agent_session": 1,
+        "agent_speaking": 1,
+        "agent_turn": 1,
+        "drain_agent_activity": 1,
+        "job_entrypoint": 1,
+        "job_shutdown": 1,
+        "on_exit": 1,
+        "on_session_end": 1,
+        "room_disconnect": 1,
+        "session_close": 1,
+        "session_end_upload": 1
+      },
+      "received_unix_nano": "1792408021116933000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 6355
+      }
+    }
+  ],
+  "span_count": 58,
+  "span_names": {
+    "agent_session": 1,
+    "agent_speaking": 3,
+    "agent_turn": 3,
+    "drain_agent_activity": 1,
+    "eou_detection": 3,
+    "eou_wait": 3,
+    "job_entrypoint": 1,
+    "job_shutdown": 1,
+    "llm_node": 5,
+    "llm_request": 5,
+    "llm_request_run": 5,
+    "on_enter": 1,
+    "on_exit": 1,
+    "on_session_end": 1,
+    "on_user_turn_completed": 3,
+    "room_disconnect": 1,
+    "session_close": 1,
+    "session_end_upload": 1,
+    "session_start": 1,
+    "setup_toolsets": 1,
+    "start_agent_activity": 1,
+    "tts_node": 3,
+    "tts_request": 3,
+    "tts_request_run": 3,
+    "user_speaking": 3,
+    "user_turn": 3
+  },
+  "scopes": {
+    "livekit-agents": {
+      "version": "",
+      "span_names": [
+        "agent_session",
+        "agent_speaking",
+        "agent_turn",
+        "drain_agent_activity",
+        "eou_detection",
+        "eou_wait",
+        "job_entrypoint",
+        "job_shutdown",
+        "llm_node",
+        "llm_request",
+        "llm_request_run",
+        "on_enter",
+        "on_exit",
+        "on_session_end",
+        "on_user_turn_completed",
+        "room_disconnect",
+        "session_close",
+        "session_end_upload",
+        "session_start",
+        "setup_toolsets",
+        "start_agent_activity",
+        "tts_node",
+        "tts_request",
+        "tts_request_run",
+        "user_speaking",
+        "user_turn"
+      ]
+    }
+  },
+  "resource_attribute_keys": [
+    "service.instance.id",
+    "service.name",
+    "telemetry.sdk.language",
+    "telemetry.sdk.name",
+    "telemetry.sdk.version"
+  ],
+  "end_marker": {
+    "scope": "livekit-agents",
+    "span": "session_close",
+    "file": "007.pb",
+    "end_time_unix_nano": "1792408020891922000"
+  },
+  "after_end_marker": [
+    {
+      "span": "agent_session",
+      "end_after_marker_ms": 0.258
+    },
+    {
+      "span": "on_session_end",
+      "end_after_marker_ms": 22.947
+    },
+    {
+      "span": "session_end_upload",
+      "end_after_marker_ms": 26.09
+    },
+    {
+      "span": "room_disconnect",
+      "end_after_marker_ms": 42.434
+    },
+    {
+      "span": "job_shutdown",
+      "end_after_marker_ms": 42.546
+    },
+    {
+      "span": "job_entrypoint",
+      "end_after_marker_ms": 42.557
+    }
+  ],
+  "span_shapes": {
+    "agent_session": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "gen_ai.operation.name": 1,
+        "gen_ai.workflow.name": 1,
+        "job_id": 1,
+        "lk.agent_label": 1,
+        "lk.agent_name": 1,
+        "lk.dispatch_id": 1,
+        "lk.job.agent_id": 1,
+        "lk.job.worker_id": 1,
+        "lk.job_id": 1,
+        "lk.pii.room_name": 1,
+        "lk.room_sid": 1,
+        "room_id": 1
+      },
+      "events": {
+        "agent_state_changed": {
+          "count": 10,
+          "attributes": ["lk.new_state", "lk.old_state"]
+        },
+        "user_state_changed": {
+          "count": 6,
+          "attributes": ["lk.new_state", "lk.old_state"]
+        }
+      }
+    },
+    "agent_speaking": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "job_id": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "agent_turn": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.agent.name": 3,
+        "gen_ai.conversation.id": 3,
+        "gen_ai.operation.name": 3,
+        "job_id": 3,
+        "lk.e2e_latency": 3,
+        "lk.end_of_turn_delay": 3,
+        "lk.generation_count": 3,
+        "lk.generation_id": 3,
+        "lk.interrupted": 3,
+        "lk.on_user_turn_completed_delay": 3,
+        "lk.pii.response.text": 3,
+        "lk.pii.user_input": 3,
+        "lk.speech.queue_wait": 3,
+        "lk.speech_id": 3,
+        "lk.transcription_delay": 3,
+        "room_id": 3
+      },
+      "events": {
+        "generation": {
+          "count": 5,
+          "attributes": ["lk.generation_id"]
+        },
+        "preemptive_generation_discarded": {
+          "count": 2,
+          "attributes": ["lk.speech_id"]
+        }
+      }
+    },
+    "drain_agent_activity": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "lk.agent_label": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "eou_detection": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "job_id": 3,
+        "lk.eou.endpointing_delay": 3,
+        "lk.eou.from_cache": 3,
+        "lk.eou.language": 3,
+        "lk.eou.probability": 3,
+        "lk.eou.source": 3,
+        "lk.eou.unlikely_threshold": 3,
+        "lk.pii.chat_ctx": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "eou_wait": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "job_id": 3,
+        "lk.eou.endpointing_delay": 3,
+        "lk.eou.not_committed_count": 3,
+        "lk.eou.outcome": 3,
+        "lk.eou.rearm_count": 3,
+        "lk.eou.source": 3,
+        "lk.eou.wait_duration": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "job_entrypoint": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "lk.agent_name": 1,
+        "lk.dispatch_id": 1,
+        "lk.job.agent_id": 1,
+        "lk.job.entrypoint_latency": 1,
+        "lk.job.worker_id": 1,
+        "lk.job_id": 1,
+        "lk.pii.room_name": 1,
+        "lk.room_sid": 1,
+        "room_id": 1
+      },
+      "events": {
+        "entrypoint_returned": {
+          "count": 1,
+          "attributes": []
+        },
+        "entrypoint_started": {
+          "count": 1,
+          "attributes": []
+        },
+        "process_assigned": {
+          "count": 1,
+          "attributes": []
+        }
+      }
+    },
+    "job_shutdown": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "lk.shutdown.reason": 1,
+        "lk.shutdown.user_initiated": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "llm_node": {
+      "spans": 5,
+      "attributes": {
+        "earshot.session.id": 5,
+        "gen_ai.conversation.id": 5,
+        "gen_ai.provider.name": 5,
+        "gen_ai.request.model": 5,
+        "job_id": 5,
+        "lk.function_tools": 5,
+        "lk.pii.chat_ctx": 5,
+        "lk.pii.response.function_calls": 5,
+        "lk.pii.response.text": 5,
+        "lk.provider_tools": 5,
+        "lk.response.ttft": 5,
+        "lk.tool_sets": 5,
+        "room_id": 5
+      },
+      "events": {}
+    },
+    "llm_request": {
+      "spans": 5,
+      "attributes": {
+        "earshot.session.id": 5,
+        "gen_ai.conversation.id": 5,
+        "gen_ai.input.messages": 5,
+        "gen_ai.operation.name": 5,
+        "gen_ai.output.messages": 5,
+        "gen_ai.output.type": 5,
+        "gen_ai.provider.name": 5,
+        "gen_ai.request.model": 5,
+        "gen_ai.request.stream": 5,
+        "gen_ai.response.finish_reasons": 5,
+        "gen_ai.response.id": 5,
+        "gen_ai.response.model": 5,
+        "gen_ai.response.time_to_first_chunk": 5,
+        "gen_ai.system_instructions": 5,
+        "gen_ai.usage.input_tokens": 5,
+        "gen_ai.usage.output_tokens": 5,
+        "gen_ai.usage.reasoning.output_tokens": 5,
+        "gen_ai.usage.reasoning_tokens": 5,
+        "job_id": 5,
+        "langfuse.observation.completion_start_time": 5,
+        "lk.llm_metrics": 5,
+        "room_id": 5
+      },
+      "events": {}
+    },
+    "llm_request_run": {
+      "spans": 5,
+      "attributes": {
+        "earshot.session.id": 5,
+        "gen_ai.conversation.id": 5,
+        "gen_ai.provider.name": 5,
+        "gen_ai.request.model": 5,
+        "job_id": 5,
+        "lk.provider_request_ids": 4,
+        "lk.retry_count": 5,
+        "room_id": 5
+      },
+      "events": {}
+    },
+    "on_enter": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "lk.agent_label": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "on_exit": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "lk.agent_label": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "on_session_end": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "lk.callback.name": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "on_user_turn_completed": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "job_id": 3,
+        "lk.agent_label": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "room_disconnect": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "session_close": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "lk.close.drain": 1,
+        "lk.close_reason": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "session_end_upload": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "session_start": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "setup_toolsets": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.conversation.id": 1,
+        "job_id": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "start_agent_activity": {
+      "spans": 1,
+      "attributes": {
+        "earshot.session.id": 1,
+        "gen_ai.agent.name": 1,
+        "gen_ai.conversation.id": 1,
+        "gen_ai.operation.name": 1,
+        "gen_ai.provider.name": 1,
+        "gen_ai.request.model": 1,
+        "job_id": 1,
+        "lk.agent_label": 1,
+        "room_id": 1
+      },
+      "events": {}
+    },
+    "tts_node": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "gen_ai.provider.name": 3,
+        "gen_ai.request.model": 3,
+        "job_id": 3,
+        "lk.response.ttfb": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "tts_request": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "gen_ai.provider.name": 3,
+        "gen_ai.request.model": 3,
+        "job_id": 3,
+        "lk.pii.input_text": 3,
+        "lk.tts.label": 3,
+        "lk.tts.streaming": 3,
+        "lk.tts_metrics": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "tts_request_run": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "gen_ai.provider.name": 3,
+        "gen_ai.request.model": 3,
+        "job_id": 3,
+        "lk.provider_request_ids": 3,
+        "lk.retry_count": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "user_speaking": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "job_id": 3,
+        "room_id": 3
+      },
+      "events": {}
+    },
+    "user_turn": {
+      "spans": 3,
+      "attributes": {
+        "earshot.session.id": 3,
+        "gen_ai.conversation.id": 3,
+        "gen_ai.provider.name": 3,
+        "gen_ai.request.model": 3,
+        "job_id": 3,
+        "lk.end_of_turn_delay": 3,
+        "lk.pii.user_transcript": 3,
+        "lk.provider_request_ids": 3,
+        "lk.stt.events": 3,
+        "lk.transcript_confidence": 3,
+        "lk.transcription_delay": 3,
+        "room_id": 3
+      },
+      "events": {}
+    }
+  },
+  "audio": {
+    "file": "audio/recording.ogg",
+    "channel_speakers": ["user", "agent"],
+    "started_at_unix_nano": "1792407986846424000",
+    "started_at_source": "RecorderIO.recording_started_at (time.time() at RecorderIO.start(), microsecond precision)",
+    "processing": "none: the bytes RecorderIO wrote",
+    "codec": "opus",
+    "channels": 2,
+    "sample_rate": 48000,
+    "decoded_duration_s": 34.003771,
+    "encoder": "Lavf62.12.102",
+    "size": 396729,
+    "sha256": "1a059804f16aec20cdd1c5693e6ba9d4cea5984a3d068fce5c20fa7d84e0ac45"
+  },
+  "ground_truth": {
+    "caller_wav_sample_0_s": 0.02114,
+    "caller_lines": [
+      {
+        "text": "Hi, I would like to book a table for two people tomorrow evening.",
+        "start_s": 1.02114,
+        "duration_s": 2.87925
+      },
+      {
+        "text": "Seven thirty works for us. Could we sit somewhere quiet near the window?",
+        "start_s": 10.90039,
+        "duration_s": 3.761625
+      },
+      {
+        "text": "Perfect, that is everything I needed. Thank you very much, goodbye.",
+        "start_s": 21.662015,
+        "duration_s": 3.204375
+      }
+    ],
+    "agent_playback": [
+      {
+        "start_s": 5.073152,
+        "played_s": 4.597583,
+        "interrupted": false,
+        "runs": [[5.073206, 0.0, 4.597583]]
+      },
+      {
+        "start_s": 15.7595,
+        "played_s": 6.130042,
+        "interrupted": false,
+        "runs": [[15.759564, 0.0, 6.130042]]
+      },
+      {
+        "start_s": 25.933499,
+        "played_s": 4.040292,
+        "interrupted": false,
+        "runs": [[25.933563, 0.0, 4.040292]]
+      }
+    ]
+  }
+}
