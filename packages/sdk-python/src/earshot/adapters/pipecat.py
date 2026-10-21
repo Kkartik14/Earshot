@@ -673,7 +673,7 @@ class PipecatAdapter:
         return event_id
 
     def create_observer(self) -> object:
-        """Create a Pipecat 1.5 observer for explicit pipeline-frame facts."""
+        """Create a Pipecat 1.6 observer for explicit pipeline-frame facts."""
 
         try:
             from pipecat.frames.frames import (
@@ -688,7 +688,7 @@ class PipecatAdapter:
             from pipecat.observers.base_observer import BaseObserver, FramePushed
         except ImportError as error:  # pragma: no cover - optional dependency
             raise AdapterDependencyError(
-                "Pipecat frame observation requires pipecat-ai>=1.5,<1.6"
+                "Pipecat frame observation requires pipecat-ai>=1.6,<1.7"
             ) from error
 
         adapter = self
