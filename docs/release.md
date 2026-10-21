@@ -238,12 +238,28 @@ format support requires an explicit versioned decoder or normalizer.
 This release tests CPython 3.11, 3.12, and 3.13. Linux is the primary full-suite target;
 the compatibility workflow also runs a framework smoke on macOS. The `Requires-Python`
 floor remains `>=3.11`; newer interpreters outside the tested matrix are unverified, not
-prohibited. Pipecat support is `>=1.5.0,<1.6`, LiveKit Agents support is
+prohibited. Pipecat support is `>=1.6.0,<1.7`, LiveKit Agents support is
 `>=1.6.5,<1.7`, and standalone OpenTelemetry API/SDK support is `>=1.30,<2`. CI tests
 the exact Pipecat/LiveKit lower bounds and the newest resolver-selected versions within
 those ranges in separate jobs. Framework dependencies can impose a higher effective
 OpenTelemetry floor than the standalone extra. A release must not claim compatibility
 from a developer's single local environment alone.
+
+The Pipecat minimum was raised from 1.5.0 to 1.6.0 in response to the
+[upstream advisory](https://github.com/pipecat-ai/pipecat/security/advisories/GHSA-hqm2-cfx2-2vgh),
+which marks versions through 1.5.0 as affected when the built-in development runner is
+exposed beyond localhost. Pipecat 1.6.0 adds a warning and documents this boundary; it
+does not add authentication. The runner remains unauthenticated by design and must not
+be exposed to untrusted networks. Production deployments require an authenticated
+dispatcher or managed runtime. Earshot's adapter does not start or expose the runner, and
+its optional extras exclude the advisory's affected version range.
+
+The optional Pipecat dependency graph still includes NLTK 3.10.3. Its
+[upstream path-traversal advisory](https://github.com/nltk/nltk/security/advisories/GHSA-8mgp-746c-j5xp)
+has no patched release listed. The affected model-artifact path APIs are not called by
+Earshot's adapter, but applications using those NLTK APIs must assess their exposure;
+this transitive dependency means the optional Pipecat environment is not vulnerability-free.
+Recheck the advisory before each release.
 
 The Postgres catalog is tested on Postgres 16, and the S3 blob store against MinIO.
 

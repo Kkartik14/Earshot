@@ -811,6 +811,22 @@ wheels = [
 ]
 
 [[package]]
+name = "deepgram-sdk"
+version = "7.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2d/a9/d1892162e7e14a64e502c3402be8938a17f688d6738981ec05bd7bc9ada8/deepgram_sdk-7.14.0.tar.gz", hash = "sha256:fe665790a10ea65760383cc0ef7ef1dd1b0e0c8338cce8580a4df2a0f2fdbe7f", size = 254063, upload-time = "2026-10-20T09:49:36.043Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/1e/547fa73b2eadf8c883fa736c1f98e4ee246df46c2d77721a3660beaf28a4/deepgram_sdk-7.14.0-py3-none-any.whl", hash = "sha256:5d7bf8d3277e2145a1ccac979b8cadd9b9c2b34e0a6bc0322717e227cd17563f", size = 664066, upload-time = "2026-10-20T09:49:34.545Z" },
+]
+
+[[package]]
 name = "defusedxml"
 version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -896,6 +912,11 @@ pipecat-groq = [
     { name = "opentelemetry-sdk" },
     { name = "pipecat-ai", extra = ["groq", "tracing"] },
 ]
+pipecat-matrix = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-sdk" },
+    { name = "pipecat-ai", extra = ["deepgram", "groq", "sarvam", "tracing"] },
+]
 postgres = [
     { name = "psycopg", extra = ["binary"] },
 ]
@@ -934,6 +955,7 @@ requires-dist = [
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-api", marker = "extra == 'pipecat'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-api", marker = "extra == 'pipecat-groq'", specifier = ">=1.30,<2" },
+    { name = "opentelemetry-api", marker = "extra == 'pipecat-matrix'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'dev'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-proto", marker = "extra == 'dev'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-proto", marker = "extra == 'server'", specifier = ">=1.30,<2" },
@@ -942,8 +964,10 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-sdk", marker = "extra == 'pipecat'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-sdk", marker = "extra == 'pipecat-groq'", specifier = ">=1.30,<2" },
-    { name = "pipecat-ai", extras = ["groq", "tracing"], marker = "extra == 'pipecat-groq'", specifier = ">=1.5.0,<1.6" },
-    { name = "pipecat-ai", extras = ["tracing"], marker = "extra == 'pipecat'", specifier = ">=1.5.0,<1.6" },
+    { name = "opentelemetry-sdk", marker = "extra == 'pipecat-matrix'", specifier = ">=1.30,<2" },
+    { name = "pipecat-ai", extras = ["assemblyai", "cartesia", "deepgram", "elevenlabs", "groq", "openai", "sarvam", "soniox", "tracing"], marker = "extra == 'pipecat-matrix'", specifier = "==1.6.0" },
+    { name = "pipecat-ai", extras = ["groq", "tracing"], marker = "extra == 'pipecat-groq'", specifier = ">=1.6.0,<1.7" },
+    { name = "pipecat-ai", extras = ["tracing"], marker = "extra == 'pipecat'", specifier = ">=1.6.0,<1.7" },
     { name = "protobuf", specifier = ">=6.33.5,<7" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'dev'", specifier = ">=3.2,<4" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2,<4" },
@@ -961,7 +985,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.30,<1" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.30,<1" },
 ]
-provides-extras = ["server", "postgres", "s3", "spool-encryption", "dev", "otel", "pipecat", "pipecat-groq", "livekit"]
+provides-extras = ["server", "postgres", "s3", "spool-encryption", "dev", "otel", "pipecat", "pipecat-groq", "pipecat-matrix", "livekit"]
 
 [[package]]
 name = "eval-type-backport"
@@ -2590,7 +2614,7 @@ wheels = [
 
 [[package]]
 name = "pipecat-ai"
-version = "1.5.0"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -2611,21 +2635,26 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyloudnorm" },
     { name = "pyyaml" },
-    { name = "pyyaml-include" },
     { name = "resampy" },
     { name = "soxr" },
     { name = "typing-extensions" },
     { name = "wait-for2", marker = "python_full_version < '3.12'" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/59/7b46ccbeb7c8f68083d0bc1ef39583e78938c6e65af1ff6f707051ea0948/pipecat_ai-1.5.0.tar.gz", hash = "sha256:df9bd5c3176076d425ffba3d510e0122d055b97c9ba8ad35a4390073eb421e18", size = 11624719, upload-time = "2026-07-04T17:11:50.441Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/18/75513bd13f3b8dacfedc3457b65f367c8324c3b5254d28d0a81608d4acfd/pipecat_ai-1.6.0.tar.gz", hash = "sha256:836d50e34e56b8d68aa06e204129c08510f68b763d027f71536d0f50c23f7d3b", size = 11690560, upload-time = "2026-07-21T20:14:45.642Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/05/c7daebbf0fc59fd6106e34e52a255727443c1db49d046f7ed0bd9dcb6e4e/pipecat_ai-1.5.0-py3-none-any.whl", hash = "sha256:6089ac7ec418b310975c9c16dd472c16f99838810aae707d669b4f6f5981cf8a", size = 11264890, upload-time = "2026-07-04T17:11:47.677Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/61/94f37f1b898e6625ebca74a0998358d14f2f3521762514676a8ce7d5b073/pipecat_ai-1.6.0-py3-none-any.whl", hash = "sha256:ec5f3659fc1743c359d559284ea9f701a48e26b369b01de24a2503677c1cab23", size = 11314604, upload-time = "2026-07-21T20:14:43.125Z" },
 ]
 
 [package.optional-dependencies]
+deepgram = [
+    { name = "deepgram-sdk" },
+]
 groq = [
     { name = "groq" },
+]
+sarvam = [
+    { name = "sarvamai" },
 ]
 tracing = [
     { name = "opentelemetry-api" },
@@ -3185,18 +3214,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyyaml-include"
-version = "1.4.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyyaml" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/be/2d07ad85e3d593d69640876a8686eae2c533db8cb7bf298d25c421b4d2d5/pyyaml-include-1.4.1.tar.gz", hash = "sha256:1a96e33a99a3e56235f5221273832464025f02ff3d8539309a3bf00dec624471", size = 20592, upload-time = "2024-03-25T14:56:43.748Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/ca/6a2cc3a73170d10b5af1f1613baa2ed1f8f46f62dd0bfab2bffd2c2fe260/pyyaml_include-1.4.1-py3-none-any.whl", hash = "sha256:323c7f3a19c82fbc4d73abbaab7ef4f793e146a13383866831631b26ccc7fb00", size = 19079, upload-time = "2024-03-25T14:56:41.274Z" },
-]
-
-[[package]]
 name = "regex"
 version = "2026.9.29"
 source = { registry = "https://pypi.org/simple" }
@@ -3402,6 +3419,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/76/43/35e4d8aa320bffe8287fe8f65f578fa2d2db0a64212f0e710dce58267854/s3transfer-0.19.2.tar.gz", hash = "sha256:ba0309fd86be3c27dbf78cdd813c13c5e1df16e5874b99d2535ebbdfb9892993", size = 165592, upload-time = "2026-07-22T19:30:44.432Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/e7/5c595c75e9f41a44f30e526eda465ea0b4eec93470e074e4a111b253f13a/s3transfer-0.19.2-py3-none-any.whl", hash = "sha256:d8168eccca828cbb2cd573675333f3bddd254313a9c42494b84c76b539e8ba25", size = 90216, upload-time = "2026-07-22T19:30:43.251Z" },
+]
+
+[[package]]
+name = "sarvamai"
+version = "0.1.28"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/23/44/57a7a37be64953bb0bec9f674e92a9f8fb7070ce6aeb44c6f22720458b40/sarvamai-0.1.28.tar.gz", hash = "sha256:bc52f0c849e429d1a4493e49b1b4b65bf06965f3936d4eb6ee3da3130452e7ea", size = 139022, upload-time = "2026-04-20T08:05:12.185Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/90/95cd195a3a2ae9a9973c6a05705207e8dd97b5aea90339bc24343cb54850/sarvamai-0.1.28-py3-none-any.whl", hash = "sha256:52e71c0a0f521552d4d948ec452699b44554a56e64ee354b14da2efc9d9046b3", size = 269335, upload-time = "2026-04-20T08:05:10.712Z" },
 ]
 
 [[package]]

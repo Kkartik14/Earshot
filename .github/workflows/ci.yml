@@ -207,10 +207,10 @@ jobs:
         include:
           - integration: pipecat
             lane: minimum
-            dependency: pipecat-ai[tracing]==1.5.0
+            dependency: pipecat-ai[tracing]==1.6.0
           - integration: pipecat
             lane: current
-            dependency: pipecat-ai[tracing]>=1.5.0,<1.6
+            dependency: pipecat-ai[tracing]>=1.6.0,<1.7
           - integration: livekit
             lane: minimum
             dependency: livekit-agents==1.6.5

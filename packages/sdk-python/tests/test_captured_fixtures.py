@@ -27,6 +27,13 @@ EXPECTED_ADAPTER_VERSION = {
     "pipecat": PIPECAT_ADAPTER_VERSION,
     "sarvam": PIPELINE_ADAPTER_VERSION,
 }
+EXPECTED_CAPTURED_ON = {
+    "cartesia": "2026-07-23",
+    "deepgram": "2026-07-23",
+    "livekit": "2026-07-23",
+    "pipecat": "2026-09-28",
+    "sarvam": "2026-07-23",
+}
 
 
 def _sha256(path: Path) -> str:
@@ -56,7 +63,7 @@ def test_retained_real_captures_validate_and_remain_metadata_only() -> None:
         assert not bundle.raw_otlp_chunks, path
         assert not bundle.profile.media_refs, path
         assert entry["source_kind"] == "retained_real_capture"
-        assert entry["captured_on"] == "2026-07-23"
+        assert entry["captured_on"] == EXPECTED_CAPTURED_ON[entry["surface"]]
         assert entry["migration"] == "none_current_contract"
         assert entry["adapter_version"] == EXPECTED_ADAPTER_VERSION[entry["surface"]]
         assert bundle.profile.manifest.adapters[0].version == entry["adapter_version"]

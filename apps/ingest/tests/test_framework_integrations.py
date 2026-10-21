@@ -93,12 +93,12 @@ def test_livekit_1_6_metric_models_are_consumed_as_real_objects() -> None:
     assert validate_incident(bundle).ok
 
 
-def test_pipecat_1_5_real_readable_spans_have_lifecycle_root_and_sibling_stages() -> None:
+def test_pipecat_1_6_real_readable_spans_have_lifecycle_root_and_sibling_stages() -> None:
     pytest.importorskip("pipecat")
     resources = pytest.importorskip("opentelemetry.sdk.resources")
     sdk_trace = pytest.importorskip("opentelemetry.sdk.trace")
 
-    assert version("pipecat-ai").startswith("1.5.")
+    assert version("pipecat-ai").startswith("1.6.")
     adapter = PipecatAdapter(recorder(), framework_version=version("pipecat-ai"))
     provider = sdk_trace.TracerProvider(
         resource=resources.Resource.create({"service.name": "pipecat-integration"})
@@ -139,6 +139,7 @@ def test_pipecat_real_pipeline_normal_end_frame_does_not_create_interruption() -
         """
         import asyncio
         import json
+        from importlib.metadata import version
 
         from opentelemetry import trace
         from opentelemetry.sdk.trace import TracerProvider
@@ -153,7 +154,7 @@ def test_pipecat_real_pipeline_normal_end_frame_does_not_create_interruption() -
         provider = TracerProvider()
         trace.set_tracer_provider(provider)
         recorder = IncidentRecorder(config=RecorderConfig(clock_domain_id="server-clock"))
-        adapter = PipecatAdapter(recorder, framework_version="1.5.0")
+        adapter = PipecatAdapter(recorder, framework_version=version("pipecat-ai"))
         adapter.attach(provider)
         worker = PipelineWorker(
             Pipeline([IdentityFilter()]),
@@ -185,6 +186,9 @@ def test_pipecat_real_pipeline_normal_end_frame_does_not_create_interruption() -
             + json.dumps(
                 {
                     "was_interrupted": turn.attributes.get("turn.was_interrupted"),
+                    "method_version": (
+                        turn.evidence.method_version if turn.evidence else None
+                    ),
                     "accepted": sum(
                         event.event_name == "earshot.interruption.accepted"
                         for event in bundle.profile.events
@@ -209,6 +213,7 @@ def test_pipecat_real_pipeline_normal_end_frame_does_not_create_interruption() -
     )
     assert json.loads(result_line.removeprefix("EARSHOT_RESULT=")) == {
         "accepted": 0,
+        "method_version": version("pipecat-ai"),
         "was_interrupted": True,
     }
 
