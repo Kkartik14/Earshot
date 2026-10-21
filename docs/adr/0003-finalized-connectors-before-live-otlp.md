@@ -1,6 +1,6 @@
 # ADR 0003: Build finalized provider Connectors before generic live OTLP
 
-Status: accepted
+Status: superseded by [ADR 0005](./0005-otlp-receiver-and-calls.md) (2026-10-19)
 
 ## Context
 
