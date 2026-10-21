@@ -24,13 +24,30 @@ expected, not a failure.
 
 ### Running a subset by marker
 
-`pyproject.toml` defines four markers: `unit`, `integration`, `e2e`, `property`.
+`pyproject.toml` defines the markers `unit`, `integration`, `e2e`, `property`,
+`sqlite_only`, `postgres_only`, `real_providers` and `slow`.
 
 ```bash
 python -m pytest -q -m unit                 # fast, isolated contract/analysis tests
-python -m pytest -q -m "not e2e"            # skip the slow real-server-process tests
+python -m pytest -q -m "not e2e"            # skip the real-server-process tests
 python -m pytest -q -m property             # hypothesis-based generative tests only
 ```
+
+### Skipping the slow tests while building
+
+`slow` marks tests that take about 10 s or more each (the 10,000-incident reprojection
+boot, the random-SIGKILL OTLP property test, the 1 GiB blob and recording memory tests,
+the stalled-materializer shutdown test in `apps/ingest/tests/test_closer_server.py`,
+the provider-free replay e2e `apps/ingest/tests/e2e/test_otlp_replay_quickstart.py` and
+the real-provider e2e `apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`).
+Plain `pytest` still runs them, so CI and the release gate are unchanged.
+
+```bash
+python -m pytest -q -m "not slow"                                   # the quick loop
+python -m pytest -q -m slow apps/ingest/tests/test_recordings_memory.py   # slow tests of a module you touched
+```
+
+The end-of-change run is `-m "not slow"` plus the slow tests of the modules you touched.
 
 ### Running one area
 
@@ -58,10 +75,9 @@ pnpm --filter @earshot/viewer test:watch    # vitest watch mode, for active UI w
 pnpm --filter @earshot/viewer typecheck     # tsc -b, no emit
 ```
 
-Other workspace packages (`packages/browser`, `packages/schema`, `packages/analysis`,
-`examples/browser-voice`) have their own test scripts too — run `pnpm test` from the
-repo root to run all of them via Turborepo (`turbo run test`), or scope to one with
-`pnpm --filter <package-name> test`.
+Other workspace packages (`packages/browser`, `examples/browser-voice`) have their own
+test scripts too — run `pnpm test` from the repo root to run all of them via Turborepo
+(`turbo run test`), or scope to one with `pnpm --filter <package-name> test`.
 
 ## Lint and format
 

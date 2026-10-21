@@ -51,3 +51,6 @@ packages/sdk-python/src/earshot/web/
 .claude/*
 !.claude/skills/
 !.claude/skills/**
+
+# development notes
+local/
