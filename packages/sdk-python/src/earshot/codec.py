@@ -102,6 +102,24 @@ def canonical_profile_json(profile: IncidentProfile) -> bytes:
         raise IncidentCodecError("incident profile is outside the RFC 8785 domain") from error
 
 
+def _stored_profile_json_forms(profile: IncidentProfile) -> tuple[bytes, ...]:
+    """Every canonical form ``profile`` may be stored in; the encoder's comes first.
+
+    Earshot 0.1.0 predates ``clock_relations``, so its contract-0.1.0 profiles
+    have no such key, while every later release writes ``"clock_relations": []``
+    for the same profile. Both are stored artifacts that must keep decoding, and
+    an analysis bound to either is bound to that incident. The encoder keeps
+    today's form, so the digest of everything written since 0.1.0 is unchanged.
+    """
+
+    current = canonical_profile_json(profile)
+    if profile.manifest.schema_version != "0.1.0" or profile.clock_relations:
+        return (current,)
+    value = profile.model_dump(mode="json", exclude_none=True)
+    del value["clock_relations"]
+    return (current, rfc8785.dumps(value))
+
+
 def _chunk_dict(chunk: RawOtlpChunk) -> dict[str, Any]:
     digest = hashlib.sha256(chunk.payload).hexdigest()
     if chunk.sha256 is not None and chunk.sha256 != digest:
@@ -212,10 +230,17 @@ def decode_incident_json_value(
         raise IncidentCodecError("incident JSON violates v1alpha1 invariants") from error
 
 
-def _encode_incident_protobuf_unchecked(bundle: IncidentBundle) -> bytes:
-    """Encode an already-validated bundle for internal digest construction."""
+def _encode_incident_protobuf_unchecked(
+    bundle: IncidentBundle, *, profile_json: bytes | None = None
+) -> bytes:
+    """Encode an already-validated bundle for internal digest construction.
 
-    profile_json = canonical_profile_json(bundle.profile)
+    ``profile_json`` replaces today's canonical profile form with another form
+    the same profile is stored in (``_stored_profile_json_forms``).
+    """
+
+    if profile_json is None:
+        profile_json = canonical_profile_json(bundle.profile)
     manifest = bundle.profile.manifest
     envelope = _IncidentEnvelopeMessage()
     envelope.schema_version = manifest.schema_version
@@ -239,12 +264,37 @@ def _encode_incident_protobuf_unchecked(bundle: IncidentBundle) -> bytes:
     return envelope.SerializeToString(deterministic=True)
 
 
-def analysis_input_sha256(bundle: IncidentBundle) -> str:
-    """Digest the immutable evidence artifact with embedded analysis omitted."""
+def analysis_input_sha256(bundle: IncidentBundle, *, canonical_payload: bytes | None = None) -> str:
+    """Digest the immutable evidence artifact with embedded analysis omitted.
 
+    ``canonical_payload`` is the bundle's canonical protobuf encoding when the
+    caller already holds it. A bundle without embedded analysis is its own
+    evidence artifact, so those bytes are digested instead of encoding again.
+    """
+
+    if canonical_payload is not None and bundle.profile.analysis is None:
+        return hashlib.sha256(canonical_payload).hexdigest()
     evidence_profile = bundle.profile.model_copy(update={"analysis": None})
     evidence_bundle = bundle.model_copy(update={"profile": evidence_profile})
     return hashlib.sha256(_encode_incident_protobuf_unchecked(evidence_bundle)).hexdigest()
+
+
+def analysis_input_digests(bundle: IncidentBundle) -> tuple[str, ...]:
+    """Every digest the bundle's evidence artifact may be stored under, today's first.
+
+    The first is ``analysis_input_sha256``; a profile Earshot 0.1.0 wrote may be
+    stored in an older canonical form (``_stored_profile_json_forms``). An
+    analysis whose ``input_sha256`` is any of these is bound to this evidence.
+    """
+
+    evidence_profile = bundle.profile.model_copy(update={"analysis": None})
+    evidence_bundle = bundle.model_copy(update={"profile": evidence_profile})
+    return tuple(
+        hashlib.sha256(
+            _encode_incident_protobuf_unchecked(evidence_bundle, profile_json=form)
+        ).hexdigest()
+        for form in _stored_profile_json_forms(evidence_profile)
+    )
 
 
 def encode_incident_protobuf(bundle: IncidentBundle) -> bytes:
@@ -286,7 +336,7 @@ def decode_incident_protobuf(
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
         raise IncidentCodecError("invalid canonical profile JSON") from error
 
-    if canonical_profile_json(profile) != profile_json:
+    if profile_json not in _stored_profile_json_forms(profile):
         raise IncidentCodecError("canonical profile JSON is not RFC 8785/JCS canonical")
 
     manifest = profile.manifest
