@@ -43,6 +43,29 @@ function LiveRoute() {
   return sessionId ? <RoutedObserve route={{ kind: "live", sessionId }} /> : null;
 }
 
+function CallRoute() {
+  const { callId } = useParams<{ callId: string }>();
+  return callId ? <RoutedObserve route={{ kind: "call", callId }} /> : null;
+}
+
+/** The viewer's pages by URL, inside an authenticated query scope. */
+export function ObserveRoutes() {
+  return (
+    <Routes>
+      <Route index element={<RoutedObserve route={{ kind: "fleet" }} />} />
+      <Route path="sessions/:bundleId" element={<IncidentRoute />} />
+      <Route path="observe" element={<SessionRoute />} />
+      {/* A live session and an artifact are different kinds of thing and must
+          not share a URL. */}
+      <Route path="live/:sessionId" element={<LiveRoute />} />
+      <Route path="dashboard" element={<RoutedObserve route={{ kind: "dashboard" }} />} />
+      <Route path="calls" element={<RoutedObserve route={{ kind: "calls" }} />} />
+      <Route path="calls/:callId" element={<CallRoute />} />
+      <Route path="upload" element={<RoutedObserve route={{ kind: "upload" }} />} />
+    </Routes>
+  );
+}
+
 function SessionRoute() {
   const [searchParams] = useSearchParams();
   const sessionId = searchParams.get("sessionId");
@@ -203,14 +226,7 @@ export function App() {
           authContextId: auth.session.auth_context_id,
         }}
       >
-        <Routes>
-          <Route index element={<RoutedObserve route={{ kind: "fleet" }} />} />
-          <Route path="sessions/:bundleId" element={<IncidentRoute />} />
-          <Route path="observe" element={<SessionRoute />} />
-          {/* A live session and an artifact are different kinds of thing and must
-              not share a URL. */}
-          <Route path="live/:sessionId" element={<LiveRoute />} />
-        </Routes>
+        <ObserveRoutes />
       </ViewerQueryScopeProvider>
     </>
   );
