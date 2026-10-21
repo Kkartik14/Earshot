@@ -46,6 +46,14 @@ if _package_manifest_lines != sorted(set(_package_manifest_lines)) or any(
 ):
     raise RuntimeError(f"invalid source package manifest: {PACKAGE_MANIFEST_PATH}")
 ALLOWED_PACKAGE_FILES = frozenset(_package_manifest_lines)
+# Package data that is not Python, each named: the vendored Silero VAD model the
+# recording analysis runs, and its licence.
+PACKAGE_DATA_FILES = frozenset(
+    {
+        f"{ALLOWED_PACKAGE_PREFIX}signals/model/LICENSE",
+        f"{ALLOWED_PACKAGE_PREFIX}signals/model/silero_vad.onnx",
+    }
+)
 VIEWER_DIRECTORY = "packages/sdk-python/src/earshot/web"
 VIEWER_ASSETS_DIRECTORY = f"{VIEWER_DIRECTORY}/assets"
 VIEWER_ASSET_SUFFIXES = frozenset({".css", ".js"})
@@ -160,7 +168,7 @@ def _path_is_allowed(relative_path: str, *, directory: bool) -> bool:
         )
     if relative_path in ALLOWED_ROOT_FILES:
         return True
-    return relative_path in ALLOWED_PACKAGE_FILES
+    return relative_path in ALLOWED_PACKAGE_FILES or relative_path in PACKAGE_DATA_FILES
 
 
 def _path_is_forbidden(name: str) -> bool:
@@ -516,10 +524,14 @@ def check_sdist(path: pathlib.Path) -> None:
                 raise SystemExit(f"{path}: unexpected archive path: {relative_path!r}")
             if member.isfile():
                 relative_files.add(relative_path)
-    required_files = ALLOWED_PACKAGE_FILES | {
-        "pyproject.toml",
-        "packages/sdk-python/src/earshot/web/index.html",
-    }
+    required_files = (
+        ALLOWED_PACKAGE_FILES
+        | PACKAGE_DATA_FILES
+        | {
+            "pyproject.toml",
+            "packages/sdk-python/src/earshot/web/index.html",
+        }
+    )
     missing = required_files - relative_files
     if missing:
         raise SystemExit(f"{path}: required source files are missing: {sorted(missing)!r}")
