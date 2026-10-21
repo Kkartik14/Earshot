@@ -1,0 +1,24 @@
+Earshot is starting: one server, replaced with the Recreate strategy on upgrade.
+
+{{- if .Values.ingress.enabled }}
+
+Open it through your Ingress:
+{{- range .Values.ingress.hosts }}
+  https://{{ .host }}/
+{{- end }}
+{{- else }}
+
+Open it from your machine:
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "earshot.fullname" . }} 4319:{{ .Values.service.port }}
+  open http://127.0.0.1:4319/
+
+In-cluster agents export OTLP to:
+  http://{{ include "earshot.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+{{- end }}
+
+Sign in with the operator token from Secret "{{ .Values.auth.existingSecret }}":
+  kubectl --namespace {{ .Release.Namespace }} get secret {{ .Values.auth.existingSecret }} \
+    -o jsonpath='{.data.{{ .Values.auth.tokenKey }}}' | base64 --decode
+
+Catalog: {{ if .Values.database.existingSecret }}Postgres{{ else }}SQLite on the data volume{{ end }}.
+Recordings: {{ if .Values.blobs.url }}{{ .Values.blobs.url | splitList "?" | first }}{{ else }}files on the data volume{{ end }}.

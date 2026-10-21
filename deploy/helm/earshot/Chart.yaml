@@ -1,0 +1,13 @@
+apiVersion: v2
+name: earshot
+description: Self-hosted Earshot server and viewer for voice-agent observability
+type: application
+version: 0.4.0
+appVersion: "0.4.0"
+home: https://github.com/Kkartik14/Earshot
+sources:
+  - https://github.com/Kkartik14/Earshot
+keywords:
+  - voice-ai
+  - observability
+  - opentelemetry

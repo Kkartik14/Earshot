@@ -1,0 +1,96 @@
+# Earshot chart values. Docs: docs/install-helm.md.
+#
+# The chart always runs exactly one Earshot server and replaces it with the
+# Recreate strategy (the old pod stops before the new one starts): a second
+# server on the same database exits with EARSHOT_DATABASE_IN_USE. There is no
+# replica count to set.
+
+image:
+  repository: ghcr.io/kkartik14/earshot
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Required. Every /v1 request must carry this operator token, or a project API
+# key created with it, with or without an Ingress. Create the Secret first:
+#   kubectl create secret generic earshot \
+#     --from-literal=token="$(openssl rand -hex 32)"
+auth:
+  existingSecret: ""
+  tokenKey: token
+
+# The catalog. Empty existingSecret: SQLite on the data volume (keep persistence
+# enabled). For Postgres, a Secret holding the postgresql:// URL and the
+# instance correlation key (32 random bytes, base64; back it up with the
+# database).
+database:
+  existingSecret: ""
+  urlKey: database-url
+  correlationKeyKey: correlation-key
+
+# Recording storage. Empty url: files on the data volume (keep persistence
+# enabled). For S3 or an S3-compatible store, an s3:// URL such as
+# s3://bucket/prefix?region=eu-west-1, and either a Secret with an access key or
+# no Secret, to use the pod's own cloud identity.
+blobs:
+  url: ""
+  existingSecret: ""
+  accessKeyIdKey: access-key-id
+  secretAccessKeyKey: secret-access-key
+
+# The data directory, /data. SQLite and file recordings live here. With
+# Postgres and S3 it can be disabled: the pod then uses an emptyDir.
+# The claim is kept when the release is uninstalled.
+persistence:
+  enabled: true
+  existingClaim: ""
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 10Gi
+
+# More environment for the server, for example the webhook secrets a connector
+# names as env:NAME:
+#   - name: VAPI_WEBHOOK_SECRET
+#     valueFrom:
+#       secretKeyRef: {name: earshot-connectors, key: vapi}
+extraEnv: []
+
+service:
+  type: ClusterIP
+  port: 4319
+  annotations: {}
+
+# Enabling the Ingress tells Earshot it runs behind a TLS-terminating proxy
+# (EARSHOT_BEHIND_TLS_PROXY): terminate TLS at the Ingress.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: earshot.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: earshot-tls
+  #    hosts:
+  #      - earshot.example.com
+
+# Size memory for your longest calls: see docs/production.md (OTLP memory and
+# the materializer child process).
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
