@@ -5,11 +5,17 @@
 # future operations, roles, event names, evidence sources, and availability
 # reasons. Existing gen_ai.* and OpenInference attributes should be retained and
 # reused where they already describe the underlying model/tool operation.
-# The general OpenTelemetry `session.id` convention is reused for telemetry
-# correlation rather than duplicated as `earshot.session.id`. Its Development
-# status means adapters must pin the semconv revision they implement. This file
-# vendors the session.id definition from OpenTelemetry semantic-conventions
-# v1.41.1 (git ead83b9b0fa36540c1642fce46e874f002ac23f1, verified 2026-07-11).
+# `earshot.session.id` is the host's own session key. Earshot's OTLP receiver
+# groups spans into calls by it first, then by `gen_ai.conversation.id`, the
+# general OpenTelemetry `session.id`, and `conversation.id` (on the resource it
+# reads `earshot.session.id` only). This reverses the earlier rule that
+# `session.id` was reused rather than duplicated as `earshot.session.id`: a key
+# the host sets explicitly must not depend on a framework's choice of
+# conventions (see ADR 0005). `session.id` is still reused for telemetry
+# correlation; its Development status means adapters must pin the semconv
+# revision they implement. This file vendors the session.id definition from
+# OpenTelemetry semantic-conventions v1.41.1 (git
+# ead83b9b0fa36540c1642fce46e874f002ac23f1, verified 2026-07-11).
 earshot_semantic_profile_version: 0.2.0
 groups:
   - id: registry.earshot
@@ -20,6 +26,26 @@ groups:
         type: string
         requirement_level: opt_in
         brief: A unique session identifier, reused from the pinned OpenTelemetry semantic-conventions registry.
+      - id: earshot.session.id
+        type: string
+        requirement_level: recommended
+        brief: The host's session key for the call a span belongs to, 1 to 256 UTF-8 bytes after trimming; the first key Earshot's receiver consults, on a span or on its resource.
+      - id: earshot.call.ended
+        type: boolean
+        requirement_level: opt_in
+        brief: Set to true on any span to signal that its call has ended, so the call closes after a short grace period.
+      - id: earshot.agent.name
+        type: string
+        requirement_level: opt_in
+        brief: The agent that handled the call, as the call list filters on it; preferred over gen_ai.agent.name, lk.agent_name and the resource service.name (an unknown_service default never names the agent). 1 to 256 characters; the first span carrying it wins.
+      - id: earshot.call.outcome
+        type: string
+        requirement_level: opt_in
+        brief: The call's outcome as the host defines it (for example transferred or voicemail), 1 to 256 characters; the last value sent wins. Without it Earshot derives error (a span with error status), interrupted (no end signal) or completed.
+      - id: earshot.call.tags
+        type: string[]
+        requirement_level: opt_in
+        brief: Labels for the call (each 1 to 256 characters); a call's tags are the union of every span's, and the call list filters on them (all given must match).
       - id: earshot.turn.id
         type: string
         requirement_level: opt_in
@@ -288,6 +314,126 @@ groups:
         type: int
         requirement_level: opt_in
         brief: Count of provider requests made for one end-of-turn inference.
+      - id: earshot.connector.provider
+        type: string
+        requirement_level: opt_in
+        brief: The hosted voice provider a connector's evidence came from (vapi, retell, elevenlabs, ringg), on the evidence resource.
+      - id: earshot.connector.call.type
+        type: string
+        requirement_level: opt_in
+        brief: The provider's call type as it names it (for example webCall, phone_call, inbound).
+      - id: earshot.connector.call.status
+        type: string
+        requirement_level: opt_in
+        brief: The provider's final call status as it names it.
+      - id: earshot.connector.call.ended_reason
+        type: string
+        requirement_level: opt_in
+        brief: Why the provider says the call ended, as its own enumeration names it.
+      - id: earshot.connector.coverage.turn_latency
+        type: string
+        requirement_level: opt_in
+        brief: available when the provider exposed per-turn latency for the call, not_exposed when it did not; the call keeps its transcript and audio either way.
+      - id: earshot.connector.transcript.speaker
+        type: string
+        requirement_level: opt_in
+        brief: "user or agent: who spoke a provider transcript line. Transcript content: not kept under metadata_only."
+      - id: earshot.connector.transcript.text
+        type: string
+        requirement_level: opt_in
+        brief: "The text of a provider transcript line. Transcript content: not kept under metadata_only."
+      - id: earshot.connector.transcript.timing
+        type: string
+        requirement_level: opt_in
+        brief: "measured (the span's start and end are the line's), start_only (only the start is; the end equals it and is not a measurement) or order_only (neither time is a measurement: order lines by transcript.index)."
+      - id: earshot.connector.transcript.index
+        type: int
+        requirement_level: opt_in
+        brief: The line's position in the provider's transcript, from 0.
+      - id: earshot.connector.transcript.interrupted
+        type: boolean
+        requirement_level: opt_in
+        brief: Whether the provider marked the line as cut off by an interruption.
+      - id: earshot.connector.turn.index
+        type: int
+        requirement_level: opt_in
+        brief: The provider's position of a turn whose latency it reported, from 0.
+      - id: earshot.connector.latency.turn_ms
+        type: double
+        requirement_level: opt_in
+        brief: The whole turn's latency the provider reported for it, in milliseconds.
+      - id: earshot.connector.latency.llm_ms
+        type: double
+        requirement_level: opt_in
+        brief: "A turn's LLM stage latency as the provider reported it, in milliseconds (a provider stage split: detail only)."
+      - id: earshot.connector.latency.tts_ms
+        type: double
+        requirement_level: opt_in
+        brief: A turn's speech-synthesis stage latency as the provider reported it, in milliseconds (detail only).
+      - id: earshot.connector.latency.stt_ms
+        type: double
+        requirement_level: opt_in
+        brief: A turn's transcription stage latency as the provider reported it, in milliseconds (detail only).
+      - id: earshot.connector.latency.endpointing_ms
+        type: double
+        requirement_level: opt_in
+        brief: A turn's endpointing latency as the provider reported it, in milliseconds (detail only).
+      - id: earshot.connector.latency.component
+        type: string
+        requirement_level: opt_in
+        brief: Which provider latency series a latency span holds, as the provider names it (for example e2e, llm, tts).
+      - id: earshot.connector.latency.values_ms
+        type: double[]
+        requirement_level: opt_in
+        brief: A provider latency series not tied to turns, in milliseconds, in the provider's order.
+      - id: earshot.connector.analysis.summary_message
+        type: string
+        requirement_level: opt_in
+        brief: "The provider's model-generated summary of the call. Model output: not kept under metadata_only."
+      - id: earshot.connector.analysis.successful
+        type: string
+        requirement_level: opt_in
+        brief: The provider's verdict on whether the call succeeded, as it states it (for example true, success).
+      - id: earshot.connector.analysis.sentiment
+        type: string
+        requirement_level: opt_in
+        brief: The provider's user-sentiment label for the call.
+      - id: earshot.connector.analysis.in_voicemail
+        type: boolean
+        requirement_level: opt_in
+        brief: Whether the provider says the call reached voicemail.
+      - id: earshot.connector.analysis.classification
+        type: string
+        requirement_level: opt_in
+        brief: The provider's classification label for the call.
+      - id: earshot.connector.cost.amount
+        type: double
+        requirement_level: opt_in
+        brief: What the provider reports the call cost, in cost.unit. Never added to Earshot's own estimate.
+      - id: earshot.connector.cost.unit
+        type: string
+        requirement_level: opt_in
+        brief: "usd, usd_cent or credit: the unit of cost.amount."
+      - id: earshot.connector.cost.source
+        type: string
+        requirement_level: opt_in
+        brief: The payload field cost.amount was read from.
+      - id: earshot.connector.translator.version
+        type: string
+        requirement_level: opt_in
+        brief: The version of the translator that wrote a delivery's evidence spans.
+      - id: earshot.upload.format
+        type: string
+        requirement_level: opt_in
+        brief: "vtt or text: the format of a transcript uploaded for a recording (POST /v1/recordings/{id}/transcript)."
+      - id: earshot.upload.line_count
+        type: int
+        requirement_level: opt_in
+        brief: How many transcript lines an uploaded transcript holds.
+      - id: earshot.upload.sha256
+        type: string
+        requirement_level: opt_in
+        brief: The sha256 (hex) of an uploaded transcript's format and lines, as Earshot parsed them; a different transcript for the same recording is refused (409), never stored.
 
   - id: span.earshot.voice_operation
     type: span
@@ -340,3 +486,88 @@ groups:
       - ref: earshot.evidence.confidence
       - ref: earshot.evidence.availability
       - ref: earshot.privacy.capture_class
+
+  - id: span.earshot.connector.call
+    type: span
+    span_kind: internal
+    brief: "A hosted provider's call, translated from its delivery: the call's window and status, and its end (earshot.call.ended). Every other connector span is its child, on one trace per session key. Agent identifiers use the OpenTelemetry GenAI keys gen_ai.agent.id and gen_ai.agent.name."
+    attributes:
+      - ref: earshot.session.id
+      - ref: earshot.call.ended
+      - ref: earshot.connector.call.type
+      - ref: earshot.connector.call.status
+      - ref: earshot.connector.call.ended_reason
+      - ref: earshot.connector.coverage.turn_latency
+
+  - id: span.earshot.connector.transcript_line
+    type: span
+    span_kind: internal
+    brief: One line of a provider's transcript; span ID from the line index, so every delivery of the call writes it identically.
+    attributes:
+      - ref: earshot.session.id
+      - ref: earshot.connector.transcript.speaker
+      - ref: earshot.connector.transcript.text
+      - ref: earshot.connector.transcript.timing
+      - ref: earshot.connector.transcript.index
+      - ref: earshot.connector.transcript.interrupted
+
+  - id: span.earshot.connector.turn
+    type: span
+    span_kind: internal
+    brief: One turn's latency as the provider reported it.
+    attributes:
+      - ref: earshot.session.id
+      - ref: earshot.connector.turn.index
+      - ref: earshot.connector.latency.turn_ms
+      - ref: earshot.connector.latency.llm_ms
+      - ref: earshot.connector.latency.tts_ms
+      - ref: earshot.connector.latency.stt_ms
+      - ref: earshot.connector.latency.endpointing_ms
+
+  - id: span.earshot.connector.latency
+    type: span
+    span_kind: internal
+    brief: A provider latency series not tied to turns.
+    attributes:
+      - ref: earshot.session.id
+      - ref: earshot.connector.latency.component
+      - ref: earshot.connector.latency.values_ms
+
+  - id: span.earshot.connector.analysis
+    type: span
+    span_kind: internal
+    brief: The provider's analysis of the call; a kind of its own, so an analysis that arrives in a later delivery is new evidence, never a conflict.
+    attributes:
+      - ref: earshot.session.id
+      - ref: earshot.connector.analysis.summary_message
+      - ref: earshot.connector.analysis.successful
+      - ref: earshot.connector.analysis.sentiment
+      - ref: earshot.connector.analysis.in_voicemail
+      - ref: earshot.connector.analysis.classification
+
+  - id: span.earshot.connector.cost
+    type: span
+    span_kind: internal
+    brief: What the provider reports the call cost.
+    attributes:
+      - ref: earshot.session.id
+      - ref: earshot.connector.cost.amount
+      - ref: earshot.connector.cost.unit
+      - ref: earshot.connector.cost.source
+
+  - id: span.earshot.connector.translator
+    type: span
+    span_kind: internal
+    brief: The translator that wrote a delivery's spans, keyed by its version, so an upgraded translator never changes a span another delivery wrote.
+    attributes:
+      - ref: earshot.session.id
+      - ref: earshot.connector.translator.version
+
+  - id: span.earshot.upload.transcript
+    type: span
+    span_kind: internal
+    brief: "A transcript uploaded for a recording, under the earshot.upload instrumentation scope, on one trace per recording. Its children are span.earshot.connector.transcript_line spans with the same attributes as a provider's lines: timing measured for WebVTT (cue times from the recording's started_at), order_only for plain text. The trace is bound to the recording's call."
+    attributes:
+      - ref: earshot.upload.format
+      - ref: earshot.upload.line_count
+      - ref: earshot.upload.sha256
