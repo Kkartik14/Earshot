@@ -30,7 +30,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Connector Delivery Endpoint */
+        /**
+         * Connector Delivery Endpoint
+         * @description Receive one provider delivery, checked in this order: the connector (404),
+         *     a header credential (401), the body cap (413; an ElevenLabs
+         *     ``post_call_audio`` streams up to 64 MiB and is ignored), the signature (401),
+         *     an event the connector does not consume (200 ``ignored``, nothing written), the
+         *     rate (429), then the payload (400; 422 for a call ID that is not a session
+         *     key). The Host check does not apply: a hook carries its provider's credential.
+         */
         post: operations["connector_delivery_endpoint_hooks_v1_connectors__endpoint_id__post"];
         delete?: never;
         options?: never;
@@ -90,6 +98,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Calls Endpoint
+         * @description The authenticated project's calls, newest first evidence first. Pages are keyed on each call's first evidence time and ID, which never change, so paging is stable while calls arrive and receive evidence. Every filter given must match, and a filter never matches an unknown (null) value or a call without a projection. Latency and audible-gap bounds compare the call's p50 in ms; tag repeats (all must match); min_cost_nano_usd compares the cost lower bound; max_cost_nano_usd matches complete costs only (lower bound plus estimate) and reports excluded_incomplete. q is a substring of the transcript (at least 3 characters, % and _ literal, ASCII case folded); under the metadata_only preset it is 422 EARSHOT_PRESET_FORBIDS_CONTENT_SEARCH.
+         */
+        get: operations["list_calls_endpoint_v1_calls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/calls/{call_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Call Endpoint
+         * @description One call with its revisions, recordings, transcript and projection. The transcript is read from the call's spans, so an open call's transcript grows as they arrive; under metadata_only it is empty (not_captured_by_preset). projection is null until the call is projected. The reply carries an ETag; a request whose If-None-Match names it is 304.
+         */
+        get: operations["get_call_endpoint_v1_calls__call_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Purge Call Endpoint
+         * @description Purge the call and all its evidence: spans, recordings and their blobs, and every revision incident. Evidence for its session key is refused for LONG_QUIET + 24 h; after that the key starts a new call.
+         */
+        delete: operations["purge_call_endpoint_v1_calls__call_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/calls/{call_id}/spans/{trace_id}/{span_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Call Span Endpoint
+         * @description One span of the call as it was stored (lowercase hex IDs): its attributes with their semantic keys and capture classes, its events and its status. 404 EARSHOT_SPAN_NOT_FOUND unless the span's trace belongs to this call.
+         */
+        get: operations["get_call_span_endpoint_v1_calls__call_id__spans__trace_id___span_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/calls:resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Call Endpoint
+         * @description The call a session key names in the authenticated project, in the key's current generation. 404 otherwise; the key is never echoed.
+         */
+        post: operations["resolve_call_endpoint_v1_calls_resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/capture": {
         parameters: {
             query?: never;
@@ -124,6 +216,26 @@ export interface paths {
          *     stays visible to live-session readers.
          */
         post: operations["capture_endpoint_v1_capture_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Dashboard Endpoint
+         * @description Call volume, latency, interruptions, dead air and cost per minute for the authenticated project's projected calls that started in [from, to) (Unix nanoseconds, by each call's own evidence start), overall, per UTC hour or day bucket, and per framework or agent. Latency percentiles are nearest-rank over turns. Every tile names the calls it covers (calls of of_calls); an unknown value is never counted as 0. Earshot's and the provider's cost are reported side by side, never summed. At most 1000 buckets.
+         */
+        get: operations["dashboard_endpoint_v1_dashboard_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -477,6 +589,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/otlp/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Otlp Stats Endpoint
+         * @description The authenticated project's OTLP rare-event counters and its parked-trace and open-call gauges.
+         */
+        get: operations["otlp_stats_endpoint_v1_otlp_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Prices Endpoint
+         * @description The built-in prices and the authenticated project's own, oldest first. Money is integer nano-USD: price_nano_usd per per_quantity units.
+         */
+        get: operations["list_prices_endpoint_v1_prices_get"];
+        put?: never;
+        /**
+         * Create Price Endpoint
+         * @description Add a price for the authenticated project (append-only; it wins over a built-in price for the same provider, model and unit). Projections priced before it become stale and are recomputed.
+         */
+        post: operations["create_price_endpoint_v1_prices_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}": {
         parameters: {
             query?: never;
@@ -511,6 +667,170 @@ export interface paths {
         get: operations["project_summary_endpoint_v1_projects__project_id__summary_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Recording Endpoint
+         * @description Create a recording of the call a session key names, creating the call if needed: one speaker's mono track, or a mixed recording whose channel_speakers names each channel's speaker (user and agent at most once each; WAV, FLAC or Ogg Opus only, whose channel count the upload's header must match). The same recording_id with the same manifest answers 200 with the recording; another manifest, or a failed recording, is 409. A call holds at most 16 recordings; a 17th is 409. Without recording_id the server mints one and the request is not idempotent. Upload the bytes to upload_path.
+         */
+        post: operations["create_recording_endpoint_v1_recordings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/recordings/{recording_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Recording Endpoint
+         * @description A recording's metadata, in the authenticated project.
+         */
+        get: operations["get_recording_endpoint_v1_recordings__recording_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/recordings/{recording_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recording Content Endpoint
+         * @description A stored recording's bytes, streamed through the server on every blob backend. One Range (bytes=a-b, a-, -n) is answered with 206; several are answered whole. A recording that is not stored is 409.
+         */
+        get: operations["recording_content_endpoint_v1_recordings__recording_id__content_get"];
+        /**
+         * Upload Recording Endpoint
+         * @description Upload a pending recording's bytes (Content-Type is the recording's content_type). A WAV, FLAC or Ogg Opus header must show the recording's channel count (one, or one per channel_speakers entry), or the upload is 422 EARSHOT_RECORDING_CHANNEL_MISMATCH. The body streams to the blob store under a server-chosen key and is stored when it commits; concurrent uploads store exactly one. An upload to a stored recording is only hashed: the same bytes answer 200, other bytes 409. A failed recording is 409. While the body streams, the recording's Call is not closed; a body that sends nothing for 60 s, or is still arriving at the upload hold cap (600 s by default) after the request started, is 408.
+         */
+        put: operations["upload_recording_endpoint_v1_recordings__recording_id__content_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/recordings/{recording_id}/peaks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recording Peaks Endpoint
+         * @description The recording's waveform peaks from its analysis: an audiowaveform .dat file (version 2, 8-bit, 256 source samples per pixel, one channel per channel of the recording). Private, no-cache, with an ETag (If-None-Match gives 304). 404 EARSHOT_PEAKS_NOT_FOUND until the analysis stores them, and for a recording that cannot be analysed.
+         */
+        get: operations["recording_peaks_endpoint_v1_recordings__recording_id__peaks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/recordings/{recording_id}/rendition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recording Rendition Endpoint
+         * @description The stereo FLAC rendition of a mono pair on one timeline (channel 0 user, channel 1 agent), made by the analysis and held by the pair's user recording, so a browser plays both on one clock. Range as for content. 404 EARSHOT_RENDITION_NOT_FOUND for any other recording, or before it is made.
+         */
+        get: operations["recording_rendition_endpoint_v1_recordings__recording_id__rendition_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/recordings/{recording_id}/rendition/peaks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recording Rendition Peaks Endpoint
+         * @description The rendition's peaks: both halves' peaks as one two-channel audiowaveform .dat file (channel 0 user, channel 1 agent). Caching as for peaks; 404 EARSHOT_PEAKS_NOT_FOUND until both halves' peaks are stored.
+         */
+        get: operations["recording_rendition_peaks_endpoint_v1_recordings__recording_id__rendition_peaks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/recordings/{recording_id}/transcript": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recording Transcript Endpoint
+         * @description Attach a transcript to a recording, as transcript lines of its call. The body is UTF-8: text/vtt (WebVTT; each cue is a line, its times offsets from the recording's started_at: measured timing) or text/plain (one line per non-blank line: order_only timing), at most 1048576 bytes and 10000 lines. A WebVTT voice (<v user>, <v agent>) or a 'user:'/'agent:' prefix names each line's speaker; on a one-speaker recording an unnamed line is that speaker's. A malformed body is 422 EARSHOT_TRANSCRIPT_INVALID, naming the line. A recording holds one transcript: the same transcript again answers 200 and writes nothing; another is 409 EARSHOT_TRANSCRIPT_EXISTS and never replaces it. Under the metadata_only preset it is 422 EARSHOT_PRESET_FORBIDS_TRANSCRIPT.
+         */
+        post: operations["recording_transcript_endpoint_v1_recordings__recording_id__transcript_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/traces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Otlp Traces Endpoint
+         * @description OTLP/HTTP trace export (protobuf or JSON). Spans are stored into Calls in one transaction; the reply is sent after it commits. Errors this route raises are google.rpc.Status bodies; host and authentication errors keep Earshot's problem JSON.
+         */
+        post: operations["otlp_traces_endpoint_v1_traces_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -643,6 +963,37 @@ export interface components {
             /** Severity */
             severity: string;
         };
+        /**
+         * AudibleGapResponse
+         * @description The gap at the agent between the user's speech ending and the agent's starting,
+         *     measured on one recorder timeline. ``measured``: ``value_ms`` ± ``uncertainty_ms``.
+         *     ``talk_over``: the agent started while the user spoke (no value).
+         *     ``not_measurable``: ``reason`` says why; ``bound_ms`` (± ``uncertainty_ms``) is an
+         *     upper bound only for a recorder timeline discontinuity on a recorder that only
+         *     inserts time. ``user_end_ms`` and ``agent_start_ms`` are the speech edges paired
+         *     with the turn, when found.
+         */
+        AudibleGapResponse: {
+            /** Agent Start Ms */
+            agent_start_ms: number | null;
+            /** Basis */
+            basis: ("anchors_checked" | "continuous_timeline_assumed") | null;
+            /** Bound Ms */
+            bound_ms: number | null;
+            /** Reason */
+            reason: ("recorder_timeline_discontinuity" | "no_agent_audio" | "no_clear_pairing" | "not_one_timeline" | "no_recording" | "analysis_not_stored") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "measured" | "talk_over" | "not_measurable";
+            /** Uncertainty Ms */
+            uncertainty_ms: number | null;
+            /** User End Ms */
+            user_end_ms: number | null;
+            /** Value Ms */
+            value_ms: number | null;
+        };
         /** AudioFormat */
         AudioFormat: {
             /** Channels */
@@ -773,6 +1124,374 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * CallCostResponse
+         * @description A call's cost. ``lower_bound_nano_usd`` sums the priced items (null: the call
+         *     has no cost item); ``estimated_nano_usd`` sums the estimated ones (null: none);
+         *     ``unknown_items`` counts items with no price or no reported usage. ``complete``:
+         *     the call has cost items and none is unknown.
+         */
+        CallCostResponse: {
+            /** Complete */
+            complete: boolean;
+            /** Estimated Nano Usd */
+            estimated_nano_usd: number | null;
+            /** Lower Bound Nano Usd */
+            lower_bound_nano_usd: number | null;
+            /** Unknown Items */
+            unknown_items: number;
+        };
+        /**
+         * CallDetailResponse
+         * @description One call with its revisions, recordings, transcript (read from its spans, so an
+         *     open call's grows) and projection.
+         */
+        CallDetailResponse: {
+            /** Call Id */
+            call_id: string;
+            /** Evidence After Latest Revision */
+            evidence_after_latest_revision: boolean;
+            /** First Evidence Unix Nano */
+            first_evidence_unix_nano: string;
+            /** Key Source */
+            key_source: string;
+            /** Last Evidence Unix Nano */
+            last_evidence_unix_nano: string;
+            latest_revision: components["schemas"]["CallRevisionSummary"] | null;
+            /** Materialize Error */
+            materialize_error: string | null;
+            projection: components["schemas"]["CallProjectionDetailResponse"] | null;
+            /**
+             * Projection State
+             * @enum {string}
+             */
+            projection_state: "none" | "stale" | "current";
+            /** Recording Count */
+            recording_count: number;
+            /** Recordings */
+            recordings: components["schemas"]["RecordingResponse"][];
+            /** Revisions */
+            revisions: components["schemas"]["CallRevisionResponse"][];
+            /** Session Key */
+            session_key: string | null;
+            /** Span Count */
+            span_count: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "open" | "closed";
+            /** Transcript */
+            transcript: components["schemas"]["TranscriptLineResponse"][];
+            /**
+             * Transcript Coverage
+             * @enum {string}
+             */
+            transcript_coverage: "available" | "not_captured_by_preset" | "not_observed";
+        };
+        /**
+         * CallMediaResponse
+         * @description One playable audio source on the call's axis. A ``rendition`` (a stereo file
+         *     made from a mono pair on one timeline) stands for the recordings it names, which
+         *     are then not listed on their own. Paths are relative to the server's base URL;
+         *     ``peaks_path`` serves audiowaveform ``.dat`` peaks with one channel per entry of
+         *     ``channels`` (null until the analysis stores them).
+         */
+        CallMediaResponse: {
+            /** Analysis Error Code */
+            analysis_error_code: string | null;
+            /**
+             * Analysis State
+             * @enum {string}
+             */
+            analysis_state: "pending" | "running" | "stored" | "failed" | "unavailable";
+            /** Channels */
+            channels: components["schemas"]["MediaChannelResponse"][];
+            /** Content Path */
+            content_path: string;
+            /** Content Type */
+            content_type: string;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Offset Ms */
+            offset_ms: number;
+            /** Peaks Path */
+            peaks_path: string | null;
+            /** Recording Ids */
+            recording_ids: string[];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "recording" | "rendition";
+        };
+        /**
+         * CallPageResponse
+         * @description A page of calls. ``excluded_incomplete`` (only with ``max_cost_nano_usd``):
+         *     calls every other filter matches whose cost as known is within the cap, left out
+         *     because their cost has unknown items.
+         */
+        CallPageResponse: {
+            /** Excluded Incomplete */
+            excluded_incomplete: number | null;
+            /** Items */
+            items: components["schemas"]["CallSummaryResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * CallProjectionDetailResponse
+         * @description A call's projection as the call view shows it. The axis starts at the earliest
+         *     recording's start, or at the call's first evidence when it has no recording.
+         */
+        CallProjectionDetailResponse: {
+            /** Agent */
+            agent: string | null;
+            /**
+             * Analysis State
+             * @enum {string}
+             */
+            analysis_state: "none" | "pending" | "stored" | "partial" | "failed" | "unavailable";
+            /** Audible Gap Max Ms */
+            audible_gap_max_ms: number | null;
+            /** Audible Gap P50 Ms */
+            audible_gap_p50_ms: number | null;
+            /**
+             * Axis Origin
+             * @enum {string}
+             */
+            axis_origin: "recording_start" | "first_evidence";
+            /** Axis Origin Unix Nano */
+            axis_origin_unix_nano: string;
+            cost: components["schemas"]["CallCostResponse"];
+            /** Cost Items */
+            cost_items: components["schemas"]["CostItemResponse"][];
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Framework */
+            framework: string | null;
+            /** Measurable Turns */
+            measurable_turns: number;
+            /** Media */
+            media: components["schemas"]["CallMediaResponse"][];
+            /** Outcome */
+            outcome: string | null;
+            /** Reported Latency Max Ms */
+            reported_latency_max_ms: number | null;
+            /** Reported Latency P50 Ms */
+            reported_latency_p50_ms: number | null;
+            /** Revision */
+            revision: number;
+            signals: components["schemas"]["CallSignalsResponse"];
+            /** Tags */
+            tags: string[];
+            /** Transcript */
+            transcript: components["schemas"]["PlacedTranscriptLineResponse"][];
+            /** Turn Count */
+            turn_count: number;
+            /** Turns */
+            turns: components["schemas"]["CallTurnResponse"][];
+        };
+        /**
+         * CallProjectionResponse
+         * @description A call's projection summary: what its revision ``revision``, that revision's
+         *     audio analyses and the prices say. Latency and gap values are milliseconds over
+         *     the call's turns (audible gap: its measurable turns only).
+         */
+        CallProjectionResponse: {
+            /** Agent */
+            agent: string | null;
+            /**
+             * Analysis State
+             * @enum {string}
+             */
+            analysis_state: "none" | "pending" | "stored" | "partial" | "failed" | "unavailable";
+            /** Audible Gap Max Ms */
+            audible_gap_max_ms: number | null;
+            /** Audible Gap P50 Ms */
+            audible_gap_p50_ms: number | null;
+            cost: components["schemas"]["CallCostResponse"];
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Framework */
+            framework: string | null;
+            /** Measurable Turns */
+            measurable_turns: number;
+            /** Outcome */
+            outcome: string | null;
+            /** Reported Latency Max Ms */
+            reported_latency_max_ms: number | null;
+            /** Reported Latency P50 Ms */
+            reported_latency_p50_ms: number | null;
+            /** Revision */
+            revision: number;
+            /** Tags */
+            tags: string[];
+            /** Turn Count */
+            turn_count: number;
+        };
+        /** CallResolveRequest */
+        CallResolveRequest: {
+            /** Session Key */
+            session_key: string;
+        };
+        /** CallResolveResponse */
+        CallResolveResponse: {
+            /** Call Id */
+            call_id: string;
+        };
+        /**
+         * CallRevisionResponse
+         * @description One revision of a call: its bundle, and the evidence it was built from.
+         */
+        CallRevisionResponse: {
+            /** Bundle Id */
+            bundle_id: string;
+            /**
+             * Close Reason
+             * @enum {string}
+             */
+            close_reason: "end_signal" | "quiet_period" | "late_data";
+            /** Created Unix Nano */
+            created_unix_nano: string;
+            /**
+             * Finality
+             * @enum {string}
+             */
+            finality: "final" | "provisional";
+            /** Recording Count */
+            recording_count: number;
+            /** Revision */
+            revision: number;
+            /** Span Count */
+            span_count: number;
+        };
+        /**
+         * CallRevisionSummary
+         * @description A call's latest revision, as the call list shows it.
+         */
+        CallRevisionSummary: {
+            /** Bundle Id */
+            bundle_id: string;
+            /**
+             * Close Reason
+             * @enum {string}
+             */
+            close_reason: "end_signal" | "quiet_period" | "late_data";
+            /**
+             * Finality
+             * @enum {string}
+             */
+            finality: "final" | "provisional";
+            /** Revision */
+            revision: number;
+        };
+        /**
+         * CallSignalsResponse
+         * @description Conversation signals from the call's speech runs. ``one_timeline`` is null with
+         *     no analysed recording; when false, every cross-channel signal is null.
+         */
+        CallSignalsResponse: {
+            /** Barge In Count */
+            barge_in_count: number | null;
+            /** Dead Air Ms */
+            dead_air_ms: number | null;
+            /** Long Silence Count */
+            long_silence_count: number | null;
+            /** One Timeline */
+            one_timeline: boolean | null;
+            /** Overlap Ms */
+            overlap_ms: number | null;
+            /** Talk Over Count */
+            talk_over_count: number | null;
+            /** Talk Time Agent Ms */
+            talk_time_agent_ms: number | null;
+            /** Talk Time User Ms */
+            talk_time_user_ms: number | null;
+        };
+        /**
+         * CallSpanResponse
+         * @description One span of a call as it was stored: what the project's preset kept when the
+         *     span arrived (under ``metadata_only``, no content and no status message).
+         */
+        CallSpanResponse: {
+            /** Attributes */
+            attributes: components["schemas"]["SpanAttributeResponse"][];
+            /** Call Id */
+            call_id: string;
+            /** End Unix Nano */
+            end_unix_nano: string;
+            /** Events */
+            events: components["schemas"]["SpanEventResponse"][];
+            /** Name */
+            name: string;
+            /** Parent Span Id */
+            parent_span_id: string | null;
+            /** Scope Name */
+            scope_name: string;
+            /** Span Id */
+            span_id: string;
+            /** Start Unix Nano */
+            start_unix_nano: string;
+            status: components["schemas"]["SpanStatusResponse"];
+            /** Trace Id */
+            trace_id: string;
+        };
+        /**
+         * CallSummaryResponse
+         * @description One call. ``session_key`` is null when it was not stored (``metadata_only``
+         *     projects and trace-keyed calls). ``projection`` is null when ``projection_state``
+         *     is ``none``; a ``stale`` projection is served until its recomputation lands.
+         */
+        CallSummaryResponse: {
+            /** Call Id */
+            call_id: string;
+            /** First Evidence Unix Nano */
+            first_evidence_unix_nano: string;
+            /** Key Source */
+            key_source: string;
+            /** Last Evidence Unix Nano */
+            last_evidence_unix_nano: string;
+            latest_revision: components["schemas"]["CallRevisionSummary"] | null;
+            /** Materialize Error */
+            materialize_error: string | null;
+            projection: components["schemas"]["CallProjectionResponse"] | null;
+            /**
+             * Projection State
+             * @enum {string}
+             */
+            projection_state: "none" | "stale" | "current";
+            /** Recording Count */
+            recording_count: number;
+            /** Session Key */
+            session_key: string | null;
+            /** Span Count */
+            span_count: number;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "open" | "closed";
+        };
+        /**
+         * CallTurnResponse
+         * @description One turn: the framework-reported latency beside the audible gap.
+         */
+        CallTurnResponse: {
+            audible_gap: components["schemas"]["AudibleGapResponse"];
+            /** End Ms */
+            end_ms: number | null;
+            /** Index */
+            index: number;
+            /** Reported Latency Ms */
+            reported_latency_ms: number | null;
+            /** Spans */
+            spans: components["schemas"]["TurnSpanResponse"][];
+            /** Start Ms */
+            start_ms: number | null;
+            /** Turn Id */
+            turn_id: string | null;
+        };
+        /**
          * CaptureAcceptedResponse
          * @description The incident one capture batch became, plus what the server refused.
          *
@@ -826,6 +1545,11 @@ export interface components {
             /** Trace Id */
             trace_id: string | null;
         };
+        /**
+         * CaptureClass
+         * @enum {string}
+         */
+        CaptureClass: "metadata" | "extension_payload" | "transcript" | "audio" | "tool_payload" | "model_payload" | "diagnostic_payload" | "identity" | "raw_otlp";
         /** CaptureClassPolicy */
         CaptureClassPolicy: {
             /** Attributes */
@@ -1241,19 +1965,26 @@ export interface components {
             /** Turn Ids */
             turn_ids: string[];
         };
-        /** ConnectorDeliveryResponse */
+        /**
+         * ConnectorDeliveryResponse
+         * @description What a connector hook did with a delivery.
+         *
+         *     ``applied``: its evidence went to ``call_id``. ``replayed``: a retry of a delivery
+         *     already applied (``call_id`` is that call; ``null`` for one applied before 0.4).
+         *     ``purged``: the call it describes was purged, so nothing was kept (``call_id``
+         *     ``null``). ``ignored``: an event this connector does not consume; nothing was
+         *     written and there is no receipt.
+         */
         ConnectorDeliveryResponse: {
-            /** Bundle Id */
-            bundle_id: string | null;
-            /** Canonical Sha256 */
-            canonical_sha256: string | null;
+            /** Call Id */
+            call_id: string | null;
             /**
              * Disposition
              * @enum {string}
              */
-            disposition: "applied" | "replayed" | "ignored";
+            disposition: "applied" | "replayed" | "purged" | "ignored";
             /** Receipt Id */
-            receipt_id: string;
+            receipt_id: string | null;
         };
         /** ConnectorProblemDetail */
         ConnectorProblemDetail: {
@@ -1312,6 +2043,42 @@ export interface components {
             turn_id?: string | null;
         };
         /**
+         * CostItemResponse
+         * @description One cost item. ``priced`` and ``estimated`` items cost ``quantity`` units of
+         *     ``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),
+         *     rounded half up to a whole nano-USD; ``no_price`` has usage and no price row;
+         *     ``not_reported`` has no usage. ``span`` is where the usage was read, if one span.
+         */
+        CostItemResponse: {
+            /** Cost Nano Usd */
+            cost_nano_usd: number | null;
+            /** Model */
+            model: string | null;
+            /**
+             * Operation
+             * @enum {string}
+             */
+            operation: "llm" | "stt" | "tts" | "realtime";
+            /** Per Quantity */
+            per_quantity: number | null;
+            /** Price Id */
+            price_id: number | null;
+            /** Price Nano Usd */
+            price_nano_usd: number | null;
+            /** Provider */
+            provider: string | null;
+            /** Quantity */
+            quantity: number | null;
+            span: components["schemas"]["SpanRefResponse"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "priced" | "no_price" | "not_reported" | "estimated";
+            /** Unit */
+            unit: string | null;
+        };
+        /**
          * Coverage
          * @description What a fact source could or could not observe for one signal.
          *
@@ -1356,6 +2123,188 @@ export interface components {
             reason?: string | null;
             /** Signal */
             signal: string;
+        };
+        /** DashboardBucketResponse */
+        DashboardBucketResponse: {
+            /** Start Unix Nano */
+            start_unix_nano: string;
+            tiles: components["schemas"]["DashboardTilesResponse"];
+        };
+        /**
+         * DashboardCostRateResponse
+         * @description ``cost_nano_usd`` over ``duration_ms`` of the covered calls, as integer nano-USD
+         *     per minute (rounded half up). All three null when no call is covered.
+         */
+        DashboardCostRateResponse: {
+            /** Calls */
+            calls: number;
+            /** Cost Nano Usd */
+            cost_nano_usd: number | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Nano Usd Per Minute */
+            nano_usd_per_minute: number | null;
+            /** Of Calls */
+            of_calls: number;
+        };
+        /**
+         * DashboardCostResponse
+         * @description Earshot's cost (complete costs only: priced items plus the STT estimate) and
+         *     the provider-reported cost, side by side. They are never added together: a
+         *     provider's cost already includes the stages Earshot prices.
+         */
+        DashboardCostResponse: {
+            earshot: components["schemas"]["DashboardCostRateResponse"];
+            provider: components["schemas"]["DashboardProviderCostRateResponse"];
+        };
+        /**
+         * DashboardDeadAirResponse
+         * @description Dead air over call time (``dead_air_ms / duration_ms``), over the calls with a
+         *     recording on one timeline. Both null when no call measured it.
+         */
+        DashboardDeadAirResponse: {
+            /** Calls */
+            calls: number;
+            /** Dead Air Ms */
+            dead_air_ms: number | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Of Calls */
+            of_calls: number;
+        };
+        /**
+         * DashboardGroupResponse
+         * @description The calls whose agent or framework is ``value`` (null: unknown).
+         */
+        DashboardGroupResponse: {
+            tiles: components["schemas"]["DashboardTilesResponse"];
+            /** Value */
+            value: string | null;
+        };
+        /**
+         * DashboardInterruptionsResponse
+         * @description The interruption rate is ``barge_ins / turns``, over the calls whose barge-ins
+         *     were measured (a recording on one timeline). ``barge_ins``: null with none.
+         */
+        DashboardInterruptionsResponse: {
+            /** Barge Ins */
+            barge_ins: number | null;
+            /** Calls */
+            calls: number;
+            /** Of Calls */
+            of_calls: number;
+            /** Turns */
+            turns: number;
+        };
+        /**
+         * DashboardLatencyResponse
+         * @description Nearest-rank percentiles over **turns** (not over each call's median), from each
+         *     call's projection: ``turns`` with a value of ``of_turns``, in ``calls`` of
+         *     ``of_calls``. Null percentiles: no turn has a value.
+         */
+        DashboardLatencyResponse: {
+            /** Calls */
+            calls: number;
+            /** Of Calls */
+            of_calls: number;
+            /** Of Turns */
+            of_turns: number;
+            /** P50 Ms */
+            p50_ms: number | null;
+            /** P95 Ms */
+            p95_ms: number | null;
+            /** Turns */
+            turns: number;
+        };
+        /** DashboardLlmLatencyResponse */
+        DashboardLlmLatencyResponse: {
+            /** Calls */
+            calls: number;
+            /** Of Calls */
+            of_calls: number;
+            /** Providers */
+            providers: components["schemas"]["DashboardLlmProviderResponse"][];
+        };
+        /**
+         * DashboardLlmProviderResponse
+         * @description One LLM provider's first-token latency on one measurement basis (values on
+         *     different bases do not compare): from the turn's end to the LLM's first token
+         *     (``first_token``), or as the provider timed its own stage
+         *     (``provider_stage_direct``).
+         */
+        DashboardLlmProviderResponse: {
+            /** Basis */
+            basis: string;
+            /** Calls */
+            calls: number;
+            /** P50 Ms */
+            p50_ms: number;
+            /** P95 Ms */
+            p95_ms: number;
+            /** Provider */
+            provider: string | null;
+            /** Turns */
+            turns: number;
+        };
+        /**
+         * DashboardProviderCostRateResponse
+         * @description What hosted providers reported the calls cost; ``bases`` names the fields it
+         *     was read from.
+         */
+        DashboardProviderCostRateResponse: {
+            /** Bases */
+            bases: string[];
+            /** Calls */
+            calls: number;
+            /** Cost Nano Usd */
+            cost_nano_usd: number | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Nano Usd Per Minute */
+            nano_usd_per_minute: number | null;
+            /** Of Calls */
+            of_calls: number;
+        };
+        /**
+         * DashboardResponse
+         * @description The project's projected calls that started in ``[from, to)``: ``overall``, one
+         *     entry per UTC ``bucket`` overlapping the range (empty ones included), and one per
+         *     group, most calls first. ``not_projected_calls``: calls received in the range that
+         *     have no projection yet, so are not placed.
+         */
+        DashboardResponse: {
+            /**
+             * Bucket
+             * @enum {string}
+             */
+            bucket: "hour" | "day";
+            /** Buckets */
+            buckets: components["schemas"]["DashboardBucketResponse"][];
+            /** From Unix Nano */
+            from_unix_nano: string;
+            /**
+             * Group By
+             * @enum {string}
+             */
+            group_by: "framework" | "agent";
+            /** Groups */
+            groups: components["schemas"]["DashboardGroupResponse"][];
+            /** Not Projected Calls */
+            not_projected_calls: number;
+            overall: components["schemas"]["DashboardTilesResponse"];
+            /** To Unix Nano */
+            to_unix_nano: string;
+        };
+        /** DashboardTilesResponse */
+        DashboardTilesResponse: {
+            audible_gap: components["schemas"]["DashboardLatencyResponse"];
+            /** Calls */
+            calls: number;
+            cost_per_minute: components["schemas"]["DashboardCostResponse"];
+            dead_air: components["schemas"]["DashboardDeadAirResponse"];
+            interruption_rate: components["schemas"]["DashboardInterruptionsResponse"];
+            llm_first_token: components["schemas"]["DashboardLlmLatencyResponse"];
+            reported_latency: components["schemas"]["DashboardLatencyResponse"];
         };
         /** DerivedAnalysis */
         DerivedAnalysis: {
@@ -1932,11 +2881,6 @@ export interface components {
             /** Reason */
             reason: string | null;
         };
-        /** HTTPValidationError */
-        HTTPValidationError: {
-            /** Detail */
-            detail?: components["schemas"]["ValidationError"][];
-        };
         /** HealthResponse */
         HealthResponse: {
             /** Status */
@@ -2488,6 +3432,16 @@ export interface components {
              */
             state: "live" | "stale" | "finalized" | "abandoned";
         };
+        /** MediaChannelResponse */
+        MediaChannelResponse: {
+            /** Index */
+            index: number;
+            /**
+             * Speaker
+             * @enum {string}
+             */
+            speaker: "user" | "agent" | "mixed";
+        };
         /** MediaLocator */
         MediaLocator: {
             /**
@@ -2533,6 +3487,11 @@ export interface components {
          *     fill them with something it did not compute — is exactly the dishonesty
          *     this contract exists to prevent. The coherence rule is enforced by
          *     :func:`media_custody_incoherence` at every boundary, not by convention.
+         *
+         *     ``channel_index`` names one channel (from 0) of a multi-channel file: the
+         *     reference covers that channel only, and ``stream_id`` is that channel's
+         *     stream, so a stereo recording of a caller and an agent is two references to
+         *     the same bytes. Absent, the reference covers every channel of the file.
          */
         MediaRef: {
             /** Attributes */
@@ -2547,6 +3506,11 @@ export interface components {
              * @enum {string}
              */
             capture_class: "metadata" | "extension_payload" | "transcript" | "audio" | "tool_payload" | "model_payload" | "diagnostic_payload" | "identity";
+            /**
+             * Channel Index
+             * @default null
+             */
+            channel_index: number | null;
             /**
              * Clock Domain Id
              * @default null
@@ -2747,6 +3711,28 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * OtlpStatsResponse
+         * @description The OTLP receiver's rare-event counters and gauges for one project (AC5.12).
+         */
+        OtlpStatsResponse: {
+            /** Key Disagreements */
+            key_disagreements: number;
+            /** Open Calls */
+            open_calls: number;
+            /** Parked Traces */
+            parked_traces: number;
+            /** Parked Traces Discarded */
+            parked_traces_discarded: number;
+            /** Purged Call Evidence Dropped */
+            purged_call_evidence_dropped: number;
+            /** Rejected Spans */
+            rejected_spans: number;
+            /** Revision Cap Reached */
+            revision_cap_reached: number;
+            /** Span Conflicts */
+            span_conflicts: number;
+        };
         /** Participant */
         Participant: {
             /** Attributes */
@@ -2777,6 +3763,105 @@ export interface components {
             session_id: string;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * PlacedTranscriptLineResponse
+         * @description A transcript line on the call's axis. ``timing``: ``measured`` lines have both
+         *     times, ``start_only`` a start, ``order_only`` neither (listed in order, never
+         *     placed). ``alignment_uncertain``: the line's turn had a timeline discontinuity.
+         */
+        PlacedTranscriptLineResponse: {
+            /** Alignment Uncertain */
+            alignment_uncertain: boolean;
+            /** End Ms */
+            end_ms: number | null;
+            /** Line No */
+            line_no: number;
+            span: components["schemas"]["SpanRefResponse"] | null;
+            /**
+             * Speaker
+             * @enum {string}
+             */
+            speaker: "user" | "agent";
+            /** Start Ms */
+            start_ms: number | null;
+            /** Text */
+            text: string;
+            /**
+             * Timing
+             * @enum {string}
+             */
+            timing: "measured" | "start_only" | "order_only";
+        };
+        /**
+         * PriceCreateRequest
+         * @description A price for the caller's project: ``price_nano_usd`` per ``per_quantity`` units
+         *     of ``unit``, in effect for calls whose first evidence is at or after
+         *     ``effective_from_unix_nano``. ``provider`` and ``model`` match usage exactly,
+         *     lower-cased.
+         */
+        PriceCreateRequest: {
+            /** Effective From Unix Nano */
+            effective_from_unix_nano: string;
+            /** Model */
+            model: string;
+            /** Note */
+            note?: string | null;
+            /**
+             * Per Quantity
+             * @default 1
+             */
+            per_quantity: number;
+            /** Price Nano Usd */
+            price_nano_usd: number;
+            /** Provider */
+            provider: string;
+            /** Source Url */
+            source_url?: string | null;
+            /**
+             * Unit
+             * @enum {string}
+             */
+            unit: "input_token" | "output_token" | "cached_input_token" | "character" | "audio_second";
+        };
+        /** PricePageResponse */
+        PricePageResponse: {
+            /** Items */
+            items: components["schemas"]["PriceResponse"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+        };
+        /**
+         * PriceResponse
+         * @description One price row. ``scope`` ``builtin`` rows ship with Earshot or are added by the
+         *     operator; ``project`` rows are the caller's and win over built-ins.
+         */
+        PriceResponse: {
+            /** Created Unix Nano */
+            created_unix_nano: string;
+            /** Effective From Unix Nano */
+            effective_from_unix_nano: string;
+            /** Id */
+            id: number;
+            /** Model */
+            model: string;
+            /** Note */
+            note: string | null;
+            /** Per Quantity */
+            per_quantity: number;
+            /** Price Nano Usd */
+            price_nano_usd: number;
+            /** Provider */
+            provider: string;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "builtin" | "project";
+            /** Source Url */
+            source_url: string | null;
+            /** Unit */
+            unit: string;
         };
         /** PrivacyManifest */
         PrivacyManifest: {
@@ -2957,6 +4042,108 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ReadinessResponse */
+        ReadinessResponse: {
+            /** Projections Pending */
+            projections_pending?: number | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * RecordingCreateRequest
+         * @description A recording's manifest. Without ``recording_id`` the server mints a UUID, and
+         *     the request is then not idempotent. A ``mixed`` recording may name each
+         *     channel's speaker in ``channel_speakers`` (``user`` and ``agent`` at most once
+         *     each); its file then has that many channels.
+         */
+        RecordingCreateRequest: {
+            /** Channel Speakers */
+            channel_speakers?: ("user" | "agent")[] | null;
+            /**
+             * Content Type
+             * @enum {string}
+             */
+            content_type: "audio/wav" | "audio/ogg" | "audio/mpeg" | "audio/webm" | "audio/flac";
+            /** Label */
+            label?: string | null;
+            /** Recording Id */
+            recording_id?: string | null;
+            /** Session Key */
+            session_key: string;
+            /**
+             * Speaker
+             * @enum {string}
+             */
+            speaker: "user" | "agent" | "mixed";
+            /** Started At Unix Nano */
+            started_at_unix_nano: string;
+        };
+        /**
+         * RecordingResponse
+         * @description One recording; ``upload_path`` is relative to the server's base URL.
+         */
+        RecordingResponse: {
+            /** Call Id */
+            call_id: string;
+            /** Channel Speakers */
+            channel_speakers: ("user" | "agent")[] | null;
+            /** Content Type */
+            content_type: string;
+            /** Created Unix Nano */
+            created_unix_nano: string;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Label */
+            label: string | null;
+            /** Recording Id */
+            recording_id: string;
+            /** Sha256 */
+            sha256: string | null;
+            /** Size */
+            size: number | null;
+            /**
+             * Speaker
+             * @enum {string}
+             */
+            speaker: "user" | "agent" | "mixed";
+            /** Started At Unix Nano */
+            started_at_unix_nano: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending" | "stored" | "failed";
+            /** Stored Unix Nano */
+            stored_unix_nano: string | null;
+            /** Upload Path */
+            upload_path: string;
+        };
+        /**
+         * RecordingTranscriptResponse
+         * @description The transcript a recording holds: its format, the timing its lines have
+         *     (``measured`` for WebVTT, ``order_only`` for plain text), how many lines, and the
+         *     sha256 of the lines as parsed (the same transcript, re-sent, has the same one).
+         */
+        RecordingTranscriptResponse: {
+            /** Call Id */
+            call_id: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "vtt" | "text";
+            /** Line Count */
+            line_count: number;
+            /** Recording Id */
+            recording_id: string;
+            /** Sha256 */
+            sha256: string;
+            /**
+             * Timing
+             * @enum {string}
+             */
+            timing: "measured" | "order_only";
+        };
         /**
          * RecoveryRecord
          * @description How this artifact was reconstructed, and what that costs its completeness.
@@ -3088,6 +4275,47 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * SpanAttributeResponse
+         * @description One stored attribute: its key as sent, the semantic key Earshot reads it as,
+         *     its capture class, and its value (JSON; bytes as base64, a non-finite float as
+         *     its name).
+         */
+        SpanAttributeResponse: {
+            capture_class: components["schemas"]["CaptureClass"];
+            /** Key */
+            key: string;
+            /** Semantic Key */
+            semantic_key: string;
+            /** Value */
+            value: unknown;
+        };
+        /** SpanEventResponse */
+        SpanEventResponse: {
+            /** Attributes */
+            attributes: components["schemas"]["SpanAttributeResponse"][];
+            /** Name */
+            name: string;
+            /** Time Unix Nano */
+            time_unix_nano: string;
+        };
+        /** SpanRefResponse */
+        SpanRefResponse: {
+            /** Span Id */
+            span_id: string;
+            /** Trace Id */
+            trace_id: string;
+        };
+        /** SpanStatusResponse */
+        SpanStatusResponse: {
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "unset" | "ok" | "error";
+            /** Message */
+            message: string | null;
+        };
         /** StoredAnalysisResponse */
         StoredAnalysisResponse: {
             analysis: components["schemas"]["DerivedAnalysis"];
@@ -3178,6 +4406,27 @@ export interface components {
              * @default 0
              */
             untimed_operation_count: number;
+        };
+        /**
+         * TranscriptLineResponse
+         * @description One transcript line and the span it was read from.
+         */
+        TranscriptLineResponse: {
+            /** End Unix Nano */
+            end_unix_nano: string;
+            /** Span Id */
+            span_id: string;
+            /**
+             * Speaker
+             * @enum {string}
+             */
+            speaker: "user" | "agent";
+            /** Start Unix Nano */
+            start_unix_nano: string;
+            /** Text */
+            text: string;
+            /** Trace Id */
+            trace_id: string;
         };
         /**
          * TurnMetricAvailabilityChangeResponse
@@ -3332,6 +4581,32 @@ export interface components {
             /** Turn Id */
             turn_id: string;
         };
+        /**
+         * TurnSpanResponse
+         * @description A span of a turn, for the lazy span route; times are span times on the axis.
+         */
+        TurnSpanResponse: {
+            /** End Ms */
+            end_ms: number;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "stt" | "llm" | "tts" | "tool" | "other";
+            /** Span Id */
+            span_id: string;
+            /** Start Ms */
+            start_ms: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "unset" | "ok" | "error";
+            /** Trace Id */
+            trace_id: string;
+        };
         /** UnmatchedTurnsResponse */
         UnmatchedTurnsResponse: {
             /** Only In Incident */
@@ -3351,19 +4626,6 @@ export interface components {
             valid: boolean;
             /** Warnings */
             warnings: components["schemas"]["ApiIssue"][];
-        };
-        /** ValidationError */
-        ValidationError: {
-            /** Context */
-            ctx?: Record<string, never>;
-            /** Input */
-            input?: unknown;
-            /** Location */
-            loc: (string | number)[];
-            /** Message */
-            msg: string;
-            /** Error Type */
-            type: string;
         };
     };
     responses: never;
@@ -3468,13 +4730,13 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemResponse"] | components["schemas"]["ConnectorProblemResponse"];
                 };
             };
-            /** @description Validation Error */
+            /** @description Unprocessable Content */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["ProblemResponse"] | components["schemas"]["ConnectorProblemResponse"];
                 };
             };
             /** @description Too Many Requests */
@@ -3525,7 +4787,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthResponse"];
+                    "application/json": components["schemas"]["ReadinessResponse"];
                 };
             };
             /** @description Service Unavailable */
@@ -3534,7 +4796,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HealthResponse"];
+                    "application/json": components["schemas"]["ReadinessResponse"];
                 };
             };
         };
@@ -3921,6 +5183,677 @@ export interface operations {
             };
         };
     };
+    list_calls_endpoint_v1_calls_get: {
+        parameters: {
+            query?: {
+                state?: ("open" | "closed") | null;
+                limit?: number;
+                cursor?: string | null;
+                agent?: string | null;
+                outcome?: string | null;
+                tag?: string[];
+                min_reported_latency_ms?: number | null;
+                max_reported_latency_ms?: number | null;
+                min_audible_gap_ms?: number | null;
+                max_audible_gap_ms?: number | null;
+                min_cost_nano_usd?: number | null;
+                max_cost_nano_usd?: number | null;
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallPageResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    get_call_endpoint_v1_calls__call_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallDetailResponse"];
+                };
+            };
+            /** @description Not modified: the If-None-Match ETag is current. */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    purge_call_endpoint_v1_calls__call_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    get_call_span_endpoint_v1_calls__call_id__spans__trace_id___span_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                call_id: string;
+                trace_id: string;
+                span_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallSpanResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    resolve_call_endpoint_v1_calls_resolve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CallResolveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallResolveResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
     capture_endpoint_v1_capture_post: {
         parameters: {
             query?: never;
@@ -4019,6 +5952,139 @@ export interface operations {
                 };
             };
             /** @description The payload exceeds a request bound, or a continuous call's journal would exceed its configured record or byte limit. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    dashboard_endpoint_v1_dashboard_get: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                bucket?: "hour" | "day";
+                group_by?: "framework" | "agent";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
             413: {
                 headers: {
                     [name: string]: unknown;
@@ -6737,6 +8803,397 @@ export interface operations {
             };
         };
     };
+    otlp_stats_endpoint_v1_otlp_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OtlpStatsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    list_prices_endpoint_v1_prices_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PricePageResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    create_price_endpoint_v1_prices_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
     delete_project_endpoint_v1_projects__project_id__delete: {
         parameters: {
             query?: never;
@@ -7002,6 +9459,1262 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    create_recording_endpoint_v1_recordings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The recording exists already with this manifest. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingResponse"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    get_recording_endpoint_v1_recordings__recording_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    recording_content_endpoint_v1_recordings__recording_id__content_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole recording. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/flac": string;
+                    "audio/mpeg": string;
+                    "audio/ogg": string;
+                    "audio/wav": string;
+                    "audio/webm": string;
+                };
+            };
+            /** @description The one byte range the Range header asked for. */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/flac": string;
+                    "audio/mpeg": string;
+                    "audio/ogg": string;
+                    "audio/wav": string;
+                    "audio/webm": string;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description The range starts past the end. */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    upload_recording_endpoint_v1_recordings__recording_id__content_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description RFC 9530 sha-256 digest of the body; a mismatch stores nothing (400). */
+                "Content-Digest"?: string;
+            };
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "audio/flac": string;
+                "audio/mpeg": string;
+                "audio/ogg": string;
+                "audio/wav": string;
+                "audio/webm": string;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Request Timeout */
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    recording_peaks_endpoint_v1_recordings__recording_id__peaks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An audiowaveform .dat file, version 2, 8-bit. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Not modified: the If-None-Match ETag is current. */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    recording_rendition_endpoint_v1_recordings__recording_id__rendition_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The whole rendition. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/flac": string;
+                };
+            };
+            /** @description The one byte range the Range header asked for. */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/flac": string;
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description The range starts past the end. */
+            416: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    recording_rendition_peaks_endpoint_v1_recordings__recording_id__rendition_peaks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An audiowaveform .dat file, version 2, 8-bit. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Not modified: the If-None-Match ETag is current. */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    recording_transcript_endpoint_v1_recordings__recording_id__transcript_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "text/plain": string;
+                "text/vtt": string;
+            };
+        };
+        responses: {
+            /** @description The recording holds this transcript already. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptResponse"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingTranscriptResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    otlp_traces_endpoint_v1_traces_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Content-Encoding"?: "identity" | "gzip" | "deflate";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": Record<string, never>;
+                "application/x-protobuf": string;
+            };
+        };
+        responses: {
+            /** @description Stored. An ExportTraceServiceResponse in the request's encoding: empty, or with partial_success.rejected_spans and error_message when spans were rejected. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                    "application/x-protobuf": string;
+                };
+            };
+            /** @description The body is not an ExportTraceServiceRequest. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code?: number;
+                        message?: string;
+                    };
+                    "application/x-protobuf": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description The project began deletion before the spans were written. */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code?: number;
+                        message?: string;
+                    };
+                    "application/x-protobuf": string;
+                };
+            };
+            /** @description The body is over its size bound. */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code?: number;
+                        message?: string;
+                    };
+                    "application/x-protobuf": string;
+                };
+            };
+            /** @description Unsupported Content-Type or Content-Encoding. */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code?: number;
+                        message?: string;
+                    };
+                    "application/x-protobuf": string;
+                };
+            };
+            /** @description Busy: retry after Retry-After seconds. */
+            503: {
+                headers: {
+                    /** @description Whole seconds before the request should be retried. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code?: number;
+                        message?: string;
+                    };
+                    "application/x-protobuf": string;
                 };
             };
         };
