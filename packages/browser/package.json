@@ -1,22 +1,42 @@
 {
   "name": "@earshot/browser",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.3.0",
   "description": "Client-side voice capture kernel — records getUserMedia/RTCPeerConnection/AudioContext/render telemetry and W3C trace-context in the exact shape the server WebRTC/device engines consume, and delivers it to POST /v1/capture.",
+  "keywords": [
+    "earshot",
+    "voice",
+    "observability",
+    "webrtc",
+    "web-audio"
+  ],
+  "homepage": "https://github.com/Kkartik14/Earshot/tree/main/packages/browser#readme",
+  "bugs": "https://github.com/Kkartik14/Earshot/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kkartik14/Earshot.git",
+    "directory": "packages/browser"
+  },
+  "license": "Apache-2.0",
   "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
