@@ -1,0 +1,47 @@
+{
+  "call_id": "call_0d0d68c6f99a393adc2596ec43815ea9",
+  "trace_id": "5d6bb6c9d0acbb71228a8b271359ece2",
+  "span_id": "b03dc1e01b585ed7",
+  "parent_span_id": "27195d4734ad5441",
+  "name": "llm",
+  "scope_name": "pipecat",
+  "start_unix_nano": "1792372165463758000",
+  "end_unix_nano": "1792372166686779000",
+  "status": {
+    "code": "unset",
+    "message": null
+  },
+  "attributes": [
+    {
+      "key": "gen_ai.provider.name",
+      "semantic_key": "gen_ai.provider.name",
+      "capture_class": "metadata",
+      "value": "groq"
+    },
+    {
+      "key": "input",
+      "semantic_key": "gen_ai.input.messages",
+      "capture_class": "model_payload",
+      "value": "[{\"role\": \"user\", \"content\": \"Hi. I would like to book a tab…"
+    },
+    {
+      "key": "gen_ai.usage.input_tokens",
+      "semantic_key": "gen_ai.usage.input_tokens",
+      "capture_class": "metadata",
+      "value": 119
+    },
+    {
+      "key": "output",
+      "semantic_key": "gen_ai.output.messages",
+      "capture_class": "model_payload",
+      "value": "Sure, what time would you like to come in tomorrow evening?"
+    },
+    {
+      "key": "metrics.ttfb",
+      "semantic_key": "metrics.ttfb",
+      "capture_class": "metadata",
+      "value": 1.1116979122161865
+    }
+  ],
+  "events": []
+}

@@ -1,0 +1,237 @@
+{
+  "call_id": "call_0d0d68c6f99a393adc2596ec43815ea9",
+  "key_source": "conversation.id",
+  "state": "closed",
+  "session_key": "pipecat-otlp-156876d7-4d62-427a-9295-cee8c3186dcb",
+  "first_evidence_unix_nano": "1800000000000000000",
+  "last_evidence_unix_nano": "1800000030000000000",
+  "span_count": 17,
+  "recording_count": 0,
+  "latest_revision": {
+    "revision": 1,
+    "bundle_id": "call_0d0d68c6f99a393adc2596ec43815ea9.r1",
+    "close_reason": "end_signal",
+    "finality": "final"
+  },
+  "materialize_error": null,
+  "projection_state": "current",
+  "projection": {
+    "revision": 1,
+    "agent": "booking-agent",
+    "framework": "pipecat",
+    "outcome": "completed",
+    "tags": ["refund", "vip"],
+    "duration_ms": 32486,
+    "turn_count": 3,
+    "measurable_turns": 2,
+    "reported_latency_p50_ms": 1352,
+    "reported_latency_max_ms": 1800,
+    "audible_gap_p50_ms": 1479,
+    "audible_gap_max_ms": 1510,
+    "cost": {
+      "lower_bound_nano_usd": 3672825,
+      "estimated_nano_usd": 4169037,
+      "unknown_items": 2,
+      "complete": false
+    },
+    "analysis_state": "stored",
+    "axis_origin_unix_nano": "1800000000000000000",
+    "axis_origin": "recording_start",
+    "media": [
+      {
+        "source": "recording",
+        "recording_ids": ["conv-1"],
+        "content_path": "/v1/recordings/conv-1/content",
+        "content_type": "audio/wav",
+        "peaks_path": "/v1/recordings/conv-1/peaks",
+        "offset_ms": 0,
+        "duration_ms": 32486,
+        "channels": [
+          {
+            "index": 0,
+            "speaker": "user"
+          },
+          {
+            "index": 1,
+            "speaker": "agent"
+          }
+        ],
+        "analysis_state": "stored",
+        "analysis_error_code": null
+      }
+    ],
+    "turns": [
+      {
+        "index": 0,
+        "turn_id": "turn-1",
+        "start_ms": 1310,
+        "end_ms": 7420,
+        "reported_latency_ms": 1800,
+        "audible_gap": {
+          "status": "not_measurable",
+          "value_ms": null,
+          "uncertainty_ms": 20,
+          "bound_ms": 3080,
+          "user_end_ms": 3880,
+          "agent_start_ms": 6960,
+          "reason": "recorder_timeline_discontinuity",
+          "basis": "anchors_checked"
+        },
+        "spans": [
+          {
+            "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+            "span_id": "1000000000000001",
+            "name": "stt",
+            "role": "stt",
+            "status": "ok",
+            "start_ms": 1100,
+            "end_ms": 3900
+          },
+          {
+            "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+            "span_id": "1000000000000002",
+            "name": "llm",
+            "role": "llm",
+            "status": "ok",
+            "start_ms": 3950,
+            "end_ms": 4810
+          }
+        ]
+      },
+      {
+        "index": 1,
+        "turn_id": "turn-2",
+        "start_ms": 11810,
+        "end_ms": 19710,
+        "reported_latency_ms": 1352,
+        "audible_gap": {
+          "status": "measured",
+          "value_ms": 1510,
+          "uncertainty_ms": 30,
+          "bound_ms": null,
+          "user_end_ms": 15240,
+          "agent_start_ms": 16750,
+          "reason": null,
+          "basis": "anchors_checked"
+        },
+        "spans": [
+          {
+            "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+            "span_id": "1000000000000004",
+            "name": "llm",
+            "role": "llm",
+            "status": "ok",
+            "start_ms": 15300,
+            "end_ms": 16100
+          }
+        ]
+      }
+    ],
+    "signals": {
+      "one_timeline": true,
+      "talk_time_user_ms": 8210,
+      "talk_time_agent_ms": 8130,
+      "overlap_ms": 0,
+      "barge_in_count": 0,
+      "talk_over_count": 0,
+      "long_silence_count": 1,
+      "dead_air_ms": 3080
+    },
+    "cost_items": [
+      {
+        "status": "priced",
+        "operation": "llm",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "unit": "input_token",
+        "quantity": 495,
+        "price_id": 7,
+        "price_nano_usd": 75,
+        "per_quantity": 1,
+        "cost_nano_usd": 37125,
+        "span": null
+      },
+      {
+        "status": "not_reported",
+        "operation": "llm",
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b",
+        "unit": null,
+        "quantity": null,
+        "price_id": null,
+        "price_nano_usd": null,
+        "per_quantity": null,
+        "cost_nano_usd": null,
+        "span": {
+          "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+          "span_id": "1000000000000006"
+        }
+      },
+      {
+        "status": "estimated",
+        "operation": "stt",
+        "provider": "deepgram",
+        "model": "nova-3-general",
+        "unit": "audio_second",
+        "quantity": 32.486,
+        "price_id": 3,
+        "price_nano_usd": 7700000,
+        "per_quantity": 60,
+        "cost_nano_usd": 4169037,
+        "span": null
+      }
+    ],
+    "transcript": [
+      {
+        "line_no": 0,
+        "speaker": "user",
+        "text": "Hi. I would like to book a table for two people tomorrow evening.",
+        "timing": "measured",
+        "start_ms": 1310,
+        "end_ms": 3880,
+        "alignment_uncertain": false,
+        "span": {
+          "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+          "span_id": "1000000000000001"
+        }
+      },
+      {
+        "line_no": 1,
+        "speaker": "agent",
+        "text": "Sure, what time would you like to come in tomorrow evening?",
+        "timing": "measured",
+        "start_ms": 6960,
+        "end_ms": 9920,
+        "alignment_uncertain": true,
+        "span": {
+          "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+          "span_id": "1000000000000002"
+        }
+      }
+    ]
+  },
+  "revisions": [
+    {
+      "revision": 1,
+      "bundle_id": "call_0d0d68c6f99a393adc2596ec43815ea9.r1",
+      "close_reason": "end_signal",
+      "finality": "final",
+      "span_count": 17,
+      "recording_count": 0,
+      "created_unix_nano": "1800000045000000000"
+    }
+  ],
+  "recordings": [],
+  "evidence_after_latest_revision": false,
+  "transcript": [
+    {
+      "speaker": "user",
+      "text": "Hi. I would like to book a table for two people tomorrow evening.",
+      "start_unix_nano": "1792372162493948928",
+      "end_unix_nano": "1792372165462407936",
+      "trace_id": "5d6bb6c9d0acbb71228a8b271359ece2",
+      "span_id": "67ddfb773669a19e"
+    }
+  ],
+  "transcript_coverage": "available"
+}
