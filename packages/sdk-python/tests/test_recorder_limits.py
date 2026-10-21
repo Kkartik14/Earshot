@@ -114,6 +114,30 @@ def test_total_byte_limit_has_an_exact_admission_boundary() -> None:
     assert [item.event_id for item in recorder.close().profile.events] == ["same"]
 
 
+@pytest.mark.parametrize(
+    ("value", "kept"),
+    [
+        ("a" * 7, True),
+        ("a" * 8, False),
+        ("\u00e9" * 3, True),  # two bytes each: 6
+        ("\u00e9" * 4, False),  # 8 bytes in 4 characters
+        ("\u20ac" * 2, True),  # three bytes each: 6
+        ("\u20ac" * 3, False),
+        ("\U0001f600", True),  # four bytes
+        ("\U0001f600" * 2, False),
+        ("a" * 70_000 + "\u20ac", False),  # longer than any chunk the size is taken in
+    ],
+)
+def test_a_value_budget_counts_utf8_bytes_not_characters(value: str, kept: bool) -> None:
+    # ``max_value_bytes`` counts a string's UTF-8 bytes plus one: with a budget of
+    # 8, a value is kept up to 7 bytes, whatever its number of characters.
+    recorder = IncidentRecorder(config=RecorderConfig(max_value_bytes=8))
+
+    _event(recorder, "sized", **{"service.name": value})
+
+    assert recorder.status().truncated is not kept
+
+
 def test_oversized_value_is_omitted_before_copy_without_freezing_enclosing_record() -> None:
     recorder = IncidentRecorder(
         config=RecorderConfig(

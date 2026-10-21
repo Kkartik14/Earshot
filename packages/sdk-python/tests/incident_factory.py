@@ -349,3 +349,62 @@ def make_valid_bundle(
             ),
         )
     return IncidentBundle(profile=profile, raw_otlp_chunks=chunks)
+
+
+def make_long_bundle(*, turns: int, bundle_id: str = "bundle-long") -> IncidentBundle:
+    """A valid bundle whose session repeats the ``make_valid_bundle`` turn ``turns`` times.
+
+    Turn ``n`` has its own trace and operation, event and turn IDs, two seconds
+    after turn ``n - 1``; its analysis and turn facts scale with ``turns``.
+    """
+
+    base = make_valid_bundle(bundle_id=bundle_id, include_raw_otlp=False)
+    step = 2_000_000_000
+
+    def shifted(time_point: TimePoint | None, offset: int) -> TimePoint | None:
+        if time_point is None:
+            return None
+        return point(int(time_point.monotonic_time_nano) + offset)
+
+    operations = []
+    events = []
+    for index in range(turns):
+        offset = index * step
+        turn_id = f"turn-{index + 1}"
+        trace_id = f"{index + 1:032x}"
+        for operation in base.profile.operations:
+            attributes = dict(operation.attributes)
+            if "earshot.turn.id" in attributes:
+                attributes["earshot.turn.id"] = turn_id
+            operations.append(
+                operation.model_copy(
+                    update={
+                        "operation_id": f"{operation.operation_id}-{index + 1}",
+                        "turn_id": turn_id,
+                        "trace_id": trace_id,
+                        "started_at": shifted(operation.started_at, offset),
+                        "ended_at": shifted(operation.ended_at, offset),
+                        "attributes": attributes,
+                    }
+                )
+            )
+        for event in base.profile.events:
+            events.append(
+                event.model_copy(
+                    update={
+                        "event_id": f"{event.event_id}-{index + 1}",
+                        "turn_id": turn_id,
+                        "operation_id": (
+                            None
+                            if event.operation_id is None
+                            else f"{event.operation_id}-{index + 1}"
+                        ),
+                        "time": shifted(event.time, offset),
+                    }
+                )
+            )
+    session = base.profile.session.model_copy(update={"ended_at": point(turns * step + step)})
+    profile = base.profile.model_copy(
+        update={"session": session, "operations": tuple(operations), "events": tuple(events)}
+    )
+    return base.model_copy(update={"profile": profile})

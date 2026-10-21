@@ -16,6 +16,7 @@ import threading
 from collections.abc import Mapping
 from typing import Any
 
+from ..call_capture import canonical_attribute_key
 from ..contract import (
     Adapter,
     CausalLink,
@@ -25,7 +26,12 @@ from ..contract import (
     TimePoint,
     TimeRange,
 )
-from ..privacy import sanitize_semantic_label, sanitize_source_label
+from ..privacy import (
+    CaptureClass,
+    classify_attribute,
+    sanitize_semantic_label,
+    sanitize_source_label,
+)
 from ..recorder import IncidentRecorder
 from ..versions import LIVEKIT_ADAPTER_VERSION
 from . import routing
@@ -33,6 +39,7 @@ from .base import (
     DEFAULT_ADAPTER_TRACKING_ENTRIES,
     AdapterDependencyError,
     AdapterTrackingStatus,
+    otel_id,
     seconds_to_nano,
     stable_id,
     validate_tracking_limit,
@@ -251,28 +258,18 @@ def _is_connection_acquisition_metric(metric: object) -> bool:
 
 
 def _normalize_native_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
-    """Map current LiveKit payload fields into explicit capture-class namespaces."""
+    """Record each attribute under its semantic key from the one key table
+    (``call_capture.ATTRIBUTE_KEYS``), which the OTLP receiver classifies by too.
 
-    normalized = dict(attributes)
-    mappings = {
-        "lk.chat_ctx": "gen_ai.input",
-        "lk.function_tool.arguments": "tool.arguments",
-        "lk.function_tool.output": "tool.result",
-        "lk.function_tools": "gen_ai.input.function_tools",
-        "lk.input_text": "speech.text",
-        "lk.instructions": "gen_ai.input.system_instruction",
-        "lk.participant_identity": "participant.name",
-        "lk.provider_tools": "gen_ai.input.provider_tools",
-        "lk.response.text": "gen_ai.output.messages",
-        "lk.tool_sets": "gen_ai.input.tool_sets",
-        "lk.user_input": "speech.text",
-        "lk.user_transcript": "speech.text",
-    }
-    for source, target in mappings.items():
-        if source not in normalized:
-            continue
-        normalized.setdefault(target, normalized[source])
-        del normalized[source]
+    LiveKit 1.6 and 1.7+ spellings of one field (``lk.response.text``,
+    ``lk.pii.response.text``) land on one key, whose name the recorder files under
+    the table's class. A key outside the table keeps its own name; when two keys
+    name one semantic key, the first one the span carries wins.
+    """
+
+    normalized: dict[str, Any] = {}
+    for key, item in attributes.items():
+        normalized.setdefault(canonical_attribute_key(key) if isinstance(key, str) else key, item)
     return normalized
 
 
@@ -291,22 +288,6 @@ def _turn_id_from_span(span: object, attributes: Mapping[str, Any]) -> str | Non
     if separator and base.startswith("speech_") and step.isdigit():
         return base
     return candidate
-
-
-def _otel_id(raw: object, width: int) -> str | None:
-    if isinstance(raw, int):
-        if raw <= 0 or raw >= 1 << (width * 4):
-            return None
-        return f"{raw:0{width}x}"
-    if isinstance(raw, str):
-        candidate = raw.lower().removeprefix("0x")
-        if len(candidate) == width and candidate != "0" * width:
-            try:
-                int(candidate, 16)
-            except ValueError:
-                return None
-            return candidate
-    return None
 
 
 class LiveKitAdapter:
@@ -386,15 +367,23 @@ class LiveKitAdapter:
         )
         native_metrics = self._pop_native_metrics(attributes)
         for metric in native_metrics:
-            attributes.update(self._metric_attributes(metric))
+            # A metric whose name a recorder reads as content (``livekit.tts.audio_duration``
+            # reads as audio) stays a quality measurement only: on the operation it would
+            # give one record two sensitive classes next to the span's text, which a
+            # recorder refuses.
+            attributes.update(
+                (key, item)
+                for key, item in self._metric_attributes(metric).items()
+                if classify_attribute(key) is CaptureClass.METADATA
+            )
             request_id = value(metric, "request_id")
             if request_id is not None:
                 attributes.setdefault("earshot.request.id", str(request_id))
         context = value(span, "context")
-        trace_id = _otel_id(value(context, "trace_id"), 32) if context is not None else None
-        span_id = _otel_id(value(context, "span_id"), 16) if context is not None else None
-        trace_id = trace_id or _otel_id(value(span, "trace_id"), 32)
-        span_id = span_id or _otel_id(value(span, "span_id"), 16)
+        trace_id = otel_id(value(context, "trace_id"), 32) if context is not None else None
+        span_id = otel_id(value(context, "span_id"), 16) if context is not None else None
+        trace_id = trace_id or otel_id(value(span, "trace_id"), 32)
+        span_id = span_id or otel_id(value(span, "span_id"), 16)
         if trace_id is None or span_id is None:
             raise TypeError("LiveKit span lacks a valid OpenTelemetry trace/span identity")
 
@@ -404,8 +393,8 @@ class LiveKitAdapter:
         end = self._time_point(raw_end) if raw_end is not None else None
 
         parent = value(span, "parent")
-        parent_span_id = _otel_id(value(parent, "span_id"), 16) if parent is not None else None
-        parent_span_id = parent_span_id or _otel_id(value(span, "parent_span_id"), 16)
+        parent_span_id = otel_id(value(parent, "span_id"), 16) if parent is not None else None
+        parent_span_id = parent_span_id or otel_id(value(span, "parent_span_id"), 16)
         supplied_parent_scope = value(span, "parent_scope")
         if supplied_parent_scope:
             raw_parent_scope = str(supplied_parent_scope)
@@ -436,8 +425,8 @@ class LiveKitAdapter:
         links: list[CausalLink] = []
         for native_link in value(span, "links", ()) or ():
             link_context = value(native_link, "context")
-            linked_trace_id = _otel_id(value(link_context, "trace_id"), 32)
-            linked_span_id = _otel_id(value(link_context, "span_id"), 16)
+            linked_trace_id = otel_id(value(link_context, "trace_id"), 32)
+            linked_span_id = otel_id(value(link_context, "span_id"), 16)
             if linked_trace_id is None or linked_span_id is None:
                 continue
             link_attributes = dict(value(native_link, "attributes", {}) or {})
