@@ -4,9 +4,13 @@ docs/private/
 local/
 fixtures/faults/*.incident.json
 fixtures/captured/*.incident.json
+fixtures/captured/pipecat-otlp-*/manifest.json
+fixtures/upgrade/manifest.json
 pnpm-lock.yaml
 spec/*.json
 fixtures/conformance/canonical-vector.*.json
 fixtures/valid/complete.json
 packages/viewer-ui/src/api/schema.d.ts
 packages/viewer-ui/src/features/inspector/__fixtures__/faults/*.explanation.json
+# Helm templates are Go templates, not YAML.
+deploy/helm/earshot/templates/
