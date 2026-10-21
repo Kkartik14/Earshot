@@ -24,14 +24,15 @@ from earshot.codec import (
     encode_incident_protobuf,
 )
 from earshot.contract import DerivedAnalysis, Diagnosis, ExportPolicy, RetentionPolicy
-from earshot.storage import IncidentStore, StorageCleanupPendingError
+from earshot.storage import StorageCleanupPendingError
 from incident_factory import SECRET_SENTINEL, make_valid_bundle
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
 
 def app_client(tmp_path, *, config: ApiConfig | None = None, analyzer=analyze_incident):
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     app = create_app(store=store, config=config, analyzer=analyzer)
     return store, TestClient(app)
 
@@ -87,14 +88,14 @@ def test_health_and_readiness_are_available_without_incident_auth(tmp_path) -> N
     config = ApiConfig(token="test-token")
     _, client = app_client(tmp_path, config=config)
     assert client.get("/healthz").json() == {"status": "ok"}
-    assert client.get("/readyz").json() == {"status": "ready"}
+    assert client.get("/readyz").json() == {"status": "ready", "projections_pending": 0}
 
 
 @pytest.mark.asyncio
 async def test_blocked_storage_ingest_does_not_stall_asgi_health(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     original_ingest = store.ingest
     started = threading.Event()
     release = threading.Event()
@@ -134,7 +135,7 @@ async def test_blocked_storage_ingest_does_not_stall_asgi_health(
 
 @pytest.mark.asyncio
 async def test_api_key_verification_does_not_stall_asgi_health(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     issued = store.issue_api_key("default", label="liveness test")
     original_authenticate = store.authenticate_api_key
     started = threading.Event()
@@ -211,11 +212,11 @@ def test_tls_proxy_allows_an_authenticated_non_loopback_socket() -> None:
 def test_tls_proxy_application_requires_a_configured_credential(tmp_path) -> None:
     config = ApiConfig(host="127.0.0.1", behind_tls_proxy=True)
     with pytest.raises(ValueError, match="requires a bearer token or an active project API key"):
-        create_app(store=IncidentStore(tmp_path), config=config)
+        create_app(store=make_store(tmp_path), config=config)
 
 
 def test_project_key_exchanges_for_a_secure_http_only_viewer_session(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     issued = store.issue_api_key("default", label="viewer")
     app = create_app(
         store=store,
@@ -265,7 +266,7 @@ def test_project_key_exchanges_for_a_secure_http_only_viewer_session(tmp_path) -
 def test_incident_references_are_idempotent_and_returned_only_within_project(
     tmp_path, valid_bundle
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.ingest(valid_bundle, encode_incident_protobuf(valid_bundle))
     default_key = store.issue_api_key("default", label="platform service")
     store.create_project("other-project", display_name="Other project")
@@ -388,7 +389,7 @@ def test_tokenless_loopback_viewer_can_discover_that_login_is_not_required(tmp_p
 
 
 def test_viewer_logout_requires_csrf_and_revokes_the_server_session(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     issued = store.issue_api_key("default", label="viewer logout")
     app = create_app(
         store=store,
@@ -423,7 +424,7 @@ def test_viewer_logout_requires_csrf_and_revokes_the_server_session(tmp_path) ->
 def test_viewer_session_expires_server_side(tmp_path, monkeypatch) -> None:
     now = [10.0]
     monkeypatch.setattr("earshot.browser_session.time.monotonic", lambda: now[0])
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     issued = store.issue_api_key("default", label="expiring viewer")
     app = create_app(
         store=store,
@@ -446,7 +447,7 @@ def test_viewer_session_expires_server_side(tmp_path, monkeypatch) -> None:
 
 
 def test_revoking_project_key_invalidates_its_viewer_sessions(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     issued = store.issue_api_key("default", label="revoked viewer")
     app = create_app(
         store=store,
@@ -466,7 +467,7 @@ def test_revoking_project_key_invalidates_its_viewer_sessions(tmp_path) -> None:
 
 
 def test_viewer_session_capacity_evicts_the_oldest_session(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     issued = store.issue_api_key("default", label="bounded viewers")
     app = create_app(
         store=store,
@@ -501,7 +502,7 @@ def test_viewer_session_capacity_evicts_the_oldest_session(tmp_path) -> None:
 
 
 def test_actual_asgi_listener_cannot_bypass_declared_loopback_security(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     app = create_app(store=store, config=ApiConfig(), analyzer=analyze_incident)
     with TestClient(app, base_url="http://0.0.0.0") as client:
         response = client.get("/v1/incidents")
@@ -510,7 +511,7 @@ def test_actual_asgi_listener_cannot_bypass_declared_loopback_security(tmp_path)
 
 
 def test_actual_asgi_listener_guard_also_protects_provider_hooks(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     app = create_app(store=store, config=ApiConfig(), analyzer=analyze_incident)
     with TestClient(app, base_url="http://0.0.0.0") as client:
         response = client.post(
@@ -817,7 +818,7 @@ def test_incident_listing_uses_catalog_metadata_without_reading_artifacts(
 
 def test_expiry_reaper_runs_without_a_list_request(tmp_path, valid_bundle) -> None:
     expired = with_expired_metadata(valid_bundle)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     record = store.ingest(expired, encode_incident_protobuf(expired)).record
     object_path = store.objects.path_for(record.digest)
     config = ApiConfig(
@@ -857,7 +858,7 @@ def test_expiry_backlog_releases_the_store_lock_between_batches(tmp_path, monkey
             )
         )
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     object_paths = tuple(
         store.objects.path_for(store.ingest(bundle, encode_incident_protobuf(bundle)).record.digest)
         for bundle in expired_bundles
@@ -902,7 +903,7 @@ def test_expiry_backlog_releases_the_store_lock_between_batches(tmp_path, monkey
 def test_expiry_reaper_retries_a_failed_scrub_without_new_expired_rows(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     expired = with_expired_metadata(valid_bundle)
     result = store.ingest(expired, encode_incident_protobuf(expired))
     object_path = store.objects.path_for(result.record.digest)
@@ -941,7 +942,7 @@ def test_expiry_reaper_retries_a_failed_scrub_without_new_expired_rows(
 def test_final_expiry_compaction_does_not_hold_the_store_lock(
     tmp_path, valid_bundle, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     expired = with_expired_metadata(valid_bundle)
     store.ingest(expired, encode_incident_protobuf(expired))
     original_scrub = store._scrub_deleted_pages
@@ -1635,7 +1636,7 @@ def test_hosted_auth_configuration_requires_all_verifier_settings() -> None:
 def test_openapi_keeps_connector_trust_separate_and_documents_retryable_errors(
     tmp_path,
 ) -> None:
-    client = TestClient(create_app(store=IncidentStore(tmp_path)))
+    client = TestClient(create_app(store=make_store(tmp_path)))
 
     operation = client.get("/openapi.json").json()["paths"]["/hooks/v1/connectors/{endpoint_id}"][
         "post"

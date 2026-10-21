@@ -34,8 +34,9 @@ from earshot.checkpoint import CheckpointConfig, CheckpointWriter
 from earshot.codec import decode_incident_protobuf, encode_incident_json
 from earshot.live import END_PROJECT_DELETED, EVENT_END, LiveConfig, LiveSessionRegistry
 from earshot.recorder import IncidentRecorder
-from earshot.storage import IncidentStore, StorageCleanupPendingError
+from earshot.storage import StorageCleanupPendingError
 from incident_factory import SECRET_SENTINEL, make_valid_bundle
+from store_support import make_store
 
 
 class _JwksHandler(BaseHTTPRequestHandler):
@@ -214,7 +215,7 @@ def _hosted_metadata_body(*, include_raw_otlp: bool = False) -> dict[str, object
 
 
 def test_hosted_jwt_uses_signed_project_and_operation_scope(tmp_path, issuer) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("project-a", display_name="Project A")
     store.create_project("project-b", display_name="Project B")
     config = dataclasses.replace(
@@ -263,9 +264,59 @@ def test_hosted_jwt_uses_signed_project_and_operation_scope(tmp_path, issuer) ->
     assert unprovisioned.json()["error"]["code"] == "EARSHOT_PROJECT_NOT_PROVISIONED"
 
 
+# Operator-only call surfaces (AC5.8): no hosted scope is defined for any method, so
+# a hosted JWT that grants every scope still gets the existing 403.
+_OPERATOR_ONLY_PATHS = (
+    "/v1/traces",
+    "/v1/calls",
+    "/v1/calls/call_0123456789abcdef0123456789abcdef",
+    "/v1/calls:resolve",
+    "/v1/calls/call_0123456789abcdef0123456789abcdef/spans/"
+    "0123456789abcdef0123456789abcdef/0123456789abcdef",
+    "/v1/recordings",
+    "/v1/recordings/user-1",
+    "/v1/recordings/user-1/content",
+    "/v1/prices",
+    "/v1/otlp/stats",
+    "/v1/dashboard",
+)
+_METHODS = ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE")
+
+
+def test_hosted_jwts_get_operation_unavailable_on_every_call_route_and_method(
+    tmp_path, issuer
+) -> None:
+    from otlp_support import request, serve
+
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    every_scope = "earshot:read earshot:write earshot:delete"
+    token = _token(issuer, project_id="project-a", scope=every_scope)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/x-protobuf"}
+
+    with serve(create_app(store=store, config=_hosted_config(issuer))) as port:
+        control = request(port, "GET", "/v1/incidents", headers=headers)
+        hosted_contract = request(port, "GET", "/openapi.json").json()["paths"]
+        replies = {
+            (method, path): request(port, method, path, b"", headers=headers)
+            for path in _OPERATOR_ONLY_PATHS
+            for method in _METHODS
+        }
+
+    assert control.status == 200
+    # The hosted contract does not list operations it always refuses.
+    assert not set(_OPERATOR_ONLY_PATHS) & set(hosted_contract)
+    assert "/v1/incidents" in hosted_contract
+    assert len(replies) == len(_OPERATOR_ONLY_PATHS) * len(_METHODS)
+    for (method, path), reply in replies.items():
+        assert reply.status == 403, (method, path, reply.status, reply.body)
+        if method != "HEAD":
+            assert reply.problem_code() == "EARSHOT_OPERATION_UNAVAILABLE", (method, path)
+
+
 def test_hosted_capture_rejects_free_text_coverage_and_hmacs_client_ids(tmp_path, issuer) -> None:
     project_id = "hosted-capture"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted capture")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
     secret_label = "customer-jane-doe"
@@ -316,7 +367,7 @@ def test_hosted_capture_rejects_free_text_coverage_and_hmacs_client_ids(tmp_path
 
 def test_hosted_capture_resync_reasons_are_finite(tmp_path, issuer) -> None:
     project_id = "hosted-resync"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted resync")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
     body = {
@@ -356,7 +407,7 @@ def test_hosted_capture_resync_reasons_are_finite(tmp_path, issuer) -> None:
 
 def test_hosted_capture_accepts_transport_drop_resync_reason(tmp_path, issuer) -> None:
     project_id = "hosted-upload-resync"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted upload resync")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -401,7 +452,7 @@ def test_hosted_capture_accepts_transport_drop_resync_reason(tmp_path, issuer) -
 
 def test_hosted_continuous_capture_requires_durable_journal_storage(tmp_path, issuer) -> None:
     project_id = "hosted-durable-capture"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted durable capture")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
     response = client.post(
@@ -435,7 +486,7 @@ def test_hosted_continuous_capture_requires_durable_journal_storage(tmp_path, is
 
 def test_hosted_capture_retry_fails_closed_after_correlation_key_loss(tmp_path, issuer) -> None:
     project_id = "hosted-key-loss"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted key loss")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -470,7 +521,7 @@ def test_hosted_capture_retry_fails_closed_after_correlation_key_loss(tmp_path, 
     store.close()
     (tmp_path / "instance-correlation.key").unlink()
 
-    reopened_store = IncidentStore(tmp_path)
+    reopened_store = make_store(tmp_path)
     reopened_app = create_app(
         store=reopened_store,
         config=_hosted_config(issuer),
@@ -501,7 +552,7 @@ def test_hosted_capture_fails_closed_on_unattributable_journal_inventory(
     tmp_path, issuer, inventory_damage
 ) -> None:
     project_id = "hosted-inventory-check"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted inventory check")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -586,7 +637,7 @@ def test_hosted_capture_revalidates_inventory_after_journal_mount_replacement(
     tmp_path, issuer
 ) -> None:
     project_id = "hosted-replaced-mount"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted replaced mount")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -635,7 +686,7 @@ def test_hosted_capture_stays_unavailable_when_sealed_journal_cleanup_fails(
     from earshot.capture import calls as capture_calls
 
     project_id = "hosted-sealed-cleanup-failure"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted sealed cleanup failure")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -700,7 +751,7 @@ def test_hosted_capture_stays_unavailable_when_sealed_journal_cleanup_fails(
 
 def test_hosted_unreplayable_journal_stays_fenced_until_project_deletion(tmp_path, issuer) -> None:
     project_id = "hosted-corrupt-journal"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted corrupt journal")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -782,7 +833,7 @@ def test_hosted_unreplayable_journal_stays_fenced_until_project_deletion(tmp_pat
 
 def test_hosted_live_sealing_waits_for_the_accepted_artifact_contract(tmp_path, issuer) -> None:
     project_id = "hosted-seal-pending"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted seal pending")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
 
@@ -807,7 +858,7 @@ def test_hosted_finalized_capture_can_be_sealed_to_release_its_durable_slot(
     from earshot.live import LiveConfig, LiveSessionRegistry
 
     project_id = "hosted-capture-seal"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted capture seal")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -865,7 +916,7 @@ def test_hosted_seal_retry_cleans_up_after_artifact_exists_but_journal_ack_fails
     from earshot.live import LiveConfig, LiveSessionRegistry
 
     project_id = "hosted-capture-seal-retry"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted capture seal retry")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -937,7 +988,7 @@ def test_project_deletion_waits_for_capture_seal_fence(tmp_path, issuer, monkeyp
     from earshot.capture import calls as capture_calls_module
 
     project_id = "hosted-seal-delete-race"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted seal deletion race")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -1040,7 +1091,7 @@ def test_project_deletion_waits_for_capture_seal_fence(tmp_path, issuer, monkeyp
 
 def test_project_deletion_waits_for_a_live_seal_snapshot(tmp_path, issuer, monkeypatch) -> None:
     project_id = "hosted-seal-snapshot-delete-race"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted seal snapshot deletion race")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -1134,7 +1185,7 @@ def test_project_deletion_waits_for_capture_expiry_fence(tmp_path, issuer, monke
     from earshot.live import LiveConfig, LiveSessionRegistry
 
     project_id = "hosted-expiry-delete-race"
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted expiry deletion race")
     capture_dir = tmp_path / "capture-journals"
     capture_dir.mkdir()
@@ -1239,7 +1290,7 @@ def test_project_deletion_waits_for_capture_expiry_fence(tmp_path, issuer, monke
 
 def test_hosted_runtime_session_cannot_claim_browser_capture_namespace(tmp_path, issuer) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Reserved hosted session")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
     body = _hosted_metadata_body()
@@ -1323,7 +1374,7 @@ def test_unrecognized_key_ids_are_rate_limited_before_jwks_fetch(issuer) -> None
 
 
 def test_hosted_jwt_requires_exact_audience_signature_and_short_lifetime(tmp_path, issuer) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("project-a", display_name="Project A")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
 
@@ -1354,7 +1405,7 @@ def test_hosted_jwt_requires_exact_audience_signature_and_short_lifetime(tmp_pat
 
 def test_project_summary_is_host_neutral_and_requires_its_summary_scope(tmp_path, issuer) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted project")
     bundle = make_valid_bundle(bundle_id="summary-bundle")
     store.ingest(bundle, project_id=project_id)
@@ -1393,7 +1444,7 @@ def test_project_summary_is_host_neutral_and_requires_its_summary_scope(tmp_path
 
 def test_hosted_ingest_assigns_earshot_bundle_id_and_is_idempotent(tmp_path, issuer) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted ingest project")
     body = _hosted_metadata_body()
     payload = json.dumps(body).encode()
@@ -1436,7 +1487,7 @@ def test_hosted_ingest_assigns_earshot_bundle_id_and_is_idempotent(tmp_path, iss
     assert stored_bundle.profile.manifest.producer.language == "unknown"
 
     store.close()
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
     retried = client.post("/v1/incidents", content=payload, headers=headers)
     assert retried.status_code == 200
@@ -1493,7 +1544,7 @@ def test_hosted_ingest_rejects_raw_payloads_and_unapproved_provider_labels(
     tmp_path, issuer
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Metadata-only hosted project")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
     headers = {
@@ -1531,7 +1582,7 @@ def test_hosted_runtime_identity_requires_a_bounded_runtime_slug_and_release(
     tmp_path, issuer, field: str, value: str
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Metadata-only hosted project")
     body = _hosted_metadata_body()
     body["profile"]["manifest"]["producer"][field] = value
@@ -1565,7 +1616,7 @@ def test_hosted_ingest_rejects_unapproved_bounded_codes(
     tmp_path, issuer, field: str, value: str
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Metadata-only hosted project")
     body = _hosted_metadata_body()
     if field == "status":
@@ -1598,7 +1649,7 @@ def test_hosted_ingest_stays_closed_until_event_contract_allowlists_are_configur
     tmp_path, issuer
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Unconfigured hosted contract")
     config = dataclasses.replace(
         _hosted_config(issuer),
@@ -1630,7 +1681,7 @@ def test_hosted_runtime_version_rejects_freeform_prerelease_and_build_labels(
     tmp_path, issuer
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Strict runtime version")
     body = _hosted_metadata_body()
     body["profile"]["manifest"]["producer"]["version"] = "1.2.3-provider-openai+customer-model"
@@ -1656,7 +1707,7 @@ def test_hosted_runtime_version_rejects_freeform_prerelease_and_build_labels(
 
 def test_hosted_checkpoint_writes_wait_for_the_accepted_runtime_contract(tmp_path, issuer) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Hosted checkpoint project")
     client = TestClient(create_app(store=store, config=_hosted_config(issuer)))
 
@@ -1688,7 +1739,7 @@ def test_hosted_time_rejects_monotonic_values_without_an_approved_clock_contract
     tmp_path, issuer
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Metadata-only hosted project")
     body = _hosted_metadata_body()
     body["profile"]["events"][0]["time"].update(
@@ -1717,7 +1768,7 @@ def test_hosted_ingest_rejects_explicit_nonmetadata_capture_policy(
     tmp_path, issuer, capture_class: str
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Metadata-only hosted project")
     body = _hosted_metadata_body()
     body["profile"]["privacy"] = {
@@ -1753,7 +1804,7 @@ def test_hosted_ingest_rejects_unapproved_content_before_persisting(
     tmp_path, issuer, location: str, sentinel: str
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Metadata-only hosted project")
     body = _hosted_metadata_body()
     if location == "event_attributes":
@@ -1785,7 +1836,7 @@ def test_hosted_ingest_rejects_unapproved_content_before_persisting(
 
 def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path, issuer) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Platform project")
     bundle = make_valid_bundle(bundle_id="platform-summary-bundle")
     store.ingest(bundle, project_id=project_id)
@@ -1830,7 +1881,7 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
 def test_hosted_openapi_publishes_scope_requirements_and_hides_operator_auth(
     tmp_path, issuer
 ) -> None:
-    client = TestClient(create_app(store=IncidentStore(tmp_path), config=_hosted_config(issuer)))
+    client = TestClient(create_app(store=make_store(tmp_path), config=_hosted_config(issuer)))
     schema = client.get("/openapi.json").json()
 
     assert schema["paths"]["/v1/incidents"]["get"]["x-required-scope"] == "earshot:read"
@@ -1864,7 +1915,7 @@ def test_project_deletion_requires_scope_fences_requests_and_retries_pending_cle
 ) -> None:
     project_a = str(uuid.uuid4())
     project_b = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_a, display_name="Project A")
     store.create_project(project_b, display_name="Project B")
     app = create_app(store=store, config=_hosted_config(issuer))
@@ -1979,7 +2030,7 @@ def test_project_deletion_revokes_live_tail_before_capture_cleanup(
     tmp_path, issuer, monkeypatch
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path / "data")
+    store = make_store(tmp_path / "data")
     store.create_project(project_id, display_name="Live tail deletion")
     journal_dir = tmp_path / "journals"
     writer = CheckpointWriter(CheckpointConfig(checkpoint_dir=journal_dir))
@@ -2024,7 +2075,7 @@ def test_project_deletion_defers_global_compaction_until_capture_cleanup_complet
     tmp_path, issuer, monkeypatch
 ) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Deferred compaction")
     app = create_app(store=store, config=_hosted_config(issuer))
     client = TestClient(app)
@@ -2054,7 +2105,7 @@ def test_project_deletion_defers_global_compaction_until_capture_cleanup_complet
 
 def test_artifact_deletion_requires_its_own_hosted_scope(tmp_path, issuer) -> None:
     project_id = str(uuid.uuid4())
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project(project_id, display_name="Artifact deletion project")
     bundle = make_valid_bundle(bundle_id="scope-protected-artifact")
     store.ingest(bundle, project_id=project_id)
