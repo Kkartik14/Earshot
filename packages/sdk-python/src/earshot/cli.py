@@ -1,4 +1,14 @@
-"""Command-line entry point for local validation, storage, and serving."""
+"""Command-line entry point for local validation, storage, and serving.
+
+Commands that open the incident store import ``earshot.storage`` only when they
+run: the store needs the ``server`` extra, while validation, query, export and
+checkpoint commands work on a base install.
+
+Every store command takes ``--database-url`` (default ``EARSHOT_DATABASE_URL``).
+Without it the catalog is SQLite in ``--data-dir``; with a ``postgresql://`` URL it
+is that database, and the command also needs the ``postgres`` extra and the
+correlation key (``EARSHOT_CORRELATION_KEY`` or ``EARSHOT_CORRELATION_KEY_FILE``).
+"""
 
 from __future__ import annotations
 
@@ -9,15 +19,14 @@ import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
-from .analysis import ANALYZER_VERSION, analyze_incident
 from .checkpoint import (
     AssemblyError,
     JournalUnreadableError,
     assemble_incident,
     summarize_directory,
 )
-from .checkpoint.keys import resolve_at_rest_key
 from .codec import (
     IncidentCodecError,
     decode_incident_json,
@@ -30,7 +39,6 @@ from .exporters.push import OtlpHttpExporter
 from .exporters.registry import export_incident, exporter_names
 from .privacy import ExportPolicyError, assert_export_allowed
 from .query import EvidenceQuery, compare_incidents
-from .storage import DEFAULT_PROJECT_ID, IncidentStore, StorageError
 from .validation import assert_valid_incident, validate_incident
 
 
@@ -38,9 +46,46 @@ def _data_dir(value: str | None) -> Path:
     return Path(value or os.environ.get("EARSHOT_DATA_DIR", ".earshot"))
 
 
-def _boolean_environment(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    return value.lower() in {"1", "true", "yes"} if value is not None else default
+def _database_url(arguments: argparse.Namespace) -> str | None:
+    """The catalog URL, or ``None`` for SQLite in the data directory."""
+
+    return (
+        getattr(arguments, "database_url", None) or os.environ.get("EARSHOT_DATABASE_URL") or None
+    )
+
+
+def _add_store_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--data-dir")
+    parser.add_argument(
+        "--database-url",
+        help=(
+            "postgresql:// catalog URL (default: EARSHOT_DATABASE_URL; without "
+            "either, SQLite in the data directory)"
+        ),
+    )
+
+
+def _storage() -> Any:
+    """Import storage for a command that opens the store."""
+
+    from . import storage
+
+    return storage
+
+
+def _open_store(arguments: argparse.Namespace, *, auto_migrate: bool = True) -> Any:
+    """Open the store; it refuses with a stable code when the server extra is missing."""
+
+    return _storage().IncidentStore(
+        _data_dir(arguments.data_dir),
+        database_url=_database_url(arguments),
+        auto_migrate=auto_migrate,
+    )
+
+
+def _project_id(arguments: argparse.Namespace) -> str:
+    project = arguments.project
+    return _storage().DEFAULT_PROJECT_ID if project is None else project
 
 
 def _decode_file(path: Path, *, validate: bool = True):
@@ -83,11 +128,11 @@ def _ingest_command(arguments: argparse.Namespace) -> int:
             }
         )
         return 1
-    store = IncidentStore(_data_dir(arguments.data_dir))
+    store = _open_store(arguments)
     result = store.ingest(
         bundle,
         encode_incident_protobuf(bundle),
-        project_id=arguments.project,
+        project_id=_project_id(arguments),
     )
     value = result.record.as_dict()
     value["created"] = result.created
@@ -95,10 +140,23 @@ def _ingest_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+# ``list`` filters on projected columns (retention deadline, export flag). Without
+# a server re-projecting in the background, it brings stale incidents up to date
+# first, for at most this long.
+LIST_REPROJECTION_BUDGET_SECONDS = 10.0
+
+
 def _list_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
+    store = _open_store(arguments)
+    convergence = store.converge_projections(time_budget_seconds=LIST_REPROJECTION_BUDGET_SECONDS)
+    if convergence.pending:
+        print(
+            f"earshot: {convergence.pending} incidents still have projections from an "
+            "older release; run 'earshot db reproject'",
+            file=sys.stderr,
+        )
     page = store.list_incidents(
-        project_id=arguments.project,
+        project_id=_project_id(arguments),
         session_id=arguments.session_id,
         limit=arguments.limit,
         cursor=arguments.cursor,
@@ -114,8 +172,8 @@ def _list_command(arguments: argparse.Namespace) -> int:
 
 
 def _show_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
-    _, payload = store.get_artifact(arguments.bundle_id, project_id=arguments.project)
+    store = _open_store(arguments)
+    _, payload = store.get_artifact(arguments.bundle_id, project_id=_project_id(arguments))
     bundle = decode_incident_protobuf(payload)
     assert_export_allowed(bundle, "local_cli")
     if arguments.format == "protobuf":
@@ -127,14 +185,54 @@ def _show_command(arguments: argparse.Namespace) -> int:
 
 
 def _purge_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
-    store.purge(arguments.bundle_id, project_id=arguments.project)
+    store = _open_store(arguments)
+    try:
+        store.purge(arguments.bundle_id, project_id=_project_id(arguments))
+    except _storage().IncidentBelongsToCallError as error:
+        # A call's revisions go with their call (AC14.3).
+        print(
+            f"earshot: {error.code}: {error}: earshot call purge {error.call_id}",
+            file=sys.stderr,
+        )
+        return 2
     _print_json({"bundle_id": arguments.bundle_id, "purged": True})
     return 0
 
 
+def _call_purge_command(arguments: argparse.Namespace) -> int:
+    """Purge one call and all its evidence (FR-14), as ``DELETE /v1/calls/{id}`` does.
+
+    The call lifecycle timings and the blob store come from the same settings the
+    server reads (``EARSHOT_CALL_*``, ``EARSHOT_BLOB_URL``).
+    """
+
+    from .blobstore import open_blob_store
+    from .server_config import load_server_settings
+    from .storage_call_purge import CallNotFoundError, CallPurger
+    from .storage_calls import CallStore
+    from .storage_recordings import RecordingStore
+
+    settings = load_server_settings(
+        os.environ,
+        data_dir=None if arguments.data_dir is None else Path(arguments.data_dir),
+        database_url=arguments.database_url,
+    )
+    store = _open_store(arguments)
+    calls = CallStore(store, timings=settings.call_timings())
+    recordings = RecordingStore(store, calls=calls, blobs=open_blob_store(settings.blob_url))
+    try:
+        CallPurger(store, calls=calls, recordings=recordings).purge_call(
+            _project_id(arguments), arguments.call_id
+        )
+    except CallNotFoundError as error:
+        print(f"earshot: {error.code}: {error}", file=sys.stderr)
+        return 2
+    _print_json({"call_id": arguments.call_id, "purged": True})
+    return 0
+
+
 def _cleanup_unreferenced_objects_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
+    store = _open_store(arguments)
     removed = store.cleanup_unreferenced_objects()
     _print_json(
         {
@@ -146,7 +244,7 @@ def _cleanup_unreferenced_objects_command(arguments: argparse.Namespace) -> int:
 
 
 def _project_create_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
+    store = _open_store(arguments)
     project = store.create_project(arguments.project_id, display_name=arguments.display_name)
     _print_json(
         {
@@ -158,8 +256,33 @@ def _project_create_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _project_set_capture_command(arguments: argparse.Namespace) -> int:
+    store = _open_store(arguments)
+    project = store.set_capture_preset(arguments.project, arguments.preset)
+    _print_json({"project_id": project.project_id, "capture_preset": project.capture_preset})
+    return 0
+
+
+def _project_show_command(arguments: argparse.Namespace) -> int:
+    store = _open_store(arguments)
+    project = store.get_project(arguments.project_id)
+    if project is None:
+        print(f"earshot: project {arguments.project_id} does not exist", file=sys.stderr)
+        return 2
+    _print_json(
+        {
+            "project_id": project.project_id,
+            "display_name": project.display_name,
+            "created_at_unix_nano": project.created_at_unix_nano,
+            "lifecycle_state": project.lifecycle_state,
+            "capture_preset": project.capture_preset,
+        }
+    )
+    return 0
+
+
 def _api_key_issue_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
+    store = _open_store(arguments)
     issued = store.issue_api_key(arguments.project, label=arguments.label)
     _print_json(
         {
@@ -174,7 +297,7 @@ def _api_key_issue_command(arguments: argparse.Namespace) -> int:
 
 
 def _api_key_revoke_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
+    store = _open_store(arguments)
     store.revoke_api_key(arguments.project, arguments.key_id)
     _print_json(
         {
@@ -187,7 +310,7 @@ def _api_key_revoke_command(arguments: argparse.Namespace) -> int:
 
 
 def _connector_create_command(arguments: argparse.Namespace) -> int:
-    store = IncidentStore(_data_dir(arguments.data_dir))
+    store = _open_store(arguments)
     connector = store.create_connector(
         arguments.project,
         provider=arguments.provider,
@@ -278,13 +401,9 @@ def _export_command(arguments: argparse.Namespace) -> int:
 
 
 def _checkpoint_key() -> bytes | None:
-    return resolve_at_rest_key(
-        None,
-        env_var="EARSHOT_CHECKPOINT_KEY",
-        env_file_var="EARSHOT_CHECKPOINT_KEY_FILE",
-        label="checkpoint key",
-        fallback=("EARSHOT_SPOOL_KEY", "EARSHOT_SPOOL_KEY_FILE"),
-    )
+    from .server_config import checkpoint_key_from_environment
+
+    return checkpoint_key_from_environment()
 
 
 def _checkpoints_list_command(arguments: argparse.Namespace) -> int:
@@ -348,8 +467,8 @@ def _recover_command(arguments: argparse.Namespace) -> int:
     payload = encode_incident_protobuf(result.bundle)
     created = None
     if arguments.ingest:
-        store = IncidentStore(_data_dir(arguments.data_dir))
-        ingested = store.ingest(result.bundle, payload, project_id=arguments.project)
+        store = _open_store(arguments)
+        ingested = store.ingest(result.bundle, payload, project_id=_project_id(arguments))
         created = ingested.created
     if arguments.out is not None:
         Path(arguments.out).write_bytes(encode_incident_json(result.bundle, indent=2) + b"\n")
@@ -375,11 +494,111 @@ def _recover_command(arguments: argparse.Namespace) -> int:
     return 0
 
 
+def _db_current_command(arguments: argparse.Namespace) -> int:
+    _print_json(
+        _storage().describe_catalog_revision(
+            _data_dir(arguments.data_dir), database_url=_database_url(arguments)
+        )
+    )
+    return 0
+
+
+def _db_upgrade_command(arguments: argparse.Namespace) -> int:
+    storage = _storage()
+    data_dir = _data_dir(arguments.data_dir)
+    database_url = _database_url(arguments)
+    before = storage.describe_catalog_revision(data_dir, database_url=database_url)
+    # Opening the store is the upgrade: it runs under the store lock, exactly as
+    # a server start would.
+    _open_store(arguments).close()
+    after = storage.describe_catalog_revision(data_dir, database_url=database_url)
+    _print_json(
+        {
+            "head": after["head"],
+            "revision": after["revision"],
+            "revision_before": before["revision"],
+        }
+    )
+    return 0
+
+
+def _db_reproject_command(arguments: argparse.Namespace) -> int:
+    """Re-project every stale incident now, without a running server."""
+
+    store = _open_store(arguments)
+    if arguments.all:
+        store.mark_projections_stale()
+    convergence = store.converge_projections()
+    _print_json(
+        {
+            "failed": list(convergence.failed),
+            "projections_pending": convergence.pending,
+            "reprojected": convergence.reprojected,
+        }
+    )
+    return 1 if convergence.failed else 0
+
+
+def _prices_add_command(arguments: argparse.Namespace) -> int:
+    """Append a price: the project's own, or (``--builtin``) a built-in for every
+    project. Each insert bumps its scope's price version, so the projections it may
+    change are repriced by a running server."""
+
+    from .storage_prices import NewPrice, PriceStore
+
+    store = _open_store(arguments)
+    price = PriceStore(store).add(
+        None if arguments.builtin else arguments.project,
+        NewPrice(
+            provider=arguments.provider,
+            model=arguments.model,
+            unit=arguments.unit,
+            price_nano_usd=arguments.price_nano_usd,
+            per_quantity=arguments.per_quantity,
+            effective_from_unix_nano=arguments.effective_from_unix_nano,
+            source_url=arguments.source_url,
+            note=arguments.note,
+        ),
+    )
+    _print_json(price.document())
+    return 0
+
+
+def _prices_list_command(arguments: argparse.Namespace) -> int:
+    """Every price a project's calls may use: the built-ins and its own, oldest first."""
+
+    from .storage_prices import PriceStore
+
+    prices = PriceStore(_open_store(arguments))
+    listed, cursor = [], None
+    while True:
+        page = prices.list_prices(_project_id(arguments), limit=100, cursor=cursor)
+        listed.extend(price.document() for price in page.items)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+    _print_json(listed)
+    return 0
+
+
+def _db_enable_transcript_index_command(arguments: argparse.Namespace) -> int:
+    from .storage_call_reads import TranscriptIndexError, enable_transcript_index
+
+    store = _open_store(arguments)
+    try:
+        name = enable_transcript_index(store)
+    except TranscriptIndexError as error:
+        print(f"earshot: {error}", file=sys.stderr)
+        return 2
+    _print_json({"index": name})
+    return 0
+
+
 def _serve_command(arguments: argparse.Namespace) -> int:
     try:
         import uvicorn
 
-        from .api import ApiConfig, create_app
+        from .api import create_app  # noqa: F401 - the server extra is importable
     except ModuleNotFoundError:
         print(
             "earshot: server dependencies are not installed; "
@@ -388,51 +607,44 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         )
         return 2
 
-    from .live import LiveSessionRegistry
+    from .server_config import load_server_settings, open_server
 
-    token = arguments.token or os.environ.get("EARSHOT_TOKEN")
-    data_dir = _data_dir(arguments.data_dir).expanduser().resolve()
-    checkpoint_dir = arguments.checkpoint_dir or os.environ.get("EARSHOT_CHECKPOINT_DIR")
-    config = ApiConfig(
+    # Flags win over their environment variables; ``serve`` and the ASGI module
+    # share this parser and ``open_server`` (docs/configuration.md).
+    settings = load_server_settings(
+        os.environ,
+        data_dir=None if arguments.data_dir is None else Path(arguments.data_dir),
+        database_url=arguments.database_url,
         host=arguments.host,
-        token=token,
+        port=arguments.port,
+        web_dir=arguments.web_dir,
+        checkpoint_dir=arguments.checkpoint_dir,
+        token=arguments.token,
         auth_mode=arguments.auth_mode,
         jwt_issuer=arguments.jwt_issuer,
         jwt_audience=arguments.jwt_audience,
         jwks_url=arguments.jwks_url,
         jwks_ca_file=arguments.jwks_ca_file,
+        platform_adapter=arguments.platform_adapter or None,
+        behind_tls_proxy=arguments.behind_tls_proxy or None,
+        trust_local_network=arguments.trust_local_network or None,
         max_body_bytes=arguments.max_body_bytes,
         max_connector_body_bytes=arguments.max_connector_body_bytes,
-        max_connector_deliveries_per_minute=(arguments.max_connector_deliveries_per_minute),
+        max_connector_deliveries_per_minute=arguments.max_connector_deliveries_per_minute,
         retention_cleanup_interval_seconds=arguments.retention_cleanup_interval_seconds,
         retention_cleanup_batch_size=arguments.retention_cleanup_batch_size,
-        analyzer_version=ANALYZER_VERSION,
-        behind_tls_proxy=arguments.behind_tls_proxy,
-        trust_local_network=arguments.trust_local_network,
     )
-    # Following a checkpoint directory is an explicit opt-in: it is the same
-    # storage decision as writing one, seen from the other end.
-    registry = (
-        None
-        if checkpoint_dir is None
-        else LiveSessionRegistry(
-            journal_dir=Path(checkpoint_dir).expanduser().resolve(),
-            key=_checkpoint_key(),
-        )
-    )
-    app = create_app(
-        data_dir=data_dir,
-        analyzer=analyze_incident,
-        config=config,
-        web_dir=arguments.web_dir,
-        live_registry=registry,
-        enable_platform_adapter=arguments.platform_adapter,
-    )
-    print(f"Earshot data path: {data_dir}", file=sys.stderr)
-    if checkpoint_dir is not None:
-        print(f"Earshot live tail: {checkpoint_dir}", file=sys.stderr)
-    print(f"Earshot listening: http://{arguments.host}:{arguments.port}/", file=sys.stderr)
-    if arguments.trust_local_network:
+    # Opening the store migrates the catalog to head, unless --no-auto-migrate
+    # asks the server to refuse a catalog that is behind instead.
+    app, server_lock = open_server(settings, auto_migrate=not arguments.no_auto_migrate)
+    if settings.database_url is not None and server_lock is not None:
+        print(f"Earshot database: {server_lock.display_url}", file=sys.stderr)
+    else:
+        print(f"Earshot data path: {settings.data_dir.resolve()}", file=sys.stderr)
+    if settings.checkpoint_dir is not None:
+        print(f"Earshot live tail: {settings.checkpoint_dir}", file=sys.stderr)
+    print(f"Earshot listening: http://{settings.host}:{settings.port}/", file=sys.stderr)
+    if settings.trust_local_network:
         print(
             "Earshot warning: API authentication is disabled "
             "(--trust-local-network); keep this listener on a trusted boundary "
@@ -441,8 +653,8 @@ def _serve_command(arguments: argparse.Namespace) -> int:
         )
     uvicorn.run(
         app,
-        host=arguments.host,
-        port=arguments.port,
+        host=settings.host,
+        port=settings.port,
         log_level=arguments.log_level,
         access_log=False,
     )
@@ -462,13 +674,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ingest = commands.add_parser("ingest", help="ingest an incident into the local store")
     ingest.add_argument("path")
-    ingest.add_argument("--data-dir")
-    ingest.add_argument("--project", default=DEFAULT_PROJECT_ID)
+    _add_store_arguments(ingest)
+    ingest.add_argument("--project", help="project id (default: the built-in default project)")
     ingest.set_defaults(handler=_ingest_command)
 
     list_parser = commands.add_parser("list", help="list locally stored incidents")
-    list_parser.add_argument("--data-dir")
-    list_parser.add_argument("--project", default=DEFAULT_PROJECT_ID)
+    _add_store_arguments(list_parser)
+    list_parser.add_argument("--project", help="project id (default: the built-in default project)")
     list_parser.add_argument("--session-id")
     list_parser.add_argument("--limit", type=int, default=50)
     list_parser.add_argument("--cursor")
@@ -476,16 +688,26 @@ def _build_parser() -> argparse.ArgumentParser:
 
     show = commands.add_parser("show", help="write one stored incident to stdout")
     show.add_argument("bundle_id")
-    show.add_argument("--data-dir")
-    show.add_argument("--project", default=DEFAULT_PROJECT_ID)
+    _add_store_arguments(show)
+    show.add_argument("--project", help="project id (default: the built-in default project)")
     show.add_argument("--format", choices=("json", "protobuf"), default="json")
     show.set_defaults(handler=_show_command)
 
     purge = commands.add_parser("purge", help="physically purge an incident")
     purge.add_argument("bundle_id")
-    purge.add_argument("--data-dir")
-    purge.add_argument("--project", default=DEFAULT_PROJECT_ID)
+    _add_store_arguments(purge)
+    purge.add_argument("--project", help="project id (default: the built-in default project)")
     purge.set_defaults(handler=_purge_command)
+
+    call = commands.add_parser("call", help="manage calls (OTLP and recordings evidence)")
+    call_commands = call.add_subparsers(dest="call_command", required=True)
+    call_purge = call_commands.add_parser(
+        "purge", help="purge a call: its spans, recordings, blobs and revisions"
+    )
+    call_purge.add_argument("call_id")
+    _add_store_arguments(call_purge)
+    call_purge.add_argument("--project", help="project id (default: the built-in default project)")
+    call_purge.set_defaults(handler=_call_purge_command)
 
     maintenance = commands.add_parser(
         "maintenance", help="run explicit store-wide maintenance operations"
@@ -495,7 +717,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "cleanup-unreferenced-objects",
         help="globally remove CAS objects not referenced by any incident",
     )
-    cleanup_objects.add_argument("--data-dir")
+    _add_store_arguments(cleanup_objects)
     cleanup_objects.add_argument(
         "--confirm-global-object-sweep",
         action="store_true",
@@ -509,20 +731,42 @@ def _build_parser() -> argparse.ArgumentParser:
     project_create = project_commands.add_parser("create", help="create a project")
     project_create.add_argument("project_id")
     project_create.add_argument("--display-name", required=True)
-    project_create.add_argument("--data-dir")
+    _add_store_arguments(project_create)
     project_create.set_defaults(handler=_project_create_command)
+    project_set_capture = project_commands.add_parser(
+        "set-capture",
+        help="choose what the OTLP receiver keeps of a project's evidence",
+    )
+    project_set_capture.add_argument("--project", required=True)
+    project_set_capture.add_argument(
+        "--preset",
+        required=True,
+        # redacted is listed so that it is refused with its stable code, not as a typo.
+        choices=("full", "metadata_only", "redacted"),
+        help=(
+            "full keeps content; metadata_only drops session keys and the attributes whose "
+            "key names it classifies as content or identity (a classifier, not an "
+            "allowlist: see docs/privacy.md)"
+        ),
+    )
+    _add_store_arguments(project_set_capture)
+    project_set_capture.set_defaults(handler=_project_set_capture_command)
+    project_show = project_commands.add_parser("show", help="show a project")
+    project_show.add_argument("project_id")
+    _add_store_arguments(project_show)
+    project_show.set_defaults(handler=_project_show_command)
 
     api_key = commands.add_parser("api-key", help="manage project API keys")
     api_key_commands = api_key.add_subparsers(dest="api_key_command", required=True)
     api_key_issue = api_key_commands.add_parser("issue", help="issue a project API key")
     api_key_issue.add_argument("--project", required=True)
     api_key_issue.add_argument("--label", required=True)
-    api_key_issue.add_argument("--data-dir")
+    _add_store_arguments(api_key_issue)
     api_key_issue.set_defaults(handler=_api_key_issue_command)
     api_key_revoke = api_key_commands.add_parser("revoke", help="revoke a project API key")
     api_key_revoke.add_argument("--project", required=True)
     api_key_revoke.add_argument("--key-id", required=True)
-    api_key_revoke.add_argument("--data-dir")
+    _add_store_arguments(api_key_revoke)
     api_key_revoke.set_defaults(handler=_api_key_revoke_command)
 
     connector = commands.add_parser("connector", help="manage hosted-provider connectors")
@@ -535,7 +779,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--provider", required=True, choices=("elevenlabs", "vapi", "retell", "ringg")
     )
     connector_create.add_argument("--secret-env", required=True)
-    connector_create.add_argument("--data-dir")
+    _add_store_arguments(connector_create)
     connector_create.set_defaults(handler=_connector_create_command)
 
     query = commands.add_parser(
@@ -607,8 +851,8 @@ def _build_parser() -> argparse.ArgumentParser:
     recover.add_argument(
         "--ingest", action="store_true", help="ingest the recovered incident locally"
     )
-    recover.add_argument("--data-dir")
-    recover.add_argument("--project", default=DEFAULT_PROJECT_ID)
+    _add_store_arguments(recover)
+    recover.add_argument("--project", help="project id (default: the built-in default project)")
     recover.add_argument(
         "--best-effort",
         action="store_true",
@@ -624,82 +868,167 @@ def _build_parser() -> argparse.ArgumentParser:
     recover.set_defaults(handler=_recover_command)
 
     serve = commands.add_parser("serve", help="run the local ingest API")
-    serve.add_argument("--data-dir")
-    serve.add_argument("--host", default=os.environ.get("EARSHOT_HOST", "127.0.0.1"))
-    serve.add_argument("--port", type=int, default=int(os.environ.get("EARSHOT_PORT", "4319")))
+    _add_store_arguments(serve)
+    serve.add_argument("--host", help="listener address (EARSHOT_HOST; default 127.0.0.1)")
+    serve.add_argument("--port", type=int, help="listener port (EARSHOT_PORT; default 4319)")
     serve.add_argument(
         "--web-dir",
-        default=os.environ.get("EARSHOT_WEB_DIR"),
-        help="serve a built viewer SPA from this directory at the site root",
+        help="serve a built viewer SPA from this directory at the site root (EARSHOT_WEB_DIR)",
     )
     serve.add_argument(
         "--checkpoint-dir",
         default=None,
         help=(
             "follow the crash-recovery journals in this directory and expose them "
-            "under /v1/live; live sessions are never listed as incidents"
+            "under /v1/live (EARSHOT_CHECKPOINT_DIR); live sessions are never listed "
+            "as incidents"
         ),
     )
-    serve.add_argument("--token")
+    serve.add_argument("--token", help="legacy operator bearer token (EARSHOT_TOKEN)")
     serve.add_argument(
         "--auth-mode",
         choices=("operator", "hosted_jwt"),
-        default=os.environ.get("EARSHOT_AUTH_MODE", "operator"),
+        help="operator (default) or hosted_jwt (EARSHOT_AUTH_MODE)",
     )
-    serve.add_argument("--jwt-issuer", default=os.environ.get("EARSHOT_JWT_ISSUER"))
-    serve.add_argument("--jwt-audience", default=os.environ.get("EARSHOT_JWT_AUDIENCE"))
-    serve.add_argument("--jwks-url", default=os.environ.get("EARSHOT_JWKS_URL"))
-    serve.add_argument("--jwks-ca-file", default=os.environ.get("EARSHOT_JWKS_CA_FILE"))
+    serve.add_argument("--jwt-issuer", help="EARSHOT_JWT_ISSUER")
+    serve.add_argument("--jwt-audience", help="EARSHOT_JWT_AUDIENCE")
+    serve.add_argument("--jwks-url", help="EARSHOT_JWKS_URL")
+    serve.add_argument("--jwks-ca-file", help="EARSHOT_JWKS_CA_FILE")
     serve.add_argument(
         "--platform-adapter",
         action="store_true",
-        default=_boolean_environment("EARSHOT_PLATFORM_ADAPTER_ENABLED"),
-        help="mount the optional Platform Observe response adapter (hosted_jwt only)",
+        help=(
+            "mount the optional Platform Observe response adapter (hosted_jwt only; "
+            "EARSHOT_PLATFORM_ADAPTER_ENABLED)"
+        ),
     )
     serve.add_argument(
         "--behind-tls-proxy",
         action="store_true",
-        default=_boolean_environment("EARSHOT_BEHIND_TLS_PROXY"),
-        help="confirm that a same-host proxy exposes the loopback listener over HTTPS",
+        help=(
+            "confirm that a same-host proxy exposes the loopback listener over HTTPS "
+            "(EARSHOT_BEHIND_TLS_PROXY)"
+        ),
     )
     serve.add_argument(
         "--trust-local-network",
         action="store_true",
-        default=_boolean_environment("EARSHOT_TRUST_LOCAL_NETWORK"),
         help=(
             "serve the API without authentication on a listener confined to a "
             "trusted local boundary (e.g. `docker -p 127.0.0.1:PORT`); never on "
-            "a public interface"
+            "a public interface (EARSHOT_TRUST_LOCAL_NETWORK)"
         ),
     )
+    serve.add_argument("--max-body-bytes", type=int, help="EARSHOT_MAX_BODY_BYTES")
     serve.add_argument(
-        "--max-body-bytes",
-        type=int,
-        default=int(os.environ.get("EARSHOT_MAX_BODY_BYTES", str(16 * 1024 * 1024))),
-    )
-    serve.add_argument(
-        "--max-connector-body-bytes",
-        type=int,
-        default=int(os.environ.get("EARSHOT_MAX_CONNECTOR_BODY_BYTES", str(2 * 1024 * 1024))),
+        "--max-connector-body-bytes", type=int, help="EARSHOT_MAX_CONNECTOR_BODY_BYTES"
     )
     serve.add_argument(
         "--max-connector-deliveries-per-minute",
         type=int,
-        default=int(os.environ.get("EARSHOT_MAX_CONNECTOR_DELIVERIES_PER_MINUTE", "120")),
+        help="EARSHOT_MAX_CONNECTOR_DELIVERIES_PER_MINUTE",
     )
     serve.add_argument(
         "--retention-cleanup-interval-seconds",
         type=float,
-        default=float(os.environ.get("EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS", "5")),
+        help="EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS",
     )
     serve.add_argument(
-        "--retention-cleanup-batch-size",
-        type=int,
-        default=int(os.environ.get("EARSHOT_RETENTION_CLEANUP_BATCH_SIZE", "1000")),
+        "--retention-cleanup-batch-size", type=int, help="EARSHOT_RETENTION_CLEANUP_BATCH_SIZE"
     )
     serve.add_argument("--log-level", default="info")
+    serve.add_argument(
+        "--no-auto-migrate",
+        action="store_true",
+        help="refuse to start when the catalog schema is behind instead of migrating it",
+    )
     serve.set_defaults(handler=_serve_command)
+
+    db = commands.add_parser("db", help="inspect or migrate the catalog schema")
+    db_commands = db.add_subparsers(dest="db_command", required=True)
+    db_current = db_commands.add_parser(
+        "current", help="report the catalog's schema revision without changing it"
+    )
+    _add_store_arguments(db_current)
+    db_current.set_defaults(handler=_db_current_command)
+    db_upgrade = db_commands.add_parser(
+        "upgrade", help="migrate the catalog schema to this release's head revision"
+    )
+    _add_store_arguments(db_upgrade)
+    db_upgrade.set_defaults(handler=_db_upgrade_command)
+    db_reproject = db_commands.add_parser(
+        "reproject",
+        help=(
+            "re-project incidents whose read models predate this release (a running "
+            "server does this in the background)"
+        ),
+    )
+    _add_store_arguments(db_reproject)
+    db_reproject.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "re-project every incident, verifying each artifact (after a restore, or to "
+            "repair projections)"
+        ),
+    )
+    db_reproject.set_defaults(handler=_db_reproject_command)
+    db_transcript_index = db_commands.add_parser(
+        "enable-transcript-index",
+        help=(
+            "Postgres: create the optional pg_trgm index that speeds up transcript search "
+            "(q); outside the migration chain, idempotent"
+        ),
+    )
+    _add_store_arguments(db_transcript_index)
+    db_transcript_index.set_defaults(handler=_db_enable_transcript_index_command)
+
+    prices = commands.add_parser("prices", help="manage the prices calls are costed with")
+    prices_commands = prices.add_subparsers(dest="prices_command", required=True)
+    prices_add = prices_commands.add_parser(
+        "add", help="append a price (integer nano-USD per per-quantity units)"
+    )
+    _add_store_arguments(prices_add)
+    scope = prices_add.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--project", help="the project the price is for")
+    scope.add_argument(
+        "--builtin", action="store_true", help="a built-in price, for every project (operator)"
+    )
+    prices_add.add_argument("--provider", required=True)
+    prices_add.add_argument("--model", required=True)
+    prices_add.add_argument(
+        "--unit",
+        required=True,
+        help="input_token, output_token, cached_input_token, character or audio_second",
+    )
+    prices_add.add_argument("--price-nano-usd", type=int, required=True)
+    prices_add.add_argument("--per-quantity", type=int, default=1)
+    prices_add.add_argument(
+        "--effective-from-unix-nano",
+        type=int,
+        default=0,
+        help="calls whose first evidence is at or after this time use it (default 0: all)",
+    )
+    prices_add.add_argument("--source-url")
+    prices_add.add_argument("--note")
+    prices_add.set_defaults(handler=_prices_add_command)
+    prices_list = prices_commands.add_parser(
+        "list", help="list the built-in prices and a project's own"
+    )
+    _add_store_arguments(prices_list)
+    prices_list.add_argument("--project")
+    prices_list.set_defaults(handler=_prices_list_command)
     return parser
+
+
+_REPORTED_ERRORS: tuple[type[Exception], ...] = (
+    AssemblyError,
+    ExportPolicyError,
+    IncidentCodecError,
+    JournalUnreadableError,
+    OSError,
+    ValueError,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -707,17 +1036,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         return int(arguments.handler(arguments))
-    except (
-        AssemblyError,
-        ExportPolicyError,
-        IncidentCodecError,
-        JournalUnreadableError,
-        StorageError,
-        OSError,
-        ValueError,
-    ) as error:
+    except Exception as error:
+        # Only commands that opened the store can raise a storage error, and they
+        # imported storage to do so.
+        storage = sys.modules.get(f"{__package__}.storage")
+        storage_errors = () if storage is None else (storage.StorageError,)
+        if not isinstance(error, _REPORTED_ERRORS + storage_errors):
+            raise
         # CLI output should help an operator without reflecting incident payloads.
-        print(f"earshot: {type(error).__name__}", file=sys.stderr)
+        # A store that refuses to open says why with a stable code and a message
+        # that never carries evidence.
+        server_config = sys.modules.get(f"{__package__}.server_config")
+        configuration_error = server_config is not None and isinstance(
+            error, server_config.ConfigurationError
+        )
+        if configuration_error or (
+            storage is not None
+            and isinstance(error, (storage.StorageOpenError, storage.CapturePresetUnavailableError))
+        ):
+            print(f"earshot: {error}", file=sys.stderr)
+        else:
+            print(f"earshot: {type(error).__name__}", file=sys.stderr)
         return 2
 
 

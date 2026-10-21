@@ -13,14 +13,6 @@ from incident_factory import SECRET_SENTINEL
 pytestmark = pytest.mark.integration
 
 
-def test_serve_honors_trusted_proxy_environment(monkeypatch) -> None:
-    monkeypatch.setenv("EARSHOT_BEHIND_TLS_PROXY", "true")
-
-    arguments = _build_parser().parse_args(["serve"])
-
-    assert arguments.behind_tls_proxy is True
-
-
 def test_serve_reports_the_active_data_path(monkeypatch, tmp_path, capsys) -> None:
     observed = {}
     monkeypatch.setenv("EARSHOT_AUTH_MODE", "hosted_jwt")
@@ -30,6 +22,7 @@ def test_serve_reports_the_active_data_path(monkeypatch, tmp_path, capsys) -> No
     monkeypatch.setenv("EARSHOT_PLATFORM_ADAPTER_ENABLED", "true")
     monkeypatch.setenv("EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS", "7.5")
     monkeypatch.setenv("EARSHOT_RETENTION_CLEANUP_BATCH_SIZE", "42")
+    monkeypatch.setenv("EARSHOT_BEHIND_TLS_PROXY", "true")
 
     def create_app(**kwargs):
         observed["config"] = kwargs["config"]
@@ -50,6 +43,7 @@ def test_serve_reports_the_active_data_path(monkeypatch, tmp_path, capsys) -> No
     assert observed["config"].retention_cleanup_interval_seconds == 7.5
     assert observed["config"].retention_cleanup_batch_size == 42
     assert observed["enable_platform_adapter"] is True
+    assert observed["config"].behind_tls_proxy is True
 
 
 def test_base_install_serve_command_explains_the_server_extra(monkeypatch, capsys) -> None:
