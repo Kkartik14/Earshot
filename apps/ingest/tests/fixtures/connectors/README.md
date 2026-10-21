@@ -1,8 +1,8 @@
 # Real captured provider deliveries
 
 Drop a genuine captured webhook here and `test_real_provider_deliveries.py` will
-prove our connector authenticates the **real** signature and normalizes the
-**real** bytes. This is how we confirm each provider's signature format matches
+prove our connector authenticates the **real** signature and translates the
+**real** bytes into call evidence. This is how we confirm each provider's signature format matches
 the live contract — a failure means our HMAC scheme disagrees with what the
 provider actually sends.
 
@@ -19,6 +19,7 @@ One JSON file per delivery, in the provider's subdirectory
 {
   "provider": "retell",
   "secret_env": "RETELL_WEBHOOK_SECRET",
+  "signed_at_unix_seconds": 1752828600,
   "expected_disposition": "applied",
   "headers": [
     ["X-Retell-Signature", "v=1752828600000,d=abc123..."],
@@ -32,8 +33,11 @@ One JSON file per delivery, in the provider's subdirectory
 Set the named environment variable only while running the checkpoint. Never put
 the secret itself in the JSON. `body_base64` must be the **exact** bytes the provider signed — capture the raw
 body before any parsing/re-serialization, or the signature will not validate.
+`signed_at_unix_seconds` is when the provider signed the delivery: the replay runs
+at that time, so each provider's own signature window applies unchanged.
 `must_not_appear` is optional: list a few real transcript phrases / identifiers,
-and the test asserts they never reach the canonical incident (privacy check).
+and the test asserts that a `metadata_only` project stores none of them (privacy
+check); it also asserts that no URL reaches a stored span.
 
 To base64 a captured body: `base64 -i body.raw` (macOS) or
 `base64 -w0 body.raw` (Linux).
@@ -57,5 +61,5 @@ To base64 a captured body: `base64 -i body.raw` (macOS) or
 A `DeliveryTrustError` on a real capture is the signal we were looking for: it
 means the connector's expected signature scheme (header name/format, signed
 string, digest) does not match the provider's live behavior. Compare the capture
-against the connector's `authenticate()` and adjust the connector — this is
+against the connector's `verifier()` and adjust the connector — this is
 exactly the caveat the connectors were shipped with.
