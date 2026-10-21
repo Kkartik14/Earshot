@@ -1,12 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { CallCaptureStatus } from "./CallCaptureStatus";
+import { CaptureStatus } from "./CaptureStatus";
 
-describe("CallCaptureStatus", () => {
+describe("CaptureStatus", () => {
   it("reports a host-rejected upload without presenting invented incident evidence", () => {
     render(
-      <CallCaptureStatus
-        callId="call_123"
+      <CaptureStatus
+        hostCallId="call_123"
         capture={{ state: "rejected", reasonCode: "EARSHOT_INVALID_INCIDENT" }}
       />,
     );

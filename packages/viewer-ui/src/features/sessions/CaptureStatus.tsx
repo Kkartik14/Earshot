@@ -1,7 +1,7 @@
 import type { ObserveRoute } from "../../navigation";
-import styles from "./CallCaptureStatus.module.css";
+import styles from "./CaptureStatus.module.css";
 
-type CaptureState = Extract<ObserveRoute, { kind: "call-status" }>["capture"];
+type CaptureState = Extract<ObserveRoute, { kind: "capture-status" }>["capture"];
 
 const TITLES: Record<CaptureState["state"], string> = {
   waiting: "Waiting for call evidence",
@@ -17,17 +17,17 @@ const DEFAULT_DETAILS: Record<CaptureState["state"], string> = {
   rejected: "The host reports that Earshot did not accept this call's evidence.",
 };
 
-export function CallCaptureStatus({
-  callId,
+export function CaptureStatus({
+  hostCallId,
   capture,
 }: {
-  callId: string;
+  hostCallId: string;
   capture: CaptureState;
 }) {
   return (
     <div className={styles.page}>
-      <p className={styles.eyebrow}>Platform call</p>
-      <h1 className={styles.title}>{callId}</h1>
+      <p className={styles.eyebrow}>Host call</p>
+      <h1 className={styles.title}>{hostCallId}</h1>
       <section className={styles.panel} aria-live="polite">
         <h2>{TITLES[capture.state]}</h2>
         <p>{capture.detail ?? DEFAULT_DETAILS[capture.state]}</p>

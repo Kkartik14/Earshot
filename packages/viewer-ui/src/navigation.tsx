@@ -20,9 +20,13 @@ export type ObserveRoute =
   | { kind: "incident"; bundleId: string }
   | { kind: "session"; sessionId: string }
   | { kind: "live"; sessionId: string }
+  | { kind: "dashboard" }
+  | { kind: "calls" }
+  | { kind: "call"; callId: string }
+  | { kind: "upload" }
   | {
-      kind: "call-status";
-      callId: string;
+      kind: "capture-status";
+      hostCallId: string;
       capture:
         | { state: "waiting"; detail?: string }
         | { state: "delayed"; detail?: string }
