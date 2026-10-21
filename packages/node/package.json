@@ -1,0 +1,57 @@
+{
+  "name": "@earshot/node",
+  "version": "0.3.0",
+  "description": "Earshot for Node voice agents: an OpenTelemetry span processor that keys spans to their call, and a client that uploads the call's recording and reads the call back.",
+  "keywords": [
+    "earshot",
+    "voice",
+    "observability",
+    "opentelemetry",
+    "recordings"
+  ],
+  "homepage": "https://github.com/Kkartik14/Earshot/tree/main/packages/node#readme",
+  "bugs": "https://github.com/Kkartik14/Earshot/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kkartik14/Earshot.git",
+    "directory": "packages/node"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22.12"
+  },
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "gen:api": "openapi-typescript ../../spec/backend-api.openapi.json -o src/openapi.ts && prettier --write src/openapi.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.9.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/context-async-hooks": "^2.12.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.223.0",
+    "@opentelemetry/sdk-trace-base": "^2.12.0",
+    "openapi-typescript": "^7.13.0",
+    "vitest": "^5.0.2"
+  }
+}
