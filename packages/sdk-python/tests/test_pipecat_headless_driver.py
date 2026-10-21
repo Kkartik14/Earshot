@@ -17,6 +17,9 @@ from earshot.codec import decode_incident_json
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 DRIVER = ROOT / "examples" / "pipecat_headless" / "drive.py"
+# Hang guard for a child that imports the already-warm driver (about 1 s on an idle
+# machine, 6 s on a loaded one). It is not a latency assertion.
+CHILD_PROCESS_TIMEOUT_S = 60
 pytest.importorskip("pipecat")
 pytest.importorskip("groq")
 pytestmark = pytest.mark.integration
@@ -31,6 +34,19 @@ def load_driver() -> ModuleType:
     return module
 
 
+@pytest.fixture(scope="module")
+def warm_driver_imports() -> None:
+    """Pay the driver's cold start here, untimed, before any timed child process.
+
+    The first import of the Pipecat stack from a freshly installed venv compiles
+    bytecode and first-loads native extensions (scipy via pyloudnorm). That took
+    18-85 s depending on machine load, so a child paying it raced the environment
+    instead of testing the CLI.
+    """
+    load_driver()
+
+
+@pytest.mark.usefixtures("warm_driver_imports")
 def test_cli_returns_usage_error_when_groq_key_is_missing() -> None:
     environment = os.environ.copy()
     environment.pop("GROQ_API_KEY", None)
@@ -41,7 +57,7 @@ def test_cli_returns_usage_error_when_groq_key_is_missing() -> None:
         env=environment,
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=CHILD_PROCESS_TIMEOUT_S,
         check=False,
     )
 
@@ -49,6 +65,7 @@ def test_cli_returns_usage_error_when_groq_key_is_missing() -> None:
     assert "Set GROQ_API_KEY before" in result.stderr
 
 
+@pytest.mark.usefixtures("warm_driver_imports")
 def test_real_runtime_fails_fast_when_global_tracing_is_already_owned() -> None:
     script = f"""
 import importlib.util
@@ -73,7 +90,7 @@ else:
         cwd=ROOT,
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=CHILD_PROCESS_TIMEOUT_S,
         check=False,
     )
 
