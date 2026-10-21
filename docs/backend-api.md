@@ -40,7 +40,9 @@ There is one explicit exception for single-machine self-hosting: `serve
 --trust-local-network` (env `EARSHOT_TRUST_LOCAL_NETWORK`). It permits an
 unauthenticated non-loopback bind — intended for a loopback-mapped container
 (`docker -p 127.0.0.1:PORT`), which keeps the listener on a trusted boundary while still
-requiring a loopback `Host` header. Under it, `/v1/*` is served anonymously (unless a
+requiring a loopback `Host` header from anonymous requests. A `/v1` request with a valid
+project API key or the operator token is exempt from that check; see the
+[host rule](./otlp-quickstart.md#api-keys-and-the-host-rule). Under it, `/v1/*` is served anonymously (unless a
 token is also configured, which is still enforced), and `/v1/auth/session` reports
 `authentication_required: false` so the bundled viewer loads without a project key. A
 single predicate governs middleware enforcement, the session gate, and the generated
@@ -101,7 +103,11 @@ Process liveness. It does not imply storage is writable.
 
 ### `GET /readyz`
 
-Checks SQLite and object-store readiness. Returns 503 when unavailable.
+Checks catalog and artifact-store readiness. Returns 503 `{"status": "unavailable"}` when
+unavailable, otherwise 200 `{"status": "ready", "projections_pending": N}`. `N` counts
+Incidents whose derived projections (graph rows, Turn Facts, retention and export
+columns) are from an older release and are still being re-projected in the background;
+it never makes the server unready.
 
 ### `POST /v1/auth/session`
 
@@ -282,8 +288,9 @@ Returns project-scoped fleet summaries for STT finalization, EOU, first-token/fi
 send/receive/render response, overall response, or explicit native turn duration, grouped
 by framework, provider, model, STT language, or status. Percentiles are stratified by
 availability, basis, confidence, and limitation; unlike evidence is never blended. Missing
-evidence is not converted to zero. The projection is rebuilt from canonical Incidents on
-startup.
+evidence is not converted to zero. The projection is derived from canonical Incidents at
+ingest; Incidents projected by an older release are re-projected in the background after
+startup, and `/readyz` reports how many remain (`projections_pending`).
 
 API `0.6.0` restricts the aggregation to `final` Incidents. A crash-recovered or
 operator-sealed artifact is `provisional`: it covers an unknown fraction of its
@@ -292,6 +299,10 @@ exclusion is declared rather than performed quietly — `incident_count` is what
 cover, `withheld_incident_count` and `withheld_turn_count` are what they refused, and
 `limitations` states what these numbers structurally cannot answer. Empty `groups` beside
 a non-zero `withheld_incident_count` is a refusal to aggregate, never a measured zero.
+
+Each Revision of a Call covers the whole Call, so only a Call's latest Revision counts,
+here and in Turn Fact queries. Earlier Revisions are superseded, not withheld: they are
+not in `withheld_incident_count`.
 
 ### `GET /v1/incidents/{bundle_id}`
 
@@ -387,7 +398,10 @@ cleanup removes only Earshot-owned cache entries.
 `default` project cannot be deleted. Project deletion removes Earshot incidents,
 external references, analyses and projections, connector/retry receipts, connectors,
 API keys, capture-call journals, and queued CAS objects attributable to those
-incidents. An unattributed CAS orphan is preserved for explicit maintenance rather
+incidents. It also removes every Call with all its evidence: spans, parked traces,
+Recordings and their blobs, Revisions, OTLP resources, key generations, Call tombstones
+and OTLP counters; blobs are deleted after the catalog commit, and the response stays
+pending until they are gone. An unattributed CAS orphan is preserved for explicit maintenance rather
 than guessed to belong to the deleting project. A hashed bundle-ID tombstone remains
 to prevent a purged bundle ID from being reused; the project remains as a `deleted`
 lifecycle record with no display name.
@@ -502,7 +516,10 @@ alongside the `format`, the governed `destination`, and the artifact `digest`.
 ### `DELETE /v1/incidents/{bundle_id}`
 
 Physically purges evidence and derived analysis, leaving a content-free tombstone.
-Repeated purge is idempotent; retrieval returns 410.
+Repeated purge is idempotent; retrieval returns 410. A Call's Revision cannot be purged
+on its own: the route answers `409 EARSHOT_INCIDENT_BELONGS_TO_CALL` with the `call_id`
+in the error body. Purge the Call with `DELETE /v1/calls/{call_id}`; see
+[privacy](./privacy.md#calls).
 
 ## Live sessions
 
