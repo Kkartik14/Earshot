@@ -5,9 +5,13 @@ import subprocess
 import sys
 import textwrap
 import time
+import tomllib
 from importlib.metadata import version
+from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 
 from earshot.adapters import LiveKitAdapter, PipecatAdapter
 from earshot.analysis import analyze_incident
@@ -32,11 +36,35 @@ class ListenerSession:
         return register
 
 
-def test_livekit_1_6_metric_models_are_consumed_as_real_objects() -> None:
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def _livekit_pin() -> SpecifierSet:
+    """The ``livekit`` extra's ``livekit-agents`` range, as ``pyproject.toml`` declares it."""
+
+    extras = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"][
+        "optional-dependencies"
+    ]
+    [requirement] = [
+        Requirement(item) for item in extras["livekit"] if item.startswith("livekit-agents")
+    ]
+    return requirement.specifier
+
+
+def test_the_livekit_pin_admits_every_supported_minor_and_nothing_newer() -> None:
+    pin = _livekit_pin()
+
+    supported = ["1.6.5", "1.6.10", "1.7.1", "1.8.8"]
+
+    assert list(pin.filter(supported)) == supported
+    assert not list(pin.filter(["1.6.4", "1.9.0"]))
+
+
+def test_livekit_metric_models_are_consumed_as_real_objects() -> None:
     pytest.importorskip("livekit.agents")
     from livekit.agents.metrics import EOUMetrics, LLMMetrics, STTMetrics, TTSMetrics
 
-    assert version("livekit-agents").startswith("1.6.")
+    assert version("livekit-agents") in _livekit_pin()
     adapter = LiveKitAdapter(recorder(), framework_version=version("livekit-agents"))
     metrics = (
         EOUMetrics(
@@ -505,3 +533,60 @@ def test_livekit_dual_attach_keeps_stt_interruption_operations_with_vad_quality(
         == "instant"
     )
     assert validate_incident(bundle).ok
+
+
+def test_every_attribute_key_of_the_installed_livekit_agents_is_in_the_key_table() -> None:
+    """Each real-framework lane checks its own LiveKit release's attribute constants."""
+
+    trace_types = pytest.importorskip("livekit.agents.telemetry.trace_types")
+    from earshot.call_capture import ATTRIBUTE_KEYS
+
+    keys = {
+        value
+        for name, value in vars(trace_types).items()
+        if name.startswith("ATTR_") and isinstance(value, str) and value.startswith("lk.")
+    }
+
+    assert len(keys) > 40
+    # ``lk.sip.`` is a prefix LiveKit copies SIP attributes under: unreviewed, so
+    # extension payload by the table's rule for any other ``lk.*`` key.
+    assert sorted(key for key in keys - set(ATTRIBUTE_KEYS) if not key.endswith(".")) == []
+
+
+_SERVER_PATH_WITHOUT_LIVEKIT = """
+import sys
+sys.path.insert(0, sys.argv[1])
+
+import earshot.api, earshot.otlp_receiver, earshot.storage_closer, earshot.storage_calls
+from captured_livekit_otlp import livekit_spans
+from earshot.call_capture import apply_capture_preset, resource_payload, span_payload, stored_span
+from earshot.call_materializer import CallSnapshot, materialize, transcript_lines
+
+stored = [
+    stored_span(span_payload(kept.span), resource_payload(kept))
+    for kept in (apply_capture_preset("full", span) for span in livekit_spans())
+]
+bundle = materialize(CallSnapshot("call_x", 1, True, "full", tuple(stored), ()))
+assert bundle.profile.manifest.adapters[0].name == "earshot.livekit"
+assert len(transcript_lines(stored)) == 6
+loaded = sorted(name for name in sys.modules if name == "livekit" or name.startswith("livekit."))
+print("LIVEKIT_MODULES=" + ",".join(loaded))
+"""
+
+
+def test_the_server_never_imports_livekit_agents_even_to_build_a_livekit_revision() -> None:
+    """The receiver, the closer and the materializer read stored LiveKit spans with
+    Earshot's own adapter; a server needs no LiveKit install (here it has one, and
+    still never loads it)."""
+
+    tests = ROOT / "packages" / "sdk-python" / "tests"
+    result = subprocess.run(
+        [sys.executable, "-c", _SERVER_PATH_WITHOUT_LIVEKIT, str(tests)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert "LIVEKIT_MODULES=\n" in result.stdout

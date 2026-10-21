@@ -220,6 +220,124 @@ def test_livekit_current_payload_keys_are_fail_closed_and_opt_in_works() -> None
     assert validate_incident(model_bundle).ok
 
 
+def _full_capture_recorder() -> IncidentRecorder:
+    from earshot.call_materializer import capture_policy
+
+    return IncidentRecorder(
+        config=RecorderConfig(clock_domain_id="server-clock", capture_policy=capture_policy("full"))
+    )
+
+
+def _span(name: str, span_id: str, attributes: dict) -> dict:
+    return {
+        "name": name,
+        "trace_id": TRACE_ID,
+        "span_id": span_id,
+        "start_time": 1_800_000_000_000_000_000,
+        "end_time": 1_800_000_000_100_000_000,
+        "attributes": attributes,
+    }
+
+
+def test_livekit_1_7_pii_keys_are_recorded_under_the_semantic_keys_of_their_class() -> None:
+    adapter = LiveKitAdapter(_full_capture_recorder())
+    adapter.consume_span(
+        _span("user_turn", "1" * 16, {"lk.pii.user_transcript": "PRIVATE_USER_LINE"})
+    )
+    adapter.consume_span(
+        _span(
+            "agent_turn",
+            "2" * 16,
+            {
+                "lk.pii.user_input": "PRIVATE_USER_LINE",
+                "lk.pii.instructions": "PRIVATE_INSTRUCTIONS",
+                "lk.pii.response.text": "PRIVATE_REPLY",
+                "lk.e2e_latency": 1.05,
+            },
+        )
+    )
+    adapter.consume_span(
+        _span(
+            "room_io",
+            "3" * 16,
+            {"lk.pii.participant_identity": "caller-7731", "lk.pii.room_name": "room-7731"},
+        )
+    )
+    bundle = adapter.recorder.close()
+    user, agent, room = bundle.profile.operations
+
+    assert (user.capture_class, user.attributes["speech.text"]) == (
+        "transcript",
+        "PRIVATE_USER_LINE",
+    )
+    assert agent.capture_class == "model_payload"
+    assert {key: agent.attributes[key] for key in agent.attributes if key.startswith("gen_ai")} == {
+        "gen_ai.input.user_message": "PRIVATE_USER_LINE",
+        "gen_ai.input.system_instruction": "PRIVATE_INSTRUCTIONS",
+        "gen_ai.output.messages": "PRIVATE_REPLY",
+    }
+    assert room.capture_class == "identity"
+    assert room.attributes["participant.name"] == "caller-7731"
+    assert room.attributes["lk.pii.room_name"] == "room-7731"  # on the extension grant
+    assert not any(
+        key.startswith("lk.pii.") and key != "lk.pii.room_name"
+        for key in (*user.attributes, *agent.attributes, *room.attributes)
+    )
+    assert validate_incident(bundle).ok
+
+
+def test_a_1_6_agent_turn_with_input_instructions_and_reply_is_one_model_record() -> None:
+    """LiveKit 1.6 puts the user input, the instructions and the played reply on one
+    ``agent_turn``; under full capture the adapter used to give them two sensitive
+    classes, which a recorder refuses for one record."""
+
+    adapter = LiveKitAdapter(_full_capture_recorder())
+    adapter.consume_span(
+        _span(
+            "agent_turn",
+            "4" * 16,
+            {
+                "lk.user_input": "hello",
+                "lk.instructions": "be brief",
+                "lk.response.text": "hi there",
+            },
+        )
+    )
+    [operation] = adapter.recorder.close().profile.operations
+
+    assert operation.capture_class == "model_payload"
+    assert operation.attributes["gen_ai.input.user_message"] == "hello"
+
+
+def test_the_1_8_session_close_span_keeps_its_name_as_a_safe_source_label() -> None:
+    adapter = LiveKitAdapter(recorder())
+    adapter.consume_span(_span("session_close", "5" * 16, {"lk.close_reason": "user_initiated"}))
+    [operation] = adapter.recorder.close().profile.operations
+
+    assert operation.attributes["earshot.framework.operation.name"] == "session_close"
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_the_real_1_8_capture_records_in_process_without_mixing_classes(preset) -> None:
+    from captured_livekit_otlp import livekit_spans, readable_span
+    from earshot.call_materializer import capture_policy
+
+    recorder = IncidentRecorder(
+        config=RecorderConfig(clock_domain_id="server-clock", capture_policy=capture_policy(preset))
+    )
+    adapter = LiveKitAdapter(recorder)
+    for span in livekit_spans():
+        adapter.consume_span(readable_span(span))
+    bundle = recorder.close()
+    encoded = bundle.model_dump_json()
+
+    assert len(bundle.profile.operations) == 58
+    assert validate_incident(bundle).ok
+    played = "Got it—table for two at 7:30 tomorrow, near the window."
+    assert (played in encoded) is (preset == "full")
+    assert ("Seven thirty works for us." in encoded) is (preset == "full")
+
+
 def test_current_chat_message_metrics_are_retained_without_message_content() -> None:
     adapter = LiveKitAdapter(recorder(), framework_version="current")
     item = SimpleNamespace(
