@@ -7,9 +7,10 @@ import pytest
 from earshot.analysis import analyze_incident
 from earshot.codec import encode_incident_json, encode_incident_protobuf
 from earshot.recorder import IncidentRecorder
-from earshot.storage import IncidentStore, StorageError
+from earshot.storage import StorageError
 from earshot.validation import validate_incident
 from incident_factory import SECRET_SENTINEL
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -67,7 +68,7 @@ def test_metadata_only_sentinel_never_reaches_artifact_index_analysis_or_files(t
     assert SECRET_SENTINEL.encode() not in protobuf
 
     data_dir = tmp_path / "store"
-    store = IncidentStore(data_dir)
+    store = make_store(data_dir)
     result = store.ingest(bundle, protobuf)
     assert SECRET_SENTINEL not in str(result.record.as_dict())
     analysis = analyze_incident(
@@ -87,7 +88,7 @@ def test_metadata_only_sentinel_never_reaches_artifact_index_analysis_or_files(t
 def test_analysis_sidecar_cannot_add_an_untyped_payload_channel(tmp_path) -> None:
     recorder = IncidentRecorder(session_id="privacy-session", bundle_id="privacy-bundle")
     bundle = recorder.close()
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     result = store.ingest(bundle, encode_incident_protobuf(bundle))
     analysis = analyze_incident(
         bundle,
