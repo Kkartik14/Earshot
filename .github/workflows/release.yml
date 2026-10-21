@@ -86,6 +86,81 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-npm:
+    name: Build and inspect npm packages
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Require the release version in every package
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          for package in packages/browser packages/viewer-ui packages/node; do
+            version="$(node -p "require('./$package/package.json').version")"
+            if [[ "$version" != "$RELEASE_VERSION" ]]; then
+              echo "$package is version $version; the release is $RELEASE_VERSION" >&2
+              exit 1
+            fi
+          done
+      - name: Build and pack the packages
+        # pnpm pack applies publishConfig (viewer-ui's dist entry points) and
+        # would replace workspace: ranges; npm pack does neither.
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node build
+          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node pack \
+            --pack-destination "$PWD/npm-dist"
+      - name: Inspect the tarballs
+        run: |
+          for tarball in npm-dist/*.tgz; do
+            unexpected="$(tar -tzf "$tarball" \
+              | grep -Ev '^package/((dist/.*)?|README\.md|LICENSE|package\.json)$' || true)"
+            if [[ -n "$unexpected" ]]; then
+              printf '%s ships unexpected files:\n%s\n' "$tarball" "$unexpected" >&2
+              exit 1
+            fi
+            unpacked="$(mktemp -d)"
+            tar -xzf "$tarball" -C "$unpacked"
+            # shellcheck disable=SC2016 # a JavaScript program, not shell
+            node --input-type=module -e '
+              import { existsSync, readFileSync } from "node:fs";
+              import { join } from "node:path";
+              const root = process.argv[1];
+              const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+              const targets = [];
+              const collect = (value) =>
+                typeof value === "string"
+                  ? targets.push(value)
+                  : Object.values(value ?? {}).forEach(collect);
+              collect([manifest.main, manifest.types, manifest.exports]);
+              const missing = targets.filter((target) => !existsSync(join(root, target)));
+              const ranges = JSON.stringify([
+                manifest.dependencies,
+                manifest.peerDependencies,
+                manifest.optionalDependencies,
+              ]);
+              if (missing.length > 0 || ranges.includes("workspace:")) {
+                console.error(manifest.name, { missing, workspaceRanges: ranges.includes("workspace:") });
+                process.exit(1);
+              }
+              console.log(`${manifest.name}@${manifest.version}: ${targets.length} entry points present`);
+            ' "$unpacked/package"
+          done
+      - name: Upload immutable release inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: npm-packages
+          path: npm-dist/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
   publish-container:
     name: Publish GHCR image
     if: github.ref_type == 'tag'
@@ -116,9 +191,11 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+          # These override the action's repository-derived defaults; keep them
+          # equal to the Dockerfile's labels so local and released images agree.
           labels: |
             org.opencontainers.image.title=Earshot
-            org.opencontainers.image.description=The open-source Voice Observability SDK
+            org.opencontainers.image.description=Self-hosted Earshot server and viewer for voice-agent observability
             org.opencontainers.image.licenses=Apache-2.0
       - name: Build and push the release image
         id: push
@@ -128,10 +205,13 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
+          build-args: |
+            EARSHOT_VERSION=${{ needs.validate.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: mode=max
           sbom: true
       - name: Attest the published image
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
@@ -160,10 +240,46 @@ jobs:
       - name: Publish the distributions
         uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
 
+  publish-npm:
+    name: Publish npm packages with provenance
+    if: github.ref_type == 'tag'
+    needs: [validate, build-npm, publish-container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: npm
+      url: https://www.npmjs.com/org/earshot
+    permissions:
+      id-token: write
+    steps:
+      - name: Download the inspected packages
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: npm-packages
+          path: npm-dist
+      # Node 24 bundles npm 11, which publishes through npm trusted publishing
+      # (OIDC) when it is configured and falls back to the NPM_TOKEN secret.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+      - name: Publish the packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        run: |
+          dist_tag=latest
+          if [[ "$PRERELEASE" == "true" ]]; then
+            dist_tag=next
+          fi
+          for tarball in npm-dist/*.tgz; do
+            npm publish "$tarball" --provenance --access public --tag "$dist_tag"
+          done
+
   github-release:
     name: Publish GitHub Release
     if: github.ref_type == 'tag'
-    needs: [validate, build-python, publish-container, publish-pypi]
+    needs: [validate, build-python, publish-container, publish-pypi, publish-npm]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
