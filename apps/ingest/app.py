@@ -1,82 +1,34 @@
-"""ASGI entry point for ``uvicorn apps.ingest.app:app``."""
+"""ASGI entry point for ``uvicorn apps.ingest.app:app``.
+
+Configuration comes from the environment through ``earshot.server_config``, the
+same parser and assembly ``earshot serve`` uses, so the two entry points serve the
+same app for the same environment (``docs/configuration.md`` lists every
+variable). ``uvicorn`` owns the listener: its ``--host``/``--port`` decide where it
+binds, while ``EARSHOT_HOST`` describes that listener to the app's access rules.
+
+The server lock is taken before the store opens: ``K_server`` with
+``EARSHOT_DATABASE_URL`` set to a ``postgresql://`` URL, else ``.server.lock`` in
+the SQLite data directory. A second server or a second worker
+(``--workers 2``) is refused with ``EARSHOT_DATABASE_IN_USE``; an invalid
+setting is refused with a message that names the variable. Both leave with
+uvicorn's startup-failure status, which stops uvicorn's worker supervisor
+instead of having it restart the refused worker forever.
+"""
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import sys
 
-from earshot.analysis import ANALYZER_VERSION, analyze_incident
-from earshot.api import ApiConfig, create_app
+from earshot.server_config import ConfigurationError, load_server_settings, open_server
+from earshot.storage import DatabaseInUseError
 
+# uvicorn's ``STARTUP_FAILURE`` status: its multiprocess supervisor stops the whole
+# server when a worker exits with it, rather than restarting that worker.
+STARTUP_FAILURE_EXIT_CODE = 3
 
-def _integer_environment(name: str, default: int) -> int:
-    value = os.environ.get(name)
-    return int(value) if value is not None else default
-
-
-def _float_environment(name: str, default: float) -> float:
-    value = os.environ.get(name)
-    return float(value) if value is not None else default
-
-
-def _set_environment(name: str) -> frozenset[str]:
-    value = os.environ.get(name, "")
-    return frozenset(item.strip() for item in value.split(",") if item.strip())
-
-
-HOST = os.environ.get("EARSHOT_HOST", "127.0.0.1")
-TOKEN = os.environ.get("EARSHOT_TOKEN")
-AUTH_MODE = os.environ.get("EARSHOT_AUTH_MODE", "operator")
-JWT_ISSUER = os.environ.get("EARSHOT_JWT_ISSUER")
-JWT_AUDIENCE = os.environ.get("EARSHOT_JWT_AUDIENCE")
-JWKS_URL = os.environ.get("EARSHOT_JWKS_URL")
-JWKS_CA_FILE = os.environ.get("EARSHOT_JWKS_CA_FILE")
-PLATFORM_ADAPTER_ENABLED = os.environ.get("EARSHOT_PLATFORM_ADAPTER_ENABLED", "").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-DATA_DIR = Path(os.environ.get("EARSHOT_DATA_DIR", ".earshot"))
-# Opt-in durability for continuous browser calls across backend restarts. Hosted
-# capture v2 fails closed unless this names an existing durable directory. Operator
-# mode capture may remain in memory when it is unset.
-CAPTURE_JOURNAL_DIR = os.environ.get("EARSHOT_CAPTURE_JOURNAL_DIR")
-BEHIND_TLS_PROXY = os.environ.get("EARSHOT_BEHIND_TLS_PROXY", "").lower() in {
-    "1",
-    "true",
-    "yes",
-}
-
-app = create_app(
-    data_dir=DATA_DIR,
-    analyzer=analyze_incident,
-    capture_journal_dir=CAPTURE_JOURNAL_DIR,
-    config=ApiConfig(
-        host=HOST,
-        token=TOKEN,
-        auth_mode=AUTH_MODE,
-        jwt_issuer=JWT_ISSUER,
-        jwt_audience=JWT_AUDIENCE,
-        jwks_url=JWKS_URL,
-        jwks_ca_file=JWKS_CA_FILE,
-        hosted_runtime_names=_set_environment("EARSHOT_HOSTED_RUNTIME_NAMES"),
-        hosted_session_statuses=_set_environment("EARSHOT_HOSTED_SESSION_STATUSES"),
-        hosted_event_names=_set_environment("EARSHOT_HOSTED_EVENT_NAMES"),
-        max_body_bytes=_integer_environment("EARSHOT_MAX_BODY_BYTES", 16 * 1024 * 1024),
-        max_connector_body_bytes=_integer_environment(
-            "EARSHOT_MAX_CONNECTOR_BODY_BYTES", 2 * 1024 * 1024
-        ),
-        max_connector_deliveries_per_minute=_integer_environment(
-            "EARSHOT_MAX_CONNECTOR_DELIVERIES_PER_MINUTE", 120
-        ),
-        retention_cleanup_interval_seconds=_float_environment(
-            "EARSHOT_RETENTION_CLEANUP_INTERVAL_SECONDS", 5.0
-        ),
-        retention_cleanup_batch_size=_integer_environment(
-            "EARSHOT_RETENTION_CLEANUP_BATCH_SIZE", 1000
-        ),
-        analyzer_version=ANALYZER_VERSION,
-        behind_tls_proxy=BEHIND_TLS_PROXY,
-    ),
-    enable_platform_adapter=PLATFORM_ADAPTER_ENABLED,
-)
+try:
+    SETTINGS = load_server_settings()
+    app, SERVER_LOCK = open_server(SETTINGS)
+except (ConfigurationError, DatabaseInUseError) as error:
+    print(f"earshot: {error}", file=sys.stderr, flush=True)
+    raise SystemExit(STARTUP_FAILURE_EXIT_CODE) from None
