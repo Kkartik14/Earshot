@@ -2,25 +2,25 @@ name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   python:
     name: Python contract, backend, and adapters
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
         with:
-          # The upgrade tests extract earlier releases with `git archive`; a
-          # shallow clone lacks those commits and the release guard would skip.
           fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
@@ -43,16 +43,20 @@ jobs:
         run: |
           ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples conftest.py
           ruff format --check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples conftest.py
-      # The coverage floor applies to SQLite and Postgres combined (job
-      # `coverage`), so this job records branch data without enforcing it.
-      - name: Test on SQLite with branch coverage
+      - name: Check release-version and SQLite upgrade contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q
+          packages/sdk-python/tests/test_versions.py
+          apps/ingest/tests/test_storage_upgrade_fixtures.py
+      - name: Test the full suite on SQLite with branch coverage
+        if: github.event_name == 'workflow_dispatch'
         env:
           COVERAGE_FILE: .coverage.sqlite
-          # Subprocesses (servers, the materializer child) read this config
-          # wherever they run, so their data stays branch data and combines.
           COVERAGE_RCFILE: ${{ github.workspace }}/pyproject.toml
         run: pytest --cov=earshot --cov-report= --cov-fail-under=0 -q
       - name: Keep SQLite coverage data
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-sqlite
@@ -64,7 +68,7 @@ jobs:
   python-postgres:
     name: Postgres catalog and S3 blob store
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
     services:
       postgres:
         image: postgres:16
@@ -80,8 +84,6 @@ jobs:
           --health-timeout 5s
           --health-retries 30
     env:
-      # An admin URL for a throwaway CI server; the suite creates and drops
-      # one database per store.
       EARSHOT_TEST_POSTGRES_URL: postgresql://earshot:earshot-ci@127.0.0.1:5432/earshot
       COVERAGE_FILE: .coverage.postgres
       COVERAGE_RCFILE: ${{ github.workspace }}/pyproject.toml
@@ -93,8 +95,6 @@ jobs:
           cache: pip
       - name: Install the server with the Postgres and S3 extras
         run: python -m pip install -e '.[dev,server,postgres,s3]'
-      # Chainguard's MinIO image has no default command and a service container
-      # cannot be given one, so it is started here. Credentials are per run.
       - name: Start MinIO
         run: |
           s3_user="ci-$(openssl rand -hex 8)"
@@ -113,7 +113,21 @@ jobs:
           done
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:9000/minio/health/live
           echo "EARSHOT_TEST_S3_URL=http://$s3_user:$s3_secret@127.0.0.1:9000" >> "$GITHUB_ENV"
-      - name: Test the storage modules on Postgres
+      - name: Check Postgres catalog and server contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q --db postgresql
+          apps/ingest/tests/test_catalog_parity.py
+          apps/ingest/tests/test_storage_postgres.py
+          apps/ingest/tests/test_postgres_server.py
+      - name: Check Postgres-only application contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q --db postgresql -m postgres_only
+          apps/ingest/tests/test_calls_storage.py
+          apps/ingest/tests/test_otlp_backpressure.py
+      - name: Test the full storage modules on Postgres with branch coverage
+        if: github.event_name == 'workflow_dispatch'
         run: >-
           pytest -q --db postgresql
           --cov=earshot --cov-report= --cov-fail-under=0
@@ -133,12 +147,26 @@ jobs:
           apps/ingest/tests/test_closer_conformance.py
           apps/ingest/tests/test_calls_read.py apps/ingest/tests/test_calls_purge.py
           apps/ingest/tests/test_page_cursors.py
-      - name: Test the blob store on S3 (MinIO)
+      - name: Check S3 recording API contracts on MinIO
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q --db postgresql
+          -k 's3 and (test_a_mono_wav_is_created_uploaded_and_read_back or
+          test_ranges_are_answered_from_the_blob_store_with_206_and_416)'
+          apps/ingest/tests/test_recordings_api.py
+      - name: Test the blob store on S3 (MinIO) with its full contract suite
+        if: github.event_name == 'workflow_dispatch'
         run: >-
           pytest -q
           --cov=earshot --cov-append --cov-report= --cov-fail-under=0
           apps/ingest/tests/test_blobstore.py
+      - name: Test the blob store on S3 (MinIO) contract suite
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q -m 'not slow'
+          apps/ingest/tests/test_blobstore.py
       - name: Keep Postgres and S3 coverage data
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-postgres
@@ -152,12 +180,11 @@ jobs:
 
   coverage:
     name: Branch coverage, SQLite and Postgres combined
+    if: github.event_name == 'workflow_dispatch'
     needs: [python, python-postgres]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
-      # Coverage reads the measured source files; the paths match because every
-      # job checks out to the same workspace path.
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
@@ -178,7 +205,7 @@ jobs:
   python-compatibility:
     name: Python ${{ matrix.python-version }} adapter conformance
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -200,7 +227,7 @@ jobs:
   framework-compatibility:
     name: ${{ matrix.integration }} ${{ matrix.lane }} compatibility
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -239,7 +266,7 @@ jobs:
   macos-smoke:
     name: macOS framework smoke
     runs-on: macos-14
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -257,7 +284,7 @@ jobs:
   artifacts:
     name: Clean wheel and source distribution
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -290,7 +317,7 @@ jobs:
   typescript:
     name: TypeScript compatibility packages
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - uses: pnpm/action-setup@v6
@@ -314,7 +341,7 @@ jobs:
   container:
     name: Single-image smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - name: Build and exercise hardened container
