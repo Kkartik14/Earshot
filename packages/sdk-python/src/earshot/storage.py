@@ -103,7 +103,7 @@ if hasattr(os, "register_at_fork"):
     )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Iterator
 
     from earshot.contract import IncidentBundle
 
@@ -161,6 +161,16 @@ class CapturePresetUnavailableError(StorageError):
 
 class InvalidCursorError(StorageError):
     pass
+
+
+class DeliveryReceiptConflictError(StorageError):
+    pass
+
+
+class DeliveryInProgressError(StorageError):
+    def __init__(self, message: str, *, retry_after_seconds: int) -> None:
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class StorageOpenError(StorageError):
@@ -549,10 +559,7 @@ class ConnectorRecord:
     provider: str
     secret_ref: str
     enabled: bool
-    # The version of the translator the connector was created with; informational.
     normalizer_version: str
-    # The connector's configuration as compact JSON (``None``: the defaults).
-    config_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,6 +570,15 @@ class ExternalReferenceRecord:
     record_type: str
     external_id: str
     linked_at_unix_nano: str
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryClaim:
+    receipt_id: str
+    disposition: str
+    bundle_id: str | None
+    canonical_sha256: str | None
+    lease_token: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1079,7 +1095,6 @@ def _connector_record(row: Row) -> ConnectorRecord:
         secret_ref=row["secret_ref"],
         enabled=bool(row["enabled"]),
         normalizer_version=row["normalizer_version"],
-        config_json=row["config_json"],
     )
 
 
@@ -2734,16 +2749,9 @@ class IncidentStore:
         secret_ref: str,
         endpoint_id: str | None = None,
         normalizer_version: str | None = None,
-        config: Mapping[str, Any] | None = None,
     ) -> ConnectorRecord:
-        """Create a connector. ``config`` is its configuration
-        (``connectors.config.ConnectorConfig``; ``None``: the defaults)."""
-
-        from .connectors.config import config_json
-
         if provider not in _CONNECTOR_NORMALIZER_VERSIONS:
             raise ValueError("unsupported connector provider")
-        stored_config = None if config is None else config_json(config)
         if not re.fullmatch(r"env:[A-Z][A-Z0-9_]{0,127}", secret_ref):
             raise ValueError("secret_ref must name a portable environment secret")
         identifier = endpoint_id or f"connector_{secrets.token_urlsafe(18)}"
@@ -2756,8 +2764,8 @@ class IncidentStore:
                 """
                 INSERT INTO connectors(
                     endpoint_id, project_id, provider, secret_ref, normalizer_version,
-                    created_at_unix_nano, config_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    created_at_unix_nano
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -2766,7 +2774,6 @@ class IncidentStore:
                     secret_ref,
                     selected_normalizer,
                     time.time_ns(),
-                    stored_config,
                 ),
             )
             row = connection.execute(
@@ -2799,6 +2806,262 @@ class IncidentStore:
             raise ValueError("project_id and idempotency_key are required")
         value = f"{project_id}\x00{idempotency_key}"
         return f"bundle-{self.fingerprint('hosted-artifact-id-v1', value)}"
+
+    def claim_delivery(
+        self,
+        connector: ConnectorRecord,
+        *,
+        delivery_key_hmac: str,
+        body_sha256: str,
+        event_type: str,
+        now_unix_nano: int,
+        lease_nano: int = 30_000_000_000,
+    ) -> DeliveryClaim:
+        with self._mutation("claim_delivery"), self._connect() as connection:
+            connection.begin_write()
+            self._require_active_project(connection, connector.project_id)
+            stored_connector_row = connection.execute(
+                "SELECT * FROM connectors WHERE endpoint_id = ?",
+                (connector.endpoint_id,),
+            ).fetchone()
+            if (
+                stored_connector_row is None
+                or _connector_record(stored_connector_row) != connector
+                or not connector.enabled
+            ):
+                raise StorageError("delivery connector does not match stored configuration")
+            row = connection.execute(
+                """
+                SELECT * FROM delivery_receipts
+                WHERE endpoint_id = ? AND delivery_key_hmac = ?
+                """,
+                (connector.endpoint_id, delivery_key_hmac),
+            ).fetchone()
+            if row is not None:
+                if row["body_sha256"] != body_sha256:
+                    raise DeliveryReceiptConflictError("delivery key was reused with new content")
+                if row["state"] in {"applied", "ignored"}:
+                    return DeliveryClaim(
+                        receipt_id=row["receipt_id"],
+                        disposition="replayed",
+                        bundle_id=row["bundle_id"],
+                        canonical_sha256=row["canonical_sha256"],
+                        lease_token=None,
+                    )
+                lease_until = row["lease_until_unix_nano"]
+                if lease_until is not None and lease_until > now_unix_nano:
+                    remaining_nano = lease_until - now_unix_nano
+                    raise DeliveryInProgressError(
+                        "delivery is already being processed",
+                        retry_after_seconds=max(
+                            1,
+                            (remaining_nano + 999_999_999) // 1_000_000_000,
+                        ),
+                    )
+                next_attempt = int(row["attempt_count"]) + 1
+                connection.execute(
+                    """
+                    UPDATE delivery_receipts
+                    SET state = 'processing', lease_until_unix_nano = ?,
+                        attempt_count = attempt_count + 1,
+                        failure_code = NULL
+                    WHERE receipt_id = ?
+                    """,
+                    (now_unix_nano + lease_nano, row["receipt_id"]),
+                )
+                connection.commit()
+                return DeliveryClaim(row["receipt_id"], "claimed", None, None, next_attempt)
+
+            receipt_id = f"receipt_{secrets.token_urlsafe(18)}"
+            connection.execute(
+                """
+                INSERT INTO delivery_receipts(
+                    receipt_id, project_id, endpoint_id, delivery_key_hmac,
+                    body_sha256, event_type, state, first_received_at_unix_nano,
+                    lease_until_unix_nano, attempt_count
+                ) VALUES (?, ?, ?, ?, ?, ?, 'processing', ?, ?, 1)
+                """,
+                (
+                    receipt_id,
+                    connector.project_id,
+                    connector.endpoint_id,
+                    delivery_key_hmac,
+                    body_sha256,
+                    event_type,
+                    now_unix_nano,
+                    now_unix_nano + lease_nano,
+                ),
+            )
+            connection.commit()
+            return DeliveryClaim(receipt_id, "claimed", None, None, 1)
+
+    def complete_delivery(
+        self,
+        receipt_id: str,
+        *,
+        state: str,
+        completed_at_unix_nano: int,
+        lease_token: int,
+        bundle_id: str | None = None,
+        canonical_sha256: str | None = None,
+    ) -> None:
+        if state not in {"applied", "ignored"}:
+            raise ValueError("delivery completion state must be applied or ignored")
+        if state == "applied" and (bundle_id is None or canonical_sha256 is None):
+            raise ValueError("applied delivery requires a canonical incident binding")
+        if state == "ignored" and (bundle_id is not None or canonical_sha256 is not None):
+            raise ValueError("ignored delivery cannot bind a canonical incident")
+        with self._mutation("complete_delivery"), self._connect() as connection:
+            connection.begin_write()
+            project_row = connection.execute(
+                """
+                SELECT project.lifecycle_state
+                FROM delivery_receipts AS receipt
+                JOIN projects AS project ON project.project_id = receipt.project_id
+                WHERE receipt.receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            if project_row is None or project_row["lifecycle_state"] != "active":
+                raise StorageError("delivery project is no longer active")
+            if state == "applied":
+                binding = connection.execute(
+                    """
+                    SELECT receipt.project_id AS receipt_project_id,
+                           incident.project_id AS incident_project_id,
+                           incident.object_digest AS object_digest
+                    FROM delivery_receipts AS receipt
+                    JOIN incidents AS incident ON incident.bundle_id = ?
+                    WHERE receipt.receipt_id = ?
+                    """,
+                    (bundle_id, receipt_id),
+                ).fetchone()
+                if (
+                    binding is None
+                    or binding["receipt_project_id"] != binding["incident_project_id"]
+                    or binding["object_digest"] != canonical_sha256
+                ):
+                    raise StorageError(
+                        "delivery receipt cannot bind an incident from another project"
+                    )
+            result = connection.execute(
+                """
+                UPDATE delivery_receipts
+                SET state = ?, completed_at_unix_nano = ?, lease_until_unix_nano = NULL,
+                    bundle_id = ?, canonical_sha256 = ?, failure_code = NULL
+                WHERE receipt_id = ? AND state = 'processing' AND attempt_count = ?
+                """,
+                (
+                    state,
+                    completed_at_unix_nano,
+                    bundle_id,
+                    canonical_sha256,
+                    receipt_id,
+                    lease_token,
+                ),
+            )
+            if result.rowcount != 1:
+                raise StorageError("delivery receipt is not processing")
+            connection.commit()
+
+    def fail_delivery(
+        self,
+        receipt_id: str,
+        *,
+        lease_token: int,
+        failure_code: str,
+    ) -> None:
+        with self._mutation("fail_delivery"), self._connect() as connection:
+            project_row = connection.execute(
+                """
+                SELECT project.lifecycle_state
+                FROM delivery_receipts AS receipt
+                JOIN projects AS project ON project.project_id = receipt.project_id
+                WHERE receipt.receipt_id = ?
+                """,
+                (receipt_id,),
+            ).fetchone()
+            if project_row is None or project_row["lifecycle_state"] != "active":
+                raise StorageError("delivery project is no longer active")
+            result = connection.execute(
+                """
+                UPDATE delivery_receipts
+                SET state = 'failed', lease_until_unix_nano = NULL, failure_code = ?
+                WHERE receipt_id = ? AND state = 'processing' AND attempt_count = ?
+                """,
+                (failure_code, receipt_id, lease_token),
+            )
+            if result.rowcount != 1:
+                raise StorageError("delivery receipt lease is no longer owned")
+            connection.commit()
+
+    def record_external_identity(
+        self,
+        connector: ConnectorRecord,
+        *,
+        key_kind: str,
+        value_hmac: str,
+        bundle_id: str,
+        sensitivity: str = "identity",
+    ) -> None:
+        with self._mutation("record_external_identity"), self._connect() as connection:
+            connection.begin_write()
+            self._require_active_project(connection, connector.project_id)
+            stored_connector = connection.execute(
+                """
+                SELECT connector.project_id, connector.provider, project.lifecycle_state
+                FROM connectors AS connector
+                JOIN projects AS project ON project.project_id = connector.project_id
+                WHERE connector.endpoint_id = ?
+                """,
+                (connector.endpoint_id,),
+            ).fetchone()
+            incident = connection.execute(
+                "SELECT project_id FROM incidents WHERE bundle_id = ?",
+                (bundle_id,),
+            ).fetchone()
+            if (
+                stored_connector is None
+                or incident is None
+                or stored_connector["lifecycle_state"] != "active"
+                or stored_connector["project_id"] != connector.project_id
+                or stored_connector["provider"] != connector.provider
+                or incident["project_id"] != connector.project_id
+            ):
+                raise StorageError("external identity cannot cross connector and incident projects")
+            connection.execute(
+                connection.dialect.sql(
+                    "insert-or-ignore-external-identity",
+                    sqlite="""
+                INSERT OR IGNORE INTO external_identities(
+                    project_id, endpoint_id, provider, key_kind, value_hmac,
+                    bundle_id, sensitivity, created_at_unix_nano
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                    # Only the duplicate is ignored here. OR IGNORE would also skip
+                    # NOT NULL and CHECK violations, but these values cannot violate
+                    # them: value_hmac is a 64-hex fingerprint and the connector and
+                    # incident rows were verified above.
+                    postgresql="""
+                INSERT INTO external_identities(
+                    project_id, endpoint_id, provider, key_kind, value_hmac,
+                    bundle_id, sensitivity, created_at_unix_nano
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                ),
+                (
+                    connector.project_id,
+                    connector.endpoint_id,
+                    connector.provider,
+                    key_kind,
+                    value_hmac,
+                    bundle_id,
+                    sensitivity,
+                    time.time_ns(),
+                ),
+            )
+            connection.commit()
 
     def ingest(
         self,

@@ -30,10 +30,6 @@ receiving late evidence, the later of ``now + LATE_DEBOUNCE`` and that rule. A c
 with ``REVISION_CAP`` revisions is revised no more, except for its first end-signal
 close (``UNCAPPED_SQL``); evidence past the cap is stored, keeps the call dirty, and
 sets ``evidence_after_latest_revision`` (counted once as ``revision_cap_reached``).
-A batch whose only spans for a call are tail spans (``call_capture.TAIL_SPANS``:
-LiveKit's job runner after ``session_close``) is not evidence: the spans are stored
-and counted, and the call's dirty flag, due time and last evidence are left alone,
-unless a tail end marker gives the call its first end signal.
 The closer (``storage_closer``) turns due calls into revisions.
 
 **Counters.** Only rare events are persisted (``otlp_counters``); nothing is written
@@ -72,7 +68,6 @@ from .call_capture import (
     apply_capture_preset,
     is_end_marker,
     is_session_span,
-    is_tail_span,
     payload_digest,
     resolve_session_key,
     resource_payload,
@@ -227,7 +222,6 @@ class _Prepared:
     end: int
     end_marker: bool
     session_span: bool
-    tail: bool
     key: SessionKey | None
     payload: bytes
     digest: bytes
@@ -245,8 +239,6 @@ class _CallTarget:
     generation: int = 0
     first_evidence: int = 0
     new_spans: int = 0
-    # Of ``new_spans``, the tail spans (``call_capture.TAIL_SPANS``).
-    tail_spans: int = 0
     end_marker: bool = False
 
 
@@ -269,8 +261,6 @@ class _Evidence:
     spans: int = 0
     recordings: int = 0
     end_marker: bool = False
-    # Of ``spans``, the tail spans, which are not evidence on their own.
-    tail_spans: int = 0
 
 
 @dataclass(slots=True)
@@ -308,7 +298,6 @@ def _prepare(span: OtlpSpan, preset: str, memo: RequestMemo) -> _Prepared:
         end=raw.end_time_unix_nano,
         end_marker=is_end_marker(span),
         session_span=is_session_span(span),
-        tail=is_tail_span(span),
         key=resolve_session_key(span, memo=memo),
         payload=payload,
         digest=payload_digest(payload),
@@ -316,18 +305,6 @@ def _prepare(span: OtlpSpan, preset: str, memo: RequestMemo) -> _Prepared:
         resource_payload=resource,
         # From the stored (preset-filtered) span: under metadata_only it has no text.
         text_json=transcript_text_json(kept),
-    )
-
-
-def _batch_result(counts: _Counts) -> SpanBatchResult:
-    return SpanBatchResult(
-        stored_spans=counts.stored,
-        duplicate_spans=counts.duplicates,
-        span_conflicts=counts.conflicts,
-        key_disagreements=counts.disagreements,
-        purged_call_evidence_dropped=counts.dropped,
-        parked_spans=counts.parked,
-        call_ids=tuple(sorted(call for call, target in counts.targets.items() if target.new_spans)),
     )
 
 
@@ -507,33 +484,17 @@ class CallStore:
             )
             crash_point("before_otlp_commit")
             connection.commit()
-        return _batch_result(counts)
-
-    def record_spans_in(
-        self,
-        connection: DatabaseConnection,
-        project_id: str,
-        spans: Sequence[OtlpSpan],
-        *,
-        now: int,
-    ) -> SpanBatchResult:
-        """``record_spans`` inside the caller's write transaction, under the preset
-        read there: for a writer whose spans must commit together with its own rows
-        (a connector delivery's recordings and receipt), or not at all."""
-
-        preset = self._read_preset(connection, project_id)
-        memo = RequestMemo()
-        counts = self._record(
-            connection, project_id, [_prepare(span, preset, memo) for span in spans], preset, now
-        )
-        self._bump_counters(
-            connection,
-            project_id,
+        return SpanBatchResult(
+            stored_spans=counts.stored,
+            duplicate_spans=counts.duplicates,
             span_conflicts=counts.conflicts,
             key_disagreements=counts.disagreements,
             purged_call_evidence_dropped=counts.dropped,
+            parked_spans=counts.parked,
+            call_ids=tuple(
+                sorted(call for call, target in counts.targets.items() if target.new_spans)
+            ),
         )
-        return _batch_result(counts)
 
     def _record(
         self,
@@ -621,11 +582,7 @@ class CallStore:
             connection,
             project_id,
             {
-                call_id: _Evidence(
-                    spans=target.new_spans,
-                    end_marker=target.end_marker,
-                    tail_spans=target.tail_spans,
-                )
+                call_id: _Evidence(spans=target.new_spans, end_marker=target.end_marker)
                 for call_id, target in counts.targets.items()
                 if target.new_spans
             },
@@ -911,7 +868,6 @@ class CallStore:
                 session_span = session_span or span.session_span
                 if target is None:
                     continue
-                target.tail_spans += span.tail
                 target.end_marker = target.end_marker or span.end_marker
                 if span.key is not None:
                     fingerprint = fingerprints.get(span.key.value)
@@ -1007,16 +963,11 @@ class CallStore:
             )
         }
         updates = []
-        counted_only = []
         capped = []
         for call_id in sorted(evidence):
             call, item = calls[call_id], evidence[call_id]
             end_signal = call["end_signal_unix_nano"]
-            gives_end_signal = end_signal is None and item.end_marker
-            if not (item.spans - item.tail_spans or item.recordings or gives_end_signal):
-                counted_only.append((item.spans, project_id, call_id))
-                continue
-            if gives_end_signal:
+            if end_signal is None and item.end_marker:
                 end_signal = now
             updates.append(
                 (
@@ -1038,10 +989,6 @@ class CallStore:
             "end_signal_unix_nano = ?, close_due_unix_nano = ? "
             "WHERE project_id = ? AND call_id = ?",
             updates,
-        )
-        connection.executemany(
-            "UPDATE calls SET span_count = span_count + ? WHERE project_id = ? AND call_id = ?",
-            counted_only,
         )
         for call_id in capped:
             self.note_evidence_past_cap(connection, project_id, call_id)

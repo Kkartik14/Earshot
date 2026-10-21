@@ -93,5 +93,5 @@ def test_each_entry_point_sweeps_its_blob_store_at_startup_and_stores_recordings
     assert uploaded.json()["sha256"] == hashlib.sha256(body).hexdigest()
     assert uploaded.json()["duration_ms"] == 750
     assert read.body == body
-    (key,) = blob_backend.objects("recordings/")  # the server's analysis may add peaks
+    (key,) = blob_backend.objects()
     assert key.startswith("recordings/default/") and uuid.UUID(key.rsplit("/", 1)[1])

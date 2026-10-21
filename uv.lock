@@ -845,7 +845,7 @@ wheels = [
 
 [[package]]
 name = "earshot-observability"
-version = "0.3.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "protobuf" },
@@ -864,9 +864,6 @@ dev = [
     { name = "grpcio-tools" },
     { name = "httpx" },
     { name = "hypothesis" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "onnxruntime" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-proto" },
     { name = "opentelemetry-sdk" },
@@ -877,7 +874,6 @@ dev = [
     { name = "pytest-cov" },
     { name = "pyyaml" },
     { name = "ruff" },
-    { name = "soundfile" },
     { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
@@ -914,12 +910,6 @@ server = [
     { name = "sqlalchemy" },
     { name = "uvicorn" },
 ]
-signals = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "onnxruntime" },
-    { name = "soundfile" },
-]
 spool-encryption = [
     { name = "cryptography" },
 ]
@@ -939,11 +929,7 @@ requires-dist = [
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = "==1.81.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27,<1" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.120,<7" },
-    { name = "livekit-agents", marker = "extra == 'livekit'", specifier = ">=1.6.5,<1.9" },
-    { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.26,<3" },
-    { name = "numpy", marker = "extra == 'signals'", specifier = ">=1.26,<3" },
-    { name = "onnxruntime", marker = "extra == 'dev'", specifier = ">=1.20,<2" },
-    { name = "onnxruntime", marker = "extra == 'signals'", specifier = ">=1.20,<2" },
+    { name = "livekit-agents", marker = "extra == 'livekit'", specifier = ">=1.6.5,<1.7" },
     { name = "opentelemetry-api", marker = "extra == 'livekit'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.30,<2" },
     { name = "opentelemetry-api", marker = "extra == 'pipecat'", specifier = ">=1.30,<2" },
@@ -970,14 +956,12 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'dev'", specifier = ">=6,<7" },
     { name = "rfc8785", specifier = "==0.1.4" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9,<1" },
-    { name = "soundfile", marker = "extra == 'dev'", specifier = ">=0.13,<0.14" },
-    { name = "soundfile", marker = "extra == 'signals'", specifier = ">=0.13,<0.14" },
     { name = "sqlalchemy", marker = "extra == 'dev'", specifier = ">=2.0,<3" },
     { name = "sqlalchemy", marker = "extra == 'server'", specifier = ">=2.0,<3" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.30,<1" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.30,<1" },
 ]
-provides-extras = ["server", "postgres", "s3", "spool-encryption", "signals", "dev", "otel", "pipecat", "pipecat-groq", "livekit"]
+provides-extras = ["server", "postgres", "s3", "spool-encryption", "dev", "otel", "pipecat", "pipecat-groq", "livekit"]
 
 [[package]]
 name = "eval-type-backport"
@@ -3629,26 +3613,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c5/6f/6292145099f72a153a710245f46ae43e5fb6c77bec1b6086cb76c12dc280/sounddevice-0.5.6-py3-none-win32.whl", hash = "sha256:b36b807eb02abd257198bf84b2af05e4fea199a9d2f0019014169c7136d45e9c", size = 1009627, upload-time = "2026-08-17T07:55:00.401Z" },
     { url = "https://files.pythonhosted.org/packages/8d/3e/cbc593c31a5f0d817b3fe97e64aa8461bd0f55cb07b67ce1b776296ae336/sounddevice-0.5.6-py3-none-win_amd64.whl", hash = "sha256:7f4162f514f007b0bf25a3ccfed3f1705bc2ec311888a90232729eec4f57a4f4", size = 1009630, upload-time = "2026-08-17T07:55:02.088Z" },
     { url = "https://files.pythonhosted.org/packages/60/a4/b0c21c9f215a6fd9606b8f8748c21212dc098e5d5a2d93068c50edcf19b4/sounddevice-0.5.6-py3-none-win_arm64.whl", hash = "sha256:c8ae19173e5f27f8c12d4b5eee2dbfe542cee125d591e663e0fb4dfb75246d45", size = 1009630, upload-time = "2026-08-17T07:55:03.689Z" },
-]
-
-[[package]]
-name = "soundfile"
-version = "0.13.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cffi" },
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/41/9b873a8c055582859b239be17902a85339bec6a30ad162f98c9b0288a2cc/soundfile-0.13.1.tar.gz", hash = "sha256:b2c68dab1e30297317080a5b43df57e302584c49e2942defdde0acccc53f0e5b", size = 46156, upload-time = "2025-01-25T09:17:04.831Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/28/e2a36573ccbcf3d57c00626a21fe51989380636e821b341d36ccca0c1c3a/soundfile-0.13.1-py2.py3-none-any.whl", hash = "sha256:a23c717560da2cf4c7b5ae1142514e0fd82d6bbd9dfc93a50423447142f2c445", size = 25751, upload-time = "2025-01-25T09:16:44.235Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/ab/73e97a5b3cc46bba7ff8650a1504348fa1863a6f9d57d7001c6b67c5f20e/soundfile-0.13.1-py2.py3-none-macosx_10_9_x86_64.whl", hash = "sha256:82dc664d19831933fe59adad199bf3945ad06d84bc111a5b4c0d3089a5b9ec33", size = 1142250, upload-time = "2025-01-25T09:16:47.583Z" },
-    { url = "https://files.pythonhosted.org/packages/a0/e5/58fd1a8d7b26fc113af244f966ee3aecf03cb9293cb935daaddc1e455e18/soundfile-0.13.1-py2.py3-none-macosx_11_0_arm64.whl", hash = "sha256:743f12c12c4054921e15736c6be09ac26b3b3d603aef6fd69f9dde68748f2593", size = 1101406, upload-time = "2025-01-25T09:16:49.662Z" },
-    { url = "https://files.pythonhosted.org/packages/58/ae/c0e4a53d77cf6e9a04179535766b3321b0b9ced5f70522e4caf9329f0046/soundfile-0.13.1-py2.py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:9c9e855f5a4d06ce4213f31918653ab7de0c5a8d8107cd2427e44b42df547deb", size = 1235729, upload-time = "2025-01-25T09:16:53.018Z" },
-    { url = "https://files.pythonhosted.org/packages/57/5e/70bdd9579b35003a489fc850b5047beeda26328053ebadc1fb60f320f7db/soundfile-0.13.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:03267c4e493315294834a0870f31dbb3b28a95561b80b134f0bd3cf2d5f0e618", size = 1313646, upload-time = "2025-01-25T09:16:54.872Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/df/8c11dc4dfceda14e3003bb81a0d0edcaaf0796dd7b4f826ea3e532146bba/soundfile-0.13.1-py2.py3-none-win32.whl", hash = "sha256:c734564fab7c5ddf8e9be5bf70bab68042cd17e9c214c06e365e20d64f9a69d5", size = 899881, upload-time = "2025-01-25T09:16:56.663Z" },
-    { url = "https://files.pythonhosted.org/packages/14/e9/6b761de83277f2f02ded7e7ea6f07828ec78e4b229b80e4ca55dd205b9dc/soundfile-0.13.1-py2.py3-none-win_amd64.whl", hash = "sha256:1e70a05a0626524a69e9f0f4dd2ec174b4e9567f4d8b6c11d38b5c289be36ee9", size = 1019162, upload-time = "2025-01-25T09:16:59.573Z" },
 ]
 
 [[package]]

@@ -412,7 +412,6 @@ _SAFE_SOURCE_LABELS = frozenset(
         "agent_false_interruption",
         "agent_session",
         "agent_turn",
-        "session_close",
         "conversation_item_added.item.interrupted",
         "conversation_item_added.item.metrics",
         "conversation.item.input_audio_transcription.completed",

@@ -165,20 +165,6 @@ def delete_calls(
                 scope,
             ).fetchall()
         )
-        # What their analyses derived (peaks, renditions): the rows go with the
-        # recordings (ON DELETE CASCADE), so their keys are journaled first.
-        blob_keys.extend(
-            key
-            for row in connection.execute_unprepared(
-                "SELECT a.peaks_blob_key, a.rendition_blob_key FROM audio_analysis a "
-                "JOIN recordings r ON r.project_id = a.project_id "
-                "AND r.recording_id = a.recording_id "
-                f"WHERE r.project_id = ? AND r.call_id IN ({marks})",
-                scope,
-            ).fetchall()
-            for key in (row["peaks_blob_key"], row["rendition_blob_key"])
-            if key is not None
-        )
         digests.update(_delete_traces(connection, project_id, traces))
         for table in ("recordings", "call_revisions", "calls"):
             connection.execute_unprepared(f"DELETE FROM {table} WHERE {in_calls}", scope)
@@ -215,11 +201,9 @@ def _delete_traces(
 def delete_project_calls(
     connection: DatabaseConnection, project_id: str, *, limit: int, now: int
 ) -> bool:
-    """One bounded batch of a deleted project's calls (with all their evidence:
-    their projections, tags and transcript lines go with them), then of its parked
-    traces, then of its own prices (never the built-in ones). ``True`` once none is
-    left. Runs in the caller's write transaction, after the project's incidents are
-    gone."""
+    """One bounded batch of a deleted project's calls (with all their evidence),
+    then of its parked traces. ``True`` once neither is left. Runs in the caller's
+    write transaction, after the project's incidents are gone."""
 
     call_ids = [
         row["call_id"]
@@ -239,16 +223,11 @@ def delete_project_calls(
         ).fetchall()
     ]
     _delete_traces(connection, project_id, parked)
-    connection.execute(
-        "DELETE FROM prices WHERE id IN "
-        "(SELECT id FROM prices WHERE project_id = ? ORDER BY id LIMIT ?)",
-        (project_id, limit),
-    )
     return not any(
         connection.execute(
             f"SELECT 1 FROM {table} WHERE project_id = ? LIMIT 1", (project_id,)
         ).fetchone()
-        for table in ("calls", "call_traces", "prices")
+        for table in ("calls", "call_traces")
     )
 
 

@@ -1,6 +1,6 @@
 """One registry for independently evolvable Earshot compatibility layers."""
 
-PACKAGE_VERSION = "0.3.0"
+PACKAGE_VERSION = "0.2.0"
 CONTRACT_VERSION = "0.2.0"
 SEMANTIC_PROFILE_VERSION = "0.2.0"
 # Producers emit the current version; readers accept every version they can
@@ -12,7 +12,7 @@ SUPPORTED_SEMANTIC_PROFILE_VERSIONS = ("0.1.0", "0.2.0")
 RECOVERY_MIN_CONTRACT_VERSION = "0.2.0"
 MEDIA_CUSTODY_MIN_CONTRACT_VERSION = "0.2.0"
 COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION = "0.2.0"
-API_VERSION = "0.15.0"
+API_VERSION = "0.14.0"
 ANALYZER_VERSION = "0.6.0"
 TURN_FACT_PROJECTION_VERSION = "0.1.0"
 # Stored per incident (``incidents.projection_version``). Bump it whenever an
@@ -24,9 +24,7 @@ INCIDENT_PROJECTION_VERSION = 1
 PIPELINE_ADAPTER_VERSION = "0.3.0"
 LIVEKIT_ADAPTER_VERSION = "0.1.0"
 PIPECAT_ADAPTER_VERSION = "0.1.0"
-# The hosted-provider translators (payload -> call evidence spans). Stamped on each
-# delivery's evidence; a connector accepts deliveries whatever version created it.
-ELEVENLABS_NORMALIZER_VERSION = "0.2.0"
-VAPI_NORMALIZER_VERSION = "0.2.0"
-RETELL_NORMALIZER_VERSION = "0.2.0"
-RINGG_NORMALIZER_VERSION = "0.2.0"
+ELEVENLABS_NORMALIZER_VERSION = "0.1.0"
+VAPI_NORMALIZER_VERSION = "0.1.0"
+RETELL_NORMALIZER_VERSION = "0.1.0"
+RINGG_NORMALIZER_VERSION = "0.1.0"

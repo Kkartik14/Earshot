@@ -84,17 +84,7 @@ python scripts/check_wheel.py /tmp/earshot-dist/*.whl
 python scripts/check_sdist.py /tmp/earshot-dist/*.tar.gz
 python scripts/smoke_artifact.py /tmp/earshot-dist/*.whl
 python scripts/smoke_artifact.py /tmp/earshot-dist/*.tar.gz
-python scripts/viewer_smoke.py   # after the bundle step: the call views on replayed calls
 ```
-
-`scripts/viewer_smoke.py` starts `earshot serve`, replays the two captured calls
-(`fixtures/captured/pipecat-otlp-1.5`, `fixtures/captured/livekit-otlp-1.8`), waits for
-the server to analyse and project them, and requests everything the viewer's calls pages
-request: the pages and their scripts, the list with each filter, each call view, its
-peaks, its audio by `Range`, and its spans. It needs only the standard library, so it can
-drive an installed artifact: `python scripts/viewer_smoke.py --earshot
-/path/to/venv/bin/earshot`. `--keep-serving` leaves the server up for a look in a
-browser.
 
 Plain `pytest` runs every test, including the ones marked `slow` (about 10 s or more
 each: the 10,000-incident reprojection boot, the random-SIGKILL OTLP property test, the
@@ -109,26 +99,18 @@ pytest -m slow                                         # every slow test
 
 CI and the release gate run plain `pytest`, so no `slow` test is skipped there.
 
-Two tests still skip in CI: the real-provider e2e (`apps/ingest/tests/e2e_real/`,
-marked `real_providers`). Each runs one real call, Pipecat 1.5 or LiveKit Agents 1.8,
-into Earshot on Postgres and S3, waits for the server to analyse and project it, and
-checks its call view. They need `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `CARTESIA_API_KEY`
-and `CARTESIA_VOICE_ID` in the environment, the examples' `requirements.txt`, and the S3
-test server. The LiveKit test also needs `EARSHOT_LIVEKIT_PYTHON`: the python of a
-separate venv with `examples/livekit_otlp/requirements.txt` and Earshot installed
-(LiveKit 1.8 needs OpenTelemetry versions Earshot's own lock cannot take). Without any of
-them a test skips. They read keys from the process environment only, never from `.env`,
-so a plain local `pytest` places no paid calls. The release gate runs them with
+One test still skips in CI: the real-provider e2e
+(`apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`, marked `real_providers`)
+runs one real Pipecat call into Earshot on Postgres and S3. It needs `DEEPGRAM_API_KEY`,
+`GROQ_API_KEY`, `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID` in the environment, the
+example's `requirements.txt`, and the S3 test server; without any of them it skips. It
+reads keys from the process environment only, never from `.env`, so a plain local
+`pytest` places no paid calls. The release gate runs it with
 `EARSHOT_REQUIRE_REAL_PROVIDERS=1`, which turns a skip into a failure:
 
 ```bash
-(set -a; . ./.env; set +a; EARSHOT_REQUIRE_REAL_PROVIDERS=1 \
-  EARSHOT_LIVEKIT_PYTHON=/path/to/livekit-venv/bin/python pytest -q -m real_providers)
+(set -a; . ./.env; set +a; EARSHOT_REQUIRE_REAL_PROVIDERS=1 pytest -q -m real_providers)
 ```
-
-The provider-free replay of both calls
-(`apps/ingest/tests/e2e/test_otlp_replay_quickstart.py`) runs in CI and pins their call
-views' values.
 
 Tests intentionally mutate valid fixtures. A passing test should prove a property or
 regression, not merely assert that its own valid sample is valid.

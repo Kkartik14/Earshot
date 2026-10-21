@@ -52,7 +52,7 @@ from store_support import (
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres_only]
 
-HEAD = "0006_connectors"
+HEAD = "0004_calls"
 
 
 @pytest.fixture

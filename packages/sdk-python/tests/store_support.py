@@ -31,7 +31,6 @@ import contextlib
 import hashlib
 import os
 import secrets
-import sqlite3
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -174,8 +173,8 @@ def stored_needles(path: str | Path, needles: list[bytes]) -> set[bytes]:
 
     On SQLite: every byte of the database file, its WAL and its shared memory
     (close the store first, so nothing is only in memory). On Postgres: every
-    ``text`` and ``bytea`` column of the call and projection tables, ``incidents``
-    and ``artifacts``.
+    ``text`` and ``bytea`` column of the call tables, ``incidents`` and
+    ``artifacts``.
     """
 
     path = Path(path)
@@ -192,7 +191,7 @@ def stored_needles(path: str | Path, needles: list[bytes]) -> set[bytes]:
         return {needle for needle in needles if needle in data}
     import psycopg
 
-    from earshot.storage_schema import CALLS_TABLES, PROJECTION_TABLES
+    from earshot.storage_schema import CALLS_TABLES
 
     found = set()
     with psycopg.connect(postgres_cluster().database_for(path)) as connection:
@@ -200,7 +199,7 @@ def stored_needles(path: str | Path, needles: list[bytes]) -> set[bytes]:
             "SELECT table_name, column_name, data_type FROM information_schema.columns "
             "WHERE table_schema = current_schema() AND table_name = ANY(%s) "
             "AND data_type IN ('text', 'bytea')",
-            ([*CALLS_TABLES, *PROJECTION_TABLES, "incidents", "artifacts"],),
+            ([*CALLS_TABLES, "incidents", "artifacts"],),
         ).fetchall()
         assert len(columns) > 20
         for table, column, data_type in columns:
@@ -236,58 +235,14 @@ def drop_post_v19_objects(connection: Any) -> None:
 
 
 def drop_calls_objects(connection: Any, *, preset_column: bool = True) -> None:
-    """Undo revision ``0004_calls`` on a catalog of either dialect (children first),
-    and before it every later revision built on its tables."""
+    """Undo revision ``0004_calls`` on a catalog of either dialect (children first)."""
 
     from earshot.storage_schema import CALLS_TABLES
 
-    drop_projection_objects(connection)
     for table in reversed(CALLS_TABLES):
         connection.execute(f"DROP TABLE IF EXISTS {table}")
     if preset_column:
         connection.execute("ALTER TABLE projects DROP COLUMN capture_preset")
-
-
-def _table_columns(connection: Any, table: str) -> set[str]:
-    if isinstance(connection, sqlite3.Connection):
-        return {row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
-    return {
-        row[0]
-        for row in connection.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_schema = current_schema() AND table_name = ?",
-            (table,),
-        ).fetchall()
-    }
-
-
-def drop_projection_objects(connection: Any) -> None:
-    """Undo revision ``0005_projections`` on a catalog of either dialect (children
-    first), keeping every row of the tables it added a column to. A catalog without
-    some of its objects (one a legacy simulation rebuilt) is fine."""
-
-    from earshot.storage_schema import PROJECTION_COLUMNS, PROJECTION_TABLES
-
-    drop_connector_objects(connection)
-    for table in reversed(PROJECTION_TABLES):
-        connection.execute(f"DROP TABLE IF EXISTS {table}")
-    for table, column in PROJECTION_COLUMNS:
-        if column in _table_columns(connection, table):
-            connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
-
-
-def drop_connector_objects(connection: Any) -> None:
-    """Undo revision ``0006_connectors`` on a catalog of either dialect, keeping every
-    row of the tables it added a column to. A catalog without some of its objects
-    (one a legacy simulation rebuilt) is fine."""
-
-    from earshot.storage_schema import CONNECTOR_COLUMNS, CONNECTOR_TABLES
-
-    for table in reversed(CONNECTOR_TABLES):
-        connection.execute(f"DROP TABLE IF EXISTS {table}")
-    for table, column in CONNECTOR_COLUMNS:
-        if column in _table_columns(connection, table):
-            connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
 
 
 def _close_open_postgres_stores() -> None:

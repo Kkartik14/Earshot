@@ -3,8 +3,7 @@
 Every test runs the real app on a real uvicorn server against a real catalog
 (SQLite, or Postgres under ``--db postgresql``) and a real blob store: local disk
 (``[local]``) and MinIO (``[s3]``). Audio bodies are real WAV files written by the
-standard ``wave`` module, real FLAC from PyAV's encoder, and the real LiveKit 1.8
-stereo Ogg Opus recording.
+standard ``wave`` module.
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ from collections.abc import Iterator
 
 import pytest
 
-from audio_support import LIVEKIT_RECORDING, encoded
 from earshot.api import ApiConfig, create_app
 from earshot.clock import ManualClock
 from earshot.storage_calls import CallStore, CallTimings
@@ -92,10 +90,7 @@ def server(tmp_path, blob_backend) -> Iterator[tuple[int, object]]:
 
 
 def _journal(tmp_path) -> list[tuple]:
-    # Upload attempts' keys; the server's analysis also journals its outputs briefly.
-    return catalog_rows(
-        tmp_path, "SELECT blob_key FROM pending_blob_deletions WHERE blob_key LIKE 'recordings/%'"
-    )
+    return catalog_rows(tmp_path, "SELECT blob_key FROM pending_blob_deletions")
 
 
 def _wait_for_empty_journal(tmp_path) -> None:
@@ -151,7 +146,7 @@ def test_a_mono_wav_is_created_uploaded_and_read_back(tmp_path, blob_backend, se
     assert catalog_rows(
         tmp_path, "SELECT recording_count, dirty FROM calls WHERE call_id = ?", (call_id,)
     ) == [(1, 1)]
-    (key,) = blob_backend.objects("recordings/")
+    (key,) = blob_backend.objects()
     prefix, _, attempt = key.rpartition("/")
     assert prefix == "recordings/default" and uuid.UUID(attempt)
     assert blob_backend.leftovers() == [] and _journal(tmp_path) == []
@@ -315,167 +310,6 @@ def test_a_metadata_only_project_gets_422_for_a_recording(tmp_path, server) -> N
     assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
 
 
-# --- stereo recordings (FR-1) ------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("content_type", "body_of", "duration_ms"),
-    [
-        ("audio/ogg", lambda: LIVEKIT_RECORDING.read_bytes(), 34_010),
-        (
-            "audio/flac",
-            lambda: encoded("flac", "flac", rate=16_000, channels=2, seconds=1.5),
-            1500,
-        ),
-        ("audio/wav", lambda: wav(channels=2, seconds=1.5), 1500),
-    ],
-    ids=["livekit-ogg-opus", "flac", "wav"],
-)
-def test_a_stereo_recording_with_a_channel_map_is_created_uploaded_and_read_back(
-    tmp_path, blob_backend, server, content_type, body_of, duration_ms
-) -> None:
-    port, _ = server
-    body = body_of()
-    manifest = {
-        "recording_id": "call-1.stereo",
-        "speaker": "mixed",
-        "content_type": content_type,
-        "channel_speakers": ["user", "agent"],
-    }
-
-    created = post_recording(port, **manifest)
-    again = post_recording(port, **manifest)
-    swapped = post_recording(port, **{**manifest, "channel_speakers": ["agent", "user"]})
-    uploaded = put_content(port, "call-1.stereo", body, content_type=content_type)
-    whole = request(port, "GET", "/v1/recordings/call-1.stereo/content")
-    mono = post_recording(port, recording_id="call-1.user")
-
-    assert created.status == 201, created.body
-    assert (created.json()["speaker"], created.json()["channel_speakers"]) == (
-        "mixed",
-        ["user", "agent"],
-    )
-    assert (again.status, again.json()) == (200, created.json())
-    assert (swapped.status, swapped.problem_code()) == (409, "EARSHOT_RECORDING_CONFLICT")
-    assert uploaded.status == 200, uploaded.body
-    assert {key: uploaded.json()[key] for key in ("state", "duration_ms", "channel_speakers")} == {
-        "state": "stored",
-        "duration_ms": duration_ms,
-        "channel_speakers": ["user", "agent"],
-    }
-    assert (whole.status, whole.body, whole.headers["content-type"]) == (200, body, content_type)
-    assert mono.json()["channel_speakers"] is None
-    assert catalog_rows(
-        tmp_path, "SELECT recording_id, channel_speakers_json FROM recordings ORDER BY 1"
-    ) == [("call-1.stereo", '["user","agent"]'), ("call-1.user", None)]
-
-
-@pytest.mark.parametrize(
-    ("manifest", "content_type", "body_of"),
-    [
-        ({"speaker": "agent"}, "audio/ogg", lambda: LIVEKIT_RECORDING.read_bytes()),
-        ({"speaker": "mixed"}, "audio/wav", lambda: wav(channels=2, seconds=0.5)),
-        (
-            {"speaker": "user"},
-            "audio/flac",
-            lambda: encoded("flac", "flac", rate=16_000, channels=2, seconds=0.5),
-        ),
-        (
-            {"speaker": "mixed", "channel_speakers": ["user", "agent"]},
-            "audio/wav",
-            lambda: wav(channels=1, seconds=0.5),
-        ),
-        (
-            {"speaker": "mixed", "channel_speakers": ["agent"]},
-            "audio/ogg",
-            lambda: LIVEKIT_RECORDING.read_bytes(),
-        ),
-    ],
-    ids=[
-        "mono-ogg-gets-stereo",
-        "mixed-gets-stereo",
-        "mono-flac-gets-stereo",
-        "map-2-gets-1",
-        "map-1-gets-2",
-    ],
-)
-def test_an_upload_whose_header_has_another_channel_count_is_refused(
-    tmp_path, blob_backend, server, manifest, content_type, body_of
-) -> None:
-    port, _ = server
-    post_recording(port, recording_id="r1", content_type=content_type, **manifest)
-
-    reply = put_content(port, "r1", body_of(), content_type=content_type)
-    state = request(port, "GET", "/v1/recordings/r1").json()["state"]
-
-    assert (reply.status, reply.problem_code()) == (422, "EARSHOT_RECORDING_CHANNEL_MISMATCH")
-    assert state == "pending"
-    assert blob_backend.objects() == [] and blob_backend.leftovers() == []
-    assert _journal(tmp_path) == []
-
-
-@pytest.mark.parametrize(
-    ("content_type", "body", "code"),
-    [
-        ("audio/flac", b"ID3\x04" + bytes(4096), "EARSHOT_RECORDING_INVALID_FLAC"),
-        ("audio/ogg", b"RIFF" + bytes(4096), "EARSHOT_RECORDING_INVALID_OGG"),
-        # Ogg Vorbis: Earshot reads the channel count of Ogg Opus only.
-        (
-            "audio/ogg",
-            b"OggS\x00\x02" + bytes(20) + b"\x01\x1e\x01vorbis" + bytes(23),
-            "EARSHOT_RECORDING_INVALID_OGG",
-        ),
-    ],
-    ids=["not-flac", "not-ogg", "ogg-vorbis"],
-)
-def test_a_flac_or_ogg_body_whose_header_cannot_be_read_is_refused(
-    tmp_path, blob_backend, server, content_type, body, code
-) -> None:
-    port, _ = server
-    post_recording(port, recording_id="r1", content_type=content_type)
-
-    reply = put_content(port, "r1", body, content_type=content_type)
-
-    assert (reply.status, reply.problem_code()) == (422, code)
-    assert blob_backend.objects() == [] and _journal(tmp_path) == []
-
-
-@pytest.mark.parametrize(
-    ("fields", "code"),
-    [
-        ({"speaker": "mixed", "channel_speakers": []}, "EARSHOT_INVALID_REQUEST"),
-        ({"speaker": "mixed", "channel_speakers": ["mixed"]}, "EARSHOT_INVALID_REQUEST"),
-        (
-            {"speaker": "mixed", "channel_speakers": ["user", "agent", "user"]},
-            "EARSHOT_INVALID_REQUEST",
-        ),
-        ({"speaker": "mixed", "channel_speakers": "user"}, "EARSHOT_INVALID_REQUEST"),
-        (
-            {"speaker": "mixed", "channel_speakers": ["user", "user"]},
-            "EARSHOT_INVALID_CHANNEL_SPEAKERS",
-        ),
-        ({"speaker": "user", "channel_speakers": ["user"]}, "EARSHOT_INVALID_CHANNEL_SPEAKERS"),
-        (
-            {
-                "speaker": "mixed",
-                "content_type": "audio/mpeg",
-                "channel_speakers": ["user", "agent"],
-            },
-            "EARSHOT_INVALID_CHANNEL_SPEAKERS",
-        ),
-    ],
-    ids=["empty", "mixed-channel", "three", "not-a-list", "twice", "not-mixed", "mp3"],
-)
-def test_an_invalid_channel_map_is_422_and_creates_nothing(tmp_path, server, fields, code) -> None:
-    port, _ = server
-
-    reply = post_recording(port, recording_id="r1", **fields)
-
-    assert (reply.status, reply.problem_code()) == (422, code), reply.body
-    assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
-    assert catalog_rows(tmp_path, "SELECT count(*) FROM calls") == [(0,)]
-
-
 # --- uploads ------------------------------------------------------------------------------------
 
 
@@ -501,7 +335,7 @@ def test_an_upload_to_a_stored_recording_is_hashed_and_never_written(
 @pytest.mark.parametrize(
     ("case", "status", "code"),
     [
-        ("stereo", 422, "EARSHOT_RECORDING_CHANNEL_MISMATCH"),
+        ("stereo", 422, "EARSHOT_RECORDING_NOT_MONO"),
         ("not a wav", 422, "EARSHOT_RECORDING_INVALID_WAV"),
         ("wrong type", 415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE"),
         ("no type", 415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE"),
@@ -1027,7 +861,7 @@ def test_two_concurrent_uploads_store_one_object_and_the_loser_cleans_up(
     assert request(port, "GET", "/v1/recordings/r1/content").body == bodies[winner]
     _wait_for_empty_journal(tmp_path)
     assert _journal(tmp_path) == []
-    assert len(blob_backend.objects("recordings/")) == 1 and blob_backend.leftovers() == []
+    assert len(blob_backend.objects()) == 1 and blob_backend.leftovers() == []
 
 
 # --- AC9.3: project isolation -----------------------------------------------------------------

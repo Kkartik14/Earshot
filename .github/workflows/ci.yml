@@ -133,13 +133,6 @@ jobs:
           apps/ingest/tests/test_closer_conformance.py
           apps/ingest/tests/test_calls_read.py apps/ingest/tests/test_calls_purge.py
           apps/ingest/tests/test_page_cursors.py
-          apps/ingest/tests/test_migration_0005.py apps/ingest/tests/test_client.py
-          apps/ingest/tests/test_analysis_storage.py apps/ingest/tests/test_analysis_job.py
-          apps/ingest/tests/test_analysis_api.py
-          apps/ingest/tests/test_call_view_api.py apps/ingest/tests/test_prices_api.py
-          apps/ingest/tests/test_api_response_contract.py
-          apps/ingest/tests/test_call_projection_job.py apps/ingest/tests/test_prices_cli.py
-          apps/ingest/tests/test_livekit_otlp_calls.py apps/ingest/tests/test_livekit_otlp_server.py
       - name: Test the blob store on S3 (MinIO)
         run: >-
           pytest -q
@@ -222,11 +215,8 @@ jobs:
             lane: minimum
             dependency: livekit-agents==1.6.5
           - integration: livekit
-            lane: "1.6"
-            dependency: livekit-agents>=1.6.5,<1.7
-          - integration: livekit
             lane: current
-            dependency: livekit-agents>=1.8,<1.9
+            dependency: livekit-agents>=1.6.5,<1.7
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -245,12 +235,6 @@ jobs:
             -k '${{ matrix.integration }}'
           pytest -q packages/sdk-python/tests/test_adapter_conformance.py \
             -k '${{ matrix.integration }}'
-      - name: Replay the real LiveKit capture in process and through the materializer
-        if: matrix.integration == 'livekit'
-        run: >-
-          pytest -q
-          packages/sdk-python/tests/test_livekit_otel_adapter.py
-          packages/sdk-python/tests/test_livekit_otlp_materializer.py
 
   macos-smoke:
     name: macOS framework smoke
@@ -302,12 +286,6 @@ jobs:
         run: |
           python scripts/smoke_artifact.py dist/*.whl
           python scripts/smoke_artifact.py dist/*.tar.gz
-      - name: Viewer smoke on the wheel (replayed calls, bundled viewer, call views' API)
-        run: |
-          python -m venv /tmp/viewer-smoke
-          /tmp/viewer-smoke/bin/python -m pip install \
-            "earshot-observability[server,signals] @ file://$(ls "$PWD"/dist/*.whl)"
-          python scripts/viewer_smoke.py --earshot /tmp/viewer-smoke/bin/earshot
 
   typescript:
     name: TypeScript compatibility packages
@@ -315,29 +293,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
-      # The @earshot/node and viewer-ui suites start a real `earshot serve`.
-      # Turbo's strict env mode drops env overrides, so the harnesses find the
-      # server at the default `.venv/bin` path.
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          cache: pip
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Install Earshot for the TS suites that run a real server
-        run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install -e '.[dev,server]'
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-      - name: Check generated API types
+      - name: Check generated viewer API types
         run: |
           pnpm --filter @earshot/viewer-ui gen:api
-          pnpm --filter @earshot/node gen:api
-          git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts packages/node/src/openapi.ts
+          git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts
       - name: Test, typecheck, build, and format
         run: |
           pnpm test

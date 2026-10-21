@@ -12,5 +12,3 @@ fixtures/conformance/canonical-vector.*.json
 fixtures/valid/complete.json
 packages/viewer-ui/src/api/schema.d.ts
 packages/viewer-ui/src/features/inspector/__fixtures__/faults/*.explanation.json
-# Helm templates are Go templates, not YAML.
-deploy/helm/earshot/templates/

@@ -30,7 +30,7 @@ from store_support import make_store
 
 pytestmark = [pytest.mark.integration, pytest.mark.sqlite_only]
 
-HEAD = "0006_connectors"
+HEAD = "0004_calls"
 ALEMBIC_SENTINEL = 1000
 
 

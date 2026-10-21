@@ -66,7 +66,7 @@ def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> 
 
 
 def test_the_capture_surface_evolution_is_versioned() -> None:
-    assert API_VERSION == "0.15.0"
+    assert API_VERSION == "0.14.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:

@@ -42,8 +42,6 @@ Normalization rules. Each one names what it folds, and nothing else is folded:
    keeps the index name, UNIQUE, the table, every key expression with
    DESC/COLLATE, and the partial ``WHERE`` predicate. SQLite's per-key
    ``index_xinfo`` (sort order and collation) is also kept in ``native``.
-   Indexes named ``earshot_opt_*`` are left out: an operator creates them outside
-   the migration chain (``earshot db enable-transcript-index``), on one dialect.
 9. **CHECK constraints.** Each CHECK's text, normalized as in rule 8, sorted;
    names ignored. SQLite's come from the ``CREATE TABLE`` text (column and table
    level: a CHECK on a column added by ``ALTER TABLE`` lands there too);
@@ -84,10 +82,6 @@ _AUTOINCREMENT = "autoincrement"
 class CatalogSnapshot:
     portable: dict[str, Any]
     native: dict[str, Any]
-
-
-# Operator-optional indexes outside the migration chain (rule 8).
-OPTIONAL_INDEX_PREFIX = "earshot_opt_"
 
 
 def type_class(declared: str) -> str:
@@ -161,7 +155,7 @@ def sqlite_catalog_snapshot(path: str | Path) -> CatalogSnapshot:
                 if origin == "u":
                     uniques.append(tuple(name for name, _, _ in keys))
                     index_keys[f"unique{uniques[-1]}"] = keys
-                elif origin == "c" and not index.startswith(OPTIONAL_INDEX_PREFIX):
+                elif origin == "c":
                     index_sql = next(row[2] for row in objects if row[1] == index)
                     indexes.append(normalized_text(index_sql))
                     index_keys[index] = keys
@@ -233,8 +227,7 @@ def postgres_catalog_snapshot(url: str) -> CatalogSnapshot:
             ).fetchall()
             indexes = connection.execute(
                 "SELECT pg_get_indexdef(i.indexrelid) FROM pg_index AS i "
-                "WHERE i.indrelid = %s::oid AND left(i.indexrelid::regclass::text, 12) "
-                "<> 'earshot_opt_' AND i.indexrelid NOT IN ("
+                "WHERE i.indrelid = %s::oid AND i.indexrelid NOT IN ("
                 "SELECT conindid FROM pg_constraint "
                 "WHERE conrelid = %s::oid AND contype IN ('p', 'u'))",
                 (oid, oid),

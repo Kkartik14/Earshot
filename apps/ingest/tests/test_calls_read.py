@@ -187,10 +187,7 @@ def test_a_listed_call_carries_its_key_counts_evidence_times_and_latest_revision
         bad_cursor = _get(port, "/v1/calls?cursor=not-a-cursor")
         bad_limit = _get(port, "/v1/calls?limit=101")
 
-    # The server's projection job projects a closed call in the background: its
-    # projection fields are test_call_view_api's and test_call_projection_job's.
-    listed_call = {key: value for key, value in items[call_id].items() if "projection" not in key}
-    assert listed_call == {
+    assert items[call_id] == {
         "call_id": call_id,
         "key_source": "conversation.id",
         "state": "closed",
@@ -261,8 +258,8 @@ def test_call_detail_lists_revisions_recordings_and_the_transcript_of_its_spans(
         unknown = _get(port, "/v1/calls/call_0123456789abcdef0123456789abcdef")
         foreign = _get(port, f"/v1/calls/{call_id}", credential=other)
 
-    month_1 = {key: value for key, value in listed.items() if "projection" not in key}
-    assert {key: value for key, value in detail.items() if key in month_1} == month_1
+    summary = {key: value for key, value in detail.items() if key in listed}
+    assert summary == listed
     assert [
         {key: value for key, value in revision.items() if key != "created_unix_nano"}
         for revision in detail["revisions"]

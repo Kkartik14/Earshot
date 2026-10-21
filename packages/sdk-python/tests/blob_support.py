@@ -201,20 +201,17 @@ class BlobBackend:
 
         return open_blob_store(self.url)
 
-    def objects(self, prefix: str = "") -> list[str]:
-        """Every committed object of this store whose key starts with ``prefix``
-        (``"recordings/"``: uploads only, not what a server's analysis derived)."""
+    def objects(self) -> list[str]:
+        """Every committed object of this store, by key."""
 
         if self._server is not None:
             start = len(self._prefix) + 1
-            names = [name[start:] for name in self._server.object_names(self._prefix)]
-            return [name for name in names if name.startswith(prefix)]
+            return [name[start:] for name in self._server.object_names(self._prefix)]
         assert self._root is not None
         return sorted(
-            key
+            path.relative_to(self._root).as_posix()
             for path in self._root.rglob("*")
             if path.is_file() and ".tmp" not in path.relative_to(self._root).parts
-            if (key := path.relative_to(self._root).as_posix()).startswith(prefix)
         )
 
     def leftovers(self) -> list[str]:

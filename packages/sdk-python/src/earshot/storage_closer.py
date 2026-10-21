@@ -550,7 +550,7 @@ class Closer:
         read takes one row more than ``uploading`` has calls, so a held call never
         hides a claimable one behind it."""
 
-        horizon = now - self.recordings.calls.timings.upload_hold_nano
+        horizon = now - self.recordings.timings.upload_hold_nano
         for sql, parameters in claim_candidate_queries(now, horizon, limit=len(uploading) + 1):
             for row in connection.execute(sql, parameters).fetchall():
                 if (row["project_id"], row["call_id"]) not in uploading:
@@ -744,12 +744,6 @@ class Closer:
             )
             # Evidence that arrived since the claim and that the cap now keeps out.
             self.calls.note_evidence_past_cap(connection, claim.project_id, claim.call_id)
-            # A new revision is new input to the call's projection.
-            connection.execute(
-                "UPDATE calls SET projection_seq = projection_seq + 1 "
-                "WHERE project_id = ? AND call_id = ?",
-                (claim.project_id, claim.call_id),
-            )
 
         result = self.store.ingest_prepared(prepared, before_commit=record_revision)
         crash_point("after_catalog_commit")

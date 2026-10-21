@@ -27,15 +27,9 @@ from catalog_snapshot import postgres_catalog_snapshot, sqlite_catalog_snapshot
 from earshot.storage import IncidentStore
 from earshot.storage_schema import (
     CALLS_TABLES,
-    CONNECTOR_TABLES,
-    PROJECTION_TABLES,
     add_calls_tables,
-    add_connector_tables,
-    add_projection_tables,
     build_v19_baseline_metadata,
     capture_preset_column,
-    connector_columns,
-    projection_columns,
 )
 from store_support import current_dialect, make_store, postgres_cluster
 from upgrade_fixtures import copy_upgrade_fixture, upgrade_fixture_names
@@ -44,8 +38,7 @@ pytestmark = pytest.mark.integration
 
 
 def _schema_metadata() -> sa.MetaData:
-    """The head schema: the v19 baseline, revision 0002's ``artifacts``, 0004's calls,
-    0005's projections and 0006's connector columns and fetches."""
+    """The head schema: the v19 baseline, revision 0002's ``artifacts`` and 0004's calls."""
 
     metadata = build_v19_baseline_metadata()
     sa.Table(
@@ -57,12 +50,6 @@ def _schema_metadata() -> sa.MetaData:
     )
     metadata.tables["projects"].append_column(capture_preset_column())
     add_calls_tables(metadata)
-    for table, column in projection_columns():
-        metadata.tables[table].append_column(column)
-    add_projection_tables(metadata)
-    for table, column in connector_columns():
-        metadata.tables[table].append_column(column)
-    add_connector_tables(metadata)
     return metadata
 
 
@@ -107,38 +94,6 @@ def test_fresh_sqlite_legacy_upgraded_sqlite_and_fresh_postgres_have_one_schema(
     assert any(
         "whereexpires_at_unix_nanoisnotnull" in index for index in tables["incidents"]["indexes"]
     )
-    # Revision 0005 adds its tables and three columns the same way: the CHECKs on the
-    # added columns are there on every catalog, and so is the timing shape of a
-    # transcript line.
-    assert set(PROJECTION_TABLES) <= set(tables)
-    assert (
-        "checkchannel_speakers_jsonin'[user]','[agent]','[user,agent]','[agent,user]'"
-        in tables["recordings"]["checks"]
-    )
-    assert "checkprojection_seq>=0" in tables["calls"]["checks"]
-    assert "checkprice_version>=0" in tables["projects"]["checks"]
-    assert (
-        "checktiming='measured'andstart_msisnotnullandend_msisnotnullor"
-        "timing='start_only'andstart_msisnotnullandend_msisnullor"
-        "timing='order_only'andstart_msisnullandend_msisnull"
-    ) in tables["call_transcripts"]["checks"]
-    assert [
-        (key, action)
-        for key, target, _, _, action in tables["audio_analysis"]["foreign_keys"]
-        if target == "recordings"
-    ] == [(("project_id", "recording_id"), "cascade")]
-    # Revision 0006 adds its table and three columns the same way: a receipt's digest
-    # kind is checked on every catalog, and a fetch goes with its recording and with
-    # its connector.
-    assert set(CONNECTOR_TABLES) <= set(tables)
-    assert "checkdigest_kindin'body_v1','evidence_v1'" in tables["delivery_receipts"]["checks"]
-    assert sorted(
-        (key, target, action)
-        for key, target, _, _, action in tables["recording_fetches"]["foreign_keys"]
-    ) == [
-        (("endpoint_id",), "connectors", "cascade"),
-        (("project_id", "recording_id"), "recordings", "cascade"),
-    ]
 
 
 @pytest.mark.postgres_only
@@ -163,10 +118,8 @@ def test_postgres_columns_have_the_portable_widths(tmp_path) -> None:
 
     # v19: 17 and 13. Revision 0004 adds 16 integer columns (calls 6, call_traces 2,
     # spans 3, recordings 2, call_revisions, pending_blob_deletions, call_tombstones)
-    # and one decimal column (recordings.started_at_unix_nano). Revision 0005 adds 7
-    # integer ones (audio_analysis 3, call_projections 2, prices 2), and revision 0006
-    # 5 (recording_fetches).
-    assert (len(integer_nano), len(decimal_nano)) == (45, 14)
+    # and one decimal column (recordings.started_at_unix_nano).
+    assert (len(integer_nano), len(decimal_nano)) == (33, 14)
     assert {nano[key][0] for key in integer_nano} == {"bigint"}
     assert {nano[key][1] for key in decimal_nano} == {"C"}
     assert {kind for kind, _ in declared.values() if kind in {"real", "double precision"}} == {
@@ -201,11 +154,6 @@ def _check_rule(sqltext: str) -> _CheckRule:
         return _CheckRule(match[1], "a" * int(match[4]), "a" * (int(match[4]) + 1))
     if match := re.fullmatch(r"(\w+) = (\d+)", sqltext):
         return _CheckRule(match[1], int(match[2]), int(match[2]) + 1)
-    # A row shape per value of one column, the first shape with every column set (as
-    # a probe row is) and the last with some NULL: the last value violates it.
-    shapes = r"\((\w+) = '(\w+)' AND .+\) OR .*\((\w+) = '(\w+)' AND .+\)"
-    if match := re.fullmatch(shapes, sqltext):
-        return _CheckRule(match[1], match[2], match[4])
     raise AssertionError(f"no probe rule for CHECK ({sqltext})")
 
 
@@ -244,10 +192,6 @@ FOREIGN_KEY_PROBES = [
     for table in SCHEMA.sorted_tables
     for constraint in sorted(table.foreign_key_constraints, key=lambda item: item.column_keys)
 ]
-
-
-# Tables whose one row the catalog is created with (``singleton = 1``).
-_SINGLETON_TABLES = frozenset({"storage_maintenance", "builtin_price_version"})
 
 
 class _RawCatalog:
@@ -326,8 +270,8 @@ class _RawCatalog:
                 row[rule.column] = str(self._sequence).zfill(len(rule.valid))
             elif isinstance(rule.valid, bytes) and set(rule.valid) == {ord("a")}:
                 row[rule.column] = str(self._sequence).zfill(len(rule.valid)).encode()
-        if table.name in _SINGLETON_TABLES:
-            self.connection.execute(f"DELETE FROM {table.name}")
+        if table.name == "storage_maintenance":
+            self.connection.execute("DELETE FROM storage_maintenance")
         return row
 
     def give_parents(self, table: sa.Table, row: dict[str, Any]) -> None:

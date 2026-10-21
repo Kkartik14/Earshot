@@ -1,4 +1,4 @@
-"""The protocol half of the recordings API (FR-9, FR-1): IDs, media types, headers, ranges.
+"""The protocol half of the recordings API (FR-9): IDs, media types, WAV headers, ranges.
 
 Pure functions and small state machines with no storage and no HTTP server, so
 the API and its tests share one reading of each rule:
@@ -8,14 +8,10 @@ the API and its tests share one reading of each rule:
   It names the recording inside its project; it never becomes part of a blob key.
 - ``valid_start_unix_nano``: a recording's start, a decimal Unix nanosecond time in
   [1, 2^63 - 1] (the catalog's signed 64-bit range).
-- ``RECORDING_CONTENT_TYPES``: the five media types a recording may have.
-- ``valid_channel_speakers``: a ``mixed`` recording's channel map names each
-  channel's speaker in order, ``user`` and ``agent`` at most once each.
-- ``media_inspector``: the header reader of a WAV, FLAC or Ogg Opus body
-  (``WavInspector``, ``FlacInspector``, ``OggInspector``). Each reads its header as
-  the body streams in, so an upload with the wrong channel count is refused from
-  its header, and gives the duration once the body is complete (or none, never a
-  wrong one). MP3 and WebM bodies are not read.
+- ``RECORDING_CONTENT_TYPES``: the five media types Month 1 accepts.
+- ``WavInspector``: reads a WAV header from a body as it streams in, so an upload
+  that is not mono is refused from its header (Month 1 stores mono tracks only),
+  and gives the duration once the body is complete (or none, never a wrong one).
 - ``parse_byte_range``: the one ``Range: bytes=…`` reading both blob backends use.
 
 This module imports only the standard library.
@@ -29,11 +25,7 @@ from dataclasses import dataclass
 
 RECORDING_CONTENT_TYPES = ("audio/wav", "audio/ogg", "audio/mpeg", "audio/webm", "audio/flac")
 WAV_CONTENT_TYPE = "audio/wav"
-FLAC_CONTENT_TYPE = "audio/flac"
-OGG_CONTENT_TYPE = "audio/ogg"
 RECORDING_SPEAKERS = ("user", "agent", "mixed")
-# The speaker a channel of a ``mixed`` recording may have, each at most once.
-CHANNEL_SPEAKERS = ("user", "agent")
 RECORDING_STATES = ("pending", "stored", "failed")
 LABEL_MAX_LENGTH = 128
 _RECORDING_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -78,49 +70,18 @@ def valid_start_unix_nano(value: object) -> bool:
     )
 
 
-def valid_channel_speakers(value: object) -> bool:
-    """Whether ``value`` is a channel map: one or two of ``user`` and ``agent``, in
-    channel order, neither twice. Its length must also be the file's channel count,
-    which only the upload's header shows."""
-
-    return (
-        isinstance(value, list | tuple)
-        and 1 <= len(value) <= len(CHANNEL_SPEAKERS)
-        and all(isinstance(item, str) and item in CHANNEL_SPEAKERS for item in value)
-        and len(set(value)) == len(value)
-    )
-
-
 def upload_path(recording_id: str) -> str:
     """The relative path a recording's bytes are uploaded to and read from."""
 
     return f"/v1/recordings/{recording_id}/content"
 
 
-class RecordingHeaderError(ValueError):
-    """The body does not start with a header of its media type this server can read."""
-
-
-class WavHeaderError(RecordingHeaderError):
+class WavHeaderError(ValueError):
     """The body does not start with a WAV header this server can read."""
-
-
-class FlacHeaderError(RecordingHeaderError):
-    """The body does not start with a FLAC header this server can read."""
-
-
-class OggHeaderError(RecordingHeaderError):
-    """The body does not start with an Ogg Opus header this server can read."""
-
-
-def _bounded_duration_ms(milliseconds: int) -> int | None:
-    return milliseconds if milliseconds <= MAX_DURATION_MS else None
 
 
 class WavInspector:
     """Read the ``fmt`` chunk and find the ``data`` chunk of a streamed WAV body.
-
-    ``format_name`` names the format in the API's error codes.
 
     ``feed`` the body's chunks in order; once ``header_complete`` is true the
     format is known (``channels``, ``sample_rate``) and later chunks are ignored.
@@ -130,8 +91,6 @@ class WavInspector:
     shape (not RIFF/WAVE, ``data`` before ``fmt``, a short ``fmt``) raises
     ``WavHeaderError``.
     """
-
-    format_name = "wav"
 
     def __init__(self) -> None:
         self._buffer = bytearray()
@@ -221,185 +180,6 @@ class WavInspector:
         self.channels, self.sample_rate, self.block_align = channels, sample_rate, block_align
         self.format_tag, self.byte_rate = tag, byte_rate
         self._fmt_seen = True
-
-
-class FlacInspector:
-    """Read the STREAMINFO block at the start of a streamed FLAC body (RFC 9639 §8.2).
-
-    A FLAC stream is ``fLaC`` and then its metadata blocks, STREAMINFO first, so the
-    first 42 bytes give the channel count, the sample rate and the total sample
-    count. The duration is the total as STREAMINFO declares it, or ``None`` when it
-    declares none (0, "unknown"). Any other start raises ``FlacHeaderError``.
-    """
-
-    format_name = "flac"
-    _HEADER = 42  # "fLaC", a 4-byte block header and the 34-byte STREAMINFO
-
-    def __init__(self) -> None:
-        self._buffer = bytearray()
-        self.header_complete = False
-        self.channels = 0
-        self.sample_rate = 0
-        self.total_samples = 0
-        self._finished = False
-
-    def feed(self, chunk: bytes) -> None:
-        if self.header_complete or not chunk:
-            return
-        self._buffer.extend(chunk[: self._HEADER - len(self._buffer)])
-        if len(self._buffer) >= 4 and self._buffer[:4] != b"fLaC":
-            raise FlacHeaderError("the body is not a FLAC stream")
-        if len(self._buffer) < self._HEADER:
-            return
-        block_type = self._buffer[4] & 0x7F
-        block_size = int.from_bytes(self._buffer[5:8], "big")
-        if block_type != 0 or block_size != 34:
-            raise FlacHeaderError("the FLAC stream does not start with its STREAMINFO block")
-        (packed,) = struct.unpack_from(">Q", self._buffer, 18)
-        self.sample_rate = packed >> 44
-        self.channels = ((packed >> 41) & 0x7) + 1
-        self.total_samples = packed & 0xF_FFFF_FFFF
-        if self.sample_rate == 0:
-            raise FlacHeaderError("the FLAC STREAMINFO describes no audio")
-        self.header_complete = True
-
-    def finish(self, total_size: int) -> None:
-        if not self.header_complete:
-            raise FlacHeaderError("the body ends before its FLAC header does")
-        self._finished = True
-
-    def duration_ms(self) -> int | None:
-        if not self._finished:
-            raise ValueError("finish() the inspector before reading the duration")
-        if self.total_samples == 0:
-            return None
-        return _bounded_duration_ms(self.total_samples * 1000 // self.sample_rate)
-
-
-class OggInspector:
-    """Walk the pages of a streamed Ogg Opus body (RFC 3533, RFC 7845).
-
-    The first page must begin a logical stream (BOS) whose first packet is an
-    ``OpusHead``: it gives the channel count and the pre-skip. Every later page's
-    header is read and its body skipped, so the walk costs a few bytes a page. The
-    duration is the last granule position less the pre-skip, at 48 kHz (RFC 7845
-    §4), or ``None`` when the body does not end on a page boundary, carries a
-    second logical stream, or loses the page sync. Ogg holding another codec (Vorbis,
-    say) raises ``OggHeaderError``: its channel count is not read.
-    """
-
-    format_name = "ogg"
-    _PAGE_HEADER = 27
-    _NO_GRANULE = 0xFFFF_FFFF_FFFF_FFFF
-    _OPUS_RATE = 48_000
-    _OPUS_HEAD = 19  # "OpusHead", version, channels, pre-skip, rate, gain, mapping
-
-    def __init__(self) -> None:
-        self.header_complete = False
-        self.channels = 0
-        self.pre_skip = 0
-        self._header = bytearray()  # the page header being read
-        self._skip = 0  # body bytes of the current page still to pass
-        self._first_body: bytearray | None = None  # the first page's body, read whole
-        self._serial: bytes | None = None
-        self._granule: int | None = None
-        self._other_stream = False
-        self._lost = False
-        self._finished = False
-        self._duration_ms: int | None = None
-
-    def feed(self, chunk: bytes) -> None:
-        if self._lost or not chunk:
-            return
-        view, position = memoryview(chunk), 0
-        while position < len(view):
-            if self._skip:
-                taken = min(self._skip, len(view) - position)
-                if self._first_body is not None:
-                    self._first_body += view[position : position + taken]
-                self._skip -= taken
-                position += taken
-                if not self._skip and self._first_body is not None:
-                    self._read_head(bytes(self._first_body))
-                    self._first_body = None
-                continue
-            wanted = self._PAGE_HEADER
-            if len(self._header) >= self._PAGE_HEADER:
-                wanted += self._header[26]
-            taken = min(wanted - len(self._header), len(view) - position)
-            self._header += view[position : position + taken]
-            position += taken
-            if len(self._header) >= 4 and self._header[:4] != b"OggS":
-                if not self.header_complete:
-                    raise OggHeaderError("the body is not an Ogg stream")
-                self._lost = True  # a damaged page: the duration is unknown
-                return
-            complete = len(self._header) >= self._PAGE_HEADER and len(self._header) == (
-                self._PAGE_HEADER + self._header[26]
-            )
-            if complete:
-                self._page(bytes(self._header))
-                self._header.clear()
-                if not self._skip and self._first_body is not None:
-                    raise OggHeaderError("the first Ogg page carries no packet")
-
-    def _page(self, header: bytes) -> None:
-        granule = int.from_bytes(header[6:14], "little")
-        serial = header[14:18]
-        self._skip = sum(header[self._PAGE_HEADER :])
-        if self._serial is None:
-            if header[4] != 0 or not header[5] & 0x02:
-                raise OggHeaderError("the Ogg stream does not start with a first page")
-            self._serial = serial
-            self._first_body = bytearray()
-            return
-        if serial != self._serial:
-            self._other_stream = True
-        elif granule != self._NO_GRANULE:
-            self._granule = granule
-
-    def _read_head(self, packet: bytes) -> None:
-        if not packet.startswith(b"OpusHead"):
-            raise OggHeaderError("the Ogg stream does not hold Opus; Earshot reads Ogg Opus only")
-        if len(packet) < self._OPUS_HEAD:
-            raise OggHeaderError("the OpusHead packet is too short")
-        self.channels = packet[9]
-        (self.pre_skip,) = struct.unpack_from("<H", packet, 10)
-        if self.channels < 1:
-            raise OggHeaderError("the OpusHead describes no audio")
-        self.header_complete = True
-
-    def finish(self, total_size: int) -> None:
-        if not self.header_complete:
-            raise OggHeaderError("the body ends before its Ogg Opus header does")
-        on_a_boundary = not self._header and not self._skip and not self._lost
-        samples = None if self._granule is None else self._granule - self.pre_skip
-        duration = None
-        if on_a_boundary and not self._other_stream and samples is not None and samples >= 0:
-            duration = _bounded_duration_ms(samples * 1000 // self._OPUS_RATE)
-        self._duration_ms = duration
-        self._finished = True
-
-    def duration_ms(self) -> int | None:
-        if not self._finished:
-            raise ValueError("finish() the inspector before reading the duration")
-        return self._duration_ms
-
-
-MediaInspector = WavInspector | FlacInspector | OggInspector
-
-
-def media_inspector(content_type: str) -> MediaInspector | None:
-    """A new header reader for a body of ``content_type``; ``None`` for MP3 and WebM,
-    whose bodies are not read."""
-
-    if content_type == WAV_CONTENT_TYPE:
-        return WavInspector()
-    if content_type == FLAC_CONTENT_TYPE:
-        return FlacInspector()
-    if content_type == OGG_CONTENT_TYPE:
-        return OggInspector()
-    return None
 
 
 @dataclass(frozen=True, slots=True)

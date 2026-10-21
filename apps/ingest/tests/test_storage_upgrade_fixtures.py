@@ -49,12 +49,7 @@ FIXTURES = upgrade_fixture_names()
 OLDEST, NEWEST = FIXTURES[0], FIXTURES[-1]
 # A table the upgrade creates is empty afterwards, except these (and
 # incident_ingest_order, see below).
-ROWS_OF_ADDED_TABLES = {
-    "alembic_version": 1,
-    "builtin_price_version": 1,
-    "earshot_meta": 1,
-    "storage_maintenance": 1,
-}
+ROWS_OF_ADDED_TABLES = {"alembic_version": 1, "earshot_meta": 1, "storage_maintenance": 1}
 
 
 def _row_counts(database: Path) -> dict[str, int]:

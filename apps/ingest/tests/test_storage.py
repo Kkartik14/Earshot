@@ -31,8 +31,6 @@ from earshot.storage import (
     InvalidCursorError,
     StorageError,
 )
-from earshot.storage_calls import CallStore
-from earshot.storage_deliveries import DeliveryDigests, DeliveryStore
 from incident_factory import make_valid_bundle
 from store_support import catalog, catalog_rows, drop_post_v19_objects, make_store
 
@@ -2260,17 +2258,19 @@ def test_complete_persistence_unit_backup_restores_identity_authority_and_eviden
     )
     identity_before = store.fingerprint("vapi.call", "provider-call-123")
     delivery_identity = store.fingerprint("vapi.delivery", "delivery-123")
-    digests = DeliveryDigests(evidence="a" * 64, body="b" * 64)
-    claim = DeliveryStore(store, calls=CallStore(store)).claim(
+    claim = store.claim_delivery(
         connector,
         delivery_key_hmac=delivery_identity,
-        digests=digests,
+        body_sha256="a" * 64,
         event_type="end-of-call-report",
         now_unix_nano=100,
     )
     assert claim.lease_token is not None
-    DeliveryStore(store, calls=CallStore(store)).fail(
-        claim.receipt_id, lease_token=claim.lease_token, failure_code="INTERRUPTED"
+    store.complete_delivery(
+        claim.receipt_id,
+        state="ignored",
+        completed_at_unix_nano=200,
+        lease_token=claim.lease_token,
     )
     store.close()
 
@@ -2285,15 +2285,15 @@ def test_complete_persistence_unit_backup_restores_identity_authority_and_eviden
     assert principal.project_id == "sales"
     assert restored.get_connector(connector.endpoint_id) == connector
     assert restored.fingerprint("vapi.call", "provider-call-123") == identity_before
-    retry = DeliveryStore(restored, calls=CallStore(restored)).claim(
+    replay = restored.claim_delivery(
         connector,
         delivery_key_hmac=restored.fingerprint("vapi.delivery", "delivery-123"),
-        digests=digests,
+        body_sha256="a" * 64,
         event_type="end-of-call-report",
         now_unix_nano=300,
     )
-    # The restored store recognises the delivery: its retry takes over the receipt.
-    assert (retry.receipt_id, retry.lease_token) == (claim.receipt_id, 2)
+    assert replay.disposition == "replayed"
+    assert replay.receipt_id == claim.receipt_id
     assert (restored_path / "instance-correlation.key").read_bytes() == (
         backup / "instance-correlation.key"
     ).read_bytes()

@@ -16,7 +16,6 @@ import threading
 from collections.abc import Mapping
 from typing import Any
 
-from ..call_capture import canonical_attribute_key
 from ..contract import (
     Adapter,
     CausalLink,
@@ -26,12 +25,7 @@ from ..contract import (
     TimePoint,
     TimeRange,
 )
-from ..privacy import (
-    CaptureClass,
-    classify_attribute,
-    sanitize_semantic_label,
-    sanitize_source_label,
-)
+from ..privacy import sanitize_semantic_label, sanitize_source_label
 from ..recorder import IncidentRecorder
 from ..versions import LIVEKIT_ADAPTER_VERSION
 from . import routing
@@ -258,18 +252,28 @@ def _is_connection_acquisition_metric(metric: object) -> bool:
 
 
 def _normalize_native_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
-    """Record each attribute under its semantic key from the one key table
-    (``call_capture.ATTRIBUTE_KEYS``), which the OTLP receiver classifies by too.
+    """Map current LiveKit payload fields into explicit capture-class namespaces."""
 
-    LiveKit 1.6 and 1.7+ spellings of one field (``lk.response.text``,
-    ``lk.pii.response.text``) land on one key, whose name the recorder files under
-    the table's class. A key outside the table keeps its own name; when two keys
-    name one semantic key, the first one the span carries wins.
-    """
-
-    normalized: dict[str, Any] = {}
-    for key, item in attributes.items():
-        normalized.setdefault(canonical_attribute_key(key) if isinstance(key, str) else key, item)
+    normalized = dict(attributes)
+    mappings = {
+        "lk.chat_ctx": "gen_ai.input",
+        "lk.function_tool.arguments": "tool.arguments",
+        "lk.function_tool.output": "tool.result",
+        "lk.function_tools": "gen_ai.input.function_tools",
+        "lk.input_text": "speech.text",
+        "lk.instructions": "gen_ai.input.system_instruction",
+        "lk.participant_identity": "participant.name",
+        "lk.provider_tools": "gen_ai.input.provider_tools",
+        "lk.response.text": "gen_ai.output.messages",
+        "lk.tool_sets": "gen_ai.input.tool_sets",
+        "lk.user_input": "speech.text",
+        "lk.user_transcript": "speech.text",
+    }
+    for source, target in mappings.items():
+        if source not in normalized:
+            continue
+        normalized.setdefault(target, normalized[source])
+        del normalized[source]
     return normalized
 
 
@@ -367,15 +371,7 @@ class LiveKitAdapter:
         )
         native_metrics = self._pop_native_metrics(attributes)
         for metric in native_metrics:
-            # A metric whose name a recorder reads as content (``livekit.tts.audio_duration``
-            # reads as audio) stays a quality measurement only: on the operation it would
-            # give one record two sensitive classes next to the span's text, which a
-            # recorder refuses.
-            attributes.update(
-                (key, item)
-                for key, item in self._metric_attributes(metric).items()
-                if classify_attribute(key) is CaptureClass.METADATA
-            )
+            attributes.update(self._metric_attributes(metric))
             request_id = value(metric, "request_id")
             if request_id is not None:
                 attributes.setdefault("earshot.request.id", str(request_id))

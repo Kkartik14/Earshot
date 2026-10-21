@@ -33,14 +33,6 @@ def check_wheel(path: Path) -> None:
         "earshot/storage_call_reads.py",
         "earshot/storage_closer.py",
         "earshot/storage_recordings.py",
-        "earshot/storage_analysis.py",
-        "earshot/leased_jobs.py",
-        "earshot/signals/__init__.py",
-        "earshot/signals/child.py",
-        "earshot/signals/runner.py",
-        # The vendored Silero VAD model the analysis runs, and its licence.
-        "earshot/signals/model/LICENSE",
-        "earshot/signals/model/silero_vad.onnx",
         "earshot/storage_migrations/__init__.py",
         "earshot/storage_migrations/versions/0001_v19_baseline.py",
         "earshot/storage_migrations/versions/0002_artifacts.py",
@@ -80,21 +72,6 @@ def check_wheel(path: Path) -> None:
         ):
             raise SystemExit(
                 f"{path}: {dependency} must be optional and provided by the server extra"
-            )
-    # The analysis libraries are the signals extra's: the base and server installs
-    # run without them.
-    for dependency in ("numpy", "onnxruntime", "soundfile"):
-        requirements = [
-            line
-            for line in metadata.splitlines()
-            if line.lower().startswith(f"requires-dist: {dependency}")
-        ]
-        signals_guard = re.compile(r"extra\s*==\s*['\"]signals['\"]")
-        if not any(signals_guard.search(requirement) for requirement in requirements) or any(
-            re.search(r"extra\s*==", requirement) is None for requirement in requirements
-        ):
-            raise SystemExit(
-                f"{path}: {dependency} must be optional and provided by the signals extra"
             )
 
 

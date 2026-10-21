@@ -7,9 +7,8 @@ OpenTelemetry traces and its call recordings to Earshot. Earshot groups them int
 and keeps each Call's timing, transcript and audio in one place, on your own machines. It
 runs on a laptop with SQLite and local disk, or on a team server with Postgres and S3.
 
-Status: pre-v1 alpha. 0.3.0 adds the call view: audio with a waveform, the transcript on
-the audio, per-turn latency beside the audible gap at the agent, and cost, for Pipecat and
-LiveKit calls. Compatibility is limited to the versions documented for each release; see the
+Status: pre-v1 alpha. 0.2.0 is the first release that receives OTLP traces and
+recordings. Compatibility is limited to the versions documented for each release; see the
 [alpha compatibility policy](docs/release.md#alpha-compatibility-policy).
 
 ## Quick start
@@ -19,13 +18,12 @@ This takes about a minute with a Pipecat 1.5 bot you already run.
 **1. Install and start Earshot.**
 
 ```bash
-pip install 'earshot-observability[server,signals]'
+pip install 'earshot-observability[server]'
 earshot serve
 ```
 
 Earshot listens on `http://127.0.0.1:4319` and keeps everything in `./.earshot`: a SQLite
-catalog and a local blob directory. On loopback it needs no API key. The `signals` extra
-analyses each recording for the call view's audible gap and waveform.
+catalog and a local blob directory. On loopback it needs no API key.
 
 **2. Point Pipecat's HTTP OTLP exporter at it.** Use the HTTP exporter, not the gRPC one.
 
@@ -55,13 +53,11 @@ Recordings API takes it. Pipecat 1.5 puts `conversation.id` on every `turn` span
 those arrive first. It puts `earshot.session.id` only on the `conversation` span, which
 it sends last, and a trace keeps the first key Earshot sees in it. So if the two values
 differ, the Call is keyed by `conversation_id`, and a Recording created with the other
-value becomes a second Call. This is a known limitation of 0.3.0; see
+value becomes a second Call. This is a known limitation of 0.2.0; see
 [session keys](docs/otlp-quickstart.md#session-keys).
 
 **3. Upload the recordings.** Create each Recording when the call starts, at its first
-audio frame, and upload its bytes after the call ends: one mono file per speaker, or one
-stereo file with `channel_speakers: ["user", "agent"]`. `earshot.client` does both steps
-for you; see the [quick start](docs/otlp-quickstart.md#pipecat-snippet).
+audio frame, and upload its bytes after the call ends: one mono file per speaker.
 
 ```bash
 # When the call starts:
@@ -89,10 +85,7 @@ curl http://127.0.0.1:4319/v1/calls
 A Call is listed as soon as its first Recording is created or its first span arrives.
 Pipecat sends its `conversation` span when the call ends. About 10 seconds after Earshot
 has that span and every Recording's bytes, the Call closes and stores a Revision with its
-transcript and recordings. `GET /v1/calls/<call_id>` shows them. Open
-http://127.0.0.1:4319/calls for the calls list and each call's view: the player, the
-transcript (click a line to seek), each turn's reported latency and audible gap, and the
-cost. See [the call view](docs/calls.md).
+transcript and recordings. `GET /v1/calls/<call_id>` shows them.
 
 The [OTLP quick start](docs/otlp-quickstart.md) covers API keys, containers, session keys,
 close timing, recordings and error handling. [`examples/pipecat_otlp`](examples/pipecat_otlp/)
@@ -100,17 +93,16 @@ is a complete, real Pipecat call.
 
 ## What Earshot receives today
 
-| Source                                      | Status in 0.3.0                                                                                                                                                                                                 |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pipecat 1.5 over OTLP/HTTP                  | Supported: Calls with timing, transcript, recordings and the call view. Tested against a real Pipecat 1.5.0 call.                                                                                               |
-| Any OTLP/HTTP producer                      | Spans are stored and grouped into Calls by session key. A Call's Revision includes only Pipecat and LiveKit spans in 0.3.0; spans from other instrumentation stay stored and are declared as omitted.           |
-| LiveKit Agents over OTLP/HTTP               | Supported for 1.6 to 1.8: Calls with timing, the played-text transcript, LiveKit's stereo recording and the call view. Tested against a real headless LiveKit 1.8.8 call (no LiveKit server or room).           |
-| Earshot Python SDK                          | Supported: Pipecat 1.5 and LiveKit 1.6 to 1.8 adapters, and Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, recorded as portable Incident bundles, and `earshot.client` for recordings and calls. |
-| Node (`@earshot/node`)                      | A span processor that keys a call's spans, and a recordings and calls client.                                                                                                                                   |
-| ElevenLabs, Vapi, Retell, Ringg             | Signed webhook Connectors for finalized deliveries. Synthetic conformance only.                                                                                                                                 |
-| Browser (`@earshot/browser`, `/v1/capture`) | Validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                                                        |
+| Source                                      | Status in 0.2.0                                                                                                                                                                                          |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pipecat 1.5 over OTLP/HTTP                  | Supported: Calls with timing, transcript and recordings. Tested against a real Pipecat 1.5.0 call.                                                                                                       |
+| Any OTLP/HTTP producer                      | Spans are stored and grouped into Calls by session key. A Call's Revision includes only Pipecat spans in 0.2.0; spans from other instrumentation stay stored and are declared as omitted.                |
+| LiveKit Agents over OTLP/HTTP               | Partial: Earshot recognizes LiveKit's session key and its end-of-session spans, so Calls form and close. LiveKit spans are not mapped into Revisions yet; full LiveKit support is the next planned step. |
+| Earshot Python SDK                          | Supported: Pipecat 1.5 and LiveKit 1.6 adapters, and Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, recorded as portable Incident bundles.                                                |
+| ElevenLabs, Vapi, Retell, Ringg             | Signed webhook Connectors for finalized deliveries. Synthetic conformance only.                                                                                                                          |
+| Browser (`@earshot/browser`, `/v1/capture`) | Validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                                                 |
 
-gRPC is not in 0.3.0. Each closed
+gRPC, stereo recordings and a call view in the viewer are not in 0.2.0. Each closed
 Call's Revision is an ordinary Incident, so the bundled viewer and the analysis APIs can
 open it.
 
@@ -121,9 +113,9 @@ stores them.
 
 | Preset          | Stores                                                                                                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `full`          | Timing, transcripts, model and tool payloads, the session key, and recordings. The default for every Project in a new install.                                          |
+| `full`          | Timing, transcripts, model and tool payloads, the session key, and recordings. The default for every Project in a new 0.2.0 install.                                    |
 | `metadata_only` | Timing and structure only. Content, identity and the session-key attributes are removed before storage, and recordings are refused. Upgraded 0.1.x Projects start here. |
-| `redacted`      | Not available in 0.3.0.                                                                                                                                                 |
+| `redacted`      | Not available in 0.2.0.                                                                                                                                                 |
 
 ```bash
 earshot project set-capture --project default --preset metadata_only
@@ -156,7 +148,7 @@ docker compose up --build
 # then open http://127.0.0.1:4319
 ```
 
-The image includes the `server`, `postgres`, `s3` and `signals` extras. Compose publishes the port
+The image includes the `server`, `postgres` and `s3` extras. Compose publishes the port
 on `127.0.0.1` only, keeps data in the `earshot-data` volume, and runs with
 `EARSHOT_TRUST_LOCAL_NETWORK=true`, so the API is unauthenticated behind that loopback
 mapping. A bot in another container needs an API key; see the
@@ -175,7 +167,7 @@ beyond localhost, drop that line, set `EARSHOT_TOKEN` or issue API keys, set
   claims a person heard the audio.
 - **A viewer** served by `earshot serve`, and `@earshot/viewer-ui` for hosts that embed it.
 - **Hosted mode** with short-lived, project-scoped JWTs (`EARSHOT_AUTH_MODE=hosted_jwt`).
-  The call, recording, price and OTLP routes are not available in hosted mode in 0.3.0.
+  The call, recording and OTLP routes are not available in hosted mode in 0.2.0.
 
 The Python distribution is `earshot-observability`; the import package and the CLI are
 `earshot`. The PyPI project named `earshot` is an unrelated VAD package. The base install
@@ -204,8 +196,6 @@ See [development](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
   upgrading from 0.1.x, local disk or S3.
 - [Production notes](docs/production.md): topology, Collector, readiness, backups.
 - [Server configuration](docs/configuration.md): every variable.
-- [The call view](docs/calls.md): the call view, cost, prices, filters and search.
-- [0.3.0 release notes](docs/release-notes-0.3.0.md): what's new, and what the tests prove.
 - [All documentation](docs/README.md) and the [changelog](CHANGELOG.md).
 
 ## Non-goals

@@ -1,6 +1,6 @@
 # Production notes
 
-These are the operational rules for running Earshot 0.3.0 for a team: Postgres for the
+These are the operational rules for running Earshot 0.2.0 for a team: Postgres for the
 catalog, S3 for recordings, and a Collector in front. [Storage and blobs](./storage-and-blobs.md)
 explains the backends, and [server configuration](./configuration.md) lists every
 variable.
@@ -13,7 +13,7 @@ voice agents ──OTLP/HTTP──▶ Collector (persistent queue) ──▶ ear
 ## One server, one worker
 
 Run exactly one Earshot server per database, with one worker. Multiple replicas and
-multiple workers are not supported in 0.3.0.
+multiple workers are not supported in 0.2.0.
 
 - On Postgres the server takes a session advisory lock at start. On SQLite it takes an
   exclusive file lock on `<data-dir>/.server.lock` and holds it until it exits. A second
@@ -72,7 +72,7 @@ For an orchestrator this means:
 
 Each write also holds a lock on its own session. If that session dies in the middle of a
 write, Earshot logs `EARSHOT_WRITE_LOCK_LOST` and the write finishes without the lock; the
-next write reconnects. This is a known 0.3.0 limitation.
+next write reconnects. This is a known 0.2.0 limitation.
 
 ## Put a Collector in front
 
@@ -149,114 +149,11 @@ aws s3api put-bucket-lifecycle-configuration \
 ```
 
 Use the same prefix as `EARSHOT_BLOB_URL`. Do not add expiration rules for Earshot's
-objects: Earshot deletes recordings, and the peaks and renditions derived from them,
-itself when a Call is purged or its Project is deleted (in 0.3.0 no Call expires; see
-[retention](./privacy.md#calls)). If bucket
+objects: Earshot deletes recordings itself when a Call is purged or its Project is
+deleted (in 0.2.0 no Call expires; see [retention](./privacy.md#calls)). If bucket
 versioning is on, a deletion leaves a noncurrent version behind; add a
 `NoncurrentVersionExpiration` rule, or turn versioning off, to bound how long deleted
 recordings survive. See [privacy](./privacy.md#erasure-limits).
-
-## Recording analysis and the `signals` extra
-
-The server analyses every stored Recording once, for the [call view](./calls.md): speech
-runs per channel with their uncertainty (the audible gap at the agent and the signals),
-waveform peaks, and a stereo FLAC rendition for a mono user/agent pair. Install the
-`signals` extra (numpy, onnxruntime, soundfile, and the Silero VAD v6.2.3 model, MIT,
-which ships inside the package):
-
-```bash
-pip install 'earshot-observability[server,postgres,s3,signals]'
-```
-
-The container image includes it. It is 142 MB with the extra, against 94 MB for the
-0.2.0 image without it. Without the extra the server runs, and every analysis is
-`unavailable` with `EARSHOT_SIGNALS_EXTRA_REQUIRED`: Calls keep their transcript and
-reported latency, and no turn's audible gap is measured. A server started with the extra
-requeues those analyses.
-
-**One child process per analysis.** The server never loads numpy or onnxruntime itself.
-It runs one analysis at a time, each as `python -m earshot.signals.child` in a process of
-its own:
-
-- its own session, at `nice 10`, with one thread per numeric library (onnxruntime on the
-  CPU, one thread), no core files, and its output discarded;
-- on Linux, an address-space limit of 4 GiB (`RLIMIT_AS`); macOS cannot set one, so a
-  macOS child is uncapped;
-- it exits within a second if the server that started it dies, and a server that stops
-  kills it; its lease is released at the next start;
-- it reads a copy of the Recording spooled in `<data-dir>/analysis-tmp/` (owner-only),
-  removed when it ends and swept at every start. Leave room there for the largest
-  Recording you accept (`EARSHOT_RECORDING_MAX_BYTES`, 512 MiB by default).
-
-**Timeouts and retries.** An analysis may run for 30 s plus a quarter of the audio's
-duration (15 minutes when the duration is unknown); its lease is that plus 60 s. A crash,
-a timeout or an out-of-memory exit is retried after 1, 4 and 16 minutes, then is
-`failed`. Audio it cannot analyse is `unavailable` at once, never guessed:
-
-| State         | Codes                                                                                                                                                                                                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `unavailable` | `EARSHOT_SIGNALS_EXTRA_REQUIRED`, `EARSHOT_ANALYSIS_DECODE_FAILED`, `EARSHOT_ANALYSIS_UNSUPPORTED_CODEC` (WebM, which libsndfile cannot read), `EARSHOT_ANALYSIS_NO_AUDIO`, `EARSHOT_ANALYSIS_CHANNEL_MISMATCH`, `EARSHOT_ANALYSIS_MODEL_MISMATCH`, `EARSHOT_ANALYSIS_SOURCE_MISSING` |
-| `failed`      | after three retries: `EARSHOT_ANALYSIS_CRASHED`, `EARSHOT_ANALYSIS_OUT_OF_MEMORY`, `EARSHOT_ANALYSIS_TIMEOUT`, `EARSHOT_ANALYSIS_SOURCE_UNREADABLE`, `EARSHOT_ANALYSIS_STORE_FAILED`                                                                                                  |
-
-**What it costs**, measured on an Apple M4 Pro (macOS, one run each; Linux not measured):
-
-| 60 minutes of audio                         | Wall time | CPU per audio minute | Child peak RSS | Peaks   |
-| ------------------------------------------- | --------- | -------------------- | -------------- | ------- |
-| one mono 16 kHz WAV track (Pipecat)         | 9.9 s     | 0.16 s               | 103 MiB        | 0.45 MB |
-| the same, plus a mono pair's FLAC rendition | 11.3 s    | 0.18 s               | 103 MiB        | 0.45 MB |
-| one stereo 48 kHz Ogg Opus file (LiveKit)   | 52.2 s    | 0.85 s               | 169 MiB        | 2.7 MB  |
-
-Memory stays flat with the call's length: the audio is decoded in 10-second blocks.
-Upgrading to 0.3.0 queues an analysis for every Recording already stored, and a later
-release with a changed algorithm requeues older results at start, 500 at a time; plan
-for that CPU after an upgrade.
-
-**Telephony audio.** At 8 kHz the voice activity model's edges are less precise: on the
-fixtures they moved up to about 160 ms from the 16 kHz edges. Each edge's uncertainty
-reports this, so expect larger ± values.
-
-onnxruntime's own usage telemetry is turned off; see
-[privacy](./privacy.md#outbound-connections).
-
-## Call projections and prices
-
-The `call-projection` job keeps each Call's projection (the list's columns and the call
-view) current. It recomputes a Call after each Revision, each analysis result and each
-price change, 20 Calls per pass, outside the store's write lock, and writes only if the
-Call has not changed meanwhile. A Call whose projection cannot be computed is logged
-with `EARSHOT_PROJECTION_FAILED` and skipped until it changes again. After an upgrade,
-every Call with a Revision is projected once.
-
-A price change reprices every affected Call from its stored usage, without reading its
-spans: 10,000 Calls took 9.9 s on SQLite on the machine above. The built-in prices are
-seeded at every start, idempotently; operators add rows with
-`earshot prices add --builtin` and Projects with `earshot prices add --project` or
-`POST /v1/prices` (see [the call view](./calls.md#prices)).
-
-A 60-minute Call's view measured 35 to 38 KB gzipped (685 to 728 KB of JSON), served
-with a p95 of 8 to 14 ms on SQLite, in both the Pipecat and the LiveKit shape.
-
-## Transcript search index
-
-The calls list's `q` searches every placed transcript line of the Project. Without an
-index this is a scan: on SQLite, 10,000 Calls with 200,000 lines took at most 30 ms
-(p95) for a word in few Calls, growing with the number of lines.
-
-On Postgres, an optional trigram index serves the same `ILIKE` search:
-
-```bash
-earshot db enable-transcript-index
-```
-
-It runs `CREATE EXTENSION IF NOT EXISTS pg_trgm` and creates the GIN index
-`earshot_opt_call_transcripts_text_trgm` on `call_transcripts.text`. The database role
-needs the right to create the extension, or an administrator must create it first. The
-command is idempotent and is not part of the migration chain: schema checks ignore
-`earshot_opt_*` indexes, and an upgrade keeps it. It takes the store's write lock and
-builds the index in one statement, so other writes wait while it builds, and an OTLP
-request that waits more than 2 s is answered 503 (a Collector in front retries it). Run
-it while traffic is low. Postgres search at scale, with and without the index, has not been
-measured yet.
 
 ## Readiness and `projections_pending`
 
@@ -280,10 +177,10 @@ incomplete. An Incident whose artifact cannot be read stays pending, the server 
 
 A backup is a set that must be taken and restored together:
 
-| Backend  | What to copy                                                                                                                                                                                                                     |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SQLite   | The whole data directory: `earshot.sqlite3` with any WAL and SHM files, `objects/`, `instance-correlation.key`, and `blobs/` (or the `file://` blob root if it is elsewhere). `analysis-tmp/` is scratch and need not be copied. |
-| Postgres | A `pg_dump` of the database, the blob store (bucket prefix or directory), and the correlation key.                                                                                                                               |
+| Backend  | What to copy                                                                                                                                                                  |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SQLite   | The whole data directory: `earshot.sqlite3` with any WAL and SHM files, `objects/`, `instance-correlation.key`, and `blobs/` (or the `file://` blob root if it is elsewhere). |
+| Postgres | A `pg_dump` of the database, the blob store (bucket prefix or directory), and the correlation key.                                                                            |
 
 For SQLite, stop Earshot first and follow [the backup procedure](./storage.md#backup-and-restore-procedure).
 
@@ -315,11 +212,6 @@ mind.
 3. Run `earshot db upgrade`, or let `earshot serve` migrate on start. Start the server with
    `--no-auto-migrate` if migrations must be an explicit deploy step.
 4. Watch `/readyz` until `projections_pending` is 0.
-
-Upgrading to 0.3.0 adds the projection tables (catalog revision `0005_projections`) and
-queues every stored Recording for analysis. Install the `signals` extra before you
-start the new server, or the analyses become `unavailable` until a server with it
-starts.
 
 Migrations are forward-only. To roll back, restore the backup. Upgrading from 0.1.x also
 changes every existing Project's Capture Preset to `metadata_only`; see
@@ -445,7 +337,7 @@ changes every existing Project's Capture Preset to `metadata_only`; see
   full every time. A client that floods the server with wrong secrets for a real key ID
   therefore slows every other request (32 such clients raised a legitimate OTLP request's
   median latency from 15 ms to 190 ms in a measurement). An unknown or revoked key ID is
-  refused before scrypt. 0.3.0 has no per-key limit on failed attempts: rate-limit 401
+  refused before scrypt. 0.2.0 has no per-key limit on failed attempts: rate-limit 401
   answers in the TLS proxy, and revoke and replace a key whose ID is being abused.
 - The server warns with `EARSHOT_SLOW_MUTATION` when a write holds the store lock for more
   than a second.
