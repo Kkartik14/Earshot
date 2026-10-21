@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -10,8 +9,11 @@ from earshot.api import ApiConfig, create_app
 from earshot.capture.calls import CaptureCallRegistry
 from earshot.capture.durable import CaptureSidecar, journal_path, sidecar_path, write_sidecar
 from earshot.codec import encode_incident_protobuf
-from earshot.storage import IncidentStore, ProjectInactiveError, StorageError
+from earshot.storage import ProjectInactiveError, StorageError
+from earshot.storage_calls import CallStore
+from earshot.storage_deliveries import DeliveryDigests, DeliveryStore
 from incident_factory import make_valid_bundle
+from store_support import catalog_rows, drop_post_v19_objects, make_store
 
 pytestmark = pytest.mark.integration
 
@@ -34,7 +36,7 @@ def _write_pending_capture(directory, project_id: str, call_key: str) -> Capture
 
 
 def test_project_deletion_is_repeatable_and_keeps_another_project_intact(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-a", display_name="Tenant A")
     store.create_project("tenant-b", display_name="Tenant B")
     bundle_a = make_valid_bundle(bundle_id="tenant-a-evidence")
@@ -56,10 +58,11 @@ def test_project_deletion_is_repeatable_and_keeps_another_project_intact(tmp_pat
         record_type="call",
         external_id="call-a",
     )
-    claim = store.claim_delivery(
+    deliveries = DeliveryStore(store, calls=CallStore(store))
+    claim = deliveries.claim(
         connector,
         delivery_key_hmac=store.fingerprint("delivery:test", "pending-a"),
-        body_sha256="a" * 64,
+        digests=DeliveryDigests(evidence="a" * 64, body="b" * 64),
         event_type="finalized",
         now_unix_nano=1_000_000_000,
     )
@@ -77,39 +80,28 @@ def test_project_deletion_is_repeatable_and_keeps_another_project_intact(tmp_pat
     with pytest.raises(ProjectInactiveError):
         store.get_record(bundle_a.profile.manifest.bundle_id, project_id="tenant-a")
     with pytest.raises(StorageError):
-        store.complete_delivery(
-            claim.receipt_id,
-            state="ignored",
-            completed_at_unix_nano=2_000_000_000,
-            lease_token=claim.lease_token or 0,
-        )
+        deliveries.fail(claim.receipt_id, lease_token=claim.lease_token or 0, failure_code="LATE")
 
-    with sqlite3.connect(store.database_path) as connection:
-        for table in (
-            "api_keys",
-            "connectors",
-            "delivery_receipts",
-            "external_identities",
-            "incident_external_references",
-            "incidents",
-            "turn_metrics",
-        ):
-            assert (
-                connection.execute(
-                    f"SELECT COUNT(*) FROM {table} WHERE project_id = ?", ("tenant-a",)
-                ).fetchone()[0]
-                == 0
-            )
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM incidents WHERE project_id = ?", ("tenant-b",)
-            ).fetchone()[0]
-            == 1
-        )
+    for table in (
+        "api_keys",
+        "connectors",
+        "delivery_receipts",
+        "external_identities",
+        "incident_external_references",
+        "incidents",
+        "turn_metrics",
+    ):
+        assert catalog_rows(
+            tmp_path, f"SELECT COUNT(*) FROM {table} WHERE project_id = ?", ("tenant-a",)
+        ) == [(0,)]
+    assert catalog_rows(
+        tmp_path, "SELECT COUNT(*) FROM incidents WHERE project_id = ?", ("tenant-b",)
+    ) == [(1,)]
 
 
+@pytest.mark.sqlite_only
 def test_project_deletion_returns_between_bounded_batches(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-a", display_name="Large project")
     store.create_project("tenant-b", display_name="Other project")
     for bundle_id in ("batch-a-one", "batch-a-two"):
@@ -136,8 +128,9 @@ def test_project_deletion_returns_between_bounded_batches(tmp_path) -> None:
     assert store.project_is_active("tenant-b") is True
 
 
+@pytest.mark.sqlite_only
 def test_project_deletion_preserves_unattributed_cas_orphans(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-a", display_name="Tenant A")
     bundle = make_valid_bundle(bundle_id="tenant-a-owned-evidence")
     store.ingest(bundle, encode_incident_protobuf(bundle), project_id="tenant-a")
@@ -150,10 +143,11 @@ def test_project_deletion_preserves_unattributed_cas_orphans(tmp_path) -> None:
     assert orphan_path.read_bytes() == b"unattributed crash-left evidence"
 
 
+@pytest.mark.sqlite_only
 def test_project_deletion_cleans_object_published_by_interrupted_ingest(
     tmp_path, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-crashed-ingest", display_name="Interrupted ingest")
     bundle = make_valid_bundle(bundle_id="interrupted-ingest-evidence")
     payload = encode_incident_protobuf(bundle)
@@ -176,8 +170,9 @@ def test_project_deletion_cleans_object_published_by_interrupted_ingest(
     assert not object_path.exists()
 
 
+@pytest.mark.sqlite_only
 def test_startup_cleans_object_from_interrupted_ingest(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-startup-recovery", display_name="Startup recovery")
     bundle = make_valid_bundle(bundle_id="startup-recovery-evidence")
     payload = encode_incident_protobuf(bundle)
@@ -197,13 +192,14 @@ def test_startup_cleans_object_from_interrupted_ingest(tmp_path, monkeypatch) ->
     assert object_path.is_file()
     store.close()
 
-    reopened = IncidentStore(tmp_path)
+    reopened = make_store(tmp_path)
     assert reopened.project_lifecycle("tenant-startup-recovery") == "active"
     assert not object_path.exists()
 
 
+@pytest.mark.sqlite_only
 def test_legacy_pending_deletion_requires_explicit_orphan_cleanup(tmp_path, monkeypatch) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-legacy", display_name="Legacy pending deletion")
     bundle = make_valid_bundle(bundle_id="legacy-deletion-evidence")
     record = store.ingest(
@@ -223,11 +219,13 @@ def test_legacy_pending_deletion_requires_explicit_orphan_cleanup(tmp_path, monk
         connection.execute("DROP INDEX IF EXISTS pending_object_deletions_project_idx")
         connection.execute("DROP TABLE IF EXISTS pending_object_deletions")
         connection.execute("DROP TABLE IF EXISTS legacy_deletion_reviews")
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 12")
         connection.commit()
     store.close()
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
     assert migrated.delete_project_data("tenant-legacy") is False
     assert migrated.project_lifecycle("tenant-legacy") == "deleting"
     assert object_path.is_file()
@@ -260,10 +258,11 @@ def test_legacy_pending_deletion_requires_explicit_orphan_cleanup(tmp_path, monk
     assert migrated.cleanup_unreferenced_objects() == 0
 
 
+@pytest.mark.sqlite_only
 def test_global_object_sweep_preflights_the_whole_tree_before_unlinking(
     tmp_path, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     digest = "00" + "1" * 62
     orphan = store.objects.path_for(digest)
     orphan.parent.mkdir(parents=True, exist_ok=True)
@@ -292,8 +291,9 @@ def test_global_object_sweep_preflights_the_whole_tree_before_unlinking(
     assert orphan.read_bytes() == b"orphan object"
 
 
+@pytest.mark.sqlite_only
 def test_global_orphan_cleanup_refuses_symlinked_cas_shard(tmp_path) -> None:
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     external = tmp_path / "external"
     external.mkdir()
     sentinel = external / ("ab" * 31)
@@ -307,10 +307,11 @@ def test_global_orphan_cleanup_refuses_symlinked_cas_shard(tmp_path) -> None:
     assert sentinel.read_bytes() == b"outside the CAS root"
 
 
+@pytest.mark.sqlite_only
 def test_project_deletion_waits_for_cas_shard_directory_fsync(tmp_path, monkeypatch) -> None:
     import earshot.storage as storage_module
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-sync", display_name="Fsync pending")
     bundle = make_valid_bundle(bundle_id="fsync-pending-evidence")
     record = store.ingest(
@@ -335,10 +336,11 @@ def test_project_deletion_waits_for_cas_shard_directory_fsync(tmp_path, monkeypa
     assert store.delete_project_data("tenant-sync") is True
 
 
+@pytest.mark.sqlite_only
 def test_project_deletion_reports_cleanup_pending_and_retries_object_removal(
     tmp_path, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-pending", display_name="Pending cleanup")
     bundle = make_valid_bundle(bundle_id="pending-evidence")
     store.ingest(bundle, encode_incident_protobuf(bundle), project_id="tenant-pending")
@@ -357,13 +359,13 @@ def test_project_deletion_reports_cleanup_pending_and_retries_object_removal(
     assert complete is False
     assert store.project_lifecycle("tenant-pending") == "deleting"
     store.close()
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     assert store.delete_project_data("tenant-pending") is True
     assert store.project_lifecycle("tenant-pending") == "deleted"
 
 
 def test_project_deletion_batches_owned_delivery_receipts(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-receipts", display_name="Receipts")
     connector = store.create_connector(
         "tenant-receipts",
@@ -371,40 +373,28 @@ def test_project_deletion_batches_owned_delivery_receipts(tmp_path) -> None:
         secret_ref="env:ELEVENLABS_SECRET",
         endpoint_id="receipt_batch_endpoint",
     )
+    deliveries = DeliveryStore(store, calls=CallStore(store))
     for index in range(3):
-        store.claim_delivery(
+        deliveries.claim(
             connector,
             delivery_key_hmac=store.fingerprint("delivery:test", f"receipt-{index}"),
-            body_sha256=str(index) * 64,
+            digests=DeliveryDigests(evidence=str(index) * 64, body="b" * 64),
             event_type="finalized",
             now_unix_nano=index + 1,
         )
 
+    receipts = ("SELECT COUNT(*) FROM delivery_receipts WHERE project_id = ?", ("tenant-receipts",))
     assert store.delete_project_data("tenant-receipts", batch_size=1) is False
-    with store._connect() as connection:
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM delivery_receipts WHERE project_id = ?",
-                ("tenant-receipts",),
-            ).fetchone()[0]
-            == 2
-        )
+    assert catalog_rows(tmp_path, *receipts) == [(2,)]
 
     assert store.delete_project_data("tenant-receipts", batch_size=1) is False
-    with store._connect() as connection:
-        assert (
-            connection.execute(
-                "SELECT COUNT(*) FROM delivery_receipts WHERE project_id = ?",
-                ("tenant-receipts",),
-            ).fetchone()[0]
-            == 1
-        )
+    assert catalog_rows(tmp_path, *receipts) == [(1,)]
 
     assert store.delete_project_data("tenant-receipts", batch_size=1) is True
 
 
 def test_project_write_scope_rejects_mutations_after_deletion_starts(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-write", display_name="Write fence")
     assert store.delete_project_data("tenant-write") is True
 
@@ -415,7 +405,7 @@ def test_project_write_scope_rejects_mutations_after_deletion_starts(tmp_path) -
 def test_project_deletion_http_api_rejects_operator_api_keys(tmp_path) -> None:
     from fastapi.testclient import TestClient
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("tenant-operator", display_name="Operator project")
     key = store.issue_api_key("tenant-operator", label="ordinary project key")
     client = TestClient(create_app(store=store, config=ApiConfig()))

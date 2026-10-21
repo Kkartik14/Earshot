@@ -1,372 +1,200 @@
+"""Retell ``call_ended`` and ``call_analyzed`` deliveries become call evidence (FR-1, FR-2).
+
+Verified on documented payloads only: the call object below follows Retell's API
+reference (``V2CallBase``) and webhook overview; no real Retell delivery has been
+captured. Both events describe one call, so the facts they share are written once,
+and the analysis, cost and latency only ``call_analyzed`` carries are new evidence
+of their own, never a span conflict.
+"""
+
 from __future__ import annotations
 
-import hashlib
-import hmac
-import json
+import copy
 
 import pytest
-from fastapi.testclient import TestClient
 
-from earshot.api import ApiConfig, create_app
-from earshot.codec import decode_incident_protobuf
-from earshot.connectors import (
-    ConnectorConfigurationError,
-    DeliveryConflictError,
-    DeliveryPayloadError,
-    DeliveryTrustError,
-    HostedProviderIngestion,
-    MappingSecretResolver,
-    RawProviderDelivery,
+from connector_support import (
+    START,
+    START_SECONDS,
+    ConnectorWorld,
+    body_of,
+    connector_world,
+    signed_headers,
 )
-from earshot.storage import IncidentStore
+from earshot.call_capture import attribute_values
+from earshot.connectors import DeliveryTooLargeError, DeliveryTrustError, RawProviderDelivery
 
 pytestmark = pytest.mark.integration
 
-SECRET = "retell-webhook-api-key"
-NOW_MS = 1_752_828_600_000
-PRIVATE_TEXT = "private Retell transcript must never be canonical"
+CALL_ID = "Jabr9TXYYJHfvl6Syypi88rdAHYHmcq6"
 
 
-def _payload() -> bytes:
-    return json.dumps(
-        {
-            "event": "call_analyzed",
-            "call": {
-                "call_id": "call-sensitive-retell-123",
-                "agent_id": "agent-sensitive-retell-456",
-                "call_status": "ended",
-                "start_timestamp": NOW_MS - 10_000,
-                "end_timestamp": NOW_MS,
-                "duration_ms": 10_000,
-                "transcript": PRIVATE_TEXT,
-                "transcript_object": [
-                    {
-                        "role": "user",
-                        "content": PRIVATE_TEXT,
-                        "words": [{"word": "private", "start": 0.5, "end": 1.0}],
-                    },
-                    {
-                        "role": "agent",
-                        "content": PRIVATE_TEXT,
-                        "words": [
-                            {"word": "private", "start": 1.5, "end": 1.8},
-                            {"word": "response", "start": 1.8, "end": 2.2},
-                        ],
-                    },
+def _call(event: str) -> dict:
+    call = {
+        "call_type": "web_call",
+        "call_id": CALL_ID,
+        "agent_id": "oBeDLoLOeuAbiuaMFXRtDOLriTJ5tSxD",
+        "agent_name": "Clinic receptionist",
+        "agent_version": 3,
+        "call_status": "ended",
+        "start_timestamp": START // 1_000_000,
+        "end_timestamp": START // 1_000_000 + 15_791,
+        "duration_ms": 15_791,
+        "disconnection_reason": "user_hangup",
+        "transcript": "Agent: Hi, Green Valley Clinic.\nUser: I need to move my visit.\n",
+        "transcript_object": [
+            {
+                "role": "agent",
+                "content": "Hi, Green Valley Clinic.",
+                "words": [
+                    {"word": "Hi,", "start": 0.7, "end": 1.0},
+                    {"word": "Clinic.", "start": 1.9, "end": 2.3},
                 ],
-                "retell_llm_dynamic_variables": {"private": PRIVATE_TEXT},
-                "public_log_url": "https://private.example/log",
-                "latency": {
-                    "e2e": {
-                        "p50": 800,
-                        "p90": 1200,
-                        "p95": 1500,
-                        "p99": 2500,
-                        "min": 500,
-                        "max": 2700,
-                        "num": 2,
-                        "values": [800, 1200],
-                    },
-                    "llm": {
-                        "p50": 400,
-                        "p90": 400,
-                        "p95": 400,
-                        "p99": 400,
-                        "min": 400,
-                        "max": 400,
-                        "num": 1,
-                        "values": [400],
-                    },
-                    "tts": {
-                        "p50": 150,
-                        "p90": 150,
-                        "p95": 150,
-                        "p99": 150,
-                        "min": 150,
-                        "max": 150,
-                        "num": 1,
-                        "values": [150],
-                    },
-                },
-                "call_analysis": {"call_summary": PRIVATE_TEXT},
             },
+            {
+                "role": "user",
+                "content": "I need to move my visit.",
+                "words": [
+                    {"word": "I", "start": 3.4, "end": 3.5},
+                    {"word": "visit.", "start": 4.6, "end": 5.1},
+                ],
+            },
+        ],
+        "recording_url": "https://dxc03zgurdly9.cloudfront.net/Jabr9TXYYJHfvl6Syypi88rdAHYHmcq6/recording.wav",
+        "public_log_url": "https://dxc03zgurdly9.cloudfront.net/Jabr9TXYYJHfvl6Syypi88rdAHYHmcq6/public.log",
+        "latency": {
+            "e2e": {"p50": 800, "max": 950, "min": 640, "num": 3, "values": [640, 800, 950]},
+            "llm": {"p50": 400, "values": [380, 400, 450]},
+            "tts": {"p50": 200, "values": [190, 200, 230]},
         },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-
-
-def _delivery(endpoint_id: str, body: bytes, *, timestamp_ms: int = NOW_MS, secret=SECRET):
-    signature = hmac.new(
-        secret.encode(),
-        body + str(timestamp_ms).encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return RawProviderDelivery(
-        endpoint_id=endpoint_id,
-        headers=((b"x-retell-signature", f"v={timestamp_ms},d={signature}".encode()),),
-        body=body,
-    )
+        "call_cost": {
+            "product_costs": [{"product": "elevenlabs_tts", "unit_price": 1, "cost": 60}],
+            "total_duration_seconds": 16,
+            "total_duration_unit_price": 1,
+            "combined_cost": 70,
+        },
+        "data_storage_setting": "everything",
+    }
+    if event == "call_analyzed":
+        call["call_analysis"] = {
+            "call_summary": "The caller asked to move a clinic visit.",
+            "user_sentiment": "Positive",
+            "call_successful": True,
+            "in_voicemail": False,
+            "custom_analysis_data": {},
+        }
+    return {"event": event, "call": call}
 
 
 @pytest.fixture
-def connector(tmp_path):
-    store = IncidentStore(tmp_path)
-    store.create_project("support", display_name="Support")
-    endpoint = store.create_connector(
-        "support",
-        provider="retell",
-        secret_ref="env:RETELL_WEBHOOK_API_KEY",
-    )
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver({"env:RETELL_WEBHOOK_API_KEY": SECRET}),
-        now_unix_seconds=lambda: NOW_MS // 1_000,
-    )
-    return store, endpoint, ingestion
+def world(tmp_path) -> ConnectorWorld:
+    return connector_world(tmp_path, "retell")
 
 
-def test_call_analyzed_keeps_word_timing_and_uncorrelated_latency_without_text(
-    connector,
-) -> None:
-    store, endpoint, ingestion = connector
-
-    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
-
-    _, canonical = store.get_artifact(outcome.bundle_id, project_id="support")
-    bundle = decode_incident_protobuf(canonical)
-    assert len(bundle.profile.operations) == 1
-    operation = bundle.profile.operations[0]
-    assert operation.operation_name == "provider_agent_speech_timing"
-    assert operation.started_at.monotonic_time_nano == "1500000000"
-    assert operation.ended_at.monotonic_time_nano == "2200000000"
-    samples = [
-        (sample.measurements[0].name, sample.measurements[0].value)
-        for sample in bundle.profile.quality_samples
-    ]
-    assert samples == [
-        ("retell.e2e", 800.0),
-        ("retell.e2e", 1200.0),
-        ("retell.llm", 400.0),
-        ("retell.tts", 150.0),
-    ]
-    assert all(sample.measurements[0].unit == "ms" for sample in bundle.profile.quality_samples)
-    assert all(
-        "earshot.turn.id" not in sample.attributes for sample in bundle.profile.quality_samples
-    )
-    facts = store.list_turn_facts(project_id="support")
-    assert len(facts) == 1
-    assert facts[0].first_token_ms is None
-    assert PRIVATE_TEXT.encode() not in canonical
-    assert b"call-sensitive-retell-123" not in canonical
-    assert b"https://private.example/log" not in canonical
+def _names(world: ConnectorWorld) -> dict[str, int]:
+    names: dict[str, int] = {}
+    for name in world.span_names():
+        names[name] = names.get(name, 0) + 1
+    return names
 
 
-def test_retell_signature_rejects_stale_wrong_or_duplicate_headers(connector) -> None:
-    store, endpoint, ingestion = connector
-    body = _payload()
-
-    for delivery in (
-        _delivery(endpoint.endpoint_id, body, timestamp_ms=NOW_MS - 301_000),
-        _delivery(endpoint.endpoint_id, body, secret="wrong"),
-        RawProviderDelivery(
-            endpoint_id=endpoint.endpoint_id,
-            headers=(
-                _delivery(endpoint.endpoint_id, body).headers[0],
-                _delivery(endpoint.endpoint_id, body).headers[0],
-            ),
-            body=body,
-        ),
-    ):
+@pytest.mark.parametrize(("skew", "accepted"), [(-299, True), (299, True), (301, False)])
+def test_the_signature_window_is_five_minutes(world, skew, accepted) -> None:
+    if accepted:
+        assert world.deliver(_call("call_ended"), at_seconds=START_SECONDS + skew).disposition
+    else:
         with pytest.raises(DeliveryTrustError):
-            ingestion.receive(delivery)
-    assert store.list_incidents(project_id="support").items == ()
+            world.deliver(_call("call_ended"), at_seconds=START_SECONDS + skew)
 
 
-def test_retell_coverage_reflects_absent_optional_fields(connector) -> None:
-    store, endpoint, ingestion = connector
-    value = json.loads(_payload())
-    value["call"]["transcript_object"] = []
-    value["call"]["latency"] = {}
-    body = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+def test_a_body_that_does_not_match_its_signature_is_refused(world) -> None:
+    raw = body_of(_call("call_ended"))
+    headers = signed_headers("retell", raw)
 
-    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, body))
-
-    _, canonical = store.get_artifact(outcome.bundle_id, project_id="support")
-    bundle = decode_incident_protobuf(canonical)
-    coverage = {item.signal: item.availability for item in bundle.profile.coverage}
-    assert coverage["provider.word_timing"] == "not_observed"
-    assert coverage["provider.latency_samples"] == "not_observed"
+    with pytest.raises(DeliveryTrustError):
+        world.ingestion.receive(RawProviderDelivery(world.endpoint_id, headers, raw + b" "))
 
 
-def _replace_call(overrides) -> bytes:
-    value = json.loads(_payload())
-    overrides(value["call"])
-    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+def test_a_body_over_the_cap_is_refused_unread(tmp_path) -> None:
+    world = connector_world(tmp_path, "retell", max_body_bytes=1024)
+
+    with pytest.raises(DeliveryTooLargeError):
+        world.deliver(_call("call_ended"))
 
 
-def test_same_provider_call_isolated_between_connector_projects(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
-    store.create_project("support", display_name="Support")
-    store.create_project("sales", display_name="Sales")
-    support = store.create_connector(
-        "support",
-        provider="retell",
-        secret_ref="env:RETELL_WEBHOOK_API_KEY",
-        endpoint_id="retell_support_00001",
+@pytest.mark.parametrize("event", ["call_started", "transfer_started", "transcript_updated"])
+def test_events_that_end_nothing_are_ignored(world, event) -> None:
+    outcome = world.deliver({"event": event, "call": {"call_id": CALL_ID}})
+
+    assert (outcome.disposition, outcome.receipt_id, outcome.call_id) == ("ignored", None, None)
+    assert world.rows("SELECT count(*) FROM delivery_receipts") == [(0,)]
+
+
+def test_call_ended_holds_the_shared_facts_and_its_recording(world) -> None:
+    outcome = world.deliver(_call("call_ended"))
+
+    assert outcome.call_id == world.calls.resolve_call("support", f"retell:{CALL_ID}")
+    assert _names(world) == {
+        "earshot.connector.call": 1,
+        "earshot.connector.transcript_line": 2,
+        "earshot.connector.translator": 1,
+    }
+    lines = {
+        attribute_values(span.span.attributes)["earshot.connector.transcript.index"]: span.span
+        for span in world.spans()
+        if span.span.name == "earshot.connector.transcript_line"
+    }
+    assert (lines[1].start_time_unix_nano, lines[1].end_time_unix_nano) == (
+        START + 3_400_000_000,
+        START + 5_100_000_000,
     )
-    sales = store.create_connector(
-        "sales",
-        provider="retell",
-        secret_ref="env:RETELL_WEBHOOK_API_KEY",
-        endpoint_id="retell_sales_000001",
-    )
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver({"env:RETELL_WEBHOOK_API_KEY": SECRET}),
-        now_unix_seconds=lambda: NOW_MS // 1_000,
-    )
-    body = _payload()
-
-    support_outcome = ingestion.receive(_delivery(support.endpoint_id, body))
-    sales_outcome = ingestion.receive(_delivery(sales.endpoint_id, body))
-
-    assert support_outcome.bundle_id != sales_outcome.bundle_id
-    assert [record.bundle_id for record in store.list_incidents(project_id="support").items] == [
-        support_outcome.bundle_id
-    ]
-    assert [record.bundle_id for record in store.list_incidents(project_id="sales").items] == [
-        sales_outcome.bundle_id
+    assert [(row[0], row[3], row[4]) for row in world.fetches()] == [
+        ("mixed", "payload_url", "mixed")
     ]
 
 
-def test_signature_rotation_accepts_previous_secret(connector) -> None:
-    store, endpoint, _ = connector
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver(
-            {"env:RETELL_WEBHOOK_API_KEY": ("rotated-current-key", SECRET)}
-        ),
-        now_unix_seconds=lambda: NOW_MS // 1_000,
+def test_call_analyzed_adds_its_own_facts_without_a_conflict(world) -> None:
+    ended = world.deliver(_call("call_ended"))
+    analyzed = world.deliver(_call("call_analyzed"))
+
+    assert analyzed.disposition == "applied"
+    assert analyzed.call_id == ended.call_id
+    assert analyzed.receipt_id != ended.receipt_id
+    assert world.counters()["span_conflicts"] == 0
+    assert _names(world) == {
+        "earshot.connector.analysis": 1,
+        "earshot.connector.call": 1,
+        "earshot.connector.cost": 1,
+        "earshot.connector.latency": 3,
+        "earshot.connector.transcript_line": 2,
+        "earshot.connector.translator": 1,
+        "earshot.connector.turn": 3,
+    }
+    analysis = next(
+        attribute_values(span.span.attributes)
+        for span in world.spans()
+        if span.span.name == "earshot.connector.analysis"
     )
-
-    # The provider still signs with the previous webhook key during rotation.
-    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
-
-    assert outcome.disposition == "applied"
-    assert len(store.list_incidents(project_id="support").items) == 1
-
-
-def test_missing_connector_secret_is_retryable_configuration_failure(connector) -> None:
-    store, endpoint, _ = connector
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver({}),
-        now_unix_seconds=lambda: NOW_MS // 1_000,
+    assert analysis["earshot.connector.analysis.successful"] == "true"
+    assert analysis["earshot.connector.analysis.summary_message"].startswith("The caller")
+    cost = next(
+        attribute_values(span.span.attributes)
+        for span in world.spans()
+        if span.span.name == "earshot.connector.cost"
     )
-
-    with pytest.raises(ConnectorConfigurationError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
-
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_connector_rejects_unavailable_normalizer_version(connector) -> None:
-    store, _, ingestion = connector
-    incompatible = store.create_connector(
-        "support",
-        provider="retell",
-        secret_ref="env:RETELL_WEBHOOK_API_KEY",
-        endpoint_id="retell_incompatible1",
-        normalizer_version="99.0.0",
+    assert (cost["earshot.connector.cost.amount"], cost["earshot.connector.cost.unit"]) == (
+        70.0,
+        "usd_cent",
     )
-
-    with pytest.raises(ConnectorConfigurationError):
-        ingestion.receive(_delivery(incompatible.endpoint_id, _payload()))
+    assert len(world.fetches()) == 1  # the same recording: no second row, no second fetch
 
 
-def test_exact_retry_replays_but_changed_body_conflicts(connector) -> None:
-    store, endpoint, ingestion = connector
-    first = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
+def test_an_error_call_is_marked_failed(world) -> None:
+    payload = copy.deepcopy(_call("call_ended"))
+    payload["call"]["call_status"] = "error"
+    payload["call"]["disconnection_reason"] = "error_llm_websocket_open"
 
-    replay = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
-    assert replay.disposition == "replayed"
-    assert replay.bundle_id == first.bundle_id
+    world.deliver(payload)
 
-    changed = _replace_call(lambda call: call["latency"]["llm"].__setitem__("values", [401]))
-    with pytest.raises(DeliveryConflictError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, changed))
-    assert len(store.list_incidents(project_id="support").items) == 1
-
-
-def test_non_call_analyzed_event_is_rejected(connector) -> None:
-    store, endpoint, ingestion = connector
-    value = json.loads(_payload())
-    value["event"] = "call_started"
-    body = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
-
-    with pytest.raises(DeliveryPayloadError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, body))
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_non_monotonic_word_offsets_are_rejected(connector) -> None:
-    store, endpoint, ingestion = connector
-    body = _replace_call(
-        lambda call: call.__setitem__(
-            "transcript_object",
-            [
-                {
-                    "role": "agent",
-                    "words": [
-                        {"word": "a", "start": 1.5, "end": 1.8},
-                        {"word": "b", "start": 1.7, "end": 2.0},
-                    ],
-                }
-            ],
-        )
-    )
-
-    with pytest.raises(DeliveryPayloadError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, body))
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_reversed_word_span_is_rejected(connector) -> None:
-    store, endpoint, ingestion = connector
-    body = _replace_call(
-        lambda call: call.__setitem__(
-            "transcript_object",
-            [{"role": "agent", "words": [{"word": "a", "start": 2.0, "end": 1.0}]}],
-        )
-    )
-
-    with pytest.raises(DeliveryPayloadError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, body))
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_http_hook_rejects_media_type_and_oversized_body(connector) -> None:
-    store, endpoint, ingestion = connector
-    client = TestClient(
-        create_app(
-            store=store,
-            connector_ingestion=ingestion,
-            config=ApiConfig(max_connector_body_bytes=16),
-        )
-    )
-
-    wrong_type = client.post(
-        f"/hooks/v1/connectors/{endpoint.endpoint_id}",
-        content=b"{}",
-        headers={"content-type": "text/plain"},
-    )
-    oversized = client.post(
-        f"/hooks/v1/connectors/{endpoint.endpoint_id}",
-        content=b"{" + b"x" * 16 + b"}",
-        headers={"content-type": "application/json"},
-    )
-
-    assert wrong_type.status_code == 415
-    assert oversized.status_code == 413
-    assert oversized.json()["error"]["code"] == "EARSHOT_CONNECTOR_BODY_TOO_LARGE"
+    [call] = [span for span in world.spans() if span.span.name == "earshot.connector.call"]
+    assert call.span.status.code == 2
