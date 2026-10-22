@@ -49,6 +49,23 @@ jobs:
           pytest -q
           packages/sdk-python/tests/test_versions.py
           apps/ingest/tests/test_storage_upgrade_fixtures.py
+      - name: Check SQLite feature contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q --db sqlite -m 'not slow' -k 'not s3'
+          packages/sdk-python/tests/test_recording_media.py
+          apps/ingest/tests/test_calls_storage.py
+          apps/ingest/tests/test_calls_read.py
+          apps/ingest/tests/test_calls_purge.py
+          apps/ingest/tests/test_page_cursors.py
+          apps/ingest/tests/test_otlp_api.py
+          apps/ingest/tests/test_otlp_host_rule.py
+          apps/ingest/tests/test_otlp_backpressure.py
+          apps/ingest/tests/test_recordings_storage.py
+          apps/ingest/tests/test_recordings_api.py
+          apps/ingest/tests/test_example_recording_upload.py
+          apps/ingest/tests/test_closer.py
+          apps/ingest/tests/test_closer_conformance.py
       - name: Test the full suite on SQLite with branch coverage
         if: github.event_name == 'workflow_dispatch'
         env:

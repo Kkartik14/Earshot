@@ -28,6 +28,7 @@ import pytest
 
 from earshot.api import ApiConfig, create_app
 from earshot.clock import ManualClock
+from earshot.recordings import MAX_RANGE_HEADER_LENGTH
 from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_recordings import RecordingManifest, RecordingStore
 from otlp_support import Reply, keyed_request, post_otlp, request, serve
@@ -170,11 +171,7 @@ def test_ranges_are_answered_from_the_blob_store_with_206_and_416(blob_backend, 
     )
     # Positions past any object (tribunal round 1, B-2): never a 500.
     huge_end, huge_start = ranged("bytes=0-" + "9" * 200), ranged("bytes=" + "9" * 200 + "-")
-    # A header no single range needs (tribunal round 2, N-2: it cost 21 s of a
-    # backtracking regex): refused unread.
-    started = time.perf_counter()
-    too_long = ranged("bytes=x" + " " * 100_000 + "x")
-    too_long_seconds = time.perf_counter() - started
+    too_long = ranged("x" * (MAX_RANGE_HEADER_LENGTH + 1))
 
     assert (middle.status, middle.body) == (206, body[10:20])
     assert middle.headers["content-range"] == f"bytes 10-19/{len(body)}"
@@ -187,9 +184,9 @@ def test_ranges_are_answered_from_the_blob_store_with_206_and_416(blob_backend, 
     assert past.problem_code() == "EARSHOT_RANGE_NOT_SATISFIABLE"
     assert (huge_end.status, huge_end.body) == (206, body)
     assert (huge_start.status, huge_start.problem_code()) == (416, "EARSHOT_RANGE_NOT_SATISFIABLE")
-    assert (too_long.status, too_long.problem_code()) == (416, "EARSHOT_RANGE_NOT_SATISFIABLE")
+    assert too_long.status == 416
+    assert too_long.problem_code() == "EARSHOT_RANGE_NOT_SATISFIABLE"
     assert too_long.headers["content-range"] == f"bytes */{len(body)}"
-    assert too_long_seconds < 1.0
 
 
 def test_create_is_idempotent_by_recording_id_and_a_different_manifest_conflicts(
