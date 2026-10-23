@@ -24,6 +24,7 @@ INCIDENT_PROJECTION_VERSION = 1
 PIPELINE_ADAPTER_VERSION = "0.3.0"
 LIVEKIT_ADAPTER_VERSION = "0.1.0"
 PIPECAT_ADAPTER_VERSION = "0.1.0"
+TVIC_RUNTIME_ADAPTER_VERSION = "0.1.0"
 # The hosted-provider translators (payload -> call evidence spans). Stamped on each
 # delivery's evidence; a connector accepts deliveries whatever version created it.
 ELEVENLABS_NORMALIZER_VERSION = "0.2.0"

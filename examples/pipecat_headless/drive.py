@@ -10,7 +10,7 @@ Uses Groq-hosted models plus macOS `say`:
 
   * user audio  -- macOS `say`, local, no API call at all
   * STT         -- Groq whisper-large-v3-turbo
-  * LLM         -- Groq llama-3.1-8b-instant
+  * LLM         -- Groq openai/gpt-oss-20b
   * TTS         -- Groq canopylabs/orpheus-v1-english
 
 Set a Groq API key, then:
@@ -77,7 +77,7 @@ RUN_TIMEOUT_S = 90.0  # evidence deadline; late completion can never certify suc
 SYNTH_TIMEOUT_S = 10.0  # local `say` is a child process and must also be bounded
 # Explicit model names keep this reproducible; any Groq-supported model works.
 STT_MODEL = "whisper-large-v3-turbo"
-LLM_MODEL = "llama-3.1-8b-instant"
+LLM_MODEL = "openai/gpt-oss-20b"
 TTS_MODEL = "canopylabs/orpheus-v1-english"
 TTS_VOICE = "autumn"
 # Keep generated artifacts under `.earshot/`, not the repository root.
@@ -95,11 +95,11 @@ _FAILED_STAGE_STATUSES = {
 class DiscardOutputTransport(BaseOutputTransport):
     """Drain Pipecat TTS audio while retaining proof that audio was emitted."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, sample_rate: int = TTS_SR) -> None:
         super().__init__(
             TransportParams(
                 audio_out_enabled=True,
-                audio_out_sample_rate=TTS_SR,
+                audio_out_sample_rate=sample_rate,
                 audio_out_end_silence_secs=0,
             )
         )
@@ -275,12 +275,12 @@ async def synth_user_pcm(*, timeout: float = SYNTH_TIMEOUT_S) -> bytes:
             return handle.readframes(handle.getnframes())
 
 
-def _pipeline_params() -> PipelineParams:
+def _pipeline_params(*, audio_out_sample_rate: int = TTS_SR) -> PipelineParams:
     return PipelineParams(
         enable_metrics=True,
         enable_usage_metrics=True,
         audio_in_sample_rate=SR,
-        audio_out_sample_rate=TTS_SR,
+        audio_out_sample_rate=audio_out_sample_rate,
     )
 
 

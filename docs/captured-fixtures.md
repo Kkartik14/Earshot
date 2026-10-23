@@ -13,13 +13,17 @@ that gap.
 
 ## Currently retained
 
-| Surface  | Source evidence                          | Captured   | Artifact                 |
-| -------- | ---------------------------------------- | ---------- | ------------------------ |
-| LiveKit  | `livekit-agents==1.6.5` session          | 2026-07-23 | `livekit.incident.json`  |
-| Pipecat  | `pipecat-ai==1.5.0` session              | 2026-07-23 | `pipecat.incident.json`  |
-| Deepgram | Listen v1 WebSocket, `nova-3`            | 2026-07-23 | `deepgram.incident.json` |
-| Cartesia | WebSocket API `2024-11-13`, `sonic-2`    | 2026-07-23 | `cartesia.incident.json` |
-| Sarvam   | Streaming STT, `saaras:v3`, `transcribe` | 2026-07-23 | `sarvam.incident.json`   |
+| Surface  | Source evidence                                 | Captured   | Artifact                 |
+| -------- | ----------------------------------------------- | ---------- | ------------------------ |
+| LiveKit  | `livekit-agents==1.6.5` session                 | 2026-07-23 | `livekit.incident.json`  |
+| Pipecat  | `pipecat-ai==1.5.0`, Groq `gpt-oss-20b` session | 2026-09-28 | `pipecat.incident.json`  |
+| Deepgram | Listen v1 WebSocket, `nova-3`                   | 2026-07-23 | `deepgram.incident.json` |
+| Cartesia | WebSocket API `2024-11-13`, `sonic-2`           | 2026-07-23 | `cartesia.incident.json` |
+| Sarvam   | Streaming STT, `saaras:v3`, `transcribe`        | 2026-07-23 | `sarvam.incident.json`   |
+
+The TVIC runtime adapter is covered by synthetic public-envelope conformance, but no
+cross-runtime real capture has been retained yet. Real provider smoke tests in TVIC do
+not by themselves produce a scrubbed Earshot incident capture.
 
 All five artifacts were recaptured from the checked-in drivers against real framework
 or provider sessions on the date shown. They were emitted directly with the current

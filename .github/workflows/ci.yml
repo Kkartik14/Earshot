@@ -287,6 +287,19 @@ jobs:
           apps/ingest/tests/test_closer_conformance.py
           apps/ingest/tests/test_calls_read.py apps/ingest/tests/test_calls_purge.py
           apps/ingest/tests/test_page_cursors.py
+          apps/ingest/tests/test_migration_0005.py apps/ingest/tests/test_client.py
+          apps/ingest/tests/test_analysis_storage.py apps/ingest/tests/test_analysis_job.py
+          apps/ingest/tests/test_analysis_api.py apps/ingest/tests/test_call_view_api.py
+          apps/ingest/tests/test_prices_api.py apps/ingest/tests/test_prices_cli.py
+          apps/ingest/tests/test_api_response_contract.py apps/ingest/tests/test_call_projection_job.py
+          apps/ingest/tests/test_livekit_otlp_calls.py apps/ingest/tests/test_livekit_otlp_server.py
+          apps/ingest/tests/test_migration_0006.py apps/ingest/tests/test_connector_ingestion.py
+          apps/ingest/tests/test_connector_revisions.py apps/ingest/tests/test_hook_host_exemption.py
+          apps/ingest/tests/test_elevenlabs_connector.py apps/ingest/tests/test_retell_connector.py
+          apps/ingest/tests/test_ringg_connector.py apps/ingest/tests/test_vapi_connector.py
+          apps/ingest/tests/test_finalized_adapter_conformance.py apps/ingest/tests/test_recording_fetch_job.py
+          apps/ingest/tests/test_recording_fetch_server.py apps/ingest/tests/test_recording_transcripts_api.py
+          apps/ingest/tests/test_dashboard_api.py
       - name: Test the blob store on S3 with branch coverage
         run: >-
           pytest -q
@@ -360,10 +373,10 @@ jobs:
         include:
           - integration: pipecat
             lane: minimum
-            dependency: pipecat-ai[tracing]==1.5.0
+            dependency: pipecat-ai[tracing]==1.6.0
           - integration: pipecat
             lane: current
-            dependency: pipecat-ai[tracing]>=1.5.0,<1.6
+            dependency: pipecat-ai[tracing]>=1.6.0,<1.7
           - integration: livekit
             lane: minimum
             dependency: livekit-agents==1.6.5

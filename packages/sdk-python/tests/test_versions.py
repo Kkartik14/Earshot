@@ -14,7 +14,7 @@ from earshot.connectors.vapi import ADAPTER_VERSION as VAPI_VERSION
 from earshot.contract import SCHEMA_VERSION, SEMANTIC_PROFILE_VERSION
 from earshot.pipeline import PIPELINE_ADAPTER_VERSION
 from earshot.storage import TURN_FACT_PROJECTION_VERSION
-from earshot.versions import API_VERSION, PACKAGE_VERSION
+from earshot.versions import API_VERSION, PACKAGE_VERSION, TVIC_RUNTIME_ADAPTER_VERSION
 
 
 def test_unreleased_public_layers_are_centrally_versioned_and_pre_v1(tmp_path) -> None:
@@ -30,6 +30,7 @@ def test_unreleased_public_layers_are_centrally_versioned_and_pre_v1(tmp_path) -
         VAPI_VERSION,
         RETELL_VERSION,
         RINGG_VERSION,
+        TVIC_RUNTIME_ADAPTER_VERSION,
         API_VERSION,
     }
     assert all(item.startswith("0.") for item in versions)

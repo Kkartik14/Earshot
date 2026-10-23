@@ -22,11 +22,6 @@ Two session advisory locks replace SQLite's lock files:
 - ``K_server`` is held by ``serve`` for its lifetime, on its own keepalive
   connection (``PostgresServerLock``). A second server is refused.
 
-Both lock sessions ask Postgres for short server-side TCP keepalives, so a
-holder that vanishes without closing its connection (a lost node, a cut
-network) releases its lock in seconds rather than after the OS default of two
-hours idle.
-
 Importing this module imports SQLAlchemy and psycopg (the ``server`` and
 ``postgres`` extras); storage imports it only for a ``postgresql://`` URL.
 """
@@ -95,29 +90,6 @@ _SERVER_LOCK_KEEPALIVES = {
     "keepalives_count": 3,
     "tcp_user_timeout": 10_000,
 }
-
-# The same bounds on the Postgres side of both lock sessions. Postgres keeps a
-# session advisory lock until it notices that the client is gone, and a client
-# that vanished sends nothing: only the server's keepalives notice it. With these
-# the server drops a silent lock session within about idle + interval * count
-# seconds (8 s), or once data stays unacknowledged for tcp_user_timeout, so a
-# replacement server can take the lock. Any user may set them. They are SET after
-# connecting, not sent as startup options, because a session-mode PgBouncer
-# refuses startup parameters it does not track.
-_LOCK_SESSION_SETTINGS = (
-    ("tcp_keepalives_idle", "5"),
-    ("tcp_keepalives_interval", "1"),
-    ("tcp_keepalives_count", "3"),
-    ("tcp_user_timeout", "10000"),
-)
-_SET_LOCK_SESSION_SETTINGS = "SELECT " + ", ".join(
-    ["set_config(%s, %s, false)"] * len(_LOCK_SESSION_SETTINGS)
-)
-
-
-def _set_lock_session_keepalives(connection: psycopg.Connection[Any]) -> None:
-    parameters = [item for setting in _LOCK_SESSION_SETTINGS for item in setting]
-    connection.execute(_SET_LOCK_SESSION_SETTINGS, parameters)
 
 
 def is_postgres_url(url: str | None) -> bool:
@@ -443,11 +415,6 @@ class PostgresDatabase:
             )
         except psycopg.Error as error:
             raise translate_error(error) from error
-        try:
-            _set_lock_session_keepalives(connection)
-        except psycopg.Error as error:
-            connection.close()
-            raise translate_error(error) from error
         self._lock_connection = connection
         return connection
 
@@ -505,7 +472,6 @@ class PostgresServerLock:
                 f"could not connect to the database to take the server lock{_sqlstate(error)}"
             ) from error
         try:
-            _set_lock_session_keepalives(connection)
             acquired = connection.execute("SELECT pg_try_advisory_lock(%s)", (K_SERVER,)).fetchone()
         except psycopg.Error as error:
             connection.close()

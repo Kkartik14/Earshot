@@ -14,11 +14,14 @@ python3.11 -m venv .venv
 pip install -e '.[dev]'
 ```
 
-Framework extras are deliberately optional:
+Framework extras are deliberately optional. These `pip` installs are convenient local
+setups, but `pip` does not consume `uv.lock`; use the locked instructions below for a
+reproducible provider-matrix run:
 
 ```bash
 pip install -e '.[pipecat]'
 pip install -e '.[pipecat-groq]'
+pip install -e '.[pipecat-matrix]'
 pip install -e '.[livekit]'
 pip install -e '.[otel]'
 ```
@@ -26,13 +29,15 @@ pip install -e '.[otel]'
 Importing `earshot` must work without either runtime installed.
 The provider-neutral `pipecat` extra installs tracing only. The `pipecat-groq` extra
 adds the Groq service dependency used by the checked-in real STT, LLM, and TTS driver.
+The `pipecat-matrix` extra pins Pipecat 1.6.0 and installs the optional clients needed
+to run every supported provider combination in `scripts/run_pipecat_matrix.py`.
 
 Editable installs use the repository path, but built/published package metadata uses
 the collision-free distribution name `earshot-observability`. See
 [release packaging](./release.md); `pip install earshot` installs an unrelated VAD
 project even though this repository also uses `import earshot`.
 
-The compatibility lane checks Pipecat 1.5.0 and current 1.5.x, plus LiveKit Agents 1.6.5
+The compatibility lane checks Pipecat 1.6.0 and current 1.6.x, plus LiveKit Agents 1.6.5
 and current 1.8.x. Unit tests remain duck typed; installing both extras activates the
 real-package integration tests in `apps/ingest/tests/test_framework_integrations.py`.
 
@@ -137,12 +142,14 @@ Tests intentionally mutate valid fixtures. A passing test should prove a propert
 regression, not merely assert that its own valid sample is valid.
 
 The checked-in [CI workflow](../.github/workflows/ci.yml) runs bounded feature gates on
-pushes to `main` and on pull requests. Its framework matrix exercises the supported
-minimum and current Pipecat and LiveKit versions. Full SQLite and Postgres/S3 suites with
-combined branch coverage run only from `workflow_dispatch`. A separate clean-artifact
-lane bundles the viewer, builds the wheel and sdist together, and installs them in
-isolated base, `[server]`, and viewer-smoke environments. Its TypeScript lane uses the
-committed pnpm lockfile and the Node version in `.nvmrc`.
+pushes to `main` and on pull requests. Its Python lanes install both bounded framework
+extras, so the LiveKit and Pipecat real-object integration tests cannot silently skip, and
+its framework matrix exercises the supported minimum and current Pipecat and LiveKit
+versions. Full SQLite and Postgres/S3 suites with combined branch coverage run only from
+`workflow_dispatch`. A separate clean-artifact lane bundles the viewer, builds the wheel
+and sdist together, and installs them in isolated base, `[server]`, and viewer-smoke
+environments. Its TypeScript lane uses the committed pnpm lockfile and the Node version in
+`.nvmrc`.
 
 ## Run locally
 
@@ -219,6 +226,12 @@ python examples/pipecat_headless/drive.py
 It exits successfully only after a valid completed incident contains real STT, LLM,
 and TTS operations plus TTS audio accepted by the discard output transport. This is
 server-side output evidence; client render remains explicitly unobserved.
+
+The full provider matrix uses the optional `pipecat-matrix` extra and real credentials
+for each configured cell. It is a live, potentially billable run; timed-out or failed
+cells are not converted into synthetic passes. See the dated
+[36-cell results and limits](./pipecat-provider-matrix-2026-10-20.md) for the locked
+setup and invocation commands before running it.
 
 ## Add an adapter
 

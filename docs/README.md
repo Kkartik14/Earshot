@@ -55,6 +55,10 @@ regression-fixture export are planned and are not shipped APIs.
   model.
 - [Pipecat adapter](./adapters/pipecat.md) and
   [LiveKit adapter](./adapters/livekit.md) — adapter contracts and limitations.
+- [TVIC runtime adapter](./adapters/tvic.md) — runtime observation mapping,
+  chronology, and loss boundaries.
+- [Pipecat provider matrix](./pipecat-provider-matrix-2026-10-20.md) — current live
+  Cartesian-product evidence and its limits.
 - [Raw provider adapters](./adapters/providers.md) — Deepgram, Cartesia, OpenAI
   Realtime, and Sarvam event mapping for custom in-app pipelines.
 

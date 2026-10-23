@@ -155,7 +155,9 @@ conformance harness. It is applied to every shipped adapter family:
   captured provider deliveries; the opt-in real-delivery test retains its explicit skip
   when no operator-supplied payload is present.
 - Pipecat and LiveKit consume their golden public surfaces, while installed-dependency
-  lanes additionally construct real framework metric/span objects.
+  lanes additionally construct real framework metric/span objects. TVIC runtime
+  observations use the adapter's versioned public envelope; this synthetic contract
+  test is not represented as a retained real capture.
 
 The harness validates canonical JSON/protobuf stability, deterministic normalized
 output, native trace/span identity and parentage, sensitive-value absence, privacy
