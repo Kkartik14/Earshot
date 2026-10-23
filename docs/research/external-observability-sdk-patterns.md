@@ -18,7 +18,8 @@ For Earshot, the durable product thesis should therefore be narrower and stronge
 
 ## Scope and frozen revisions
 
-The repositories were shallow-cloned under the git-ignored `local/sdk-research/` directory. All links below are pinned to the inspected commit; they do not float with a branch.
+The repositories were inspected at the revisions listed below. Each link is pinned to
+the inspected commit, so it does not float with a branch.
 
 | SDK                  | Inspected commit                                                                                                  | Why it matters here                                                                                                               |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |

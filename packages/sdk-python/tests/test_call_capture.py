@@ -1,12 +1,8 @@
-"""AC3.2, AC3.3 and FR-4's pure half: what is kept of a span, and which session it names.
+"""Check capture classification for normalized framework attribute names.
 
-Classification runs on the *normalized* key: frameworks put content under keys
-Earshot's classifier reads as metadata (Pipecat's raw ``input``; LiveKit 1.7's
-``lk.pii.*``). Every row below states the class before normalization (the
-classifier alone) and after it, so a key that silently leaks shows up as a row
-whose "after" is metadata. The keys are the ones the Month 1 research found
-(`local/research/month-1/voice-frameworks-telemetry.md` §1, §4, §5) and the
-ones the real Pipecat capture carries.
+Framework adapters normalize provider keys before applying the capture policy. These
+cases cover Pipecat input fields and LiveKit private-identifier fields so a mismatch
+cannot silently make content look like metadata.
 """
 
 from __future__ import annotations

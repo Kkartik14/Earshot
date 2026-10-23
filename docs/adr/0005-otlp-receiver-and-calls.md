@@ -138,24 +138,9 @@ Negative:
 
 ## Evidence
 
-Paths under `local/` are git-ignored planning and research records; they are not
-shipped.
-
-- `local/superpowers/month-1/final-plan.md`: FR-4, FR-5, FR-6 (close rules), AC15.4.
-- `local/superpowers/month-1/architecture-review.md`: §2, §3 (raw batches rejected), §5.
-- `local/superpowers/month-1/plan-debate.md`, sign-off item 11 (error bodies);
-  `local/superpowers/month-1/fowler-review.md`, second pass, item 1 (key order).
-- `local/research/month-1/otlp-ingest-storage-blobs.md`: §1 (OTLP contract and the
-  Python exporter), §2 (Langfuse, Phoenix, Laminar).
-- `local/research/month-1/voice-frameworks-telemetry.md`: summary items 1–3, §5.3.
-- Under `local/refs/`: `semantic-conventions/docs/general/session.md`,
-  `openinference/spec/annotations.md:122`,
-  `livekit-agents/livekit-agents/livekit/agents/telemetry/gen_ai.py:313-321` and
-  `pipecat/src/pipecat/utils/tracing/turn_trace_observer.py:140`.
-- Code: `packages/sdk-python/src/earshot/exporters/otlp.py:731`, `:911` (Earshot
-  already stamps `earshot.session.id`); `semconv/earshot.yaml` (the reversed note).
-- Fixture: `fixtures/captured/pipecat-otlp-1.5/`, 7 requests and 17 spans from a real
-  Pipecat 1.5.0 call, with scopes `pipecat.turn` and `pipecat`.
-- Specs: OTLP <https://opentelemetry.io/docs/specs/otlp/>; OTel session semantics
-  <https://opentelemetry.io/docs/specs/semconv/general/session/>; protobuf JSON mapping
-  <https://protobuf.dev/programming-guides/json/>.
+The receiver contract is documented in [Backend API](../backend-api.md) and
+[OTLP quick start](../otlp-quickstart.md). The implementation and public semantic
+definitions are in `packages/sdk-python/src/earshot/` and `semconv/earshot.yaml`.
+The external protocol references are [OTLP](https://opentelemetry.io/docs/specs/otlp/),
+[OpenTelemetry session semantics](https://opentelemetry.io/docs/specs/semconv/general/session/),
+and the [protobuf JSON mapping](https://protobuf.dev/programming-guides/json/).

@@ -144,20 +144,7 @@ Negative:
 
 ## Evidence
 
-Paths under `local/` are git-ignored planning and research records; they are not
-shipped.
-
-- `local/superpowers/SOURCE_PLAN.md`, week-1 decision 3.
-- `local/superpowers/month-1/final-plan.md`: FR-1, FR-8, AC11.2–AC11.4, §2.
-- `local/superpowers/month-1/architecture-review.md`: §3 (storage port), §5, §6.
-- `local/superpowers/month-1/plan-debate.md`, pushback A (exit on lock loss);
-  `local/superpowers/month-1/fowler-review.md`, second pass, item 2 (pool and `with`).
-- `local/research/month-1/otlp-ingest-storage-blobs.md`: §3 (Phoenix, options and
-  recommendation), §4.2 (boto3 and the SigV2 pitfall), §4.3 (MinIO for tests).
-- Code in `packages/sdk-python/src/earshot/`: `storage_schema.py` (`MetaData`),
-  `storage_migrations/` (revisions, sentinel), `storage_legacy.py` (frozen converge),
-  `storage_database.py` (shim), `storage_postgres.py` (`K_server`, `K_write`) and
-  `blobstore.py`.
-- Fixtures: `fixtures/upgrade/`, with a manifest of the source commits.
-- MinIO test image:
-  <https://www.chainguard.dev/unchained/secure-and-free-minio-chainguard-containers>.
+The storage behavior is documented in [Storage](../storage.md) and
+[Storage and blobs](../storage-and-blobs.md). The upgrade fixtures under
+`fixtures/upgrade/` identify the historical release commits used by their tests.
+The implementation lives in `packages/sdk-python/src/earshot/`.

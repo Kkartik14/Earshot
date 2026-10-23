@@ -118,22 +118,6 @@ Negative:
 
 ## Evidence
 
-Paths under `local/` are git-ignored planning and research records; they are not
-shipped.
-
-- `local/superpowers/SOURCE_PLAN.md`, week-1 decision 1.
-- `local/superpowers/month-1/final-plan.md`: FR-3 (presets), AC7.4 and AC7.5 (bundle
-  budget, `MediaRef`), FR-8 and FR-9 (blob store, recordings), AC14.6 and AC15.3
-  (erasure, privacy docs).
-- `local/superpowers/month-1/architecture-review.md`: §1 (why `redacted` is deferred),
-  §3 (`MediaRef`, `privacy.py`), §5 (review finding R15, the silent upgrade to `full`).
-- `local/research/month-1/voice-frameworks-telemetry.md`: summary item 7 and §4.4 (raw
-  framework keys classified as metadata).
-- `local/research/month-1/otlp-ingest-storage-blobs.md`: §2.2 (payload growth), §3.3
-  (Postgres has no scrub equivalent), §4 (blob handling).
-- Code: `packages/sdk-python/src/earshot/contract.py` (`MediaRef`,
-  `media_custody_incoherence`), `packages/sdk-python/src/earshot/privacy.py`,
-  `packages/sdk-python/src/earshot/blobstore.py`.
-- Fixture: `fixtures/captured/pipecat-otlp-1.5/`, the real Pipecat call that the
-  `metadata_only` byte-search test replays.
-- Superseded text: `docs/privacy.md`, "Media" and "Custody, not content".
+The public privacy contract is described in [Privacy](../privacy.md) and
+[Captured fixtures](../captured-fixtures.md). Its implementation lives in
+`packages/sdk-python/src/earshot/contract.py`, `privacy.py`, and `blobstore.py`.

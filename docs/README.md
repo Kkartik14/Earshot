@@ -1,7 +1,7 @@
 # Earshot public documentation
 
-These documents are the public, reproducible source of truth. They are sufficient
-to implement another producer or consumer without access to `docs/private`.
+These guides explain the public interfaces and behavior for users, integrators, and
+contributors. The linked schemas and protocol files define the machine-readable contracts.
 
 The current release is a pre-v1 alpha. What Earshot receives today is listed in the
 repository [README](../README.md#what-earshot-receives-today); mobile capture, OTLP over

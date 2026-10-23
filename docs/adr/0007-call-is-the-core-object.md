@@ -128,21 +128,7 @@ Negative:
 
 ## Evidence
 
-Paths under `local/` are git-ignored planning and research records; they are not
-shipped.
-
-- `local/superpowers/SOURCE_PLAN.md`, week-1 decision 4.
-- `local/superpowers/month-1/final-plan.md`: AC4.1, FR-6, FR-7, FR-10, FR-14.
-- `local/superpowers/month-1/architecture-review.md`: decision paragraph, §3
-  (`LiveSessionRegistry`, `CaptureCallRegistry` and `IncidentRecorder` rows).
-- `local/superpowers/month-1/fowler-review.md`: §3.6 (new aggregate or evolution).
-- `local/superpowers/month-1/plan-debate.md`: pushback C (cap and lag), the tombstone
-  objection, and the "Converged" list.
-- `CONTEXT.md`: Call, Revision, Session Key, Recording.
-- Code: `packages/sdk-python/src/earshot/live.py` (`LiveSessionRegistry` and its limits),
-  `packages/sdk-python/src/earshot/capture/calls.py` (module docstring,
-  `CaptureCallRegistry`), `packages/sdk-python/src/earshot/recorder.py:593-594` (the
-  random IDs replaced by injected values), `packages/sdk-python/src/earshot/storage.py`
-  (`IncidentStore.ingest`).
-- Fixture: `fixtures/captured/pipecat-otlp-1.5/`, used by the conformance test that
-  compares server-side and in-process turn facts.
+The domain terms are defined in [CONTEXT.md](../../CONTEXT.md). The call lifecycle is
+implemented in `packages/sdk-python/src/earshot/live.py`,
+`packages/sdk-python/src/earshot/capture/calls.py`, and
+`packages/sdk-python/src/earshot/storage.py`.
