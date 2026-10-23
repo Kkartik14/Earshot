@@ -3,8 +3,8 @@
 ## Prerequisites
 
 - Python 3.11+
-- Node 20+ only for the legacy TypeScript prototype/viewer work
-- `pnpm` for existing TS packages
+- Node 20+ only for the TypeScript viewer and browser packages
+- `pnpm` for the TypeScript workspace
 
 ## Install
 
@@ -91,15 +91,52 @@ python scripts/smoke_artifact.py /tmp/earshot-dist/*.whl
 python scripts/smoke_artifact.py /tmp/earshot-dist/*.tar.gz
 ```
 
+Plain `pytest` runs every test, including the ones marked `slow` (about 10 s or more
+each: the 10,000-incident reprojection boot, the random-SIGKILL OTLP property test, the
+1 GiB blob and recording memory tests, and the replay and real-provider quick-start e2e
+tests). While you work, skip them and run only the slow tests of the modules you changed:
+
+```bash
+pytest -m "not slow"                                   # everything but the slow tests
+pytest -m slow apps/ingest/tests/test_recordings_memory.py   # the slow tests you touched
+pytest -m slow                                         # every slow test
+```
+
+Manual CI dispatch runs the full SQLite suite, the listed Postgres storage and
+application contracts, and the full S3 blob store contract suite, then combines SQLite
+and Postgres coverage. Quick PR checks run only the isolated `unit` tests; add the
+`Merge Ready` label to run the comprehensive pull request lanes. The standard pull
+request lanes use targeted SQLite/Postgres/S3 checks and exclude `slow` tests where the
+command specifies `-m 'not slow'`.
+
+One test still skips in CI: the real-provider e2e
+(`apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`, marked `real_providers`)
+runs one real Pipecat call into Earshot on Postgres and S3. It needs `DEEPGRAM_API_KEY`,
+`GROQ_API_KEY`, `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID` in the environment, the
+example's `requirements.txt`, and the S3 test server; without any of them it skips. It
+reads keys from the process environment only, never from `.env`, so a plain local
+`pytest` places no paid calls. The release gate runs it with
+`EARSHOT_REQUIRE_REAL_PROVIDERS=1`, which turns a skip into a failure:
+
+```bash
+(set -a; . ./.env; set +a; EARSHOT_REQUIRE_REAL_PROVIDERS=1 pytest -q -m real_providers)
+```
+
 Tests intentionally mutate valid fixtures. A passing test should prove a property or
 regression, not merely assert that its own valid sample is valid.
 
-The checked-in [CI workflow](../.github/workflows/ci.yml) runs these gates on every
-push and pull request. Its Python lane installs both bounded framework extras so the
-LiveKit 1.6 and Pipecat 1.6 real-object integration tests cannot silently skip. A
-separate clean-artifact lane bundles the viewer, builds the wheel and sdist together,
-and installs both in isolated base and `[server]` environments. Its TypeScript lane uses
-the committed pnpm lockfile and the Node version in `.nvmrc`.
+The checked-in [CI workflow](../.github/workflows/ci.yml) runs quick Python and
+TypeScript checks on each pull request update. The light-blue `Merge Ready` label starts
+the comprehensive lanes, including Postgres and S3, the Python and framework
+compatibility matrices, macOS, package artifacts, and the container. The workflow also
+runs the comprehensive lanes on pushes to `main`; a manual dispatch adds the full SQLite
+suite, the listed Postgres storage/application contracts, and the S3 blob store suite,
+then enforces combined SQLite/Postgres coverage. Its Python lane installs both
+bounded framework extras so the LiveKit 1.6 and Pipecat 1.6 real-object integration
+tests cannot silently skip. A separate clean-artifact lane bundles the viewer, builds
+the wheel and sdist together, and installs both in isolated base and `[server]`
+environments. TypeScript lanes use the committed pnpm lockfile and the Node version in
+`.nvmrc`.
 
 ## Run locally
 

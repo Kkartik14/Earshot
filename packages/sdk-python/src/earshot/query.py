@@ -35,7 +35,7 @@ from .analysis import (
     analyze_incident,
     comparable_delta,
 )
-from .codec import analysis_input_sha256
+from .codec import analysis_input_digests, analysis_input_sha256
 from .contract import (
     DerivedAnalysis,
     Diagnosis,
@@ -310,8 +310,7 @@ def _require_matching_analysis(bundle: IncidentBundle, analysis: DerivedAnalysis
     the identities must match before the analysis is trusted.
     """
 
-    expected = analysis_input_sha256(bundle)
-    if analysis.input_sha256 != expected:
+    if analysis.input_sha256 not in analysis_input_digests(bundle):
         raise ValueError(
             "derived analysis input_sha256 does not match the incident under analysis; "
             "refusing to answer from a stale or foreign analysis"

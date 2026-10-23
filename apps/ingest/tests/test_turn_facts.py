@@ -15,10 +15,10 @@ from earshot.recorder import IncidentRecorder, RecorderConfig
 from earshot.storage import (
     TURN_FACT_PROJECTION_VERSION,
     TURN_METRIC_LIMITATIONS,
-    IncidentStore,
     TurnMetricSummary,
 )
 from incident_factory import evidence, make_valid_bundle, point
+from store_support import catalog_rows, drop_post_v19_objects, make_store
 
 pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parents[3]
@@ -190,7 +190,7 @@ def _ingest_spread_of_final_incidents(store) -> None:
 
 
 def test_ingest_projects_queryable_turn_facts_with_per_metric_quality(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = make_valid_bundle(bundle_id="turn-fact-bundle")
 
     store.ingest(bundle, encode_incident_protobuf(bundle))
@@ -218,7 +218,7 @@ def test_ingest_projects_queryable_turn_facts_with_per_metric_quality(tmp_path) 
 
 
 def test_stt_language_is_a_queryable_fleet_dimension(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _with_stt_language(make_valid_bundle(bundle_id="sarvam-language"))
 
     store.ingest(bundle, encode_incident_protobuf(bundle))
@@ -231,7 +231,7 @@ def test_stt_language_is_a_queryable_fleet_dimension(tmp_path) -> None:
 
 
 def test_conflicting_stt_languages_remain_an_unknown_fleet_dimension(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _with_stt_language(make_valid_bundle(bundle_id="ambiguous-language"))
     stt = next(
         operation for operation in bundle.profile.operations if operation.operation_name == "stt"
@@ -262,7 +262,7 @@ def test_conflicting_stt_languages_remain_an_unknown_fleet_dimension(tmp_path) -
 
 
 def test_metrics_http_can_group_turns_by_stt_language(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _with_stt_language(make_valid_bundle(bundle_id="sarvam-language-http"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
     client = TestClient(create_app(store=store))
@@ -277,10 +277,11 @@ def test_metrics_http_can_group_turns_by_stt_language(tmp_path) -> None:
     assert [group["group"] for group in response.json()["groups"]] == ["hi-IN"]
 
 
+@pytest.mark.sqlite_only
 def test_internal_narrow_turn_fact_projection_is_recreated_from_canonical_incidents(
     tmp_path,
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = make_valid_bundle(bundle_id="migrated-turn-fact")
     store.ingest(bundle, encode_incident_protobuf(bundle))
     store.close()
@@ -299,39 +300,48 @@ def test_internal_narrow_turn_fact_projection_is_recreated_from_canonical_incide
             )
             """
         )
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 7")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
+    # Every incident of a legacy catalog is stale; it converges after the open.
+    assert migrated.converge_projections().pending == 0
 
     [fact] = migrated.list_turn_facts()
     assert fact.bundle_id == "migrated-turn-fact"
     assert fact.eou_ms == 50.0
     assert fact.projection_version == TURN_FACT_PROJECTION_VERSION
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
 
 
+@pytest.mark.sqlite_only
 def test_v9_turn_facts_are_rebuilt_with_language_from_canonical_incidents(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _with_stt_language(make_valid_bundle(bundle_id="migrated-language"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
     store.close()
     with sqlite3.connect(tmp_path / "earshot.sqlite3") as connection:
         connection.execute("DROP INDEX turn_metrics_project_dimensions_idx")
         connection.execute("ALTER TABLE turn_metrics DROP COLUMN language")
+        # A 0.1.x catalog has no Alembic state or later revisions.
+        drop_post_v19_objects(connection)
         connection.execute("PRAGMA user_version = 9")
 
-    migrated = IncidentStore(tmp_path)
+    migrated = make_store(tmp_path)
+    # Every incident of a legacy catalog is stale; it converges after the open.
+    assert migrated.converge_projections().pending == 0
 
     [fact] = migrated.list_turn_facts()
     assert fact.bundle_id == "migrated-language"
     assert fact.language == "hi-IN"
     with sqlite3.connect(migrated.database_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 19
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1000
 
 
 def test_turn_fact_queries_are_project_scoped(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("sales", display_name="Sales")
     bundle = make_valid_bundle(bundle_id="sales-turn-fact")
     store.ingest(
@@ -347,24 +357,22 @@ def test_turn_fact_queries_are_project_scoped(tmp_path) -> None:
 
 
 def test_turn_fact_queries_hide_expired_derived_evidence_until_purged(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _with_expired_metadata(make_valid_bundle(bundle_id="expired-turn-fact"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
-    with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM turn_metrics").fetchone()[0] == 1
+    turn_metric_rows = "SELECT COUNT(*) FROM turn_metrics"
+    assert catalog_rows(tmp_path, turn_metric_rows) == [(1,)]
 
     assert store.list_turn_facts() == ()
     assert store.summarize_turn_metric("first_token_ms") == ()
-    with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM turn_metrics").fetchone()[0] == 1
+    assert catalog_rows(tmp_path, turn_metric_rows) == [(1,)]
 
     assert store.purge_expired() == 1
-    with sqlite3.connect(store.database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM turn_metrics").fetchone()[0] == 0
+    assert catalog_rows(tmp_path, turn_metric_rows) == [(0,)]
 
 
 def test_metrics_http_never_aggregates_expired_turn_facts(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _with_expired_metadata(make_valid_bundle(bundle_id="expired-http-turn-fact"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
     client = TestClient(create_app(store=store))
@@ -379,7 +387,7 @@ def test_metrics_http_never_aggregates_expired_turn_facts(tmp_path) -> None:
 
 
 def test_turn_metric_summary_reports_nearest_rank_percentiles(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     for suffix in ("one", "two"):
         bundle = make_valid_bundle(bundle_id=f"summary-{suffix}")
         store.ingest(bundle, encode_incident_protobuf(bundle))
@@ -400,7 +408,7 @@ def test_turn_metric_summary_reports_nearest_rank_percentiles(tmp_path) -> None:
 
 
 def test_metrics_http_interface_returns_project_fleet_summary(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     for suffix in ("one", "two"):
         bundle = make_valid_bundle(bundle_id=f"http-summary-{suffix}")
         store.ingest(bundle, encode_incident_protobuf(bundle))
@@ -441,7 +449,7 @@ def test_metrics_http_interface_returns_project_fleet_summary(tmp_path) -> None:
 def test_fleet_summary_over_final_incidents_is_unchanged_by_the_finality_join(tmp_path) -> None:
     """The join must cost final-only stores nothing, down to the last float."""
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     _ingest_spread_of_final_incidents(store)
 
     fleet = store.summarize_turn_metric_fleet("first_token_ms", group_by="framework")
@@ -457,7 +465,7 @@ def test_a_provisional_incident_never_moves_a_fleet_percentile(tmp_path) -> None
     """A recovered conversation covers an unknown fraction of itself, so its
     turns cannot be pooled -- and the aggregate has to say it dropped them."""
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     _ingest_spread_of_final_incidents(store)
     recovered = _recovered(
         _with_first_token_at(make_valid_bundle(bundle_id="recovered-one"), 1_290_000_000)
@@ -478,7 +486,7 @@ def test_a_store_of_only_provisional_incidents_publishes_no_aggregate(tmp_path) 
     """No groups plus a withheld count is a refusal to aggregate. It must not be
     readable as a fleet that measured zero."""
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     for suffix, nano in (("one", 1_100_000_000), ("two", 1_250_000_000)):
         bundle = _recovered(
             _with_first_token_at(make_valid_bundle(bundle_id=f"recovered-{suffix}"), nano)
@@ -494,7 +502,7 @@ def test_a_store_of_only_provisional_incidents_publishes_no_aggregate(tmp_path) 
 
 
 def test_metrics_http_declares_the_provisional_incidents_it_withheld(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     _ingest_spread_of_final_incidents(store)
     recovered = _recovered(
         _with_first_token_at(make_valid_bundle(bundle_id="recovered-http"), 1_290_000_000)
@@ -517,7 +525,7 @@ def test_metrics_http_declares_the_provisional_incidents_it_withheld(tmp_path) -
 
 
 def test_metrics_http_never_reads_a_withheld_fleet_as_a_measured_zero(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _recovered(make_valid_bundle(bundle_id="recovered-http-only"))
     store.ingest(bundle, encode_incident_protobuf(bundle))
     client = TestClient(create_app(store=store))
@@ -536,7 +544,7 @@ def test_metrics_http_never_reads_a_withheld_fleet_as_a_measured_zero(tmp_path) 
 
 
 def test_fleet_summary_never_mixes_evidence_confidence_strata(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     measured = make_valid_bundle(bundle_id="measured-fact")
     token_event_index = next(
         index
@@ -572,7 +580,7 @@ def test_fleet_summary_never_mixes_evidence_confidence_strata(tmp_path) -> None:
 
 
 def test_fleet_summary_never_mixes_unavailable_limitations(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     source = make_valid_bundle(bundle_id="source")
     target_missing = source.model_copy(
         update={
@@ -639,7 +647,7 @@ def test_ambiguous_turn_boundaries_never_publish_a_shortest_pair(tmp_path) -> No
             )
         }
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
 
     store.ingest(bundle, encode_incident_protobuf(bundle))
 
@@ -672,7 +680,7 @@ def test_cross_clock_turn_boundaries_preserve_explicit_unavailability(tmp_path) 
             )
         }
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
 
     store.ingest(bundle, encode_incident_protobuf(bundle))
 
@@ -683,7 +691,7 @@ def test_cross_clock_turn_boundaries_preserve_explicit_unavailability(tmp_path) 
 
 
 def test_turn_provider_dimension_prefers_llm_stage_over_other_stage(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = make_valid_bundle(bundle_id="provider-dimension")
     operations = []
     old_llm_id = next(
@@ -735,7 +743,7 @@ def test_livekit_and_pipecat_goldens_persist_as_honest_project_scoped_facts(
     tmp_path,
 ) -> None:
     pipecat_bundle, livekit_bundle = _golden_runtime_bundles()
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("pipecat", display_name="Pipecat")
     store.create_project("livekit", display_name="LiveKit")
     store.ingest(
@@ -812,7 +820,7 @@ def test_interruption_count_counts_accepted_outcomes_not_lifecycle_events(tmp_pa
             )
         }
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
 
     store.ingest(bundle, encode_incident_protobuf(bundle))
 

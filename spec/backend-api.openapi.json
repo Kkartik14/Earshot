@@ -608,6 +608,364 @@
         "title": "ByteRange",
         "type": "object"
       },
+      "CallDetailResponse": {
+        "additionalProperties": false,
+        "description": "One call with its revisions, recordings and transcript (read from its spans).",
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "evidence_after_latest_revision": {
+            "title": "Evidence After Latest Revision",
+            "type": "boolean"
+          },
+          "first_evidence_unix_nano": {
+            "title": "First Evidence Unix Nano",
+            "type": "string"
+          },
+          "key_source": {
+            "title": "Key Source",
+            "type": "string"
+          },
+          "last_evidence_unix_nano": {
+            "title": "Last Evidence Unix Nano",
+            "type": "string"
+          },
+          "latest_revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CallRevisionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "materialize_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materialize Error"
+          },
+          "recording_count": {
+            "title": "Recording Count",
+            "type": "integer"
+          },
+          "recordings": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingResponse"
+            },
+            "title": "Recordings",
+            "type": "array"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/CallRevisionResponse"
+            },
+            "title": "Revisions",
+            "type": "array"
+          },
+          "session_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Key"
+          },
+          "span_count": {
+            "title": "Span Count",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptLineResponse"
+            },
+            "title": "Transcript",
+            "type": "array"
+          },
+          "transcript_coverage": {
+            "enum": [
+              "available",
+              "not_captured_by_preset",
+              "not_observed"
+            ],
+            "title": "Transcript Coverage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "key_source",
+          "state",
+          "session_key",
+          "first_evidence_unix_nano",
+          "last_evidence_unix_nano",
+          "span_count",
+          "recording_count",
+          "latest_revision",
+          "materialize_error",
+          "revisions",
+          "recordings",
+          "evidence_after_latest_revision",
+          "transcript",
+          "transcript_coverage"
+        ],
+        "title": "CallDetailResponse",
+        "type": "object"
+      },
+      "CallPageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CallSummaryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "CallPageResponse",
+        "type": "object"
+      },
+      "CallResolveRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "session_key": {
+            "maxLength": 4096,
+            "title": "Session Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_key"
+        ],
+        "title": "CallResolveRequest",
+        "type": "object"
+      },
+      "CallResolveResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id"
+        ],
+        "title": "CallResolveResponse",
+        "type": "object"
+      },
+      "CallRevisionResponse": {
+        "additionalProperties": false,
+        "description": "One revision of a call: its bundle, and the evidence it was built from.",
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "close_reason": {
+            "enum": [
+              "end_signal",
+              "quiet_period",
+              "late_data"
+            ],
+            "title": "Close Reason",
+            "type": "string"
+          },
+          "created_unix_nano": {
+            "title": "Created Unix Nano",
+            "type": "string"
+          },
+          "finality": {
+            "enum": [
+              "final",
+              "provisional"
+            ],
+            "title": "Finality",
+            "type": "string"
+          },
+          "recording_count": {
+            "title": "Recording Count",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "span_count": {
+            "title": "Span Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "bundle_id",
+          "close_reason",
+          "finality",
+          "span_count",
+          "recording_count",
+          "created_unix_nano"
+        ],
+        "title": "CallRevisionResponse",
+        "type": "object"
+      },
+      "CallRevisionSummary": {
+        "additionalProperties": false,
+        "description": "A call's latest revision, as the call list shows it.",
+        "properties": {
+          "bundle_id": {
+            "title": "Bundle Id",
+            "type": "string"
+          },
+          "close_reason": {
+            "enum": [
+              "end_signal",
+              "quiet_period",
+              "late_data"
+            ],
+            "title": "Close Reason",
+            "type": "string"
+          },
+          "finality": {
+            "enum": [
+              "final",
+              "provisional"
+            ],
+            "title": "Finality",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "bundle_id",
+          "close_reason",
+          "finality"
+        ],
+        "title": "CallRevisionSummary",
+        "type": "object"
+      },
+      "CallSummaryResponse": {
+        "additionalProperties": false,
+        "description": "One call. ``session_key`` is null when it was not stored (``metadata_only``\nprojects and trace-keyed calls).",
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "first_evidence_unix_nano": {
+            "title": "First Evidence Unix Nano",
+            "type": "string"
+          },
+          "key_source": {
+            "title": "Key Source",
+            "type": "string"
+          },
+          "last_evidence_unix_nano": {
+            "title": "Last Evidence Unix Nano",
+            "type": "string"
+          },
+          "latest_revision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CallRevisionSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "materialize_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Materialize Error"
+          },
+          "recording_count": {
+            "title": "Recording Count",
+            "type": "integer"
+          },
+          "session_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Key"
+          },
+          "span_count": {
+            "title": "Span Count",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "key_source",
+          "state",
+          "session_key",
+          "first_evidence_unix_nano",
+          "last_evidence_unix_nano",
+          "span_count",
+          "recording_count",
+          "latest_revision",
+          "materialize_error"
+        ],
+        "title": "CallSummaryResponse",
+        "type": "object"
+      },
       "CaptureAcceptedResponse": {
         "additionalProperties": false,
         "description": "The incident one capture batch became, plus what the server refused.\n\nThe ``rejected_*`` counters are the server-side allowlist's own report: they\nsay how much of the payload was dropped before it could be stored, so a\nclient can see that its batch was trimmed instead of silently reshaped.",
@@ -5437,6 +5795,56 @@
         "title": "Operation",
         "type": "object"
       },
+      "OtlpStatsResponse": {
+        "additionalProperties": false,
+        "description": "The OTLP receiver's rare-event counters and gauges for one project (AC5.12).",
+        "properties": {
+          "key_disagreements": {
+            "title": "Key Disagreements",
+            "type": "integer"
+          },
+          "open_calls": {
+            "title": "Open Calls",
+            "type": "integer"
+          },
+          "parked_traces": {
+            "title": "Parked Traces",
+            "type": "integer"
+          },
+          "parked_traces_discarded": {
+            "title": "Parked Traces Discarded",
+            "type": "integer"
+          },
+          "purged_call_evidence_dropped": {
+            "title": "Purged Call Evidence Dropped",
+            "type": "integer"
+          },
+          "rejected_spans": {
+            "title": "Rejected Spans",
+            "type": "integer"
+          },
+          "revision_cap_reached": {
+            "title": "Revision Cap Reached",
+            "type": "integer"
+          },
+          "span_conflicts": {
+            "title": "Span Conflicts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rejected_spans",
+          "span_conflicts",
+          "parked_traces_discarded",
+          "key_disagreements",
+          "revision_cap_reached",
+          "purged_call_evidence_dropped",
+          "parked_traces",
+          "open_calls"
+        ],
+        "title": "OtlpStatsResponse",
+        "type": "object"
+      },
       "Participant": {
         "additionalProperties": true,
         "properties": {
@@ -5977,6 +6385,221 @@
         "title": "QualitySample",
         "type": "object"
       },
+      "ReadinessResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "projections_pending": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projections Pending"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RecordingCreateRequest": {
+        "additionalProperties": false,
+        "description": "A recording's manifest. Without ``recording_id`` the server mints a UUID, and\nthe request is then not idempotent.",
+        "properties": {
+          "content_type": {
+            "enum": [
+              "audio/wav",
+              "audio/ogg",
+              "audio/mpeg",
+              "audio/webm",
+              "audio/flac"
+            ],
+            "title": "Content Type",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "recording_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recording Id"
+          },
+          "session_key": {
+            "maxLength": 4096,
+            "pattern": "^[^\\x00]*$",
+            "title": "Session Key",
+            "type": "string"
+          },
+          "speaker": {
+            "enum": [
+              "user",
+              "agent",
+              "mixed"
+            ],
+            "title": "Speaker",
+            "type": "string"
+          },
+          "started_at_unix_nano": {
+            "pattern": "^[1-9][0-9]{0,18}$",
+            "title": "Started At Unix Nano",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_key",
+          "speaker",
+          "content_type",
+          "started_at_unix_nano"
+        ],
+        "title": "RecordingCreateRequest",
+        "type": "object"
+      },
+      "RecordingResponse": {
+        "additionalProperties": false,
+        "description": "One recording; ``upload_path`` is relative to the server's base URL.",
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "created_unix_nano": {
+            "title": "Created Unix Nano",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "recording_id": {
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "speaker": {
+            "enum": [
+              "user",
+              "agent",
+              "mixed"
+            ],
+            "title": "Speaker",
+            "type": "string"
+          },
+          "started_at_unix_nano": {
+            "title": "Started At Unix Nano",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "stored",
+              "failed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "stored_unix_nano": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stored Unix Nano"
+          },
+          "upload_path": {
+            "title": "Upload Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "call_id",
+          "state",
+          "upload_path",
+          "speaker",
+          "content_type",
+          "label",
+          "started_at_unix_nano",
+          "size",
+          "sha256",
+          "duration_ms",
+          "created_unix_nano",
+          "stored_unix_nano"
+        ],
+        "title": "RecordingResponse",
+        "type": "object"
+      },
       "RecoveryRecord": {
         "additionalProperties": true,
         "description": "How this artifact was reconstructed, and what that costs its completeness.\n\nAn artifact that was not produced by a live ``close()`` has to be\nstructurally unable to pass as a cleanly closed one, so the declaration is a\ntyped manifest member rather than an attribute. Attribute bags are a weak\nchannel: their keys need a privacy allowlist, and validation cannot\ncross-check an open bag against ``finality``, ``completeness``,\n``session.status``, and coverage \u2014 which is exactly what makes the\ndeclaration enforceable here.\n\nThe commonest source is a checkpoint-journal replay, but not the only one: a\nbrowser capture batch is a partial observation of a session still in\nprogress, so it declares recovery with ``close_observed=False`` too. The\n``method`` names the reconstruction source (``checkpoint_journal``,\n``browser_capture_batch``); the journal coordinates below are present only\nwhen there actually was a journal.\n\nThere is deliberately no \"recovered at\" timestamp. Two reconstructions of\nthe same evidence must produce the same bytes under the same ``bundle_id``,\nor content-addressed ingest would reject the second as a conflict. When\nrecovery ran is an operational fact for the CLI and the diagnostic channel,\nnot evidence.",
@@ -6449,6 +7072,50 @@
           "total_work_ms"
         ],
         "title": "ToolAnalysis",
+        "type": "object"
+      },
+      "TranscriptLineResponse": {
+        "additionalProperties": false,
+        "description": "One transcript line and the span it was read from.",
+        "properties": {
+          "end_unix_nano": {
+            "title": "End Unix Nano",
+            "type": "string"
+          },
+          "span_id": {
+            "title": "Span Id",
+            "type": "string"
+          },
+          "speaker": {
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "title": "Speaker",
+            "type": "string"
+          },
+          "start_unix_nano": {
+            "title": "Start Unix Nano",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "speaker",
+          "text",
+          "start_unix_nano",
+          "end_unix_nano",
+          "trace_id",
+          "span_id"
+        ],
+        "title": "TranscriptLineResponse",
         "type": "object"
       },
       "TurnMetricAvailabilityChangeResponse": {
@@ -6975,7 +7642,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.12.0"
+    "version": "0.14.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7224,7 +7891,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
+                  "$ref": "#/components/schemas/ReadinessResponse"
                 }
               }
             },
@@ -7234,7 +7901,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
+                  "$ref": "#/components/schemas/ReadinessResponse"
                 }
               }
             },
@@ -7663,6 +8330,671 @@
           }
         ],
         "summary": "Create Browser Session"
+      }
+    },
+    "/v1/calls": {
+      "get": {
+        "description": "The authenticated project's calls, newest first evidence first. Pages are keyed on each call's first evidence time and ID, which never change, so paging is stable while calls arrive and receive evidence.",
+        "operationId": "list_calls_endpoint_v1_calls_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "closed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "List Calls Endpoint"
+      }
+    },
+    "/v1/calls/{call_id}": {
+      "delete": {
+        "description": "Purge the call and all its evidence: spans, recordings and their blobs, and every revision incident. Evidence for its session key is refused for LONG_QUIET + 24 h; after that the key starts a new call.",
+        "operationId": "purge_call_endpoint_v1_calls__call_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "title": "Call Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Purge Call Endpoint"
+      },
+      "get": {
+        "description": "One call with its revisions, recordings and transcript. The transcript is read from the call's spans, so an open call's transcript grows as they arrive; under metadata_only it is empty (not_captured_by_preset).",
+        "operationId": "get_call_endpoint_v1_calls__call_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "title": "Call Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Get Call Endpoint"
+      }
+    },
+    "/v1/calls:resolve": {
+      "post": {
+        "description": "The call a session key names in the authenticated project, in the key's current generation. 404 otherwise; the key is never echoed.",
+        "operationId": "resolve_call_endpoint_v1_calls_resolve_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CallResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallResolveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Resolve Call Endpoint"
       }
     },
     "/v1/capture": {
@@ -11358,6 +12690,154 @@
         "summary": "Turn Metrics Endpoint"
       }
     },
+    "/v1/otlp/stats": {
+      "get": {
+        "description": "The authenticated project's OTLP rare-event counters and its parked-trace and open-call gauges.",
+        "operationId": "otlp_stats_endpoint_v1_otlp_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OtlpStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Otlp Stats Endpoint"
+      }
+    },
     "/v1/projects/{project_id}": {
       "delete": {
         "description": "Requires the earshot:project:delete scope. Deletion is idempotent. A 202 response means writes are fenced and cleanup is still pending; repeat the same request until state is deleted.",
@@ -11684,6 +13164,994 @@
           {}
         ],
         "summary": "Read a bounded metadata summary for one project"
+      }
+    },
+    "/v1/recordings": {
+      "post": {
+        "description": "Create a mono recording of the call a session key names, creating the call if needed. The same recording_id with the same manifest answers 200 with the recording; another manifest, or a failed recording, is 409. A call holds at most 16 recordings; a 17th is 409. Without recording_id the server mints one and the request is not idempotent. Upload the bytes to upload_path.",
+        "operationId": "create_recording_endpoint_v1_recordings_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordingCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingResponse"
+                }
+              }
+            },
+            "description": "The recording exists already with this manifest."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Create Recording Endpoint"
+      }
+    },
+    "/v1/recordings/{recording_id}": {
+      "get": {
+        "description": "A recording's metadata, in the authenticated project.",
+        "operationId": "get_recording_endpoint_v1_recordings__recording_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Get Recording Endpoint"
+      }
+    },
+    "/v1/recordings/{recording_id}/content": {
+      "get": {
+        "description": "A stored recording's bytes, streamed through the server on every blob backend. One Range (bytes=a-b, a-, -n) is answered with 206; several are answered whole. A recording that is not stored is 409.",
+        "operationId": "recording_content_endpoint_v1_recordings__recording_id__content_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "audio/flac": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/mpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/ogg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/wav": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/webm": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The whole recording."
+          },
+          "206": {
+            "content": {
+              "audio/flac": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/mpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/ogg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/wav": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "audio/webm": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The one byte range the Range header asked for."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "416": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "The range starts past the end."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Recording Content Endpoint"
+      },
+      "put": {
+        "description": "Upload a pending recording's bytes (mono; Content-Type is the recording's content_type). The body streams to the blob store under a server-chosen key and is stored when it commits; concurrent uploads store exactly one. An upload to a stored recording is only hashed: the same bytes answer 200, other bytes 409. A failed recording is 409. While the body streams, the recording's Call is not closed; a body that sends nothing for 60 s, or is still arriving at the upload hold cap (600 s by default) after the request started, is 408.",
+        "operationId": "upload_recording_endpoint_v1_recordings__recording_id__content_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "RFC 9530 sha-256 digest of the body; a mismatch stores nothing (400).",
+            "in": "header",
+            "name": "Content-Digest",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "audio/flac": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "audio/mpeg": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "audio/ogg": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "audio/wav": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            },
+            "audio/webm": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "408": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Request Timeout"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Upload Recording Endpoint"
+      }
+    },
+    "/v1/traces": {
+      "post": {
+        "description": "OTLP/HTTP trace export (protobuf or JSON). Spans are stored into Calls in one transaction; the reply is sent after it commits. Errors this route raises are google.rpc.Status bodies; host and authentication errors keep Earshot's problem JSON.",
+        "operationId": "otlp_traces_endpoint_v1_traces_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Content-Encoding",
+            "required": false,
+            "schema": {
+              "default": "identity",
+              "enum": [
+                "identity",
+                "gzip",
+                "deflate"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "description": "OTLP/JSON ExportTraceServiceRequest (hex trace and span IDs).",
+                "type": "object"
+              }
+            },
+            "application/x-protobuf": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": false
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              },
+              "application/x-protobuf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Stored. An ExportTraceServiceResponse in the request's encoding: empty, or with partial_success.rejected_spans and error_message when spans were rejected."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "google.rpc.Status: code (gRPC code), message; details is empty.",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "application/x-protobuf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The body is not an ExportTraceServiceRequest."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "google.rpc.Status: code (gRPC code), message; details is empty.",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "application/x-protobuf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The project began deletion before the spans were written."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "google.rpc.Status: code (gRPC code), message; details is empty.",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "application/x-protobuf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The body is over its size bound."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "google.rpc.Status: code (gRPC code), message; details is empty.",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "application/x-protobuf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Unsupported Content-Type or Content-Encoding."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "description": "google.rpc.Status: code (gRPC code), message; details is empty.",
+                  "properties": {
+                    "code": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "application/x-protobuf": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Busy: retry after Retry-After seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds before the request should be retried.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Otlp Traces Endpoint"
       }
     }
   }

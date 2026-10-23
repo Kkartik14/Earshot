@@ -1,0 +1,801 @@
+{
+  "fixtures": {
+    "3c2f0b3": {
+      "analyzer_version": "0.6.0",
+      "api_keys": {
+        "active": {
+          "credential": "earshot_sk_bf9822644d6df942.NWyuG6oQFOkdiISy6emrdKVLAkyOZaDcVecNA6e22ho",
+          "key_id": "bf9822644d6df942"
+        },
+        "revoked": {
+          "credential": "earshot_sk_d344a32726c3727f.hraa4yN059_C-sJvBsUn6-EggGNx7RctfbMZ_CjSyaA",
+          "key_id": "d344a32726c3727f"
+        }
+      },
+      "commit": "3c2f0b3d2e0efe508e6477df596d1c79f79fbd9d",
+      "connector": {
+        "endpoint_id": "upgrade_fixture_connector",
+        "provider": "vapi"
+      },
+      "delivery": {
+        "bundle_id": "fault-barge-in",
+        "receipt_id": "receipt_xUPKyx4V9F0ewwHB3KGmkK3h"
+      },
+      "directory": "3c2f0b3",
+      "external_identity": {
+        "bundle_id": "fault-barge-in",
+        "namespace": "call_id",
+        "value": "upgrade-fixture-call",
+        "value_hmac": "983428f93e22ce915fa68d733bd9c8ec7869af311a027e2b1430ff89f9a46172"
+      },
+      "external_reference": {
+        "bundle_id": "fault-barge-in",
+        "external_id": "ticket-1",
+        "namespace": "upgrade-fixture",
+        "record_type": "ticket"
+      },
+      "files": {
+        "earshot.sqlite3": {
+          "sha256": "dd1cf5bf8527e0ccb6a0e25152946cb8c73473c4a07d5b43457a0b1df9226138",
+          "size": 393216
+        },
+        "instance-correlation.key": {
+          "sha256": "bfb9d1b4eeaf09e05eabd8174b245792e857f995d77eaecb674c5cc1dbc25695",
+          "size": 32
+        }
+      },
+      "incidents": [
+        {
+          "bundle_id": "bundle-1",
+          "digest": "4b25089503a6c47d065145278d5857d9e130928e2e9c2a0137cfb0e629e75097",
+          "project_id": "default",
+          "source": "fixtures/valid/complete.json"
+        },
+        {
+          "bundle_id": "fault-barge-in",
+          "digest": "3bba13b005513a7efbabcc1667aa3138985d8215c8188ffbd1ee33b3c67ea5c9",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/barge_in.incident.json"
+        },
+        {
+          "bundle_id": "fault-device-unavailable",
+          "digest": "bdf3e1a07a47550185b237f04d536e38e325b1cd1c61e3d69b6f5611e35a807d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/device_unavailable.incident.json"
+        },
+        {
+          "bundle_id": "fault-false-interruption",
+          "digest": "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/false_interruption.incident.json"
+        },
+        {
+          "bundle_id": "fault-fast-endpointing",
+          "digest": "6f584fde7a78209b230dd065ee15f6acc8a76d931ed14bf52d47865103817ef0",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/fast_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-full-barge-in-chain",
+          "digest": "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/full_barge_in_chain.incident.json"
+        },
+        {
+          "bundle_id": "fault-llm-delay",
+          "digest": "c0a220965658050be02245a75a901bf930bacb60e472593dfb59f4bd8e22790a",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/llm_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-native-s2s-interruption",
+          "digest": "82fcd362c51047c4f3c85fbe92d18ca8671de06c0881246b3b8ef49956723f1d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/native_s2s_interruption.incident.json"
+        },
+        {
+          "bundle_id": "fault-privacy-opt-out",
+          "digest": "99e1644ecb66f604f387fd90621836713165c51246b2cfb04f42e5683fb9d635",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/privacy_opt_out.incident.json"
+        },
+        {
+          "bundle_id": "fault-render-delay",
+          "digest": "7f86d3e28e16e2f687fc9ae95e5da88faf0bb909aecc349dc84d451241d7cb2e",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/render_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-slow-endpointing",
+          "digest": "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/slow_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-stale-buffer-playback",
+          "digest": "c4efa073f508f2d591089eb663b5332d9f8fb2f4fee8d529b4e5261cb88eb4f2",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/stale_buffer_playback.incident.json"
+        },
+        {
+          "bundle_id": "fault-stt-delay",
+          "digest": "c9676bc847fdea0e2970eed076ddf4560a10329b3492b5c126980b32245cfecd",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/stt_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-telephony-handoff",
+          "digest": "7fecd9d7604c5e2186657017afe03a69a1784056909d0fb48e03ca82b2e8d1da",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/telephony_handoff.incident.json"
+        },
+        {
+          "bundle_id": "fault-tool-timeout-retry",
+          "digest": "c08a99f5455f78db0dd97cfd8119d0088f9273c6158451f872a75b5867fe7dea",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tool_timeout_retry.incident.json"
+        },
+        {
+          "bundle_id": "fault-tts-delay",
+          "digest": "f324bca961501c47b6b9d3dd0cf685425dede1a82fac4396913d5b3003b33c4d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tts_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-webrtc-degradation",
+          "digest": "27698fb6bd7f637cfbf5df8b9415911d293871f98c93233f1e1d263117f94817",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/webrtc_degradation.incident.json"
+        },
+        {
+          "bundle_id": "fault-websocket-reconnect",
+          "digest": "9e8f2b147a9c457a019109de7f8e008f05bba21f012fd94f6f7376f1305c2e17",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/websocket_reconnect.incident.json"
+        }
+      ],
+      "objects": {
+        "27698fb6bd7f637cfbf5df8b9415911d293871f98c93233f1e1d263117f94817": 3906,
+        "3bba13b005513a7efbabcc1667aa3138985d8215c8188ffbd1ee33b3c67ea5c9": 8215,
+        "4b25089503a6c47d065145278d5857d9e130928e2e9c2a0137cfb0e629e75097": 11543,
+        "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa": 4786,
+        "6f584fde7a78209b230dd065ee15f6acc8a76d931ed14bf52d47865103817ef0": 5717,
+        "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625": 5719,
+        "7f86d3e28e16e2f687fc9ae95e5da88faf0bb909aecc349dc84d451241d7cb2e": 12802,
+        "7fecd9d7604c5e2186657017afe03a69a1784056909d0fb48e03ca82b2e8d1da": 7218,
+        "82fcd362c51047c4f3c85fbe92d18ca8671de06c0881246b3b8ef49956723f1d": 4481,
+        "99e1644ecb66f604f387fd90621836713165c51246b2cfb04f42e5683fb9d635": 3980,
+        "9e8f2b147a9c457a019109de7f8e008f05bba21f012fd94f6f7376f1305c2e17": 7521,
+        "bdf3e1a07a47550185b237f04d536e38e325b1cd1c61e3d69b6f5611e35a807d": 4310,
+        "c08a99f5455f78db0dd97cfd8119d0088f9273c6158451f872a75b5867fe7dea": 6100,
+        "c0a220965658050be02245a75a901bf930bacb60e472593dfb59f4bd8e22790a": 10818,
+        "c4efa073f508f2d591089eb663b5332d9f8fb2f4fee8d529b4e5261cb88eb4f2": 4319,
+        "c9676bc847fdea0e2970eed076ddf4560a10329b3492b5c126980b32245cfecd": 10820,
+        "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0": 12205,
+        "f324bca961501c47b6b9d3dd0cf685425dede1a82fac4396913d5b3003b33c4d": 10815
+      },
+      "project": {
+        "display_name": "Upgrade fixture",
+        "project_id": "upgrade-fixture"
+      },
+      "purged": {
+        "bundle_id": "fixture-minimal",
+        "digest": "92a4a8bec04ee7f64762c4696d77725a29ec77b507866e3dd05b6d667049581d",
+        "project_id": "default",
+        "source": "fixtures/valid/minimal.json"
+      },
+      "revision": "3c2f0b3",
+      "schema_version": 19,
+      "table_rows": {
+        "analyses": 18,
+        "api_keys": 2,
+        "causal_links": 6,
+        "connectors": 1,
+        "delivery_receipts": 1,
+        "events": 58,
+        "external_identities": 1,
+        "incident_external_references": 1,
+        "incident_ingest_order": 18,
+        "incidents": 18,
+        "legacy_deletion_reviews": 0,
+        "operations": 54,
+        "pending_ingests": 0,
+        "pending_object_deletions": 0,
+        "projects": 2,
+        "storage_maintenance": 1,
+        "tombstones": 1,
+        "turn_metrics": 17
+      }
+    },
+    "553cecf": {
+      "analyzer_version": "0.6.0",
+      "api_keys": {
+        "active": {
+          "credential": "earshot_sk_e61c7f44611dd45f.C99QU7qqUrDKqGrVmZM8QHXwejNfjtXw9OMNJFM5zNA",
+          "key_id": "e61c7f44611dd45f"
+        },
+        "revoked": {
+          "credential": "earshot_sk_719abc9866f09512.NSRy8b2a2HSgJ3a3e5xRrbwMhvJt0G-pG1ecrBrLoCA",
+          "key_id": "719abc9866f09512"
+        }
+      },
+      "commit": "553cecf67b4a1d8fcfff620fa3afbbc64a429f45",
+      "connector": {
+        "endpoint_id": "upgrade_fixture_connector",
+        "provider": "vapi"
+      },
+      "delivery": {
+        "bundle_id": "fault-barge-in",
+        "receipt_id": "receipt_v4m9BR4pum_SbFstoWA1uBIi"
+      },
+      "directory": "553cecf",
+      "external_identity": {
+        "bundle_id": "fault-barge-in",
+        "namespace": "call_id",
+        "value": "upgrade-fixture-call",
+        "value_hmac": "f167140490aaa73f90380513dda9f828c2182af89aa35c4a1c148824df62c235"
+      },
+      "external_reference": {
+        "bundle_id": "fault-barge-in",
+        "external_id": "ticket-1",
+        "namespace": "upgrade-fixture",
+        "record_type": "ticket"
+      },
+      "files": {
+        "earshot.sqlite3": {
+          "sha256": "71302f2ecde7d9ead99793bca6b766c3285fea0ef68556023c31dc27dbb088a4",
+          "size": 376832
+        },
+        "instance-correlation.key": {
+          "sha256": "eccf799042e97204c1487672c45c6199be4602919af64de437d6c1e19f6a702d",
+          "size": 32
+        }
+      },
+      "incidents": [
+        {
+          "bundle_id": "bundle-1",
+          "digest": "4b25089503a6c47d065145278d5857d9e130928e2e9c2a0137cfb0e629e75097",
+          "project_id": "default",
+          "source": "fixtures/valid/complete.json"
+        },
+        {
+          "bundle_id": "fault-barge-in",
+          "digest": "3bba13b005513a7efbabcc1667aa3138985d8215c8188ffbd1ee33b3c67ea5c9",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/barge_in.incident.json"
+        },
+        {
+          "bundle_id": "fault-device-unavailable",
+          "digest": "bdf3e1a07a47550185b237f04d536e38e325b1cd1c61e3d69b6f5611e35a807d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/device_unavailable.incident.json"
+        },
+        {
+          "bundle_id": "fault-false-interruption",
+          "digest": "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/false_interruption.incident.json"
+        },
+        {
+          "bundle_id": "fault-fast-endpointing",
+          "digest": "6f584fde7a78209b230dd065ee15f6acc8a76d931ed14bf52d47865103817ef0",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/fast_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-full-barge-in-chain",
+          "digest": "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/full_barge_in_chain.incident.json"
+        },
+        {
+          "bundle_id": "fault-llm-delay",
+          "digest": "c0a220965658050be02245a75a901bf930bacb60e472593dfb59f4bd8e22790a",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/llm_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-native-s2s-interruption",
+          "digest": "82fcd362c51047c4f3c85fbe92d18ca8671de06c0881246b3b8ef49956723f1d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/native_s2s_interruption.incident.json"
+        },
+        {
+          "bundle_id": "fault-privacy-opt-out",
+          "digest": "99e1644ecb66f604f387fd90621836713165c51246b2cfb04f42e5683fb9d635",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/privacy_opt_out.incident.json"
+        },
+        {
+          "bundle_id": "fault-render-delay",
+          "digest": "7f86d3e28e16e2f687fc9ae95e5da88faf0bb909aecc349dc84d451241d7cb2e",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/render_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-slow-endpointing",
+          "digest": "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/slow_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-stale-buffer-playback",
+          "digest": "c4efa073f508f2d591089eb663b5332d9f8fb2f4fee8d529b4e5261cb88eb4f2",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/stale_buffer_playback.incident.json"
+        },
+        {
+          "bundle_id": "fault-stt-delay",
+          "digest": "c9676bc847fdea0e2970eed076ddf4560a10329b3492b5c126980b32245cfecd",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/stt_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-telephony-handoff",
+          "digest": "7fecd9d7604c5e2186657017afe03a69a1784056909d0fb48e03ca82b2e8d1da",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/telephony_handoff.incident.json"
+        },
+        {
+          "bundle_id": "fault-tool-timeout-retry",
+          "digest": "c08a99f5455f78db0dd97cfd8119d0088f9273c6158451f872a75b5867fe7dea",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tool_timeout_retry.incident.json"
+        },
+        {
+          "bundle_id": "fault-tts-delay",
+          "digest": "f324bca961501c47b6b9d3dd0cf685425dede1a82fac4396913d5b3003b33c4d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tts_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-webrtc-degradation",
+          "digest": "27698fb6bd7f637cfbf5df8b9415911d293871f98c93233f1e1d263117f94817",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/webrtc_degradation.incident.json"
+        },
+        {
+          "bundle_id": "fault-websocket-reconnect",
+          "digest": "9e8f2b147a9c457a019109de7f8e008f05bba21f012fd94f6f7376f1305c2e17",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/websocket_reconnect.incident.json"
+        }
+      ],
+      "objects": {
+        "27698fb6bd7f637cfbf5df8b9415911d293871f98c93233f1e1d263117f94817": 3906,
+        "3bba13b005513a7efbabcc1667aa3138985d8215c8188ffbd1ee33b3c67ea5c9": 8215,
+        "4b25089503a6c47d065145278d5857d9e130928e2e9c2a0137cfb0e629e75097": 11543,
+        "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa": 4786,
+        "6f584fde7a78209b230dd065ee15f6acc8a76d931ed14bf52d47865103817ef0": 5717,
+        "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625": 5719,
+        "7f86d3e28e16e2f687fc9ae95e5da88faf0bb909aecc349dc84d451241d7cb2e": 12802,
+        "7fecd9d7604c5e2186657017afe03a69a1784056909d0fb48e03ca82b2e8d1da": 7218,
+        "82fcd362c51047c4f3c85fbe92d18ca8671de06c0881246b3b8ef49956723f1d": 4481,
+        "99e1644ecb66f604f387fd90621836713165c51246b2cfb04f42e5683fb9d635": 3980,
+        "9e8f2b147a9c457a019109de7f8e008f05bba21f012fd94f6f7376f1305c2e17": 7521,
+        "bdf3e1a07a47550185b237f04d536e38e325b1cd1c61e3d69b6f5611e35a807d": 4310,
+        "c08a99f5455f78db0dd97cfd8119d0088f9273c6158451f872a75b5867fe7dea": 6100,
+        "c0a220965658050be02245a75a901bf930bacb60e472593dfb59f4bd8e22790a": 10818,
+        "c4efa073f508f2d591089eb663b5332d9f8fb2f4fee8d529b4e5261cb88eb4f2": 4319,
+        "c9676bc847fdea0e2970eed076ddf4560a10329b3492b5c126980b32245cfecd": 10820,
+        "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0": 12205,
+        "f324bca961501c47b6b9d3dd0cf685425dede1a82fac4396913d5b3003b33c4d": 10815
+      },
+      "project": {
+        "display_name": "Upgrade fixture",
+        "project_id": "upgrade-fixture"
+      },
+      "purged": {
+        "bundle_id": "fixture-minimal",
+        "digest": "92a4a8bec04ee7f64762c4696d77725a29ec77b507866e3dd05b6d667049581d",
+        "project_id": "default",
+        "source": "fixtures/valid/minimal.json"
+      },
+      "revision": "553cecf",
+      "schema_version": 17,
+      "table_rows": {
+        "analyses": 18,
+        "api_keys": 2,
+        "causal_links": 6,
+        "connectors": 1,
+        "delivery_receipts": 1,
+        "events": 58,
+        "external_identities": 1,
+        "incident_external_references": 1,
+        "incident_ingest_order": 18,
+        "incidents": 18,
+        "legacy_deletion_reviews": 0,
+        "operations": 54,
+        "pending_object_deletions": 0,
+        "projects": 2,
+        "storage_maintenance": 1,
+        "tombstones": 1,
+        "turn_metrics": 17
+      }
+    },
+    "86c4c9c": {
+      "analyzer_version": "0.6.0",
+      "api_keys": {
+        "active": {
+          "credential": "earshot_sk_baed555f1a49f59c.jFKlVSezbTN03ROiQ56QFrILbAStJMH0DoJibzdpVvg",
+          "key_id": "baed555f1a49f59c"
+        },
+        "revoked": {
+          "credential": "earshot_sk_19b7ac5adc5b2fe2.-lLHS5NqO6I0JMkTL7XxQNnXjt6FFNsTN8J62v9991A",
+          "key_id": "19b7ac5adc5b2fe2"
+        }
+      },
+      "commit": "86c4c9c6d4616948f5744237f82c1c5a495df30e",
+      "connector": {
+        "endpoint_id": "upgrade_fixture_connector",
+        "provider": "vapi"
+      },
+      "delivery": {
+        "bundle_id": "fault-barge-in",
+        "receipt_id": "receipt_2oe6cknuLrrXmb1EFes9tYMs"
+      },
+      "directory": "86c4c9c",
+      "external_identity": {
+        "bundle_id": "fault-barge-in",
+        "namespace": "call_id",
+        "value": "upgrade-fixture-call",
+        "value_hmac": "29a0240a81b7d7a0ef969ea5b42c7980ee78ad845719bfbf00cc952080703d01"
+      },
+      "external_reference": {
+        "bundle_id": "fault-barge-in",
+        "external_id": "ticket-1",
+        "namespace": "upgrade-fixture",
+        "record_type": "ticket"
+      },
+      "files": {
+        "earshot.sqlite3": {
+          "sha256": "bd30d154ac92b85d2e61bff500357f139573d544510fc13f7d47745d415f0656",
+          "size": 393216
+        },
+        "instance-correlation.key": {
+          "sha256": "29b6c87dd472704588370e8a5ab6f8cb23059800af819e5b6e39abba9a2aed1d",
+          "size": 32
+        }
+      },
+      "incidents": [
+        {
+          "bundle_id": "bundle-1",
+          "digest": "4b25089503a6c47d065145278d5857d9e130928e2e9c2a0137cfb0e629e75097",
+          "project_id": "default",
+          "source": "fixtures/valid/complete.json"
+        },
+        {
+          "bundle_id": "fault-barge-in",
+          "digest": "3bba13b005513a7efbabcc1667aa3138985d8215c8188ffbd1ee33b3c67ea5c9",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/barge_in.incident.json"
+        },
+        {
+          "bundle_id": "fault-device-unavailable",
+          "digest": "bdf3e1a07a47550185b237f04d536e38e325b1cd1c61e3d69b6f5611e35a807d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/device_unavailable.incident.json"
+        },
+        {
+          "bundle_id": "fault-false-interruption",
+          "digest": "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/false_interruption.incident.json"
+        },
+        {
+          "bundle_id": "fault-fast-endpointing",
+          "digest": "6f584fde7a78209b230dd065ee15f6acc8a76d931ed14bf52d47865103817ef0",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/fast_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-full-barge-in-chain",
+          "digest": "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/full_barge_in_chain.incident.json"
+        },
+        {
+          "bundle_id": "fault-llm-delay",
+          "digest": "c0a220965658050be02245a75a901bf930bacb60e472593dfb59f4bd8e22790a",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/llm_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-native-s2s-interruption",
+          "digest": "82fcd362c51047c4f3c85fbe92d18ca8671de06c0881246b3b8ef49956723f1d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/native_s2s_interruption.incident.json"
+        },
+        {
+          "bundle_id": "fault-privacy-opt-out",
+          "digest": "99e1644ecb66f604f387fd90621836713165c51246b2cfb04f42e5683fb9d635",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/privacy_opt_out.incident.json"
+        },
+        {
+          "bundle_id": "fault-render-delay",
+          "digest": "7f86d3e28e16e2f687fc9ae95e5da88faf0bb909aecc349dc84d451241d7cb2e",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/render_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-slow-endpointing",
+          "digest": "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/slow_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-stale-buffer-playback",
+          "digest": "c4efa073f508f2d591089eb663b5332d9f8fb2f4fee8d529b4e5261cb88eb4f2",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/stale_buffer_playback.incident.json"
+        },
+        {
+          "bundle_id": "fault-stt-delay",
+          "digest": "c9676bc847fdea0e2970eed076ddf4560a10329b3492b5c126980b32245cfecd",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/stt_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-telephony-handoff",
+          "digest": "7fecd9d7604c5e2186657017afe03a69a1784056909d0fb48e03ca82b2e8d1da",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/telephony_handoff.incident.json"
+        },
+        {
+          "bundle_id": "fault-tool-timeout-retry",
+          "digest": "c08a99f5455f78db0dd97cfd8119d0088f9273c6158451f872a75b5867fe7dea",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tool_timeout_retry.incident.json"
+        },
+        {
+          "bundle_id": "fault-tts-delay",
+          "digest": "f324bca961501c47b6b9d3dd0cf685425dede1a82fac4396913d5b3003b33c4d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tts_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-webrtc-degradation",
+          "digest": "27698fb6bd7f637cfbf5df8b9415911d293871f98c93233f1e1d263117f94817",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/webrtc_degradation.incident.json"
+        },
+        {
+          "bundle_id": "fault-websocket-reconnect",
+          "digest": "9e8f2b147a9c457a019109de7f8e008f05bba21f012fd94f6f7376f1305c2e17",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/websocket_reconnect.incident.json"
+        }
+      ],
+      "objects": {
+        "27698fb6bd7f637cfbf5df8b9415911d293871f98c93233f1e1d263117f94817": 3906,
+        "3bba13b005513a7efbabcc1667aa3138985d8215c8188ffbd1ee33b3c67ea5c9": 8215,
+        "4b25089503a6c47d065145278d5857d9e130928e2e9c2a0137cfb0e629e75097": 11543,
+        "57fe56ab64bddd9e9224b2cb4bbf65e6ce29690821e5cd44914259819a11d8aa": 4786,
+        "6f584fde7a78209b230dd065ee15f6acc8a76d931ed14bf52d47865103817ef0": 5717,
+        "7767455ea9635c1b4b2d548d2ae2ff3001da8cbc0c022459b2f29321b14c4625": 5719,
+        "7f86d3e28e16e2f687fc9ae95e5da88faf0bb909aecc349dc84d451241d7cb2e": 12802,
+        "7fecd9d7604c5e2186657017afe03a69a1784056909d0fb48e03ca82b2e8d1da": 7218,
+        "82fcd362c51047c4f3c85fbe92d18ca8671de06c0881246b3b8ef49956723f1d": 4481,
+        "99e1644ecb66f604f387fd90621836713165c51246b2cfb04f42e5683fb9d635": 3980,
+        "9e8f2b147a9c457a019109de7f8e008f05bba21f012fd94f6f7376f1305c2e17": 7521,
+        "bdf3e1a07a47550185b237f04d536e38e325b1cd1c61e3d69b6f5611e35a807d": 4310,
+        "c08a99f5455f78db0dd97cfd8119d0088f9273c6158451f872a75b5867fe7dea": 6100,
+        "c0a220965658050be02245a75a901bf930bacb60e472593dfb59f4bd8e22790a": 10818,
+        "c4efa073f508f2d591089eb663b5332d9f8fb2f4fee8d529b4e5261cb88eb4f2": 4319,
+        "c9676bc847fdea0e2970eed076ddf4560a10329b3492b5c126980b32245cfecd": 10820,
+        "d713f5077d478cf400ffee6d491b0885bb9919d3ee3fe881c40d404ea43dc3a0": 12205,
+        "f324bca961501c47b6b9d3dd0cf685425dede1a82fac4396913d5b3003b33c4d": 10815
+      },
+      "project": {
+        "display_name": "Upgrade fixture",
+        "project_id": "upgrade-fixture"
+      },
+      "purged": {
+        "bundle_id": "fixture-minimal",
+        "digest": "92a4a8bec04ee7f64762c4696d77725a29ec77b507866e3dd05b6d667049581d",
+        "project_id": "default",
+        "source": "fixtures/valid/minimal.json"
+      },
+      "revision": "86c4c9c",
+      "schema_version": 18,
+      "table_rows": {
+        "analyses": 18,
+        "api_keys": 2,
+        "causal_links": 6,
+        "connectors": 1,
+        "delivery_receipts": 1,
+        "events": 58,
+        "external_identities": 1,
+        "incident_external_references": 1,
+        "incident_ingest_order": 18,
+        "incidents": 18,
+        "legacy_deletion_reviews": 0,
+        "operations": 54,
+        "pending_ingests": 0,
+        "pending_object_deletions": 0,
+        "projects": 2,
+        "storage_maintenance": 1,
+        "tombstones": 1,
+        "turn_metrics": 17
+      }
+    },
+    "v0.1.0": {
+      "analyzer_version": "0.1.0",
+      "api_keys": {
+        "active": {
+          "credential": "earshot_sk_29e577e79abd7775.LzfcO9DZzVWME1e_UVdmXlterO5F094s5Wa-PhlNi5k",
+          "key_id": "29e577e79abd7775"
+        },
+        "revoked": {
+          "credential": "earshot_sk_3a4c7d6be10b5d4c.ZN5lxKRWGaF0jr03okQKfvrHF_RViguOUHBEej8KSQw",
+          "key_id": "3a4c7d6be10b5d4c"
+        }
+      },
+      "commit": "ad0f54542ab8c8b1f80818ac8212d5871fb4d9c6",
+      "connector": {
+        "endpoint_id": "upgrade_fixture_connector",
+        "provider": "vapi"
+      },
+      "delivery": {
+        "bundle_id": "fault-barge-in",
+        "receipt_id": "receipt_Jbncd5YnQrnWkB8yKs_yrlOa"
+      },
+      "directory": "v0.1.0",
+      "external_identity": {
+        "bundle_id": "fault-barge-in",
+        "namespace": "call_id",
+        "value": "upgrade-fixture-call",
+        "value_hmac": "3e2122de71388bf6be9638ea9868be9cf536920f770b277784c899043df019ce"
+      },
+      "external_reference": null,
+      "files": {
+        "earshot.sqlite3": {
+          "sha256": "2bf96f8e4ddf3f29ff6b1fae06aabd82f237259f01beaa8a47e07cdc736a8681",
+          "size": 270336
+        },
+        "instance-correlation.key": {
+          "sha256": "6c5eee9a4902bec7c5ed25ed052189bf0da87787995f26fec6331a1652c01de6",
+          "size": 32
+        }
+      },
+      "incidents": [
+        {
+          "bundle_id": "bundle-1",
+          "digest": "2cb2b0b01267515e00b75f6b41b887edd046982fb8288e0084a3b7b9817f3e66",
+          "project_id": "default",
+          "source": "fixtures/valid/complete.json"
+        },
+        {
+          "bundle_id": "fault-barge-in",
+          "digest": "83def0d47b00eceeebc0216e97e234aab3e14f3b395a8eff1c59225412425e36",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/barge_in.incident.json"
+        },
+        {
+          "bundle_id": "fault-device-unavailable",
+          "digest": "cb1a3b6521314bce4e1f5858d321f66743c9ed9ecf0d7c3b9f2d782a319d8d1d",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/device_unavailable.incident.json"
+        },
+        {
+          "bundle_id": "fault-fast-endpointing",
+          "digest": "75b227e1ffab2accb73e48305580aa400f3457ec5b7f3877810ede7df26d2993",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/fast_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-llm-delay",
+          "digest": "5aaca40e1c7e37e6f17716fd9a30114a0e8f18fc753f46a97473d9b1ff4c3a74",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/llm_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-native-s2s-interruption",
+          "digest": "f0b981b0655a9138ac256ec7c1c800fbf16c14538b229ce55f90dea56e078fce",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/native_s2s_interruption.incident.json"
+        },
+        {
+          "bundle_id": "fault-privacy-opt-out",
+          "digest": "8b36d221fee3b22bfc78a55d9d41ff4c76f934f69dadae8c33680fc0a46954bd",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/privacy_opt_out.incident.json"
+        },
+        {
+          "bundle_id": "fault-slow-endpointing",
+          "digest": "ff29b0ba0452dfd770744539ca613bbcdd331a323b96969c7e6f27fdbe5950b3",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/slow_endpointing.incident.json"
+        },
+        {
+          "bundle_id": "fault-stt-delay",
+          "digest": "cf411a964326ea028d87837f879b482a6b2f7bb6c4892f8596e08623eff3ffdf",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/stt_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-telephony-handoff",
+          "digest": "44c2c9794510becdceeed5af30cd1c05e13a9e5ccd5297f325c7ed68a88b835f",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/telephony_handoff.incident.json"
+        },
+        {
+          "bundle_id": "fault-tool-timeout-retry",
+          "digest": "c3726fa46e61457ee94a7664cfe652053ed25815b26e0f932a0bdcfaa5879098",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tool_timeout_retry.incident.json"
+        },
+        {
+          "bundle_id": "fault-tts-delay",
+          "digest": "3575c22c61af8f1f44428fadbccc895457e96ad0bb213eb2e3e1ad245e4d3a80",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/tts_delay.incident.json"
+        },
+        {
+          "bundle_id": "fault-webrtc-degradation",
+          "digest": "6c9811d63f0adede82a049ba07e597f7a524aa3e742359b421cf814b6ea6ce1b",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/webrtc_degradation.incident.json"
+        },
+        {
+          "bundle_id": "fault-websocket-reconnect",
+          "digest": "fb2d2eedf7e6c38de8c1679da7418d6d35ff495ad9e4f254a745ac2696aecf86",
+          "project_id": "upgrade-fixture",
+          "source": "fixtures/faults/websocket_reconnect.incident.json"
+        }
+      ],
+      "objects": {
+        "2cb2b0b01267515e00b75f6b41b887edd046982fb8288e0084a3b7b9817f3e66": 11250,
+        "3575c22c61af8f1f44428fadbccc895457e96ad0bb213eb2e3e1ad245e4d3a80": 10794,
+        "44c2c9794510becdceeed5af30cd1c05e13a9e5ccd5297f325c7ed68a88b835f": 7197,
+        "5aaca40e1c7e37e6f17716fd9a30114a0e8f18fc753f46a97473d9b1ff4c3a74": 10797,
+        "6c9811d63f0adede82a049ba07e597f7a524aa3e742359b421cf814b6ea6ce1b": 3885,
+        "75b227e1ffab2accb73e48305580aa400f3457ec5b7f3877810ede7df26d2993": 5696,
+        "83def0d47b00eceeebc0216e97e234aab3e14f3b395a8eff1c59225412425e36": 8194,
+        "8b36d221fee3b22bfc78a55d9d41ff4c76f934f69dadae8c33680fc0a46954bd": 3959,
+        "c3726fa46e61457ee94a7664cfe652053ed25815b26e0f932a0bdcfaa5879098": 6079,
+        "cb1a3b6521314bce4e1f5858d321f66743c9ed9ecf0d7c3b9f2d782a319d8d1d": 4289,
+        "cf411a964326ea028d87837f879b482a6b2f7bb6c4892f8596e08623eff3ffdf": 10799,
+        "f0b981b0655a9138ac256ec7c1c800fbf16c14538b229ce55f90dea56e078fce": 4460,
+        "fb2d2eedf7e6c38de8c1679da7418d6d35ff495ad9e4f254a745ac2696aecf86": 7500,
+        "ff29b0ba0452dfd770744539ca613bbcdd331a323b96969c7e6f27fdbe5950b3": 5698
+      },
+      "project": {
+        "display_name": "Upgrade fixture",
+        "project_id": "upgrade-fixture"
+      },
+      "purged": {
+        "bundle_id": "fixture-minimal",
+        "digest": "c7507aa598c99cacf71b7f7424479dcb833bc5e8ad86e90d1f60441f161ca625",
+        "project_id": "default",
+        "source": "fixtures/valid/minimal.json"
+      },
+      "revision": "v0.1.0",
+      "schema_version": 10,
+      "table_rows": {
+        "analyses": 14,
+        "api_keys": 2,
+        "causal_links": 5,
+        "connectors": 1,
+        "delivery_receipts": 1,
+        "events": 39,
+        "external_identities": 1,
+        "incidents": 14,
+        "operations": 41,
+        "projects": 2,
+        "tombstones": 1,
+        "turn_metrics": 13
+      }
+    }
+  },
+  "generator": {
+    "command": ".venv/bin/python scripts/make_upgrade_fixtures.py",
+    "packages": {
+      "protobuf": "6.33.6",
+      "pydantic": "2.14.0",
+      "rfc8785": "0.1.4"
+    },
+    "python": "3.11.15"
+  }
+}

@@ -4,8 +4,6 @@ FROM node:22-slim AS web
 WORKDIR /repo
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/analysis/package.json ./packages/analysis/package.json
-COPY packages/schema/package.json ./packages/schema/package.json
 COPY packages/viewer-ui/package.json ./packages/viewer-ui/package.json
 COPY apps/viewer/package.json ./apps/viewer/package.json
 RUN pnpm install --frozen-lockfile \
@@ -30,7 +28,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY packages/sdk-python ./packages/sdk-python
-RUN python -m pip wheel --wheel-dir /wheels '.[server]'
+# The server image runs on SQLite or Postgres and stores blobs on disk or in S3.
+RUN python -m pip wheel --wheel-dir /wheels '.[server,postgres,s3]'
 
 # 3) Runtime: one process serving the SPA and the API from a single port.
 FROM python:3.11-slim AS runtime
@@ -46,9 +45,10 @@ ENV EARSHOT_DATA_DIR=/data \
 RUN groupadd --system earshot \
     && useradd --system --gid earshot --home-dir /nonexistent --shell /usr/sbin/nologin earshot \
     && install --directory --owner earshot --group earshot --mode 0700 /data
-COPY --from=builder /wheels /wheels
-RUN python -m pip install --no-index --find-links=/wheels 'earshot-observability[server]' \
-    && rm -rf /wheels
+# Install from the builder's wheels through a bind mount, so they never become a layer.
+RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
+    python -m pip install --no-index --find-links=/wheels \
+    'earshot-observability[server,postgres,s3]'
 # The built viewer, baked in and served from EARSHOT_WEB_DIR.
 COPY --from=web /repo/apps/viewer/dist /app/web
 
@@ -60,3 +60,11 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
 
 ENTRYPOINT ["earshot"]
 CMD ["serve"]
+
+# Declared last so a new version only changes image metadata, not cached layers.
+ARG EARSHOT_VERSION=dev
+LABEL org.opencontainers.image.title="Earshot" \
+    org.opencontainers.image.description="Self-hosted Earshot server and viewer for voice-agent observability" \
+    org.opencontainers.image.source="https://github.com/Kkartik14/Earshot" \
+    org.opencontainers.image.licenses="Apache-2.0" \
+    org.opencontainers.image.version="${EARSHOT_VERSION}"

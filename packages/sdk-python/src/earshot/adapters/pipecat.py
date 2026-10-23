@@ -32,6 +32,7 @@ from .base import (
     DEFAULT_ADAPTER_TRACKING_ENTRIES,
     AdapterDependencyError,
     AdapterTrackingStatus,
+    otel_id,
     stable_id,
     validate_tracking_limit,
     value,
@@ -141,24 +142,36 @@ def _classify(span: object) -> str:
     return "framework_operation"
 
 
-def _normalize_native_attributes(span: object, attributes: dict[str, object]) -> dict[str, object]:
-    """Give ambiguous Pipecat payload keys an explicit governed namespace."""
+def _native_attribute_names(operation: str) -> dict[str, str]:
+    """The governed names of an operation's ambiguous Pipecat payload keys."""
 
-    normalized = dict(attributes)
-    operation = _classify(span)
-    mappings: dict[str, str] = {}
     if operation in {"llm", "agent"}:
-        mappings = {
+        return {
             "input": "gen_ai.input",
             "output": "gen_ai.output.messages",
             "tools": "gen_ai.input.tools",
         }
-    elif operation == "tool":
-        mappings = {"input": "tool.arguments", "output": "tool.result"}
-    elif operation in {"stt", "tts", "turn_detection"}:
+    if operation == "tool":
+        return {"input": "tool.arguments", "output": "tool.result"}
+    if operation in {"stt", "tts", "turn_detection"}:
         mappings = {"text": "speech.text"}
         if operation == "tts":
             mappings["input"] = "speech.text"
+        return mappings
+    return {}
+
+
+def native_attribute_name(span: object, key: str) -> str:
+    """The name ``consume_span`` records the span's native attribute ``key`` under."""
+
+    return _native_attribute_names(_classify(span)).get(key, key)
+
+
+def _normalize_native_attributes(span: object, attributes: dict[str, object]) -> dict[str, object]:
+    """Give ambiguous Pipecat payload keys an explicit governed namespace."""
+
+    normalized = dict(attributes)
+    mappings = _native_attribute_names(_classify(span))
     for source, target in mappings.items():
         if source not in normalized:
             continue
@@ -288,6 +301,12 @@ class PipecatAdapter:
             link_context = value(native_link, "context")
             if link_context is None:
                 continue
+            # An in-process SDK span's link context holds integers; an exported
+            # (OTLP) span's holds hex strings.
+            link_trace_id = otel_id(value(link_context, "trace_id"), 32)
+            link_span_id = otel_id(value(link_context, "span_id"), 16)
+            if link_trace_id is None or link_span_id is None:
+                continue
             link_attributes = dict(value(native_link, "attributes", {}) or {})
             relationship = (
                 sanitize_semantic_label(str(link_attributes.pop("earshot.link.type", "related")))
@@ -303,8 +322,8 @@ class PipecatAdapter:
                 CausalLink(
                     relationship=relationship,
                     target_scope=target_scope,
-                    trace_id=f"{int(value(link_context, 'trace_id')):032x}",
-                    span_id=f"{int(value(link_context, 'span_id')):016x}",
+                    trace_id=link_trace_id,
+                    span_id=link_span_id,
                     attributes=link_attributes,
                 )
             )

@@ -52,9 +52,7 @@ export function IncidentReferences({
         </p>
       ) : null}
       {query.isSuccess && query.data.items.length === 0 ? (
-        <p className={styles.note}>
-          No Platform call or Voice Labs run is linked to this incident.
-        </p>
+        <p className={styles.note}>No external records are linked to this incident.</p>
       ) : null}
       {query.isSuccess && query.data.items.length > 0 ? (
         <ul className={styles.list}>

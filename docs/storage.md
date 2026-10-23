@@ -72,9 +72,14 @@ Schema version 18 indexes:
 - `legacy_deletion_reviews`: pre-v13 projects already marked deleting whose earlier
   cleanup did not record per-artifact CAS ownership.
 
-Foreign keys cascade graph and analysis rows when an incident is deleted. Graph rows
-and Turn Facts are derived and rebuilt on startup, which also backfills retention/export
-projections when an older database is migrated. Existing stores migrate into the
+Foreign keys cascade graph and analysis rows when an incident is deleted. Graph rows,
+Turn Facts and the retention/export columns are an incident's projections, derived from
+its canonical artifact. Each incident records the `projection_version` it was projected
+with. Incidents with an older or missing version (every incident, after an upgrade) are
+re-projected in the background once the server is serving, in bounded batches that each
+take the write lock briefly; startup never re-projects. `/readyz` reports
+`projections_pending`. Without a server, `earshot db reproject` converges them, and
+`earshot list` does so for up to 10 s before it filters. Existing stores migrate into the
 `default` Project. A legacy session index is explicitly rebuilt with `project_id` so
 schema upgrades do not silently retain a cross-project query plan.
 
@@ -202,9 +207,10 @@ ingest intents and incidents expired at each sweep's ingest-sequence high-water 
 bounded lock intervals. The lifespan-managed maintenance sweep also retries pending
 ingest cleanup left by transient unlink or catalog failures, in bounded batches; a
 failed immediate cleanup is logged with its opaque intent ID. Later arrivals remain
-hidden by expiry predicates for the lifespan-managed reaper. Startup verifies every remaining live artifact, checks
-index/artifact identity, rebuilds derived projections, and retries compaction when a
-durable scrub generation shows cleanup may have stopped after logical deletion. Older
+hidden by expiry predicates for the lifespan-managed reaper. Startup does not read
+artifacts; it retries compaction when a durable scrub generation shows cleanup may have
+stopped after logical deletion. An artifact's digest and identity are verified whenever
+it is read or re-projected. Older
 catalogs with tombstones seed one conservative scrub generation during migration.
 
 If CAS evidence exists while the SQLite catalog is missing, empty, corrupt, or not an
@@ -270,10 +276,11 @@ This command can remove orphaned CAS objects from every project in that data dir
 Take and verify a complete backup first. A deleting project stays fenced and its API
 continues to return pending until the sweep completes and the host retries deletion.
 
-Derived graph and Turn Fact projections are rebuilt transactionally from canonical CAS
-artifacts during startup. If any referenced artifact is missing, corrupt, or belongs to a
-different Incident, reconciliation fails and rolls back every projection repair from that
-attempt. Restore the correct CAS object and reopen the store to retry. Startup preserves
+Stale projections are rebuilt from canonical artifacts after startup, one bounded batch
+per transaction. An incident whose artifact is missing, corrupt, or belongs to a different
+Incident stays pending without holding up the others: the server logs
+`EARSHOT_PROJECTION_FAILED` and retries a minute later, and `earshot db reproject` names
+it. Restore the correct CAS object and it is re-projected on the next pass. Startup preserves
 unreferenced objects because it cannot prove whether they are crash-left evidence or a
 catalog restore mismatch.
 
@@ -289,8 +296,10 @@ There is currently no online snapshot API. For a coherent backup:
 3. Restore that complete unit into an empty directory; do not combine components from
    different backup times.
 4. Open the restored directory with the same or a newer Earshot binary. Startup verifies
-   catalog integrity, referenced CAS digests and identities, repairs rebuildable
-   projections, and hardens file permissions.
+   catalog integrity and hardens file permissions. Then run
+   `earshot db reproject --all`: it re-projects every incident, which verifies every
+   referenced CAS digest and identity and rebuilds every projection, and it names any
+   incident whose artifact is missing or damaged.
 
 Test the restored store before replacing the original. A missing catalog with CAS data,
 or a populated catalog without its correlation key, fails closed with a restore

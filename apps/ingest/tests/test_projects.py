@@ -10,15 +10,15 @@ from earshot.storage import (
     IncidentConflictError,
     IncidentNotFoundError,
     IncidentPurgedError,
-    IncidentStore,
 )
 from incident_factory import make_valid_bundle
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
 
 def test_legacy_ingest_belongs_to_the_default_project(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = make_valid_bundle(bundle_id="default-project-bundle")
 
     result = store.ingest(bundle, encode_incident_protobuf(bundle))
@@ -28,7 +28,7 @@ def test_legacy_ingest_belongs_to_the_default_project(tmp_path) -> None:
 
 
 def test_project_scope_hides_an_incident_owned_by_another_project(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("support", display_name="Support")
     bundle = make_valid_bundle(bundle_id="scoped-bundle")
     store.ingest(bundle, encode_incident_protobuf(bundle), project_id="support")
@@ -45,7 +45,7 @@ def test_project_scope_hides_an_incident_owned_by_another_project(tmp_path) -> N
 
 
 def test_api_key_authenticates_its_project_until_revoked(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("sales", display_name="Sales")
 
     issued = store.issue_api_key("sales", label="production ingest")
@@ -61,7 +61,7 @@ def test_api_key_authenticates_its_project_until_revoked(tmp_path) -> None:
 
 
 def test_project_identifiers_are_rejected_before_storage(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
 
     for invalid in ("", "Default", "contains space", "../escape", "a" * 65):
         with pytest.raises(ValueError):
@@ -69,7 +69,7 @@ def test_project_identifiers_are_rejected_before_storage(tmp_path) -> None:
 
 
 def test_remote_project_key_only_sees_its_project(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("sales", display_name="Sales")
     default_bundle = make_valid_bundle(bundle_id="default-api-bundle")
     sales_bundle = make_valid_bundle(bundle_id="sales-api-bundle")
@@ -109,7 +109,7 @@ def test_remote_project_key_only_sees_its_project(tmp_path) -> None:
 
 
 def test_sdk_project_assertion_cannot_silently_route_to_the_token_project(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("sales", display_name="Sales")
     issued = store.issue_api_key("sales", label="sdk")
     client = TestClient(
@@ -140,7 +140,7 @@ def test_sdk_project_assertion_cannot_silently_route_to_the_token_project(tmp_pa
 
 
 def test_remote_viewer_session_preserves_project_scope(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("sales", display_name="Sales")
     default_bundle = make_valid_bundle(bundle_id="default-viewer-bundle")
     sales_bundle = make_valid_bundle(bundle_id="sales-viewer-bundle")
@@ -172,13 +172,13 @@ def test_remote_listener_requires_tls_proxy_and_a_credential(tmp_path) -> None:
     with pytest.raises(ValueError):
         ApiConfig(host="0.0.0.0")
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     with pytest.raises(ValueError):
         create_app(store=store, config=ApiConfig(host="0.0.0.0", behind_tls_proxy=True))
 
 
 def test_tombstones_do_not_leak_cross_project_purge_history(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("support", display_name="Support")
     store.create_project("sales", display_name="Sales")
     bundle = make_valid_bundle(bundle_id="globally-scoped-purged-id")

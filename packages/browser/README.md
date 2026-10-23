@@ -18,12 +18,21 @@ diagnose on the server.
 > `packages/sdk-python/src/earshot/engines/webrtc.py`, `.../engines/device.py`,
 > and the endpoint in `packages/sdk-python/src/earshot/api.py`.
 
+## Install
+
+```bash
+npm install @earshot/browser
+```
+
+The package is ESM-only, has no runtime dependencies, and ships its type
+declarations. Releases carry npm provenance from the Earshot release workflow.
+Its version matches the Earshot server release whose `POST /v1/capture` shape
+it targets.
+
 ## Status
 
-**Not published. Validated on Chrome only.**
+**Validated on Chrome only.**
 
-- `private: true`, unpublished. Consume it from this workspace; whether it ever
-  goes to npm is the maintainer's call, not this package's.
 - The capture, bounding and delivery logic is unit-tested against mocked W3C
   APIs and a mocked `fetch`. Every environment dependency (clock, interval
   scheduler, randomness, `fetch`, and each W3C object) is injected via small

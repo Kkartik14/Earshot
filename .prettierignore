@@ -4,6 +4,8 @@ docs/private/
 local/
 fixtures/faults/*.incident.json
 fixtures/captured/*.incident.json
+fixtures/captured/pipecat-otlp-*/manifest.json
+fixtures/upgrade/manifest.json
 pnpm-lock.yaml
 spec/*.json
 fixtures/conformance/canonical-vector.*.json

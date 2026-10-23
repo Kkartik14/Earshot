@@ -18,7 +18,7 @@ from earshot.connectors import (
     MappingSecretResolver,
     RawProviderDelivery,
 )
-from earshot.storage import IncidentStore
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -111,7 +111,7 @@ def _delivery(endpoint_id: str, body: bytes, *, timestamp_ms: int = NOW_MS, secr
 
 @pytest.fixture
 def connector(tmp_path):
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("support", display_name="Support")
     endpoint = store.create_connector(
         "support",
@@ -206,7 +206,7 @@ def _replace_call(overrides) -> bytes:
 
 
 def test_same_provider_call_isolated_between_connector_projects(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("support", display_name="Support")
     store.create_project("sales", display_name="Sales")
     support = store.create_connector(

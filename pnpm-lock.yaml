@@ -275,27 +275,7 @@ importers:
         specifier: ^5.0.2
         version: 5.0.2(@types/node@26.6.3)(jsdom@25.0.1)(vite@8.3.1(@types/node@26.6.3))
 
-  packages/analysis:
-    dependencies:
-      '@earshot/schema':
-        specifier: workspace:*
-        version: link:../schema
-    devDependencies:
-      vitest:
-        specifier: ^5.0.2
-        version: 5.0.2(@types/node@26.6.3)(jsdom@25.0.1)(vite@8.3.1(@types/node@26.6.3))
-
   packages/browser:
-    devDependencies:
-      vitest:
-        specifier: ^5.0.2
-        version: 5.0.2(@types/node@26.6.3)(jsdom@25.0.1)(vite@8.3.1(@types/node@26.6.3))
-
-  packages/schema:
-    dependencies:
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
     devDependencies:
       vitest:
         specifier: ^5.0.2
@@ -1846,9 +1826,6 @@ packages:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
 snapshots:
 
   '@adobe/css-tools@4.5.0': {}
@@ -3221,5 +3198,3 @@ snapshots:
   yaml-ast-parser@0.0.43: {}
 
   yargs-parser@21.1.1: {}
-
-  zod@3.25.76: {}

@@ -117,6 +117,15 @@ _RECORD_KINDS = (
 )
 
 
+def _is_otlp_trace_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 32
+        and all(character in "0123456789abcdef" for character in value)
+        and value != "0" * 32
+    )
+
+
 def _bounded_loss_count(value: int | None) -> int | None:
     """A coverage loss count, or ``None`` when the value is not a usable count.
 
@@ -133,15 +142,28 @@ def _bounded_loss_count(value: int | None) -> int | None:
     return value
 
 
-def _utf8_size_up_to(value: str, limit: int) -> tuple[int, bool]:
-    """Return UTF-8 size without allocating an encoded copy, stopping at ``limit``."""
+# Characters encoded per step of ``_utf8_size_up_to``: a bounded temporary copy.
+_UTF8_SIZE_CHUNK = 64 * 1024
 
+
+def _utf8_size_up_to(value: str, limit: int) -> tuple[int, bool]:
+    """Return UTF-8 size, stopping at ``limit``, never encoding more than a chunk.
+
+    Every character takes one to four bytes (a lone surrogate three, as
+    ``surrogatepass`` encodes it), so a string longer than ``limit`` exceeds it
+    and an ASCII string's size is its length; anything else is encoded a bounded
+    chunk at a time until it passes ``limit``.
+    """
+
+    if not value:
+        return 0, False
+    if len(value) > limit:
+        return limit + 1, True
+    if value.isascii():
+        return len(value), False
     total = 0
-    for character in value:
-        codepoint = ord(character)
-        total += (
-            1 if codepoint < 0x80 else 2 if codepoint < 0x800 else 3 if codepoint < 0x10000 else 4
-        )
+    for start in range(0, len(value), _UTF8_SIZE_CHUNK):
+        total += len(value[start : start + _UTF8_SIZE_CHUNK].encode("utf-8", "surrogatepass"))
         if total > limit:
             return limit + 1, True
     return total, False
@@ -565,7 +587,15 @@ class IncidentRecorder:
         on_status: Callable[[RecorderStatus], None] | None = None,
         diagnostic: Callable[[Any], None] | None = None,
         checkpoint: CheckpointWriterLike | None = None,
+        manual_trace_id: str | None = None,
     ) -> None:
+        """``manual_trace_id`` is the trace ID of the recorder's manual operations
+        (``operation()``); random when absent. A server-side builder passes one
+        derived from what it builds, so two builds of the same evidence are
+        byte-identical."""
+
+        if manual_trace_id is not None and not _is_otlp_trace_id(manual_trace_id):
+            raise ValueError("manual_trace_id must be 32 lowercase hex digits, not all zero")
         source_config = config or RecorderConfig()
         source_policy = source_config.capture_policy
         policy_snapshot = CapturePolicy(
@@ -591,7 +621,7 @@ class IncidentRecorder:
         self.session_id = session_id or f"session-{uuid.uuid4().hex}"
         self.bundle_id = bundle_id or f"bundle-{uuid.uuid4().hex}"
         self.clock_domain_id = self.config.clock_domain_id or f"process-{uuid.uuid4().hex}"
-        self._manual_trace_id = secrets.token_hex(16)
+        self._manual_trace_id = manual_trace_id or secrets.token_hex(16)
         self.exporter = exporter
         self._on_close = on_close
         self._on_status = on_status

@@ -23,7 +23,7 @@ from earshot.connectors import (
     MappingSecretResolver,
     RawProviderDelivery,
 )
-from earshot.storage import IncidentStore
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -176,7 +176,7 @@ def _otel_payload() -> bytes:
 
 @pytest.fixture
 def connector(tmp_path):
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("support", display_name="Support")
     endpoint = store.create_connector(
         "support",
@@ -233,7 +233,7 @@ def test_free_form_provider_status_is_rejected_without_persistence(connector, tm
 
 
 def test_same_provider_call_isolated_between_connector_projects(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("support", display_name="Support")
     store.create_project("sales", display_name="Sales")
     support = store.create_connector(

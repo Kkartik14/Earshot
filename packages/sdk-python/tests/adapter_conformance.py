@@ -12,6 +12,7 @@ from earshot.codec import (
 )
 from earshot.contract import IncidentBundle
 from earshot.privacy import CaptureClass
+from earshot.storage_projection import compute_projection_rows
 from earshot.validation import validate_incident
 
 
@@ -134,3 +135,18 @@ def assert_native_trace_topology(
         assert span_id in operations
         assert operations[span_id].trace_id == trace_id
         assert operations[span_id].parent_span_id == root_span_id
+
+
+def turn_facts(bundle: IncidentBundle) -> list[tuple[object, ...]]:
+    """The bundle's turn facts (its ``turn_metrics`` rows) without the project,
+    bundle and session columns that name where the facts are stored."""
+
+    return [row[3:] for row in compute_projection_rows(bundle, "conformance").turn_metrics]
+
+
+def assert_same_turn_facts(bundle: IncidentBundle, peer: IncidentBundle) -> None:
+    """Assert two captures of one conversation derive the same, non-empty turn facts."""
+
+    facts = turn_facts(bundle)
+    assert facts
+    assert facts == turn_facts(peer)

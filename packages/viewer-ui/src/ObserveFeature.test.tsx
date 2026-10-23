@@ -25,8 +25,8 @@ describe("ObserveFeature embedding", () => {
         >
           <ObserveFeature
             route={{
-              kind: "call-status",
-              callId: "call-1",
+              kind: "capture-status",
+              hostCallId: "call-1",
               capture: { state: "waiting" },
             }}
             embedded

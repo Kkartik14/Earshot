@@ -4,7 +4,7 @@ import { FleetDashboard } from "./features/fleet/FleetDashboard";
 import { SessionInspector } from "./features/inspector/SessionInspector";
 import type { IncidentReference } from "./features/inspector/IncidentReferences";
 import { LiveSessionView } from "./features/live/LiveSessionView";
-import { CallCaptureStatus } from "./features/sessions/CallCaptureStatus";
+import { CaptureStatus } from "./features/sessions/CaptureStatus";
 import { SessionResolver } from "./features/sessions/SessionResolver";
 import { SessionRail } from "./features/sessions/SessionRail";
 import { useViewerQueryScope } from "./api/queryScope";
@@ -60,8 +60,8 @@ export function ObserveFeature({
         {route.kind === "live" ? (
           <LiveSessionView sessionId={route.sessionId} LinkComponent={LinkComponent} />
         ) : null}
-        {route.kind === "call-status" ? (
-          <CallCaptureStatus callId={route.callId} capture={route.capture} />
+        {route.kind === "capture-status" ? (
+          <CaptureStatus hostCallId={route.hostCallId} capture={route.capture} />
         ) : null}
       </Content>
     </div>

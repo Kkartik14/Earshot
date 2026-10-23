@@ -17,6 +17,22 @@ ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts
 
 Node/pnpm are needed for the TypeScript compatibility packages and their CI gates.
 
+## CI and merge readiness
+
+Every pull request update runs the quick Python and TypeScript checks. Add the
+light-blue `Merge Ready` label when the pull request is ready for the comprehensive
+checks. Those checks cover Postgres and S3, supported Python and framework versions,
+macOS, release artifacts, and the container. The required `Merge Ready checks`
+status stays failing until the light-blue label is present and all required lanes pass.
+The `main` branch ruleset requires pull requests and this status before merge. Changes to
+CI workflows and their ownership file are assigned to the repository owner in
+`.github/CODEOWNERS`; the ruleset requires that review once this file is present on the
+pull request's base branch. Future pull requests therefore cannot weaken the check they
+report without owner approval.
+
+The comprehensive pull request checks also run on pushes to `main`. Starting the CI
+workflow manually on `main` runs the broader SQLite, Postgres, S3, and coverage jobs.
+
 ## Contract changes
 
 Update the Pydantic models, semantic validator, protobuf envelope when applicable,

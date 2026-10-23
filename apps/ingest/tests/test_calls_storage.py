@@ -1,0 +1,1022 @@
+"""FR-4 storage: spans become calls through their trace, keyed by the host's session key.
+
+``CallStore.record_spans`` is the transaction the OTLP receiver runs per request.
+These tests drive it with the real Pipecat 1.5 capture
+(``fixtures/captured/pipecat-otlp-1.5``: seven requests, seventeen spans, one
+trace; only ``turn`` and ``conversation`` carry the session key, and the first
+of them arrives in request 3). Time is the store's injected clock.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import sqlite3
+import threading
+import time
+from contextlib import closing
+from pathlib import Path
+
+import pytest
+from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
+from opentelemetry.proto.common.v1.common_pb2 import AnyValue, InstrumentationScope, KeyValue
+from opentelemetry.proto.resource.v1.resource_pb2 import Resource
+from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans
+
+from captured_otlp import (
+    CAPTURED_SESSION_KEY,
+    CAPTURED_USER_ID,
+    captured_requests,
+    with_identity,
+)
+from earshot.call_capture import (
+    SESSION_KEY_ATTRIBUTES,
+    apply_capture_preset,
+    payload_digest,
+    resource_payload,
+    span_payload,
+    spans_from_request,
+)
+from earshot.clock import ManualClock
+from earshot.server_config import MAX_CALL_TIMING_SECONDS
+from earshot.storage import CatalogIntegrityError, ProjectInactiveError, StorageBusyError
+from earshot.storage_calls import CallStore, CallTimings, lock_order
+from otlp_support import (
+    best_cpu_seconds,
+    equal_shared_values_request,
+    make_request,
+    make_span,
+    shared_attributes_request,
+    string_attribute,
+)
+from store_support import (
+    catalog,
+    catalog_rows,
+    current_dialect,
+    make_store,
+    stored_needles,
+)
+
+pytestmark = pytest.mark.integration
+
+SECOND = 1_000_000_000
+START = 1_800_000_000 * SECOND
+TIMINGS = CallTimings()
+LONG_QUIET = int(TIMINGS.long_quiet_seconds * SECOND)
+END_GRACE = int(TIMINGS.end_grace_seconds * SECOND)
+LATE_DEBOUNCE = int(TIMINGS.late_debounce_seconds * SECOND)
+USER_ID = CAPTURED_USER_ID
+
+
+def _open(tmp_path: Path) -> tuple[CallStore, ManualClock]:
+    clock = ManualClock(wall=START, monotonic=START)
+    return CallStore(make_store(tmp_path, clock=clock)), clock
+
+
+def _replay(calls: CallStore, requests, *, project_id: str = "default", clock=None) -> list:
+    results = []
+    for request in requests:
+        results.append(calls.record_spans(project_id, spans_from_request(request)))
+        if clock is not None:
+            clock.advance(5 * SECOND)  # the exporter's batch schedule
+    return results
+
+
+def _without_session_keys(request, *, keep_names=None):
+    """The request with every session-key attribute removed (and only ``keep_names`` spans)."""
+
+    for resource_spans in request.resource_spans:
+        for scope_spans in resource_spans.scope_spans:
+            kept = [
+                span for span in scope_spans.spans if keep_names is None or span.name in keep_names
+            ]
+            for span in kept:
+                attributes = [a for a in span.attributes if a.key not in SESSION_KEY_ATTRIBUTES]
+                del span.attributes[:]
+                span.attributes.extend(attributes)
+            del scope_spans.spans[:]
+            scope_spans.spans.extend(kept)
+    return request
+
+
+def _calls(path: Path) -> list[tuple]:
+    return catalog_rows(
+        path,
+        "SELECT call_id, session_key, key_source, generation, state, dirty, span_count, "
+        "end_signal_unix_nano, close_due_unix_nano, first_evidence_unix_nano, "
+        "last_evidence_unix_nano FROM calls ORDER BY call_id",
+    )
+
+
+def _parked_traces(path: Path) -> int:
+    return catalog_rows(path, "SELECT count(*) FROM call_traces WHERE call_id IS NULL")[0][0]
+
+
+def _span_rows(path: Path) -> int:
+    return catalog_rows(path, "SELECT count(*) FROM spans")[0][0]
+
+
+# --- Call identity -------------------------------------------------------------------------
+
+
+def test_a_call_id_is_derived_from_project_key_and_generation(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    store = calls.store
+    store.create_project("other", display_name="Other")
+
+    call_id = calls.call_id("default", "conv-1", 0)
+
+    assert call_id == "call_" + store.fingerprint("call-session-v1", "default\x00conv-1\x000")[:32]
+    assert len(call_id) == 37
+    assert calls.call_id("default", "conv-1", 1) != call_id
+    assert calls.call_id("other", "conv-1", 0) != call_id
+    assert calls.key_fingerprint("default", "conv-1") == store.fingerprint(
+        "call-session-key-v1", "default\x00conv-1"
+    )
+
+
+def test_the_real_call_becomes_one_call_holding_all_seventeen_spans(tmp_path) -> None:
+    calls, clock = _open(tmp_path)
+
+    results = _replay(calls, captured_requests(), clock=clock)
+
+    call_id = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+    end_received = START + 6 * 5 * SECOND
+    assert _calls(tmp_path) == [
+        (
+            call_id,
+            CAPTURED_SESSION_KEY,
+            # turn spans carry conversation.id and arrive (request 3) before the
+            # conversation span with earshot.session.id: the first binding wins.
+            "conversation.id",
+            0,
+            "open",
+            1,
+            17,
+            end_received,
+            end_received + END_GRACE,
+            START,  # the first parked span's arrival
+            end_received,
+        )
+    ]
+    assert [result.stored_spans for result in results] == [1, 2, 3, 3, 3, 3, 2]
+    assert [result.parked_spans for result in results] == [1, 2, 0, 0, 0, 0, 0]
+    assert results[2].call_ids == (call_id,)
+    assert _parked_traces(tmp_path) == 0
+    assert _span_rows(tmp_path) == 17
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM otlp_resources") == [(2,)]
+    assert calls.resolve_call("default", CAPTURED_SESSION_KEY) == call_id
+    assert calls.otlp_stats("default") == {
+        "rejected_spans": 0,
+        "span_conflicts": 0,
+        "parked_traces_discarded": 0,
+        "key_disagreements": 0,
+        "revision_cap_reached": 0,
+        "purged_call_evidence_dropped": 0,
+        "parked_traces": 0,
+        "open_calls": 1,
+    }
+    # Accepted spans write no counter row: only rare events are persisted.
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM otlp_counters") == [(0,)]
+
+
+def test_unkeyed_child_spans_join_the_bound_call_through_their_trace(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    requests = captured_requests()
+    _replay(calls, requests[:3])  # request 3 has the first turn span (keyed)
+    call_id = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+
+    child = calls.record_spans("default", spans_from_request(requests[3]))  # stt, llm, tts
+
+    assert [span.span.name for span in spans_from_request(requests[3])] == ["stt", "llm", "tts"]
+    assert (child.stored_spans, child.parked_spans, child.call_ids) == (3, 0, (call_id,))
+    assert catalog_rows(tmp_path, "SELECT span_count FROM calls") == [(9,)]
+
+
+def test_parked_spans_wait_across_requests_and_join_when_the_trace_is_named(tmp_path) -> None:
+    calls, clock = _open(tmp_path)
+    requests = captured_requests()
+
+    _replay(calls, requests[:2], clock=clock)  # stt; llm + tts: no key yet
+
+    assert _calls(tmp_path) == []
+    assert _parked_traces(tmp_path) == 1
+    assert _span_rows(tmp_path) == 3
+    assert calls.otlp_stats("default")["parked_traces"] == 1
+
+    named = calls.record_spans("default", spans_from_request(requests[2]))
+
+    assert named.call_ids == (calls.call_id("default", CAPTURED_SESSION_KEY, 0),)
+    assert _parked_traces(tmp_path) == 0
+    assert catalog_rows(tmp_path, "SELECT span_count, first_evidence_unix_nano FROM calls") == [
+        (6, START)
+    ]
+    assert calls.otlp_stats("default")["parked_traces"] == 0
+
+
+# --- Parked-trace collection -------------------------------------------------------------------
+
+
+def test_a_quiet_parked_trace_with_a_framework_session_span_becomes_a_trace_keyed_call(
+    tmp_path,
+) -> None:
+    calls, clock = _open(tmp_path)
+    _replay(calls, [_without_session_keys(r) for r in captured_requests()], clock=clock)
+    last_received = START + 6 * 5 * SECOND
+    clock.wall = last_received + LONG_QUIET - 1
+
+    assert calls.collect_parked_traces().promoted == 0
+    assert _parked_traces(tmp_path) == 1
+
+    clock.wall = last_received + LONG_QUIET
+    collected = calls.collect_parked_traces()
+
+    (trace_id,) = {span.span.trace_id for span in spans_from_request(captured_requests()[0])}
+    assert (collected.promoted, collected.discarded) == (1, 0)
+    assert _calls(tmp_path) == [
+        (
+            calls.trace_call_id("default", trace_id, 0),
+            None,
+            "trace_id",
+            0,
+            "open",
+            1,
+            17,
+            last_received,  # the conversation span ended it
+            last_received + END_GRACE,  # due as of its last evidence: already due
+            START,
+            last_received,
+        )
+    ]
+    assert _parked_traces(tmp_path) == 0
+    assert calls.otlp_stats("default")["parked_traces_discarded"] == 0
+
+
+def test_a_quiet_parked_trace_without_a_session_span_is_discarded_and_counted(tmp_path) -> None:
+    calls, clock = _open(tmp_path)
+    no_session = {"turn", "stt", "llm", "tts"}
+    _replay(
+        calls,
+        [_without_session_keys(r, keep_names=no_session) for r in captured_requests()],
+        clock=clock,
+    )
+    assert (_span_rows(tmp_path), _parked_traces(tmp_path)) == (16, 1)
+    clock.wall = START + 6 * 5 * SECOND + LONG_QUIET
+
+    collected = calls.collect_parked_traces()
+
+    assert (collected.promoted, collected.discarded) == (0, 1)
+    assert (_span_rows(tmp_path), _parked_traces(tmp_path)) == (0, 0)
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM call_traces") == [(0,)]
+    # Their resource is evidence too, and nothing references it any more.
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM otlp_resources") == [(0,)]
+    assert _calls(tmp_path) == []
+    stats = calls.otlp_stats("default")
+    assert (stats["parked_traces_discarded"], stats["parked_traces"]) == (1, 0)
+
+
+def test_a_parked_trace_that_keeps_receiving_spans_is_never_collected(tmp_path) -> None:
+    calls, clock = _open(tmp_path)
+    stt = _without_session_keys(captured_requests()[0])  # one unkeyed stt span
+    template = stt.resource_spans[0].scope_spans[0].spans[0]
+
+    # A span every 30 s for 10 minutes, the collector running at every tick.
+    for tick in range(21):
+        template.span_id = (1000 + tick).to_bytes(8, "big")
+        calls.record_spans("default", spans_from_request(stt))
+        assert calls.collect_parked_traces().discarded == 0
+        assert _span_rows(tmp_path) == tick + 1
+        clock.advance(30 * SECOND)
+
+    last_received = START + 20 * 30 * SECOND
+    clock.wall = last_received + LONG_QUIET - 1
+    assert calls.collect_parked_traces().discarded == 0
+    assert _span_rows(tmp_path) == 21
+
+    clock.wall = last_received + LONG_QUIET
+    assert calls.collect_parked_traces().discarded == 1
+    assert _span_rows(tmp_path) == 0
+
+
+def test_collection_takes_bounded_batches_oldest_first(tmp_path) -> None:
+    calls, clock = _open(tmp_path)
+    stt = _without_session_keys(captured_requests()[0])
+    span = stt.resource_spans[0].scope_spans[0].spans[0]
+    for index in range(3):
+        span.trace_id = (index + 1).to_bytes(16, "big")
+        calls.record_spans("default", spans_from_request(stt))
+        clock.advance(SECOND)
+    clock.advance(LONG_QUIET)
+
+    assert calls.collect_parked_traces(limit=2).discarded == 2
+    assert catalog_rows(tmp_path, "SELECT trace_id FROM call_traces") == [
+        ((3).to_bytes(16, "big"),)
+    ]
+    assert calls.collect_parked_traces(limit=2).discarded == 1
+
+
+# --- Disagreements, duplicates, conflicts ------------------------------------------------------
+
+
+def test_a_second_key_in_a_bound_trace_is_counted_and_the_first_binding_wins(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    requests = captured_requests()
+    _replay(calls, requests[:3])
+    late_turn = requests[4]  # turn 2 (keyed) + stt + llm
+    turn = next(span for span in late_turn.resource_spans[0].scope_spans[0].spans)
+    assert turn.name == "turn"
+    for attribute in turn.attributes:
+        if attribute.key == "conversation.id":
+            attribute.value.string_value = "another-conversation"
+
+    result = calls.record_spans("default", spans_from_request(late_turn))
+
+    first = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+    assert (result.key_disagreements, result.call_ids) == (1, (first,))
+    assert calls.resolve_call("default", "another-conversation") is None
+    assert catalog_rows(tmp_path, "SELECT call_id, span_count FROM calls") == [(first, 9)]
+    assert calls.otlp_stats("default")["key_disagreements"] == 1
+
+
+def test_an_identical_resend_stores_nothing_and_a_changed_one_keeps_the_first_write(
+    tmp_path,
+) -> None:
+    calls, clock = _open(tmp_path)
+    requests = captured_requests()
+    _replay(calls, requests[:4], clock=clock)
+    before = _calls(tmp_path)
+    payloads = catalog_rows(tmp_path, "SELECT span_id, digest FROM spans ORDER BY span_id")
+
+    resent = calls.record_spans("default", spans_from_request(captured_requests()[3]))
+
+    assert (resent.stored_spans, resent.duplicate_spans, resent.span_conflicts) == (0, 3, 0)
+    assert resent.call_ids == ()
+    assert _calls(tmp_path) == before  # no new evidence: not dirtied, no new due time
+
+    changed = captured_requests()[3]
+    changed.resource_spans[0].scope_spans[0].spans[0].attributes.append(
+        KeyValue(key="metrics.extra", value=AnyValue(int_value=1))
+    )
+    conflicted = calls.record_spans("default", spans_from_request(changed))
+
+    assert (conflicted.stored_spans, conflicted.span_conflicts) == (0, 1)
+    assert catalog_rows(tmp_path, "SELECT span_id, digest FROM spans ORDER BY span_id") == payloads
+    assert calls.otlp_stats("default")["span_conflicts"] == 1
+
+
+def test_a_span_repeated_inside_one_request_is_stored_once_and_classified(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    key = [string_attribute("earshot.session.id", "call-repeat")]
+    first = make_span(1, 1, attributes=key)
+    changed = make_span(1, 2, attributes=key)
+    request = make_request(
+        [
+            first,
+            changed,
+            make_span(1, 1, attributes=key),  # the same bytes again: a duplicate
+            make_span(1, 2, name="tts", attributes=key),  # a different payload: a conflict
+        ]
+    )
+
+    result = calls.record_spans("default", spans_from_request(request))
+
+    assert (result.stored_spans, result.duplicate_spans, result.span_conflicts) == (2, 1, 1)
+    assert catalog_rows(tmp_path, "SELECT name FROM spans ORDER BY span_id") == [
+        ("llm",),
+        ("llm",),
+    ]
+    assert [row[6] for row in _calls(tmp_path)] == [2]
+    assert calls.otlp_stats("default")["span_conflicts"] == 1
+
+
+def test_a_request_of_thousands_of_spans_is_stored_whole_and_resent_as_duplicates(
+    tmp_path,
+) -> None:
+    calls, _ = _open(tmp_path)
+    key = [string_attribute("earshot.session.id", "call-large")]
+    spans = [
+        make_span(trace, span, attributes=key if span == 1 else ())
+        for trace in (1, 2, 3)
+        for span in range(1, 1201)
+    ]
+
+    stored = calls.record_spans("default", spans_from_request(make_request(spans)))
+    again = calls.record_spans(
+        "default", spans_from_request(make_request([*spans, make_span(3, 5000)]))
+    )
+
+    assert (stored.stored_spans, stored.duplicate_spans, stored.span_conflicts) == (3600, 0, 0)
+    assert (again.stored_spans, again.duplicate_spans, again.span_conflicts) == (1, 3600, 0)
+    assert _span_rows(tmp_path) == 3601
+    assert [row[6] for row in _calls(tmp_path)] == [3601]
+    assert _parked_traces(tmp_path) == 0
+
+
+@pytest.mark.parametrize("scope_per_span", [False, True], ids=["one-scope", "equal-scopes"])
+def test_a_request_whose_spans_share_a_large_resource_is_stored_in_time_linear_in_its_size(
+    tmp_path, scope_per_span
+) -> None:
+    """Tribunal round 3, Bellard N3-1: every span re-copied, re-filtered and
+    re-serialized the resource and scope it shares with the rest of its request.
+    Equal scopes in separate ``ScopeSpans`` make one resource row, so they cost
+    no more than one scope."""
+
+    calls, _ = _open(tmp_path)
+
+    def record(spans: int, attributes: int) -> float:
+        project = f"shared-{spans}"
+        calls.store.create_project(project, display_name=project)
+        request = shared_attributes_request(spans, attributes, scope_per_span=scope_per_span)
+        batch = spans_from_request(request)
+        seconds = best_cpu_seconds(lambda: calls.record_spans(project, batch))
+        assert catalog_rows(
+            tmp_path, "SELECT count(*) FROM spans WHERE project_id = ?", (project,)
+        ) == [(spans,)]
+        return seconds
+
+    small, large = record(2_000, 10_000), record(4_000, 20_000)
+
+    # Twice the request, about twice the time (spans x attributes would give 4x).
+    assert large < 3 * small, (small, large)
+    assert large < 2.0, large
+
+
+def test_spans_under_equal_large_scopes_and_schema_urls_are_stored_in_time_independent_of_them(
+    tmp_path,
+) -> None:
+    """Equal scopes and schema URLs in separate ``ScopeSpans`` are separate objects:
+    a 4 MB schema URL and a 2 MB scope version, compared once per span, made each
+    span cost their size."""
+
+    calls, _ = _open(tmp_path)
+
+    def record(project: str, url_bytes: int, version_bytes: int) -> float:
+        calls.store.create_project(project, display_name=project)
+        request = equal_shared_values_request(
+            4_000, url_bytes=url_bytes, version_bytes=version_bytes
+        )
+        batch = spans_from_request(request)
+        return best_cpu_seconds(lambda: calls.record_spans(project, batch), repeat=2)
+
+    plain = record("plain", 0, 0)
+    shared = record("shared", 4_000_000, 2_000_000)
+
+    assert shared < 2 * plain + 0.1, (plain, shared)
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_every_span_is_stored_with_its_own_presets_payload_and_resource_row(
+    tmp_path, preset
+) -> None:
+    """The rows are what the preset gives span by span, whichever spans share a
+    resource or scope object: that work is done once per resource and scope
+    (tribunal round 3, N3-1), and must still tell apart resources that differ
+    only in their scope or schema URL."""
+
+    calls, _ = _open(tmp_path)
+    calls.store.set_capture_preset("default", preset)
+    key = string_attribute("earshot.session.id", "call-shared")
+    content = string_attribute("input", "a message")  # dropped by metadata_only
+    span_ids = iter(range(1, 100))
+    request = ExportTraceServiceRequest(
+        resource_spans=[
+            ResourceSpans(
+                resource=Resource(attributes=[string_attribute("service.name", "bot"), content]),
+                schema_url=resource_schema_url,
+                scope_spans=[
+                    ScopeSpans(
+                        scope=InstrumentationScope(name=scope, attributes=[content]),
+                        schema_url=scope_schema_url,
+                        spans=[
+                            make_span(trace, next(span_ids), attributes=[key, content])
+                            for trace in (1, 2)
+                        ],
+                    )
+                    for scope, scope_schema_url in (
+                        ("pipecat", ""),
+                        ("pipecat.turn", ""),
+                        ("pipecat", "https://opentelemetry.io/schemas/1.26.0"),
+                    )
+                ],
+            )
+            for resource_schema_url in ("", "https://opentelemetry.io/schemas/1.27.0")
+        ]
+    )
+    spans = spans_from_request(request)
+    expected_spans, expected_resources = [], set()
+    for span in spans:
+        kept = apply_capture_preset(preset, span)
+        resource = resource_payload(kept)
+        expected_resources.add((payload_digest(resource), resource))
+        expected_spans.append(
+            (bytes(span.span.span_id), span_payload(kept.span), payload_digest(resource))
+        )
+
+    assert calls.record_spans("default", spans).stored_spans == 12
+
+    stored_spans = catalog_rows(
+        tmp_path, "SELECT span_id, payload, resource_digest FROM spans ORDER BY span_id"
+    )
+    stored_resources = catalog_rows(tmp_path, "SELECT resource_digest, payload FROM otlp_resources")
+    assert [tuple(map(bytes, row)) for row in stored_spans] == sorted(expected_spans)
+    assert {tuple(map(bytes, row)) for row in stored_resources} == expected_resources
+    assert len(expected_resources) == 6
+
+
+def test_a_request_spanning_hundreds_of_traces_stores_and_recognises_each_once(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    key = [string_attribute("earshot.session.id", "call-wide")]
+    spans = [make_span(trace, 1, attributes=key) for trace in range(1, 1201)]
+
+    stored = calls.record_spans("default", spans_from_request(make_request(spans)))
+    again = calls.record_spans("default", spans_from_request(make_request(spans)))
+
+    assert (stored.stored_spans, again.stored_spans, again.duplicate_spans) == (1200, 0, 1200)
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM call_traces WHERE call_id IS NOT NULL") == [
+        (1200,)
+    ]
+    assert [row[6] for row in _calls(tmp_path)] == [1200]
+
+
+class _Statements:
+    """Counts the statements the store's real connections are asked to run: one
+    ``execute``, ``execute_unprepared`` or ``executemany`` is one round trip to
+    Postgres."""
+
+    def __init__(self, store, monkeypatch) -> None:
+        self.count = 0
+        connect = store._connect
+        monkeypatch.setattr(store, "_connect", lambda: _Counted(connect(), self))
+
+
+class _Counted:
+    def __init__(self, connection, statements: _Statements) -> None:
+        self._connection = connection
+        self._statements = statements
+
+    def __enter__(self):
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._connection.__exit__(*exc)
+
+    def execute(self, *arguments, **options):
+        self._statements.count += 1
+        return self._connection.execute(*arguments, **options)
+
+    def execute_unprepared(self, *arguments, **options):
+        self._statements.count += 1
+        return self._connection.execute_unprepared(*arguments, **options)
+
+    def executemany(self, *arguments, **options):
+        self._statements.count += 1
+        return self._connection.executemany(*arguments, **options)
+
+    def __getattr__(self, name):
+        return getattr(self._connection, name)
+
+
+def test_a_batch_runs_as_many_statements_for_sixty_four_calls_as_for_one(
+    tmp_path, monkeypatch
+) -> None:
+    # Carmack C1: a voice worker's batch mixes the spans of every call it serves, and
+    # the write lock is held for the whole batch, so its cost must not grow with the
+    # number of traces in it: new calls, and spans added to calls already bound.
+    calls, _ = _open(tmp_path)
+    statements = _Statements(calls.store, monkeypatch)
+    costs = {}
+    for traces in (1, 8, 64):
+        per_trace = 64 // traces
+        ids = [1000 * traces + offset for offset in range(traces)]
+        opening = [
+            make_span(
+                trace,
+                span,
+                attributes=[string_attribute("earshot.session.id", f"c-{trace}")]
+                if span == 1
+                else (),
+            )
+            for trace in ids
+            for span in range(1, per_trace + 1)
+        ]
+        following = [make_span(trace, span) for trace in ids for span in range(65, 65 + per_trace)]
+        cost = []
+        for spans in (opening, following):
+            statements.count = 0
+            result = calls.record_spans("default", spans_from_request(make_request(spans)))
+            assert result.stored_spans == 64
+            cost.append(statements.count)
+        costs[traces] = tuple(cost)
+
+    assert costs[8] == costs[1]
+    assert costs[64] == costs[1]
+
+
+def _key(key: str, attribute: str = "earshot.session.id"):
+    return string_attribute(attribute, key)
+
+
+def _ended():
+    ended = string_attribute("earshot.call.ended", "")
+    ended.value.bool_value = True
+    return ended
+
+
+def _mixed_batch() -> list:
+    """One span batch whose traces are in every state a trace can be in."""
+
+    return [
+        make_span(1, 1, attributes=[_key("k-bound")]),  # bound: an identical re-send
+        make_span(1, 2, attributes=[string_attribute("output", "A line.")]),  # bound: new
+        make_span(1, 3, attributes=[_key("k-other")]),  # bound: names another key
+        make_span(2, 1, name="stt"),  # parked: the stored span, changed (a conflict)
+        make_span(2, 2, attributes=[_key("k-parked")]),  # parked: now named, joins
+        make_span(3, 2),  # a purged call's trace: dropped
+        make_span(4, 1, attributes=[_key("k-purged")]),  # a new trace of a purged key
+        make_span(5, 1, attributes=[_key("k-bound")]),  # a new trace of a bound call
+        make_span(6, 1, attributes=[_key("k-new")]),  # two new traces, one new call
+        make_span(7, 1, attributes=[_key("k-new", "conversation.id")]),
+        make_span(8, 1),  # a new, unnamed trace: parked
+        make_span(9, 1, attributes=[_key("k-ended"), _ended()]),  # a call that ends
+        make_span(10, 3, attributes=[_key("k-parked-2")]),  # parked twice: joins
+    ]
+
+
+def _project_state(path: Path, project_id: str) -> tuple:
+    """The project's calls, traces, spans and counters, calls named by their key."""
+
+    def rows(sql: str) -> list[tuple]:
+        return catalog_rows(path, sql, (project_id,))
+
+    return (
+        rows(
+            "SELECT session_key, key_source, generation, state, dirty, span_count, "
+            "end_signal_unix_nano, close_due_unix_nano, first_evidence_unix_nano, "
+            "last_evidence_unix_nano FROM calls WHERE project_id = ? ORDER BY session_key"
+        ),
+        rows(
+            "SELECT t.trace_id, c.session_key, t.has_session_span, "
+            "t.first_span_received_unix_nano, t.last_span_received_unix_nano "
+            "FROM call_traces t LEFT JOIN calls c "
+            "ON c.project_id = t.project_id AND c.call_id = t.call_id "
+            "WHERE t.project_id = ? ORDER BY t.trace_id"
+        ),
+        rows(
+            "SELECT trace_id, span_id, digest, end_marker, text_json FROM spans "
+            "WHERE project_id = ? ORDER BY trace_id, span_id"
+        ),
+        rows("SELECT name, value FROM otlp_counters WHERE project_id = ? ORDER BY name"),
+    )
+
+
+def test_one_batch_of_many_traces_stores_what_its_traces_sent_one_at_a_time_store(
+    tmp_path,
+) -> None:
+    from earshot.blobstore import LocalBlobStore
+    from earshot.storage_call_purge import CallPurger
+    from earshot.storage_recordings import RecordingStore
+
+    calls, clock = _open(tmp_path)
+    purger = CallPurger(
+        calls.store,
+        calls=calls,
+        recordings=RecordingStore(calls.store, calls=calls, blobs=LocalBlobStore(tmp_path / "b")),
+    )
+    totals = {}
+    for project_id in ("batched", "one-by-one"):
+        calls.store.create_project(project_id, display_name=project_id)
+        calls.record_spans(
+            project_id,
+            spans_from_request(
+                make_request(
+                    [
+                        make_span(1, 1, attributes=[_key("k-bound")]),
+                        make_span(2, 1),
+                        make_span(3, 1, attributes=[_key("k-purged")]),
+                        make_span(10, 1),
+                        make_span(10, 2),
+                    ]
+                )
+            ),
+        )
+        purger.purge_call(project_id, calls.call_id(project_id, "k-purged", 0))
+    clock.advance(SECOND)
+
+    batch = _mixed_batch()
+    results = {"batched": [calls.record_spans("batched", spans_from_request(make_request(batch)))]}
+    results["one-by-one"] = [
+        calls.record_spans(
+            "one-by-one",
+            spans_from_request(make_request([span for span in batch if span.trace_id == trace])),
+        )
+        for trace in sorted({span.trace_id for span in batch})
+    ]
+    for project_id, outcomes in results.items():
+        totals[project_id] = tuple(
+            sum(getattr(outcome, name) for outcome in outcomes)
+            for name in (
+                "stored_spans",
+                "duplicate_spans",
+                "span_conflicts",
+                "key_disagreements",
+                "purged_call_evidence_dropped",
+                "parked_spans",
+            )
+        )
+
+    assert totals["batched"] == totals["one-by-one"] == (9, 1, 1, 1, 2, 1)
+    assert _project_state(tmp_path, "batched") == _project_state(tmp_path, "one-by-one")
+
+
+# --- Close-due rules --------------------------------------------------------------------------
+
+
+def test_close_due_follows_the_end_signal_and_late_data_rules(tmp_path) -> None:
+    calls, clock = _open(tmp_path)
+    requests = captured_requests()
+    _replay(calls, requests[:3])
+    call_id = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+
+    def due() -> tuple:
+        return catalog_rows(
+            tmp_path, "SELECT end_signal_unix_nano, close_due_unix_nano, dirty, state FROM calls"
+        )[0]
+
+    assert due() == (None, START + LONG_QUIET, 1, "open")
+    clock.advance(5 * SECOND)
+    _replay(calls, requests[3:6])
+    assert due() == (None, START + 5 * SECOND + LONG_QUIET, 1, "open")
+    clock.advance(5 * SECOND)
+    calls.record_spans("default", spans_from_request(requests[6]))  # the conversation span
+    ended = START + 10 * SECOND
+    assert due() == (ended, ended + END_GRACE, 1, "open")
+
+    # The closer (WS7) closes it; a late span reopens nothing but makes it dirty
+    # again, due no sooner than the late-data debounce.
+    with catalog(tmp_path) as connection:
+        connection.execute(
+            "UPDATE calls SET state = 'closed', dirty = 0, latest_revision = 1 WHERE call_id = ?",
+            (call_id,),
+        )
+    clock.advance(60 * SECOND)
+    late = captured_requests()[3]
+    late.resource_spans[0].scope_spans[0].spans[0].span_id = b"\x0f" * 8
+    calls.record_spans("default", spans_from_request(late))
+    now = START + 70 * SECOND
+    assert due() == (ended, now + LATE_DEBOUNCE, 1, "closed")
+
+
+# --- Resolve, generations, tombstones ---------------------------------------------------------
+
+
+def test_resolve_uses_the_current_generation_and_never_crosses_projects(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    calls.store.create_project("other", display_name="Other")
+    _replay(calls, captured_requests()[:3])
+    first = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+
+    assert calls.resolve_call("default", CAPTURED_SESSION_KEY) == first
+    assert calls.resolve_call("default", f"  {CAPTURED_SESSION_KEY}\n") == first
+    assert calls.resolve_call("other", CAPTURED_SESSION_KEY) is None
+    assert calls.resolve_call("default", "never-seen") is None
+    assert calls.resolve_call("default", "") is None
+    assert calls.resolve_call("default", "x" * 257) is None
+
+    # A purge (WS8) bumps the key's generation: the old call no longer resolves,
+    # and new evidence for the key starts generation 1.
+    fingerprint = calls.key_fingerprint("default", CAPTURED_SESSION_KEY)
+    with catalog(tmp_path) as connection:
+        connection.execute(
+            "INSERT INTO call_key_generations(project_id, key_fingerprint, generation) "
+            "VALUES (?, ?, 1)",
+            ("default", fingerprint),
+        )
+        connection.execute("DELETE FROM calls")
+    assert calls.resolve_call("default", CAPTURED_SESSION_KEY) is None
+
+    _replay(calls, captured_requests()[4:5])
+    reborn = calls.call_id("default", CAPTURED_SESSION_KEY, 1)
+    assert calls.resolve_call("default", CAPTURED_SESSION_KEY) == reborn
+    assert catalog_rows(tmp_path, "SELECT call_id, generation, key_fingerprint FROM calls") == [
+        (reborn, 1, fingerprint)
+    ]
+
+
+def test_evidence_for_a_tombstoned_key_is_dropped_until_the_tombstone_expires(tmp_path) -> None:
+    calls, clock = _open(tmp_path)
+    requests = captured_requests()
+    fingerprint = calls.key_fingerprint("default", CAPTURED_SESSION_KEY)
+    with catalog(tmp_path) as connection:  # what a call purge (WS8) leaves behind
+        connection.execute(
+            "INSERT INTO call_key_generations(project_id, key_fingerprint, generation) "
+            "VALUES (?, ?, 1)",
+            ("default", fingerprint),
+        )
+        connection.execute(
+            "INSERT INTO call_tombstones(project_id, key_fingerprint, generation, "
+            "expires_at_unix_nano) VALUES (?, ?, 0, ?)",
+            ("default", fingerprint, START + 100 * SECOND),
+        )
+
+    parked = _replay(calls, requests[:2])  # unkeyed: parked, the key is not known yet
+    named = calls.record_spans("default", spans_from_request(requests[2]))
+
+    assert sum(result.parked_spans for result in parked) == 3
+    # The trace named a purged key: its parked spans and this batch are dropped.
+    assert (named.stored_spans, named.purged_call_evidence_dropped) == (0, 6)
+    assert (_span_rows(tmp_path), _parked_traces(tmp_path)) == (0, 0)
+    assert _calls(tmp_path) == []
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM otlp_resources") == [(0,)]
+    assert calls.otlp_stats("default")["purged_call_evidence_dropped"] == 6
+
+    clock.wall = START + 100 * SECOND
+    reborn = calls.record_spans("default", spans_from_request(requests[2]))
+    assert reborn.call_ids == (calls.call_id("default", CAPTURED_SESSION_KEY, 1),)
+
+
+# --- Presets ------------------------------------------------------------------------------------
+
+
+def _store_files_flushed(calls: CallStore) -> None:
+    calls.store.close()
+    if current_dialect() == "sqlite":
+        # The WAL is part of what is searched; closing does not have to empty it.
+        with closing(sqlite3.connect(calls.store.database_path)) as connection:
+            connection.execute("SELECT 1")
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_metadata_only_stores_no_raw_key_no_user_id_and_no_content(tmp_path, preset) -> None:
+    calls, clock = _open(tmp_path)
+    calls.store.set_capture_preset("default", preset)
+    needles = [
+        CAPTURED_SESSION_KEY.encode(),
+        USER_ID.encode(),
+        b"Seven thirty works for us.",  # an stt transcript
+        b"We look forward to welcoming you tomorrow.",  # a tts text
+    ]
+
+    _replay(calls, with_identity(captured_requests()), clock=clock)
+    call = catalog_rows(tmp_path, "SELECT call_id, session_key, span_count FROM calls")
+    _store_files_flushed(calls)
+
+    if preset == "metadata_only":
+        assert call == [(calls.call_id("default", CAPTURED_SESSION_KEY, 0), None, 17)]
+        assert stored_needles(tmp_path, needles) == set()
+    else:  # the control: the same search finds all of it when it is stored
+        assert call == [
+            (calls.call_id("default", CAPTURED_SESSION_KEY, 0), CAPTURED_SESSION_KEY, 17)
+        ]
+        assert stored_needles(tmp_path, needles) == set(needles)
+
+
+# --- Projects, budgets, ordering --------------------------------------------------------------
+
+
+def test_spans_for_another_project_are_kept_apart_and_inactive_projects_refused(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    calls.store.create_project("other", display_name="Other")
+    _replay(calls, captured_requests()[:3])
+    _replay(calls, captured_requests()[:3], project_id="other")
+
+    assert catalog_rows(tmp_path, "SELECT project_id, span_count FROM calls ORDER BY 1") == [
+        ("default", 6),
+        ("other", 6),
+    ]
+    assert calls.resolve_call("other", CAPTURED_SESSION_KEY) == calls.call_id(
+        "other", CAPTURED_SESSION_KEY, 0
+    )
+    calls.store.create_project("leaving", display_name="Leaving")
+    calls.store.begin_project_deletion("leaving")
+    with pytest.raises(ProjectInactiveError):
+        calls.record_spans("leaving", spans_from_request(captured_requests()[0]))
+    with pytest.raises(ValueError, match="does not exist"):
+        calls.record_spans("no-such-project", spans_from_request(captured_requests()[0]))
+
+
+def test_rejected_spans_are_counted_in_the_same_transaction(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+
+    calls.record_spans("default", [], rejected_spans=2)
+    calls.record_spans("default", spans_from_request(captured_requests()[0]), rejected_spans=1)
+
+    assert calls.otlp_stats("default")["rejected_spans"] == 3
+    with pytest.raises(ValueError):
+        calls.record_spans("default", [], rejected_spans=-1)
+
+
+def test_record_spans_gives_up_within_its_lock_budget(tmp_path) -> None:
+    calls, _ = _open(tmp_path)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold() -> None:
+        with calls.store.project_access_scope("default"):
+            holding.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold, daemon=True)
+    holder.start()
+    try:
+        assert holding.wait(10)
+        started = time.monotonic()
+        with pytest.raises(StorageBusyError):
+            calls.record_spans("default", spans_from_request(captured_requests()[0]), budget_s=0.3)
+        assert 0.25 <= time.monotonic() - started < 1.0
+    finally:
+        release.set()
+        holder.join(10)
+    assert _span_rows(tmp_path) == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "seconds"),
+    [
+        ("long_quiet_seconds", 1e10),
+        ("upload_hold_seconds", 1e12),
+        ("end_grace_seconds", float("inf")),
+        ("late_debounce_seconds", float("nan")),
+        ("late_debounce_seconds", 1e-10),
+        ("end_grace_seconds", 0.0),
+    ],
+)
+def test_call_timings_outside_one_nanosecond_to_ten_years_are_refused_when_built(
+    tmp_path, name, seconds
+) -> None:
+    """Tribunal rounds 2 and 3, Bellard: ``CallTimings(long_quiet_seconds=1e10)`` was
+    built, then every ``record_spans`` raised ``OverflowError`` (a due time past
+    int64). A host that builds its own ``CallStore`` gets the server's bounds."""
+
+    with pytest.raises(ValueError, match=name):
+        CallTimings(**{name: seconds})
+    edges = CallTimings(end_grace_seconds=1e-9, long_quiet_seconds=MAX_CALL_TIMING_SECONDS)
+    calls = CallStore(make_store(tmp_path), timings=edges)
+    request = make_request([make_span(1, 1, attributes=[string_attribute("session.id", "k")])])
+    assert calls.record_spans("default", spans_from_request(request)).stored_spans == 1
+
+
+def test_lock_order_is_sorted_traces_then_sorted_calls() -> None:
+    plan = lock_order(
+        traces=[b"\x02" * 16, b"\x01" * 16, b"\x02" * 16],
+        calls=["call_b", "call_a", "call_b"],
+    )
+
+    assert plan == (
+        ("trace", b"\x01" * 16),
+        ("trace", b"\x02" * 16),
+        ("call", "call_a"),
+        ("call", "call_b"),
+    )
+    assert lock_order(traces=[], calls=[]) == ()
+
+
+@pytest.mark.parametrize(
+    ("table", "column"), [("spans", "text_json"), ("calls", "revision_cap_counted")]
+)
+def test_a_catalog_stamped_0004_before_its_amendment_is_refused_when_it_opens(
+    tmp_path, table, column
+) -> None:
+    # Tribunal round 2, Lamport LAM2-3: ``0004_calls`` was amended in place before
+    # 0.2.0, so a catalog an unreleased build stamped lacks these columns; Alembic
+    # sees nothing to do, and every write failed with a missing column instead.
+    make_store(tmp_path).close()
+    with catalog(tmp_path) as connection:
+        connection.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        connection.commit()
+
+    with pytest.raises(CatalogIntegrityError) as refused:
+        make_store(tmp_path)
+
+    assert str(refused.value).startswith(
+        "EARSHOT_CATALOG_INTEGRITY: catalog created by an unreleased 0.2.0 build; recreate it"
+    )
+
+
+@pytest.mark.postgres_only
+def test_the_variable_in_list_reads_are_never_server_prepared(tmp_path) -> None:
+    # Tribunal round 2, Carmack CR2-4: psycopg prepares a statement on its fifth run.
+    # A prepared IN-list read keeps the generic plan Postgres made from a fresh
+    # table's missing statistics (a project-wide bitmap scan filtering 500 values a
+    # row), and a 1024-trace request went from 0.2 to 1.5 s until autoanalyze ran.
+    store = make_store(tmp_path)
+    calls = CallStore(store)
+    for batch in range(8):  # the same statement texts, over and over
+        spans = [
+            make_span(
+                10_000 * batch + trace + 1,
+                1,
+                attributes=[string_attribute("earshot.session.id", f"key-{batch}-{trace}")],
+            )
+            for trace in range(3)
+        ]
+        calls.record_spans("default", spans_from_request(make_request(spans)))
+
+    prepared = []
+    with contextlib.ExitStack() as stack:  # every pooled session at once: each has its own
+        for _ in range(store._database.pool_size):
+            connection = stack.enter_context(store._connect())
+            prepared.extend(
+                row["statement"]
+                for row in connection.execute("SELECT statement FROM pg_prepared_statements")
+            )
+
+    assert [statement for statement in prepared if " IN (" in statement] == []
