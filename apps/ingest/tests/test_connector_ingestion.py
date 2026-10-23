@@ -312,6 +312,50 @@ def test_the_hook_answers_receipt_disposition_and_call(tmp_path, monkeypatch) ->
     assert ignored.json() == {"receipt_id": None, "disposition": "ignored", "call_id": None}
 
 
+def test_the_hook_transcript_is_visible_in_the_call_detail(tmp_path, monkeypatch) -> None:
+    app, endpoint_id = _app(tmp_path, "vapi", monkeypatch)
+
+    with serve(app) as port:
+        applied = _post(port, endpoint_id, "vapi", vapi._report())
+        assert applied.status == 200, applied.body[:300]
+        detail = request(port, "GET", f"/v1/calls/{applied.json()['call_id']}")
+
+    assert detail.status == 200, detail.body[:300]
+    call = detail.json()
+    assert call["transcript_coverage"] == "available"
+    assert [(line["speaker"], line["text"]) for line in call["transcript"]] == [
+        ("agent", "Thanks for calling Green Valley Clinic."),
+        ("user", "I need to move my visit."),
+        ("agent", "Sure, which day works?"),
+    ]
+
+
+def test_a_hook_transcript_from_before_text_materialization_still_appears_in_call_detail(
+    tmp_path, monkeypatch
+) -> None:
+    app, endpoint_id = _app(tmp_path, "vapi", monkeypatch)
+
+    with serve(app) as port:
+        applied = _post(port, endpoint_id, "vapi", vapi._report())
+        assert applied.status == 200, applied.body[:300]
+        with catalog(tmp_path) as connection:
+            connection.execute(
+                "UPDATE spans SET text_json = NULL WHERE name = "
+                "'earshot.connector.transcript_line' "
+                "AND scope_name LIKE 'earshot.connector.%'"
+            )
+        detail = request(port, "GET", f"/v1/calls/{applied.json()['call_id']}")
+
+    assert detail.status == 200, detail.body[:300]
+    call = detail.json()
+    assert call["transcript_coverage"] == "available"
+    assert [(line["speaker"], line["text"]) for line in call["transcript"]] == [
+        ("agent", "Thanks for calling Green Valley Clinic."),
+        ("user", "I need to move my visit."),
+        ("agent", "Sure, which day works?"),
+    ]
+
+
 def test_the_hook_refuses_an_invalid_call_id_with_422(tmp_path, monkeypatch) -> None:
     app, endpoint_id = _app(tmp_path, "vapi", monkeypatch)
     report = vapi._report()

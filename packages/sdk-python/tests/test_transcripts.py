@@ -18,6 +18,7 @@ from earshot.connectors import evidence
 from earshot.privacy import CaptureClass
 from earshot.transcripts import (
     MAX_TRANSCRIPT_LINES,
+    MAX_TRANSCRIPT_SOURCE_LINES,
     Transcript,
     TranscriptFormatError,
     parse_transcript,
@@ -196,6 +197,14 @@ def test_each_plain_text_line_is_an_order_only_line() -> None:
     ]
 
 
+def test_plain_text_collapses_unicode_whitespace_to_one_space() -> None:
+    body = "user: one\u2003two\u2009three".encode()
+
+    assert lines(parse_transcript(body, "text", default_speaker=None)) == [
+        ("user", "one two three", None, None)
+    ]
+
+
 def test_an_unlabelled_plain_text_line_is_the_speaker_of_a_one_speaker_recording() -> None:
     body = "Bonjour: je voudrais réserver.\nagent: Oui.".encode()
 
@@ -230,6 +239,16 @@ def test_a_transcript_of_more_lines_than_the_cap_is_refused() -> None:
     assert len(parse_transcript(body[9:], "text", default_speaker=None).lines) == (
         MAX_TRANSCRIPT_LINES
     )
+
+
+def test_a_transcript_with_too_many_raw_lines_is_refused_before_row_materialization() -> None:
+    body = b"\n" * MAX_TRANSCRIPT_SOURCE_LINES
+
+    with pytest.raises(
+        TranscriptFormatError,
+        match=f"more than {MAX_TRANSCRIPT_SOURCE_LINES} source lines",
+    ):
+        parse_transcript(body, "text", default_speaker=None)
 
 
 # --- identity ------------------------------------------------------------------------------------

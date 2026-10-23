@@ -32,8 +32,8 @@ the collision-free distribution name `earshot-observability`. See
 [release packaging](./release.md); `pip install earshot` installs an unrelated VAD
 project even though this repository also uses `import earshot`.
 
-The compatibility lane is bounded to Pipecat `>=1.5.0,<1.6` and LiveKit Agents
-`>=1.6.5,<1.7`. Unit tests remain duck typed; installing both extras activates the
+The compatibility lane checks Pipecat 1.5.0 and current 1.5.x, plus LiveKit Agents 1.6.5
+and current 1.8.x. Unit tests remain duck typed; installing both extras activates the
 real-package integration tests in `apps/ingest/tests/test_framework_integrations.py`.
 
 ## Generate contract artifacts
@@ -107,7 +107,10 @@ pytest -m slow apps/ingest/tests/test_recordings_memory.py   # the slow tests yo
 pytest -m slow                                         # every slow test
 ```
 
-CI and the release gate run plain `pytest`, so no `slow` test is skipped there.
+Pull-request CI runs bounded feature suites and excludes tests marked `slow`. A
+manually triggered `workflow_dispatch` run executes the full SQLite suite and the
+Postgres/S3 storage suites with branch coverage, then combines their coverage results.
+The release gate runs plain `pytest`, so no `slow` test is skipped there.
 
 Two tests still skip in CI: the real-provider e2e (`apps/ingest/tests/e2e_real/`,
 marked `real_providers`). Each runs one real call, Pipecat 1.5 or LiveKit Agents 1.8,
@@ -127,18 +130,19 @@ so a plain local `pytest` places no paid calls. The release gate runs them with
 ```
 
 The provider-free replay of both calls
-(`apps/ingest/tests/e2e/test_otlp_replay_quickstart.py`) runs in CI and pins their call
-views' values.
+(`apps/ingest/tests/e2e/test_otlp_replay_quickstart.py`) runs in the full-coverage CI
+workflow and pins their call views' values.
 
 Tests intentionally mutate valid fixtures. A passing test should prove a property or
 regression, not merely assert that its own valid sample is valid.
 
-The checked-in [CI workflow](../.github/workflows/ci.yml) runs these gates on every
-push and pull request. Its Python lane installs both bounded framework extras so the
-LiveKit 1.6 and Pipecat 1.5 real-object integration tests cannot silently skip. A
-separate clean-artifact lane bundles the viewer, builds the wheel and sdist together,
-and installs both in isolated base and `[server]` environments. Its TypeScript lane uses
-the committed pnpm lockfile and the Node version in `.nvmrc`.
+The checked-in [CI workflow](../.github/workflows/ci.yml) runs bounded feature gates on
+pushes to `main` and on pull requests. Its framework matrix exercises the supported
+minimum and current Pipecat and LiveKit versions. Full SQLite and Postgres/S3 suites with
+combined branch coverage run only from `workflow_dispatch`. A separate clean-artifact
+lane bundles the viewer, builds the wheel and sdist together, and installs them in
+isolated base, `[server]`, and viewer-smoke environments. Its TypeScript lane uses the
+committed pnpm lockfile and the Node version in `.nvmrc`.
 
 ## Run locally
 

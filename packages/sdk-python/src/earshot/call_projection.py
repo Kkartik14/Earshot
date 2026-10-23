@@ -42,8 +42,10 @@ attributes), and the bundle hashes some of them.
   offset (the median of the turn's anchor offsets; 0 without anchors). A user line
   snaps to the nearest user run start within ``USER_SNAP_MS``; an agent line to its
   turn's paired agent run. A snapped line ends where the last run of its speaker
-  that starts before the next line ends. Without a timeline, lines keep their span
-  times. A line of a turn with a timeline discontinuity is ``alignment_uncertain``.
+  that starts before the next line ends. ``order_only`` lines keep their order and
+  have no placement; ``start_only`` lines keep a start and no inferred end. Without
+  a timeline, measured and start-only lines keep their source times. A line of a
+  turn with a timeline discontinuity is ``alignment_uncertain``.
 - **Cost:** ``call_cost``.
 """
 
@@ -52,6 +54,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -83,7 +86,7 @@ if TYPE_CHECKING:
 
 # Bumped when the projection's computation or shape changes: every stored
 # projection then reads as stale until the job recomputes it.
-CALL_PROJECTION_VERSION = 1
+CALL_PROJECTION_VERSION = 4
 PROJECTION_STATES = ("none", "stale", "current")
 
 
@@ -214,6 +217,92 @@ class Projection:
 
 def _row(row: TranscriptRow) -> list[Any]:
     return [row.line_no, row.speaker, row.timing, row.start_ms, row.end_ms, row.text]
+
+
+class _RunIndex:
+    """Nearest run starts and range maxima for one speaker's ordered timeline."""
+
+    def __init__(self, runs: Sequence[Run]) -> None:
+        self.runs = tuple(sorted(runs, key=lambda run: (run.start_ms, run.end_ms)))
+        self.starts = [run.start_ms for run in self.runs]
+        self._size = 1 << (len(self.runs) - 1).bit_length() if self.runs else 1
+        self._max_end = [-math.inf] * (2 * self._size)
+        for index, run in enumerate(self.runs):
+            self._max_end[self._size + index] = run.end_ms
+        for index in range(self._size - 1, 0, -1):
+            self._max_end[index] = max(self._max_end[index * 2], self._max_end[index * 2 + 1])
+
+    def nearest_start(self, target: float) -> int | None:
+        """The nearest run start, with the earlier start winning an exact tie."""
+
+        if not self.starts:
+            return None
+        position = bisect_left(self.starts, target)
+        candidates = self.starts[max(0, position - 1) : min(len(self.starts), position + 1)]
+        return min(candidates, key=lambda point: (abs(point - target), point))
+
+    def max_end(self, start: float, limit: float) -> int | None:
+        """The greatest end among runs whose starts are in ``[start, limit)``."""
+
+        left = bisect_left(self.starts, start)
+        right = bisect_left(self.starts, limit, lo=left)
+        if left == right:
+            return None
+        left += self._size
+        right += self._size
+        result = -math.inf
+        while left < right:
+            if left & 1:
+                result = max(result, self._max_end[left])
+                left += 1
+            if right & 1:
+                right -= 1
+                result = max(result, self._max_end[right])
+            left //= 2
+            right //= 2
+        return int(result)
+
+
+def _following_start_limits(lines: Sequence[Mapping[str, Any]]) -> list[float]:
+    """For each line, the least later start strictly after its own, in O(n log n)."""
+
+    starts = [line["start_ms"] for line in lines]
+    coordinates = sorted({start for start in starts if start is not None})
+    if not coordinates:
+        return [math.inf] * len(lines)
+    size = 1 << (len(coordinates) - 1).bit_length()
+    tree = [math.inf] * (2 * size)
+    limits = [math.inf] * len(lines)
+
+    def update(position: int, value: float) -> None:
+        node = size + position
+        tree[node] = value
+        node //= 2
+        while node:
+            tree[node] = min(tree[node * 2], tree[node * 2 + 1])
+            node //= 2
+
+    def suffix_min(position: int) -> float:
+        left, right = size + position, size + len(coordinates)
+        result = math.inf
+        while left < right:
+            if left & 1:
+                result = min(result, tree[left])
+                left += 1
+            if right & 1:
+                right -= 1
+                result = min(result, tree[right])
+            left //= 2
+            right //= 2
+        return result
+
+    for index in range(len(starts) - 1, -1, -1):
+        start = starts[index]
+        if start is None:
+            continue
+        limits[index] = suffix_min(bisect_right(coordinates, start))
+        update(bisect_left(coordinates, start), start)
+    return limits
 
 
 def canonical_json(value: Any) -> str:
@@ -470,16 +559,32 @@ def _media(recordings: Sequence[RecordingSource], axis_ms: Any) -> list[dict[str
     return sorted(entries, key=lambda entry: (entry["offset_ms"], entry["recording_ids"]))
 
 
-def _descendants(spans: Sequence[OtlpSpan], trace: bytes, root: bytes) -> list[OtlpSpan]:
-    children: dict[bytes, list[OtlpSpan]] = {}
+def _children_by_parent(spans: Sequence[OtlpSpan]) -> dict[tuple[bytes, bytes], list[OtlpSpan]]:
+    children: dict[tuple[bytes, bytes], list[OtlpSpan]] = {}
     for span in spans:
-        if span.span.trace_id == trace and span.span.parent_span_id:
-            children.setdefault(span.span.parent_span_id, []).append(span)
+        if span.span.parent_span_id:
+            children.setdefault((span.span.trace_id, span.span.parent_span_id), []).append(span)
+    return children
+
+
+def _descendants(
+    spans: Sequence[OtlpSpan],
+    trace: bytes,
+    root: bytes,
+    children: Mapping[tuple[bytes, bytes], Sequence[OtlpSpan]] | None = None,
+) -> list[OtlpSpan]:
+    if children is None:
+        children = _children_by_parent(spans)
     found, stack = [], [root]
+    visited = {root}
     while stack:
-        for child in children.get(stack.pop(), ()):
+        for child in children.get((trace, stack.pop()), ()):
+            span_id = child.span.span_id
+            if span_id in visited:
+                continue
+            visited.add(span_id)
             found.append(child)
-            stack.append(child.span.span_id)
+            stack.append(span_id)
     return sorted(found, key=lambda span: (span.span.start_time_unix_nano, span.span.span_id))
 
 
@@ -531,6 +636,7 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
         return None if value is None else round(value + timeline_shift)
 
     by_id = {(span.span.trace_id.hex(), span.span.span_id.hex()): span for span in spans}
+    children_by_parent = _children_by_parent(spans)
     anchors = turn_anchors(spans)
     gaps: list[Gap] = []
     turns: list[dict[str, Any]] = []
@@ -552,7 +658,12 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
         children = (
             []
             if turn_span is None
-            else _descendants(spans, turn_span.span.trace_id, turn_span.span.span_id)
+            else _descendants(
+                spans,
+                turn_span.span.trace_id,
+                turn_span.span.span_id,
+                children_by_parent,
+            )
         )
         turns.append(
             {
@@ -682,7 +793,7 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
                 "line_no": line["line_no"],
                 "speaker": line["speaker"],
                 "text": line["text"],
-                "timing": "measured",
+                "timing": line["timing"],
                 "start_ms": line["start_ms"],
                 "end_ms": line["end_ms"],
                 "alignment_uncertain": line["alignment_uncertain"],
@@ -698,7 +809,7 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
             TranscriptRow(
                 line_no=line["line_no"],
                 speaker=line["speaker"],
-                timing="measured",
+                timing=line["timing"],
                 start_ms=line["start_ms"],
                 end_ms=line["end_ms"],
                 text=line["text"],
@@ -749,6 +860,11 @@ def _place_transcript(
         for span in spans
     }
     turn_of_span = {(a.trace_id, a.turn_span_id): index for index, a in enumerate(anchors)}
+    anchor_starts = [anchor.turn_start_unix_nano for anchor in anchors]
+    run_indexes = {
+        "user": _RunIndex(timeline.user_runs) if timeline is not None else None,
+        "agent": _RunIndex(timeline.agent_runs) if timeline is not None else None,
+    }
 
     def turn_index(line: Any) -> int | None:
         key = (line.trace_id, line.span_id)
@@ -757,17 +873,19 @@ def _place_transcript(
         parent = (line.trace_id, parents.get(key, ""))
         if parent in turn_of_span:  # a Pipecat line's span is a child of its turn
             return turn_of_span[parent]
-        earlier = [
-            i for i, a in enumerate(anchors) if a.turn_start_unix_nano <= line.start_unix_nano
-        ]
-        return earlier[-1] if earlier else (0 if anchors else None)
+        earlier = bisect_right(anchor_starts, line.start_unix_nano) - 1
+        return earlier if earlier >= 0 else (0 if anchors else None)
 
     placed = []
     used_agent_runs: set[Run] = set()
     for line_no, line in enumerate(lines):
         index = turn_index(line)
         gap = gaps[index] if index is not None else None
-        uncertain = gap is not None and gap.reason == "recorder_timeline_discontinuity"
+        uncertain = (
+            line.timing != "order_only"
+            and gap is not None
+            and gap.reason == "recorder_timeline_discontinuity"
+        )
         span = {"trace_id": line.trace_id, "span_id": line.span_id}
         if timeline is None:
             placed.append(
@@ -775,8 +893,26 @@ def _place_transcript(
                     "line_no": line_no,
                     "speaker": line.speaker,
                     "text": line.text,
-                    "start_ms": axis_ms(line.start_unix_nano),
-                    "end_ms": axis_ms(line.end_unix_nano),
+                    "timing": line.timing,
+                    "start_ms": (
+                        None if line.timing == "order_only" else axis_ms(line.start_unix_nano)
+                    ),
+                    "end_ms": (axis_ms(line.end_unix_nano) if line.timing == "measured" else None),
+                    "snapped": False,
+                    "alignment_uncertain": uncertain,
+                    "span": span,
+                }
+            )
+            continue
+        if line.timing == "order_only":
+            placed.append(
+                {
+                    "line_no": line_no,
+                    "speaker": line.speaker,
+                    "text": line.text,
+                    "timing": line.timing,
+                    "start_ms": None,
+                    "end_ms": None,
                     "snapped": False,
                     "alignment_uncertain": uncertain,
                     "span": span,
@@ -785,12 +921,12 @@ def _place_transcript(
             continue
         offset = 0.0 if gap is None else gap.offset_ms
         start = timeline.naive_ms(line.start_unix_nano) + offset
-        end = timeline.naive_ms(line.end_unix_nano) + offset
+        end = timeline.naive_ms(line.end_unix_nano) + offset if line.timing == "measured" else None
         anchor = anchors[index] if index is not None else None
         snapped = None
         if line.speaker == "user":
-            runs = [run.start_ms for run in timeline.user_runs]
-            nearest = min(runs, key=lambda point: (abs(point - start), point), default=None)
+            run_index = run_indexes["user"]
+            nearest = None if run_index is None else run_index.nearest_start(start)
             if nearest is not None and abs(nearest - start) <= USER_SNAP_MS:
                 snapped = nearest
         else:
@@ -808,8 +944,8 @@ def _place_transcript(
                 snapped = gap.agent_run.start_ms
                 used_agent_runs.add(gap.agent_run)
             else:
-                runs = [run.start_ms for run in timeline.agent_runs]
-                nearest = min(runs, key=lambda point: (abs(point - start), point), default=None)
+                run_index = run_indexes["agent"]
+                nearest = None if run_index is None else run_index.nearest_start(start)
                 if nearest is not None and abs(nearest - start) <= USER_SNAP_MS:
                     snapped = nearest
         placed.append(
@@ -817,6 +953,7 @@ def _place_transcript(
                 "line_no": line_no,
                 "speaker": line.speaker,
                 "text": line.text,
+                "timing": line.timing,
                 "start_ms": snapped if snapped is not None else start,
                 "end_ms": end,
                 "snapped": snapped is not None,
@@ -826,22 +963,20 @@ def _place_transcript(
         )
     if timeline is None:
         return [_public(line) for line in placed]
+    following_limits = _following_start_limits(placed)
     for position, line in enumerate(placed):
-        if not line["snapped"]:
+        if not line["snapped"] or line["timing"] != "measured":
             continue
-        following = [
-            other["start_ms"]
-            for other in placed[position + 1 :]
-            if other["start_ms"] > line["start_ms"]
-        ]
-        limit = min(following, default=math.inf)
-        runs = timeline.user_runs if line["speaker"] == "user" else timeline.agent_runs
-        own = [run for run in runs if line["start_ms"] <= run.start_ms < limit]
-        if own:
-            line["end_ms"] = max(run.end_ms for run in own)
+        run_index = run_indexes[line["speaker"]]
+        if run_index is not None:
+            end = run_index.max_end(line["start_ms"], following_limits[position])
+            if end is not None:
+                line["end_ms"] = end
     for line in placed:
-        line["start_ms"] = round(line["start_ms"] + timeline_shift)
-        line["end_ms"] = round(line["end_ms"] + timeline_shift)
+        if line["start_ms"] is not None:
+            line["start_ms"] = round(line["start_ms"] + timeline_shift)
+        if line["end_ms"] is not None:
+            line["end_ms"] = round(line["end_ms"] + timeline_shift)
     return [_public(line) for line in placed]
 
 

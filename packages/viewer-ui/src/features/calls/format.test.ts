@@ -117,6 +117,18 @@ describe("gapReadout", () => {
     expect(readout.value).toBe("—");
     expect(readout.reason).toMatch(/agent/i);
   });
+
+  it("explains when speech-edge uncertainty exceeds the 100 ms measurement limit", () => {
+    const readout = gapReadout(
+      gap({
+        status: "not_measurable",
+        uncertainty_ms: 118,
+        reason: "boundary_uncertainty_too_high",
+      }),
+    );
+    expect(readout.value).toBe("—");
+    expect(readout.reason).toMatch(/uncertain/i);
+  });
 });
 
 describe("time formats", () => {

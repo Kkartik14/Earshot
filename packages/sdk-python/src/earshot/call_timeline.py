@@ -21,6 +21,7 @@ timeline's first sample. Span times reach it by the naive mapping
    ending by ``a.start`` with no agent run starting in between; none:
    ``no_clear_pairing``.
 3. *Value.* ``a.start - u*.end`` ± ``sqrt(sigma_u^2 + sigma_a^2)`` (the boundaries' sigmas).
+   If that uncertainty exceeds 100 ms, the gap is not measurable.
 4. *Discontinuity* (Pipecat, which has both anchors): ``o_u = u*.end - naive(U-off)``
    and ``o_a = audio A-on - naive(A-on)``. A step ``|o_a - o_u|`` above
    ``DISCONTINUITY_STEP_MS`` means the recorder inserted time inside the gap: the
@@ -49,14 +50,17 @@ from __future__ import annotations
 
 import math
 import statistics
+from bisect import bisect_left, bisect_right
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from itertools import pairwise
 
 # Turn alignment and pairing (M1, M6).
 ZERO_RUN_ANCHOR_MS = 50
 ANCHOR_SEARCH_MS = 1500
 PAIRING_WINDOW_MS = 1000
 DISCONTINUITY_STEP_MS = 150
+MAX_MEASURABLE_GAP_UNCERTAINTY_MS = 100
 USER_SNAP_MS = 500
 # Signals (research §4.3; M22).
 MIN_OVERLAP_MS = 120
@@ -94,6 +98,40 @@ class Timeline:
     agent_zero_runs: tuple[tuple[int, int], ...]
     # Whether the recorder only inserts time and zero-pads the agent (Pipecat).
     insert_only: bool
+    _user_runs_by_start: tuple[Run, ...] = field(init=False, repr=False, compare=False)
+    _user_starts: tuple[int, ...] = field(init=False, repr=False, compare=False)
+    _agent_runs_by_start: tuple[Run, ...] = field(init=False, repr=False, compare=False)
+    _agent_starts: tuple[int, ...] = field(init=False, repr=False, compare=False)
+    _agent_zero_edges: tuple[int, ...] = field(init=False, repr=False, compare=False)
+    _user_runs_by_end: tuple[Run, ...] = field(init=False, repr=False, compare=False)
+    _user_end_keys: tuple[tuple[int, int], ...] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        user_by_start = tuple(sorted(self.user_runs, key=lambda run: run.start_ms))
+        agent_by_start = tuple(sorted(self.agent_runs, key=lambda run: run.start_ms))
+        user_by_end = tuple(sorted(self.user_runs, key=lambda run: (run.end_ms, run.start_ms)))
+        object.__setattr__(self, "_user_runs_by_start", user_by_start)
+        object.__setattr__(self, "_user_starts", tuple(run.start_ms for run in user_by_start))
+        object.__setattr__(self, "_agent_runs_by_start", agent_by_start)
+        object.__setattr__(self, "_agent_starts", tuple(run.start_ms for run in agent_by_start))
+        object.__setattr__(
+            self,
+            "_agent_zero_edges",
+            tuple(
+                sorted(
+                    end
+                    for start, end in self.agent_zero_runs
+                    if end - start >= ZERO_RUN_ANCHOR_MS
+                    and (self.duration_ms is None or end < self.duration_ms)
+                )
+            ),
+        )
+        object.__setattr__(self, "_user_runs_by_end", user_by_end)
+        object.__setattr__(
+            self,
+            "_user_end_keys",
+            tuple((run.end_ms, run.start_ms) for run in user_by_end),
+        )
 
     def naive_ms(self, unix_nano: int) -> float:
         return (unix_nano - self.started_at_unix_nano) / _NANOS_PER_MS
@@ -130,40 +168,44 @@ def not_measurable(reason: str) -> Gap:
     return Gap(status="not_measurable", reason=reason)
 
 
-def _uncertainty(user: Run, agent: Run) -> int:
-    return round(math.sqrt(user.end_sigma_ms**2 + agent.start_sigma_ms**2))
+def _uncertainty(user: Run, agent: Run) -> float:
+    return math.sqrt(user.end_sigma_ms**2 + agent.start_sigma_ms**2)
 
 
 def _nearest(points: Sequence[int], target: float, window: float) -> int | None:
-    best = min(points, key=lambda point: (abs(point - target), point), default=None)
+    if not points:
+        return None
+    position = bisect_left(points, target)
+    candidates = points[max(0, position - 1) : min(len(points), position + 1)]
+    best = min(candidates, key=lambda point: (abs(point - target), point))
     return None if best is None or abs(best - target) > window else best
+
+
+def _nearest_run(
+    runs: Sequence[Run], starts: Sequence[int], target: float, window: float
+) -> Run | None:
+    start = _nearest(starts, target, window)
+    if start is None:
+        return None
+    return runs[bisect_left(starts, start)]
 
 
 def _audio_agent_on(timeline: Timeline, naive_agent_on: float) -> int | None:
     """Where the agent's audio starts near a mapped A-on (step 1)."""
 
     if timeline.insert_only:
-        edges = [
-            end
-            for start, end in timeline.agent_zero_runs
-            if end - start >= ZERO_RUN_ANCHOR_MS
-            and (timeline.duration_ms is None or end < timeline.duration_ms)
-        ]
-        edge = _nearest(edges, naive_agent_on, ANCHOR_SEARCH_MS)
+        edge = _nearest(timeline._agent_zero_edges, naive_agent_on, ANCHOR_SEARCH_MS)
         if edge is not None:
             return edge
-        return _nearest(
-            [run.start_ms for run in timeline.agent_runs], naive_agent_on, ANCHOR_SEARCH_MS
-        )
+        return _nearest(timeline._agent_starts, naive_agent_on, ANCHOR_SEARCH_MS)
     return round(naive_agent_on)
 
 
 def _user_on_offsets(timeline: Timeline, anchors: TurnAnchorsMs) -> list[float]:
-    onsets = [run.start_ms for run in timeline.user_runs]
     offsets = []
     for user_on in anchors.user_on_unix_nano:
         naive = timeline.naive_ms(user_on)
-        onset = _nearest(onsets, naive, ANCHOR_SEARCH_MS)
+        onset = _nearest(timeline._user_starts, naive, ANCHOR_SEARCH_MS)
         if onset is not None:
             offsets.append(onset - naive)
     return offsets
@@ -178,28 +220,36 @@ def audible_gap(timeline: Timeline, anchors: TurnAnchorsMs) -> Gap:
     audio_on = _audio_agent_on(timeline, naive_on)
     if audio_on is None:
         return not_measurable("no_agent_audio")
-    candidates = [
-        run for run in timeline.agent_runs if abs(run.start_ms - audio_on) <= PAIRING_WINDOW_MS
-    ]
-    if not candidates:
+    agent = _nearest_run(
+        timeline._agent_runs_by_start,
+        timeline._agent_starts,
+        audio_on,
+        PAIRING_WINDOW_MS,
+    )
+    if agent is None:
         return not_measurable("no_agent_audio")
-    agent = min(candidates, key=lambda run: (abs(run.start_ms - audio_on), run.start_ms))
     offsets = _user_on_offsets(timeline, anchors) if timeline.insert_only else []
     o_a = audio_on - naive_on
     if timeline.insert_only:
         offsets.append(o_a)
-    if any(run.start_ms < agent.start_ms < run.end_ms for run in timeline.user_runs):
+    latest_user_index = bisect_right(timeline._user_starts, agent.start_ms) - 1
+    if (
+        latest_user_index >= 0
+        and timeline._user_runs_by_start[latest_user_index].start_ms < agent.start_ms
+        and timeline._user_runs_by_start[latest_user_index].end_ms > agent.start_ms
+    ):
         return Gap(
             status="talk_over",
             agent_start_ms=agent.start_ms,
             offset_ms=statistics.median(offsets) if offsets else 0.0,
             agent_run=agent,
         )
-    ended = [run for run in timeline.user_runs if run.end_ms <= agent.start_ms]
-    user = max(ended, key=lambda run: (run.end_ms, run.start_ms), default=None)
-    if user is None or any(
-        user.end_ms < run.start_ms < agent.start_ms for run in timeline.agent_runs
-    ):
+    user_index = bisect_right(timeline._user_end_keys, (agent.start_ms, math.inf)) - 1
+    user = timeline._user_runs_by_end[user_index] if user_index >= 0 else None
+    agent_after_user = user is not None and bisect_right(
+        timeline._agent_starts, user.end_ms
+    ) < bisect_left(timeline._agent_starts, agent.start_ms)
+    if user is None or agent_after_user:
         return Gap(
             status="not_measurable",
             reason="no_clear_pairing",
@@ -209,6 +259,7 @@ def audible_gap(timeline: Timeline, anchors: TurnAnchorsMs) -> Gap:
         )
     value = agent.start_ms - user.end_ms
     uncertainty = _uncertainty(user, agent)
+    uncertainty_ms = round(uncertainty)
     basis = BASIS_CONTINUOUS
     if timeline.insert_only and anchors.user_off_unix_nano is not None:
         basis = BASIS_ANCHORS_CHECKED
@@ -218,7 +269,7 @@ def audible_gap(timeline: Timeline, anchors: TurnAnchorsMs) -> Gap:
         if abs(o_a - o_u) > DISCONTINUITY_STEP_MS:
             return Gap(
                 status="not_measurable",
-                uncertainty_ms=uncertainty,
+                uncertainty_ms=uncertainty_ms,
                 bound_ms=value,
                 user_end_ms=user.end_ms,
                 agent_start_ms=agent.start_ms,
@@ -228,10 +279,21 @@ def audible_gap(timeline: Timeline, anchors: TurnAnchorsMs) -> Gap:
                 agent_run=agent,
             )
     offset = statistics.median(offsets) if offsets else 0.0
+    if uncertainty > MAX_MEASURABLE_GAP_UNCERTAINTY_MS:
+        return Gap(
+            status="not_measurable",
+            uncertainty_ms=uncertainty_ms,
+            user_end_ms=user.end_ms,
+            agent_start_ms=agent.start_ms,
+            reason="boundary_uncertainty_too_high",
+            basis=basis,
+            offset_ms=offset,
+            agent_run=agent,
+        )
     return Gap(
         status="measured",
         value_ms=value,
-        uncertainty_ms=uncertainty,
+        uncertainty_ms=uncertainty_ms,
         user_end_ms=user.end_ms,
         agent_start_ms=agent.start_ms,
         basis=basis,
@@ -258,62 +320,127 @@ def talk_time(runs: Sequence[Run]) -> int:
     return sum(run.end_ms - run.start_ms for run in runs)
 
 
+def _coalesce(runs: Sequence[Run]) -> tuple[Run, ...]:
+    """Sorted maximal speech runs for one speaker, including overlapping inputs."""
+
+    result: list[Run] = []
+    for run in sorted(runs, key=lambda item: (item.start_ms, item.end_ms)):
+        if not result or run.start_ms > result[-1].end_ms:
+            result.append(run)
+            continue
+        previous = result[-1]
+        if run.end_ms > previous.end_ms:
+            result[-1] = Run(
+                previous.start_ms,
+                run.end_ms,
+                previous.start_sigma_ms,
+                run.end_sigma_ms,
+            )
+    return tuple(result)
+
+
+def _speech_groups(user: Sequence[Run], agent: Sequence[Run]) -> list[tuple[int, int, str, bool]]:
+    """Merged activity intervals with the last and first speaker at their edges."""
+
+    events = sorted(
+        [(run.start_ms, run.end_ms, "user") for run in user]
+        + [(run.start_ms, run.end_ms, "agent") for run in agent],
+        key=lambda item: (item[0], item[1], 0 if item[2] == "user" else 1),
+    )
+    groups: list[list[int | str | bool]] = []
+    for start, end, speaker in events:
+        if not groups or start > groups[-1][1]:
+            groups.append([start, end, speaker, speaker == "agent"])
+            continue
+        group = groups[-1]
+        if start == group[0] and speaker == "agent":
+            group[3] = True
+        if end > group[1]:
+            group[1] = end
+            group[2] = speaker
+        elif end == group[1] and speaker == "user" and group[2] == "agent":
+            # ``max(before, key=end)`` used to prefer user runs on an end-time tie.
+            group[2] = "user"
+    return [
+        (int(start), int(end), str(last_speaker), bool(agent_at_start))
+        for start, end, last_speaker, agent_at_start in groups
+    ]
+
+
 def _silences(user: Sequence[Run], agent: Sequence[Run]) -> list[tuple[int, int]]:
     """Maximal intervals with no one speaking, between the first and last speech."""
 
-    spans = sorted((run.start_ms, run.end_ms) for run in (*user, *agent))
-    silences = []
-    reach = None
-    for start, end in spans:
-        if reach is not None and start > reach:
-            silences.append((reach, start))
-        reach = end if reach is None else max(reach, end)
-    return silences
+    groups = _speech_groups(user, agent)
+    return [(previous[1], following[0]) for previous, following in pairwise(groups)]
 
 
 def signals(timeline: Timeline) -> Signals:
     """The call's signals on one timeline (module docstring)."""
 
-    user, agent = timeline.user_runs, timeline.agent_runs
+    user, agent = _coalesce(timeline.user_runs), _coalesce(timeline.agent_runs)
     overlap = 0
-    for u in user:
-        for a in agent:
-            both = min(u.end_ms, a.end_ms) - max(u.start_ms, a.start_ms)
-            if both >= MIN_OVERLAP_MS:
-                overlap += both
+    user_index = agent_index = 0
+    while user_index < len(user) and agent_index < len(agent):
+        u, a = user[user_index], agent[agent_index]
+        both = min(u.end_ms, a.end_ms) - max(u.start_ms, a.start_ms)
+        if both >= MIN_OVERLAP_MS:
+            overlap += both
+        if u.end_ms <= a.end_ms:
+            user_index += 1
+        if a.end_ms <= u.end_ms:
+            agent_index += 1
 
     def backchannel(u: Run, a: Run) -> bool:
         short = u.end_ms - u.start_ms < BACKCHANNEL_MAX_MS
         return short and a.end_ms > u.start_ms + YIELD_WINDOW_MS
 
-    barge_ins = sum(
-        1
-        for u in user
-        if any(
-            a.start_ms + EDGE_GUARD_MS < u.start_ms < a.end_ms and not backchannel(u, a)
-            for a in agent
-        )
-    )
-    talk_overs = sum(
-        1 for a in agent if any(u.start_ms + EDGE_GUARD_MS < a.start_ms < u.end_ms for u in user)
-    )
-    silences = _silences(user, agent)
-    long_silences = sum(1 for start, end in silences if end - start >= LONG_SILENCE_MS)
-    dead_air = 0
-    for start, end in silences:
-        before = [run for run in (*user, *agent) if run.end_ms <= start]
-        after = [run for run in (*user, *agent) if run.start_ms >= end]
-        if not before or not after:
+    agent_starts = [run.start_ms for run in agent]
+    barge_ins = 0
+    for u in user:
+        index = bisect_right(agent_starts, u.start_ms) - 1
+        if index < 0:
             continue
-        last = max(before, key=lambda run: run.end_ms)
-        followed_by_agent = any(run.start_ms == end for run in agent)
-        response_gap = last in user and end - start >= DEAD_AIR_RESPONSE_MS
-        in_turn_gap = last in agent and followed_by_agent and end - start >= DEAD_AIR_IN_TURN_MS
+        a = agent[index]
+        if a.start_ms + EDGE_GUARD_MS < u.start_ms < a.end_ms and not backchannel(u, a):
+            barge_ins += 1
+
+    user_starts = [run.start_ms for run in user]
+    talk_overs = 0
+    for a in agent:
+        index = bisect_right(user_starts, a.start_ms) - 1
+        if index >= 0:
+            u = user[index]
+            if u.start_ms + EDGE_GUARD_MS < a.start_ms < u.end_ms:
+                talk_overs += 1
+
+    groups = _speech_groups(user, agent)
+    long_silences = sum(
+        1
+        for previous, following in pairwise(groups)
+        if following[0] - previous[1] >= LONG_SILENCE_MS
+    )
+    dead_air = 0
+    for previous, following in pairwise(groups):
+        silence = following[0] - previous[1]
+        followed_by_agent = following[3]
+        response_gap = (
+            previous[2] == "user" and followed_by_agent and silence >= DEAD_AIR_RESPONSE_MS
+        )
+        in_turn_gap = (
+            previous[2] == "agent" and followed_by_agent and silence >= DEAD_AIR_IN_TURN_MS
+        )
         if response_gap or in_turn_gap:
-            dead_air += end - start
-    first = min((*user, *agent), key=lambda run: run.start_ms, default=None)
-    if first is not None and first in agent and first.start_ms >= DEAD_AIR_RESPONSE_MS:
-        dead_air += first.start_ms
+            dead_air += silence
+    first_start = min((run.start_ms for run in (*user, *agent)), default=None)
+    first_is_user = first_start is not None and any(run.start_ms == first_start for run in user)
+    first_is_agent = first_start is not None and any(run.start_ms == first_start for run in agent)
+    if (
+        first_start is not None
+        and first_is_agent
+        and not first_is_user
+        and first_start >= DEAD_AIR_RESPONSE_MS
+    ):
+        dead_air += first_start
     return Signals(
         talk_time_user_ms=talk_time(user),
         talk_time_agent_ms=talk_time(agent),

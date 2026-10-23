@@ -13,10 +13,11 @@ are created and while listed calls receive evidence. ``span_count`` and
 it holds evidence its latest revision does not show
 (``evidence_after_latest_revision``: a call at the revision cap), and its
 transcript, read from its spans at request time, so an open call's transcript
-grows as its spans arrive. Each span's line was extracted when the span was
-stored (``spans.text_json``); the read selects only spans that carry one and
-never reads a payload, so its cost follows the transcript, not the spans (an
-``llm`` span's payload repeats the whole conversation).
+grows as its spans arrive. Each new span's line was extracted when it was stored
+(``spans.text_json``); older upload/provider transcript-line spans predate that
+extractor, so their payload is decoded only when this precomputed text is absent. The
+read never decodes ordinary span payloads (an ``llm`` span's payload repeats the whole
+conversation).
 
 **Projections.** The list and the detail carry each call's projection
 (``call_projection``) when it has one, with its freshness. The list's filters
@@ -40,9 +41,10 @@ from typing import TYPE_CHECKING, Any
 from .call_capture import CAPTURE_PRESET_FULL
 from .call_materializer import (
     TranscriptLine,
+    ordered_transcript_lines,
     stored_transcript_line,
     transcript_coverage,
-    transcript_order,
+    transcript_text_json_from_stored_span,
 )
 from .call_projection import ProjectionInputs, ProjectionStamps, projection_state
 from .storage import decode_page_cursor, encode_page_cursor
@@ -57,10 +59,20 @@ if TYPE_CHECKING:
     from .storage_recordings import Recording
 
 CALL_STATES = ("open", "closed")
-# A call's transcript lines: its spans' ``text_json``, never a payload.
+# Current transcript lines use ``text_json``. Older upload/provider transcript spans
+# predate that extractor, so decode only their named line payloads as a fallback.
 TRANSCRIPT_SQL = call_spans_sql(
-    "s.trace_id, s.span_id, s.start_unix_nano, s.end_unix_nano, s.text_json",
+    "s.trace_id, s.span_id, s.start_unix_nano, s.end_unix_nano, s.text_json, "
+    "s.scope_name, NULL AS legacy_payload",
     condition="s.text_json IS NOT NULL",
+)
+LEGACY_TRANSCRIPT_SQL = call_spans_sql(
+    "s.trace_id, s.span_id, s.start_unix_nano, s.end_unix_nano, s.text_json, "
+    "s.scope_name, s.payload AS legacy_payload",
+    condition=(
+        "s.text_json IS NULL AND s.name = 'earshot.connector.transcript_line' AND "
+        "(s.scope_name = 'earshot.upload' OR s.scope_name LIKE 'earshot.connector.%')"
+    ),
 )
 # One stored span of a call, read through the call's binding of its trace.
 SPAN_SQL = call_spans_sql("s.scope_name, s.payload", condition="t.trace_id = ? AND s.span_id = ?")
@@ -505,21 +517,29 @@ class CallReads:
                 (project_id, call_id),
             ).fetchall()
         )
-        lines = tuple(
-            sorted(
-                (
+        lines_list = []
+        for query in (TRANSCRIPT_SQL, LEGACY_TRANSCRIPT_SQL):
+            for item in connection.execute(query, (project_id, call_id)).fetchall():
+                text_json = item["text_json"]
+                if text_json is None:
+                    payload = item["legacy_payload"]
+                    if payload is None:
+                        continue
+                    text_json = transcript_text_json_from_stored_span(
+                        item["scope_name"], bytes(payload)
+                    )
+                if text_json is None:
+                    continue
+                lines_list.append(
                     stored_transcript_line(
-                        item["text_json"],
+                        text_json,
                         start_unix_nano=int(item["start_unix_nano"]),
                         end_unix_nano=int(item["end_unix_nano"]),
                         trace_id=bytes(item["trace_id"]),
                         span_id=bytes(item["span_id"]),
                     )
-                    for item in connection.execute(TRANSCRIPT_SQL, (project_id, call_id)).fetchall()
-                ),
-                key=transcript_order,
-            )
-        )
+                )
+        lines = tuple(ordered_transcript_lines(lines_list))
         inputs = _project_inputs(connection, project_id)
         [summary] = _summaries(connection, project_id, [row], inputs)
         detail = None

@@ -423,15 +423,22 @@ def test_a_request_whose_spans_share_a_large_resource_is_stored_in_time_linear_i
     calls, _ = _open(tmp_path)
 
     def record(spans: int, attributes: int) -> float:
-        project = f"shared-{spans}"
-        calls.store.create_project(project, display_name=project)
         request = shared_attributes_request(spans, attributes, scope_per_span=scope_per_span)
         batch = spans_from_request(request)
-        seconds = best_cpu_seconds(lambda: calls.record_spans(project, batch))
-        assert catalog_rows(
-            tmp_path, "SELECT count(*) FROM spans WHERE project_id = ?", (project,)
-        ) == [(spans,)]
-        return seconds
+        samples = []
+        projects = []
+        for run in range(3):
+            project = f"shared-{spans}-{run}"
+            calls.store.create_project(project, display_name=project)
+            projects.append(project)
+            started = time.process_time()
+            calls.record_spans(project, batch)
+            samples.append(time.process_time() - started)
+        for project in projects:
+            assert catalog_rows(
+                tmp_path, "SELECT count(*) FROM spans WHERE project_id = ?", (project,)
+            ) == [(spans,)]
+        return min(samples)
 
     small, large = record(2_000, 10_000), record(4_000, 20_000)
 

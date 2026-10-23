@@ -14,6 +14,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlencode
 
 import pytest
 
@@ -23,12 +24,13 @@ from earshot.blobstore import LocalBlobStore
 from earshot.clock import ManualClock
 from earshot.connectors import evidence
 from earshot.storage import IncidentStore
+from earshot.storage_call_projections import CallProjector
 from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_closer import Closer
 from earshot.storage_recordings import RecordingStore
 from earshot.transcripts import MAX_TRANSCRIPT_BYTES, parse_transcript, span_id, trace_id
 from otlp_support import Reply, request, serve
-from store_support import make_store
+from store_support import catalog, make_store
 
 pytestmark = pytest.mark.integration
 
@@ -133,7 +135,31 @@ def test_a_webvtt_transcript_becomes_measured_lines_on_the_recordings_call(world
         "line_count": 2,
         "sha256": parse_transcript(VTT, "vtt", default_speaker=None).digest(),
     }
-    assert call(world, recording["call_id"])["span_count"] == 3
+    detail = call(world, recording["call_id"])
+    assert detail["span_count"] == 3
+    assert detail["transcript_coverage"] == "available"
+    assert [
+        (
+            line["speaker"],
+            line["text"],
+            int(line["start_unix_nano"]),
+            int(line["end_unix_nano"]),
+        )
+        for line in detail["transcript"]
+    ] == [
+        (
+            "user",
+            "I'd like to book a table.",
+            STARTED_AT + 1_250 * MILLISECOND,
+            STARTED_AT + 3_000 * MILLISECOND,
+        ),
+        (
+            "agent",
+            "For how many people?",
+            STARTED_AT + 3_500 * MILLISECOND,
+            STARTED_AT + 5_000 * MILLISECOND,
+        ),
+    ]
     # The span route serves only spans of the call's own traces: the line is the call's.
     second = line_span(world, recording["call_id"], "rec-1", 1)
     assert second.status == 200, second.body[:300]
@@ -154,18 +180,57 @@ def test_a_webvtt_transcript_becomes_measured_lines_on_the_recordings_call(world
 
 def test_a_plain_text_transcript_is_order_only_at_the_recordings_start(world) -> None:
     recording = create_recording(world, "rec-1")
+    lines = b"user: first in source order\nagent: second in source order\nuser: third\n"
 
-    reply = post_transcript(world, "rec-1", TEXT, content_type="text/plain; charset=utf-8")
+    reply = post_transcript(world, "rec-1", lines, content_type="text/plain; charset=utf-8")
 
     assert reply.status == 201, reply.body[:300]
     assert (reply.json()["format"], reply.json()["timing"]) == ("text", "order_only")
+    detail = call(world, recording["call_id"])
+    assert [line["text"] for line in detail["transcript"]] == [
+        "first in source order",
+        "second in source order",
+        "third",
+    ]
+    assert all(
+        (line["timing"], line["start_unix_nano"], line["end_unix_nano"])
+        == ("order_only", None, None)
+        for line in detail["transcript"]
+    )
     first = line_span(world, recording["call_id"], "rec-1", 0)
     assert (int(first.json()["start_unix_nano"]), int(first.json()["end_unix_nano"])) == (
         STARTED_AT,
         STARTED_AT,
     )
     assert attributes(first)[evidence.TRANSCRIPT_TIMING] == "order_only"
-    assert attributes(first)[evidence.TRANSCRIPT_TEXT] == "I'd like to book a table."
+    assert attributes(first)[evidence.TRANSCRIPT_TEXT] == "first in source order"
+
+
+def test_an_upload_from_before_transcript_materialization_still_appears_in_call_detail(
+    world, tmp_path: Path
+) -> None:
+    recording = create_recording(world, "rec-legacy")
+    assert post_transcript(world, "rec-legacy", TEXT, content_type="text/plain").status == 201
+
+    # Older releases stored these accepted upload spans without text_json.
+    with catalog(tmp_path) as connection:
+        connection.execute(
+            "UPDATE spans SET text_json = NULL WHERE scope_name = 'earshot.upload' AND name = ?",
+            (evidence.TRANSCRIPT_LINE,),
+        )
+
+    detail = call(world, recording["call_id"])
+
+    assert detail["transcript_coverage"] == "available"
+    assert [line["text"] for line in detail["transcript"]] == [
+        "I'd like to book a table.",
+        "For how many people?",
+    ]
+    assert all(
+        (line["timing"], line["start_unix_nano"], line["end_unix_nano"])
+        == ("order_only", None, None)
+        for line in detail["transcript"]
+    )
 
 
 def test_a_one_speaker_recordings_unlabelled_lines_are_its_speakers(world) -> None:
@@ -308,6 +373,21 @@ def test_a_transcript_of_a_closed_call_is_late_evidence_for_its_next_revision(wo
     revisions = revisions_once_closed(world, recording["call_id"], 2)
     assert [item["span_count"] for item in revisions] == [0, 3]
 
+    CallProjector(world.store).run_pending()
+    detail = call(world, recording["call_id"])
+    assert detail["projection_state"] == "current"
+    assert [(line["speaker"], line["text"]) for line in detail["projection"]["transcript"]] == [
+        ("user", "I'd like to book a table."),
+        ("agent", "For how many people?"),
+    ]
+    found = request(
+        world.port,
+        "GET",
+        f"/v1/calls?{urlencode({'q': 'book a table'})}",
+    )
+    assert found.status == 200, found.body[:300]
+    assert [item["call_id"] for item in found.json()["items"]] == [recording["call_id"]]
+
 
 # --- refusals ------------------------------------------------------------------------------
 
@@ -342,6 +422,13 @@ def test_a_transcript_of_a_closed_call_is_late_evidence_for_its_next_revision(wo
             422,
             "EARSHOT_TRANSCRIPT_INVALID",
         ),
+        (
+            "rec-1",
+            b"WEBVTT\n\n" + b"9" * 5_000 + b":00:00.000 --> 00:00:01.000\n<v user>hi\n",
+            "text/vtt",
+            422,
+            "EARSHOT_TRANSCRIPT_INVALID",
+        ),
     ],
     ids=[
         "unknown-recording",
@@ -353,6 +440,7 @@ def test_a_transcript_of_a_closed_call_is_late_evidence_for_its_next_revision(wo
         "not-utf-8",
         "cue-ends-before-it-starts",
         "past-the-latest-time",
+        "hour-field-exceeds-integer-conversion-limit",
     ],
 )
 def test_a_refused_transcript_stores_nothing(

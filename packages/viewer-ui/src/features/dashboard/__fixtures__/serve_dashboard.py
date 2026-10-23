@@ -201,7 +201,7 @@ def build(work: Path) -> None:
     _one_span_call(calls, clock, "open", "support-agent", now - HOUR)
 
     with serve(create_app(store=store)) as port:
-        print(json.dumps({"port": port}), flush=True)
+        print(json.dumps({"port": port, "now_ms": now // 1_000_000}), flush=True)
         sys.stdin.read()
 
 

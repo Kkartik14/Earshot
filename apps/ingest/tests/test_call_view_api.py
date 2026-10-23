@@ -343,7 +343,7 @@ def test_call_detail_keeps_month_1_fields_and_adds_the_projection_and_its_freshn
 def test_a_projection_from_an_older_projection_version_is_stale() -> None:
     inputs = ProjectionInputs(projection_seq=4, price_version=2, builtin_price_version=1)
     stamps = ProjectionStamps(
-        source_seq=4, price_version=2, builtin_price_version=1, projection_version=0
+        source_seq=4, price_version=2, builtin_price_version=1, projection_version=1
     )
 
     assert projection_state(stamps, inputs) == "stale"

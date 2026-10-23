@@ -396,6 +396,7 @@ class AudibleGapResponse(ApiModel):
             "not_one_timeline",
             "no_recording",
             "analysis_not_stored",
+            "boundary_uncertainty_too_high",
         ]
         | None
     )
@@ -522,12 +523,13 @@ class CallPageResponse(ApiModel):
 
 
 class TranscriptLineResponse(ApiModel):
-    """One transcript line and the span it was read from."""
+    """One transcript line and its timing provenance from the source span."""
 
     speaker: Literal["user", "agent"]
     text: str
-    start_unix_nano: str
-    end_unix_nano: str
+    timing: Literal["measured", "start_only", "order_only"]
+    start_unix_nano: str | None
+    end_unix_nano: str | None
     trace_id: str
     span_id: str
 
@@ -839,8 +841,11 @@ def _call_detail_body(call: CallDetail) -> dict[str, Any]:
             {
                 "speaker": line.speaker,
                 "text": line.text,
-                "start_unix_nano": str(line.start_unix_nano),
-                "end_unix_nano": str(line.end_unix_nano),
+                "timing": line.timing,
+                "start_unix_nano": (
+                    None if line.timing == "order_only" else str(line.start_unix_nano)
+                ),
+                "end_unix_nano": (str(line.end_unix_nano) if line.timing == "measured" else None),
                 "trace_id": line.trace_id,
                 "span_id": line.span_id,
             }
@@ -5112,7 +5117,8 @@ def create_app(
             "is UTF-8: text/vtt (WebVTT; each cue is a line, its times offsets from the "
             "recording's started_at: measured timing) or text/plain (one line per "
             f"non-blank line: order_only timing), at most {transcript_upload.MAX_TRANSCRIPT_BYTES} "
-            f"bytes and {transcript_upload.MAX_TRANSCRIPT_LINES} lines. A WebVTT voice "
+            f"bytes, {transcript_upload.MAX_TRANSCRIPT_LINES} transcript lines and "
+            f"{transcript_upload.MAX_TRANSCRIPT_SOURCE_LINES} source lines. A WebVTT voice "
             "(<v user>, <v agent>) or a 'user:'/'agent:' prefix names each line's speaker; "
             "on a one-speaker recording an unnamed line is that speaker's. A malformed "
             "body is 422 EARSHOT_TRANSCRIPT_INVALID, naming the line. A recording holds "

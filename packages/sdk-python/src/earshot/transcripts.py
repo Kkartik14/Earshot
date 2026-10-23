@@ -18,9 +18,10 @@ collapsed to single spaces, so a re-saved file (other line endings or wrapping) 
 the same transcript.
 
 **Bounds.** A body over ``MAX_TRANSCRIPT_BYTES`` is refused by the API before it is
-parsed; a transcript of more than ``MAX_TRANSCRIPT_LINES`` lines, a control
-character, or a time past the latest 64-bit nanosecond time is refused here, with
-the line it fails at. Errors name lines and rules, never the text.
+parsed; more than ``MAX_TRANSCRIPT_SOURCE_LINES`` physical rows or
+``MAX_TRANSCRIPT_LINES`` transcript lines, a control character, or a time past the
+latest 64-bit nanosecond time is refused here. Errors name lines and rules, never the
+text.
 
 **Evidence** (``transcript_spans``). The lines are written as transcript-line spans
 in the connector vocabulary (span ``earshot.connector.transcript_line``, its
@@ -51,6 +52,12 @@ if TYPE_CHECKING:
 MAX_TRANSCRIPT_BYTES = 1024 * 1024
 # The most lines one transcript holds: each is a span written in one transaction.
 MAX_TRANSCRIPT_LINES = 10_000
+# Leave room for WebVTT headers, cue IDs, blank separators and multiline cues, while
+# bounding the raw rows materialized before cue parsing.
+MAX_TRANSCRIPT_SOURCE_LINES = MAX_TRANSCRIPT_LINES * 8
+# A longer hour field cannot be useful to a recording and would make decimal
+# conversion depend on Python's configurable integer-string limit.
+MAX_TIMESTAMP_HOUR_DIGITS = 1_000
 
 FORMAT_VTT = "vtt"
 FORMAT_TEXT = "text"
@@ -75,6 +82,7 @@ _SPAN_KIND_INTERNAL = 1
 _NANOS_PER_MILLISECOND = 1_000_000
 
 _NEWLINE = re.compile(r"\r\n|\r|\n")
+_WHITESPACE = re.compile(r"\s+")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _WEBVTT = re.compile(r"WEBVTT(?:[ \t].*)?")
 _TIMESTAMP = re.compile(r"(?:(\d{2,}):)?([0-5]\d):([0-5]\d)\.(\d{3})")
@@ -168,7 +176,13 @@ def _decoded_lines(body: bytes) -> list[str]:
     except UnicodeDecodeError as error:
         line = body[: error.start].count(b"\n") + 1
         raise TranscriptFormatError(f"line {line}: the transcript is not UTF-8") from None
-    rows = _NEWLINE.split(text.removeprefix("﻿"))
+    text = text.removeprefix("﻿")
+    source_lines = text.count("\n") + text.count("\r") - text.count("\r\n") + 1
+    if source_lines > MAX_TRANSCRIPT_SOURCE_LINES:
+        raise TranscriptFormatError(
+            f"the transcript has more than {MAX_TRANSCRIPT_SOURCE_LINES} source lines"
+        )
+    rows = _NEWLINE.split(text)
     for number, row in enumerate(rows, start=1):
         if _CONTROL.search(row):
             raise TranscriptFormatError(f"line {number}: control characters are not allowed")
@@ -176,7 +190,7 @@ def _decoded_lines(body: bytes) -> list[str]:
 
 
 def _collapsed(text: str) -> str:
-    return " ".join(text.split())
+    return _WHITESPACE.sub(" ", text).strip()
 
 
 def _append(lines: list[UploadedLine], line: UploadedLine) -> None:
@@ -217,7 +231,20 @@ def _milliseconds(value: str, number: int) -> int:
             "below 60, three digits of milliseconds)"
         )
     hours, minutes, seconds, millis = match.groups()
-    return ((int(hours or 0) * 60 + int(minutes)) * 60 + int(seconds)) * 1000 + int(millis)
+    significant_hours = (hours or "0").lstrip("0") or "0"
+    if len(significant_hours) > MAX_TIMESTAMP_HOUR_DIGITS:
+        raise TranscriptFormatError(
+            f"line {number}: the cue time is later than the latest time Earshot stores "
+            "(2^63 - 1 ns after 1970)"
+        )
+    try:
+        hour_count = int(significant_hours)
+    except ValueError:
+        raise TranscriptFormatError(
+            f"line {number}: the cue time is later than the latest time Earshot stores "
+            "(2^63 - 1 ns after 1970)"
+        ) from None
+    return ((hour_count * 60 + int(minutes)) * 60 + int(seconds)) * 1000 + int(millis)
 
 
 def _cue_line(

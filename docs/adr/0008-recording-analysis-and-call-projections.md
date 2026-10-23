@@ -107,6 +107,9 @@ price added ──────────────────────�
   clock, the anchor itself. The agent run starting nearest it within 1 s is paired with
   the last user run ending before it, with no agent speech between.
 - **Value.** `agent run start − user run end`, ± √(σu² + σa²).
+- **Uncertainty limit.** When the combined boundary uncertainty exceeds 100 ms, the gap
+  is `not_measurable / boundary_uncertainty_too_high`; its edge times and uncertainty
+  remain available, but no gap value is reported.
 - **Discontinuities.** Pipecat's recorder only ever inserts time. When the user-off and
   agent-on anchors map onto the recording with offsets more than 150 ms apart, the
   recorder inserted time inside the gap: the turn is

@@ -104,6 +104,7 @@ caller heard over a network.
 | `not_one_timeline`                | The Recordings are not on one timeline (different starts, or durations more than 20 ms apart).                                |
 | `no_recording`                    | The Revision has no Recording.                                                                                                |
 | `analysis_not_stored`             | The analysis is pending, failed or unavailable; `analysis_state` says which.                                                  |
+| `boundary_uncertainty_too_high`   | The combined speech-edge uncertainty exceeds 100 ms, so the gap is withheld.                                                  |
 
 `basis` is `anchors_checked` (Pipecat: the turn's span anchors were checked against the
 audio for a discontinuity) or `continuous_timeline_assumed` (LiveKit, whose recorder
@@ -111,9 +112,10 @@ places frames by wall clock). `user_end_ms` and `agent_start_ms` are the paired 
 edges on the axis.
 
 The speech edges come from Silero VAD, refined to 10 ms energy frames; each edge's σ is
-the distance between the two (at least 10 ms). A clean TTS reply typically gives ± 40 to
-90 ms. The accuracy of the gap on natural human speech has not been measured against
-labelled audio yet.
+the distance between the two (at least 10 ms). A gap is measured only when the combined
+uncertainty is at most 100 ms. A clean TTS reply typically gives ± 40 to 90 ms. The
+accuracy of the gap on natural human speech has not been measured against labelled audio
+yet.
 
 ### Signals
 
@@ -143,6 +145,10 @@ speech. A line in a turn with a discontinuity is `alignment_uncertain`.
 Each line has a `timing`: `measured` (start and end), `start_only`, or `order_only`
 (listed in order, never placed, never seekable). An end time is never inferred from the
 next line's start.
+
+The call's raw `transcript` field carries the same `timing` value. Its Unix-nanosecond
+times are both present for `measured`, start only for `start_only`, and both null for
+`order_only` lines.
 
 ### Cost
 

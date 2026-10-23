@@ -176,9 +176,10 @@ def test_ranges_are_answered_from_the_blob_store_with_206_and_416(blob_backend, 
     # Positions past any object (tribunal round 1, B-2): never a 500.
     huge_end, huge_start = ranged("bytes=0-" + "9" * 200), ranged("bytes=" + "9" * 200 + "-")
     # A header no single range needs (tribunal round 2, N-2: it cost 21 s of a
-    # backtracking regex): refused unread.
+    # backtracking regex): refused unread. Keep it above the app's limit but below
+    # common HTTP parser limits so this checks the application response.
     started = time.perf_counter()
-    too_long = ranged("bytes=x" + " " * 100_000 + "x")
+    too_long = ranged("x" * 257)
     too_long_seconds = time.perf_counter() - started
 
     assert (middle.status, middle.body) == (206, body[10:20])

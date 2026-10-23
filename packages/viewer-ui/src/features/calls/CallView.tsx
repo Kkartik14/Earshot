@@ -117,9 +117,11 @@ function SpanTranscript({ call }: { call: CallDetail }) {
               <li key={`${line.trace_id}:${line.span_id}`} className={styles.line}>
                 <div className={styles.lineStatic}>
                   <span className={styles.lineTime}>
-                    {formatClock(
-                      Number((BigInt(line.start_unix_nano) - origin) / 1_000_000n),
-                    )}
+                    {line.start_unix_nano === null
+                      ? "—"
+                      : formatClock(
+                          Number((BigInt(line.start_unix_nano) - origin) / 1_000_000n),
+                        )}
                   </span>
                   <span className={styles.speaker} data-speaker={line.speaker}>
                     {line.speaker}

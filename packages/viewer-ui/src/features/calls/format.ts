@@ -50,6 +50,8 @@ const GAP_REASONS: Record<NonNullable<AudibleGap["reason"]>, string> = {
   no_recording: "no recording covers this turn",
   analysis_not_stored:
     "the audio analysis is not stored yet (pending, failed or unavailable)",
+  boundary_uncertainty_too_high:
+    "the speech edges are too uncertain to report a gap within 100 ms",
 };
 
 /** The audible gap at the agent: `value ± uncertainty`, "talk-over", or for a

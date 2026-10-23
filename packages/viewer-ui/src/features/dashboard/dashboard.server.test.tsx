@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewerQueryScopeProvider } from "../../api/queryScope";
 import { ObserveFeature } from "../../ObserveFeature";
 import { startRealServer, type RealServer } from "../../test/realServer";
@@ -15,7 +15,7 @@ import { startRealServer, type RealServer } from "../../test/realServer";
 const SCRIPT = join(import.meta.dirname, "__fixtures__", "serve_dashboard.py");
 const WAIT = { timeout: 15_000 };
 
-let server: RealServer<{ port: number }>;
+let server: RealServer<{ port: number; now_ms: number }>;
 
 beforeAll(async () => {
   server = await startRealServer(SCRIPT);
@@ -23,7 +23,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server?.stop();
+  vi.restoreAllMocks();
 }, 60_000);
+
+beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(server.seed.now_ms);
+});
 
 function renderDashboard() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

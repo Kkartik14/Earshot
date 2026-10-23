@@ -229,6 +229,7 @@
       "text": "Hi. I would like to book a table for two people tomorrow evening.",
       "start_unix_nano": "1792372162493948928",
       "end_unix_nano": "1792372165462407936",
+      "timing": "measured",
       "trace_id": "5d6bb6c9d0acbb71228a8b271359ece2",
       "span_id": "67ddfb773669a19e"
     }

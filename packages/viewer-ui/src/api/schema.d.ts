@@ -808,7 +808,7 @@ export interface paths {
         put?: never;
         /**
          * Recording Transcript Endpoint
-         * @description Attach a transcript to a recording, as transcript lines of its call. The body is UTF-8: text/vtt (WebVTT; each cue is a line, its times offsets from the recording's started_at: measured timing) or text/plain (one line per non-blank line: order_only timing), at most 1048576 bytes and 10000 lines. A WebVTT voice (<v user>, <v agent>) or a 'user:'/'agent:' prefix names each line's speaker; on a one-speaker recording an unnamed line is that speaker's. A malformed body is 422 EARSHOT_TRANSCRIPT_INVALID, naming the line. A recording holds one transcript: the same transcript again answers 200 and writes nothing; another is 409 EARSHOT_TRANSCRIPT_EXISTS and never replaces it. Under the metadata_only preset it is 422 EARSHOT_PRESET_FORBIDS_TRANSCRIPT.
+         * @description Attach a transcript to a recording, as transcript lines of its call. The body is UTF-8: text/vtt (WebVTT; each cue is a line, its times offsets from the recording's started_at: measured timing) or text/plain (one line per non-blank line: order_only timing), at most 1048576 bytes, 10000 transcript lines and 80000 source lines. A WebVTT voice (<v user>, <v agent>) or a 'user:'/'agent:' prefix names each line's speaker; on a one-speaker recording an unnamed line is that speaker's. A malformed body is 422 EARSHOT_TRANSCRIPT_INVALID, naming the line. A recording holds one transcript: the same transcript again answers 200 and writes nothing; another is 409 EARSHOT_TRANSCRIPT_EXISTS and never replaces it. Under the metadata_only preset it is 422 EARSHOT_PRESET_FORBIDS_TRANSCRIPT.
          */
         post: operations["recording_transcript_endpoint_v1_recordings__recording_id__transcript_post"];
         delete?: never;
@@ -981,7 +981,7 @@ export interface components {
             /** Bound Ms */
             bound_ms: number | null;
             /** Reason */
-            reason: ("recorder_timeline_discontinuity" | "no_agent_audio" | "no_clear_pairing" | "not_one_timeline" | "no_recording" | "analysis_not_stored") | null;
+            reason: ("recorder_timeline_discontinuity" | "no_agent_audio" | "no_clear_pairing" | "not_one_timeline" | "no_recording" | "analysis_not_stored" | "boundary_uncertainty_too_high") | null;
             /**
              * Status
              * @enum {string}
@@ -4409,11 +4409,11 @@ export interface components {
         };
         /**
          * TranscriptLineResponse
-         * @description One transcript line and the span it was read from.
+         * @description One transcript line and its timing provenance from the source span.
          */
         TranscriptLineResponse: {
             /** End Unix Nano */
-            end_unix_nano: string;
+            end_unix_nano: string | null;
             /** Span Id */
             span_id: string;
             /**
@@ -4422,9 +4422,14 @@ export interface components {
              */
             speaker: "user" | "agent";
             /** Start Unix Nano */
-            start_unix_nano: string;
+            start_unix_nano: string | null;
             /** Text */
             text: string;
+            /**
+             * Timing
+             * @enum {string}
+             */
+            timing: "measured" | "start_only" | "order_only";
             /** Trace Id */
             trace_id: string;
         };

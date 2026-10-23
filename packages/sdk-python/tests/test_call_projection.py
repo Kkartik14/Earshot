@@ -12,6 +12,7 @@ of its golden value and each reported ± within ±5 ms of the golden sigma.
 from __future__ import annotations
 
 import functools
+import multiprocessing
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -32,6 +33,7 @@ from earshot.call_projection import (
     compute_projection,
     reprice,
 )
+from earshot.call_span_facts import turn_anchors
 from earshot.pricing_defaults import BUILTIN_PRICES
 from earshot.signals import analyze
 from otlp_support import make_request, make_span, string_attribute
@@ -121,12 +123,63 @@ def _livekit():
     return compute_projection(_source(livekit_spans(), [recording]), PRICES)
 
 
+def _project_cyclic_turn(result_queue, cycle_kind: str) -> None:
+    spans = list(_pipecat_spans())
+    anchor = turn_anchors(spans)[0]
+    root = next(
+        span
+        for span in spans
+        if span.span.trace_id.hex() == anchor.trace_id
+        and span.span.span_id.hex() == anchor.turn_span_id
+    )
+    if cycle_kind == "self":
+        root.span.parent_span_id = root.span.span_id
+    else:
+        child = next(
+            span
+            for span in spans
+            if span.span.trace_id == root.span.trace_id
+            and span.span.parent_span_id == root.span.span_id
+        )
+        root.span.parent_span_id = child.span.span_id
+    projection = compute_projection(_source(spans, []), PRICES)
+    result_queue.put(
+        (
+            root.span.span_id.hex(),
+            [span["span_id"] for span in projection.detail["turns"][0]["spans"]],
+        )
+    )
+
+
 def _gaps(projection) -> list[dict]:
     return [turn["audible_gap"] for turn in projection.detail["turns"]]
 
 
 def _within(actual: int | None, expected: int, tolerance: int) -> bool:
     return actual is not None and abs(actual - expected) <= tolerance
+
+
+@pytest.mark.parametrize("cycle_kind", ["self", "two-span"])
+def test_a_cyclic_parent_link_does_not_repeat_turn_descendants(cycle_kind: str) -> None:
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    process = context.Process(target=_project_cyclic_turn, args=(result_queue, cycle_kind))
+    process.start()
+    try:
+        process.join(timeout=10)
+        assert not process.is_alive(), "projection did not terminate on a cyclic parent link"
+        assert process.exitcode == 0
+        root_id, descendants = result_queue.get(timeout=1)
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join()
+        result_queue.close()
+        result_queue.join_thread()
+
+    assert descendants
+    assert root_id not in descendants
+    assert len(descendants) == len(set(descendants))
 
 
 # --- the audible gap at the agent (M1, M3, M6, M28) ------------------------------------------
@@ -198,6 +251,258 @@ def test_a_line_of_a_discontinuous_turn_is_alignment_uncertain() -> None:
 
     assert [line["alignment_uncertain"] for line in transcript[:2]] == [True, True]
     assert not any(line["alignment_uncertain"] for line in transcript[2:])
+
+
+def test_a_snapped_line_ends_before_the_next_placed_line() -> None:
+    from earshot.connectors.base import transcript_line
+    from earshot.connectors.evidence import CALL, Evidence, EvidenceSpan, otlp_spans
+
+    started = 1_800_000_000_000_000_000
+    call_span = EvidenceSpan(CALL, 0, started, started + 100_000_000)
+    lines = (
+        transcript_line(
+            0,
+            speaker="user",
+            text="first",
+            start=started + 10_000_000,
+            end=started + 20_000_000,
+            timing="measured",
+        ),
+        transcript_line(
+            1,
+            speaker="user",
+            text="untimed middle",
+            start=started,
+            end=started,
+            timing="order_only",
+        ),
+        transcript_line(
+            2,
+            speaker="user",
+            text="next",
+            start=started + 30_000_000,
+            end=started + 45_000_000,
+            timing="measured",
+        ),
+    )
+    evidence = Evidence(
+        provider="vapi",
+        provider_call_id="bounded_transcript_placement",
+        spans=(call_span, *(line for line in lines if line is not None)),
+    )
+    spans = otlp_spans(
+        evidence,
+        session_key="vapi:bounded_transcript_placement",
+        translator_version="test",
+    )
+    recording = RecordingSource(
+        recording_id="recording",
+        speaker="mixed",
+        channel_speakers=("user", "agent"),
+        content_type="audio/wav",
+        started_at_unix_nano=started,
+        duration_ms=100,
+        analysis_state="stored",
+        analysis_error_code=None,
+        result={
+            "source": {"duration_ms": 100},
+            "channels": [
+                {
+                    "speaker": "user",
+                    "runs": [
+                        {"start_ms": 10, "end_ms": 20, "start_sigma_ms": 5, "end_sigma_ms": 5},
+                        {"start_ms": 30, "end_ms": 45, "start_sigma_ms": 5, "end_sigma_ms": 5},
+                        {"start_ms": 50, "end_ms": 60, "start_sigma_ms": 5, "end_sigma_ms": 5},
+                    ],
+                    "zero_runs": [],
+                },
+                {"speaker": "agent", "runs": [], "zero_runs": []},
+            ],
+        },
+        has_peaks=False,
+        holds_rendition=False,
+    )
+
+    projection = compute_projection(_source(spans, [recording]), PRICES)
+
+    assert [
+        (line["text"], line["timing"], line["start_ms"], line["end_ms"])
+        for line in projection.detail["transcript"]
+    ] == [
+        ("first", "measured", 10, 20),
+        ("untimed middle", "order_only", None, None),
+        ("next", "measured", 30, 60),
+    ]
+
+
+def test_connector_transcript_order_and_timing_survive_projection() -> None:
+    from earshot.call_materializer import stored_transcript_line, transcript_text_json
+    from earshot.connectors.base import transcript_line
+    from earshot.connectors.evidence import CALL, Evidence, EvidenceSpan, otlp_spans
+
+    started = 1_800_000_000_000_000_000
+    call_span = EvidenceSpan(CALL, 0, started, started + 2_000_000_000)
+    lines = [
+        transcript_line(
+            index,
+            speaker="user" if index % 2 == 0 else "agent",
+            text=f"source line {index}",
+            start=started,
+            end=started,
+            timing="order_only",
+        )
+        for index in range(4)
+    ]
+    lines.append(
+        transcript_line(
+            4,
+            speaker="user",
+            text="start only",
+            start=started + 500_000_000,
+            end=started + 500_000_000,
+            timing="start_only",
+        )
+    )
+    evidence = Evidence(
+        provider="vapi",
+        provider_call_id="call_with_untimed_lines",
+        spans=(call_span, *(line for line in lines if line is not None)),
+    )
+    spans = otlp_spans(
+        evidence,
+        session_key="vapi:call_with_untimed_lines",
+        translator_version="test",
+    )
+
+    projection = compute_projection(_source(spans, []), PRICES)
+    detail = projection.detail["transcript"]
+
+    assert [line["text"] for line in detail] == [
+        "source line 0",
+        "source line 1",
+        "source line 2",
+        "source line 3",
+        "start only",
+    ]
+    assert [(line["timing"], line["start_ms"], line["end_ms"]) for line in detail] == [
+        ("order_only", None, None),
+        ("order_only", None, None),
+        ("order_only", None, None),
+        ("order_only", None, None),
+        ("start_only", 500, None),
+    ]
+    assert [(row.timing, row.start_ms, row.end_ms) for row in projection.transcript] == [
+        ("order_only", None, None),
+        ("order_only", None, None),
+        ("order_only", None, None),
+        ("order_only", None, None),
+        ("start_only", 500, None),
+    ]
+    source_span = next(
+        span for span in spans if span.span.name == "earshot.connector.transcript_line"
+    )
+    stored_json = transcript_text_json(source_span)
+    assert stored_json is not None
+    stored = stored_transcript_line(
+        stored_json,
+        start_unix_nano=source_span.span.start_time_unix_nano,
+        end_unix_nano=source_span.span.end_time_unix_nano,
+        trace_id=source_span.span.trace_id,
+        span_id=source_span.span.span_id,
+    )
+    assert (stored.timing, stored.transcript_index) == ("order_only", 0)
+
+
+def test_mixed_timing_connector_lines_keep_provider_source_order() -> None:
+    from earshot.connectors.base import transcript_line
+    from earshot.connectors.evidence import CALL, Evidence, EvidenceSpan, otlp_spans
+
+    started = 1_800_000_000_000_000_000
+    call_span = EvidenceSpan(CALL, 0, started, started + 4_000_000_000)
+    lines = (
+        transcript_line(
+            0,
+            speaker="user",
+            text="measured first",
+            start=started + 2_000_000_000,
+            end=started + 2_500_000_000,
+            timing="measured",
+        ),
+        transcript_line(
+            1,
+            speaker="agent",
+            text="untimed second",
+            start=started,
+            end=started,
+            timing="order_only",
+        ),
+        transcript_line(
+            2,
+            speaker="user",
+            text="measured third",
+            start=started + 3_000_000_000,
+            end=started + 3_500_000_000,
+            timing="measured",
+        ),
+    )
+    evidence = Evidence(
+        provider="vapi",
+        provider_call_id="mixed_timing_transcript",
+        spans=(call_span, *(line for line in lines if line is not None)),
+    )
+    spans = otlp_spans(
+        evidence,
+        session_key="vapi:mixed_timing_transcript",
+        translator_version="test",
+    )
+
+    projection = compute_projection(_source(spans, []), PRICES)
+
+    assert [line["text"] for line in projection.detail["transcript"]] == [
+        "measured first",
+        "untimed second",
+        "measured third",
+    ]
+
+
+def test_an_unplaced_connector_line_is_not_marked_alignment_uncertain() -> None:
+    from earshot.connectors.base import transcript_line
+    from earshot.connectors.evidence import CALL, Evidence, EvidenceSpan, otlp_spans
+
+    started = int(captured_manifest()["audio"]["started_at_unix_nano"])
+    line = transcript_line(
+        0,
+        speaker="user",
+        text="untimed provider line",
+        start=started,
+        end=started,
+        timing="order_only",
+    )
+    evidence = Evidence(
+        provider="vapi",
+        provider_call_id="untimed_transcript",
+        spans=(
+            EvidenceSpan(CALL, 0, started, started + 1_000_000_000),
+            *((line,) if line is not None else ()),
+        ),
+    )
+    extra_spans = otlp_spans(
+        evidence,
+        session_key="vapi:untimed_transcript",
+        translator_version="test",
+    )
+
+    projection = compute_projection(
+        _source((*_pipecat_spans(), *extra_spans), _pipecat_recordings()), PRICES
+    )
+    transcript_line_detail = next(
+        line for line in projection.detail["transcript"] if line["text"] == "untimed provider line"
+    )
+
+    assert transcript_line_detail["timing"] == "order_only"
+    assert transcript_line_detail["start_ms"] is None
+    assert transcript_line_detail["end_ms"] is None
+    assert transcript_line_detail["alignment_uncertain"] is False
 
 
 # --- cost (AC4.3, M3, M7) ----------------------------------------------------------------------

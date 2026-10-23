@@ -21,6 +21,10 @@ span's line when it stores the span (``spans.text_json``), so the read API reads
 a call's transcript without its spans' payloads; a revision reads it from the
 spans it is built from (``transcript_lines``).
 
+Connector transcript-line spans use the same speaker and text vocabulary. Their
+``earshot.connector.transcript.timing`` and ``.index`` attributes also survive storage,
+so an untimed provider line stays unplaced and same-time lines keep their source order.
+
 **A revision** (``materialize``) is built the way the hosted connectors build a
 bundle on the server: an ``IncidentRecorder`` on a ``ManualClock`` set from the
 evidence (first start to last end; never the server clock), bundle ID
@@ -124,6 +128,8 @@ class TranscriptLine:
     end_unix_nano: int
     trace_id: str
     span_id: str
+    timing: str = "measured"
+    transcript_index: int | None = None
 
 
 def _span_order(span: OtlpSpan) -> tuple[int, bytes, bytes]:
@@ -131,23 +137,33 @@ def _span_order(span: OtlpSpan) -> tuple[int, bytes, bytes]:
 
 
 # The span kinds that carry a transcript line, by (instrumentation scope, span name):
-# ``(speaker, attributes)``, the first attribute present giving the text. Readers may
-# select only these spans before asking ``transcript_lines`` for the lines.
-TRANSCRIPT_SPAN_SOURCES: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {
+# ``(speaker, attributes)``, the first attribute present giving the text. ``None``
+# means the speaker is carried by an attribute, as it is for uploaded transcripts.
+TRANSCRIPT_SPAN_SOURCES: dict[tuple[str, str], tuple[str | None, tuple[str, ...]]] = {
     **{(scope, "stt"): ("user", ("transcript",)) for scope in PIPECAT_SCOPES},
     **{(scope, "llm"): ("agent", ("output",)) for scope in PIPECAT_SCOPES},
     (LIVEKIT_SCOPE, "user_turn"): ("user", ("lk.pii.user_transcript", "lk.user_transcript")),
     (LIVEKIT_SCOPE, "agent_turn"): ("agent", ("lk.pii.response.text", "lk.response.text")),
 }
+_CONNECTOR_TRANSCRIPT_SOURCE = (None, ("earshot.connector.transcript.text",))
+_CONNECTOR_TRANSCRIPT_SPAN = "earshot.connector.transcript_line"
+_CONNECTOR_TRANSCRIPT_TIMING = "earshot.connector.transcript.timing"
+_CONNECTOR_TRANSCRIPT_INDEX = "earshot.connector.transcript.index"
+_TRANSCRIPT_TIMINGS = frozenset({"measured", "start_only", "order_only"})
+_UPLOAD_SCOPE = "earshot.upload"
 # ``transcript_coverage`` values: lines found; the preset stores none; none observed.
 TRANSCRIPT_AVAILABLE = "available"
 TRANSCRIPT_NOT_CAPTURED = "not_captured_by_preset"
 TRANSCRIPT_NOT_OBSERVED = "not_observed"
 
 
-def _line_source(span: OtlpSpan) -> tuple[str, tuple[str, ...]] | None:
+def _line_source(span: OtlpSpan) -> tuple[str | None, tuple[str, ...]] | None:
     """``(speaker, attributes)`` of the span kinds that carry a transcript line."""
 
+    if span.span.name == _CONNECTOR_TRANSCRIPT_SPAN and (
+        span.scope.name == _UPLOAD_SCOPE or span.scope.name.startswith("earshot.connector.")
+    ):
+        return _CONNECTOR_TRANSCRIPT_SOURCE
     return TRANSCRIPT_SPAN_SOURCES.get((span.scope.name, span.span.name))
 
 
@@ -182,7 +198,34 @@ def transcript_text(span: OtlpSpan) -> tuple[str, str] | None:
     text = _attribute_value(span.span.attributes, attributes)
     if not isinstance(text, str) or not text.strip():
         return None
+    if speaker is None:
+        uploaded_speaker = _attribute_value(
+            span.span.attributes, ("earshot.connector.transcript.speaker",)
+        )
+        if uploaded_speaker not in {"user", "agent"}:
+            return None
+        speaker = uploaded_speaker
     return speaker, text
+
+
+def _transcript_metadata(span: OtlpSpan) -> tuple[str, int | None]:
+    """Timing provenance and source order carried by a connector transcript line."""
+
+    if _line_source(span) is None or span.span.name != _CONNECTOR_TRANSCRIPT_SPAN:
+        return "measured", None
+    timing = _attribute_value(span.span.attributes, (_CONNECTOR_TRANSCRIPT_TIMING,))
+    if not isinstance(timing, str) or timing not in _TRANSCRIPT_TIMINGS:
+        # Older or malformed connector spans with no usable timing declaration are
+        # only considered measured when their span has a non-zero time window.
+        timing = (
+            "order_only"
+            if timing is not None or span.span.start_time_unix_nano == span.span.end_time_unix_nano
+            else "measured"
+        )
+    index = _attribute_value(span.span.attributes, (_CONNECTOR_TRANSCRIPT_INDEX,))
+    if type(index) is not int or index < 0:
+        index = None
+    return timing, index
 
 
 def transcript_text_json(span: OtlpSpan) -> str | None:
@@ -192,7 +235,34 @@ def transcript_text_json(span: OtlpSpan) -> str | None:
     if line is None:
         return None
     speaker, text = line
-    return json.dumps({"speaker": speaker, "text": text}, separators=(",", ":"))
+    timing, index = _transcript_metadata(span)
+    document: dict[str, Any] = {"speaker": speaker, "text": text}
+    if timing != "measured":
+        document["timing"] = timing
+    if index is not None:
+        document["index"] = index
+    return json.dumps(document, separators=(",", ":"))
+
+
+def transcript_text_json_from_stored_span(scope_name: str, payload: bytes) -> str | None:
+    """Extract a transcript line from an older stored connector span payload.
+
+    Uploads and connector transcripts were accepted before ``spans.text_json`` knew
+    those span kinds. Call detail uses this only for their legacy rows; new spans
+    continue to read their precomputed text without parsing payloads.
+    """
+
+    from opentelemetry.proto.common.v1.common_pb2 import InstrumentationScope
+    from opentelemetry.proto.resource.v1.resource_pb2 import Resource
+    from opentelemetry.proto.trace.v1.trace_pb2 import Span
+
+    return transcript_text_json(
+        OtlpSpan(
+            resource=Resource(),
+            scope=InstrumentationScope(name=scope_name),
+            span=Span.FromString(payload),
+        )
+    )
 
 
 def stored_transcript_line(
@@ -201,6 +271,12 @@ def stored_transcript_line(
     """A ``spans.text_json`` value and its span's columns as a transcript line."""
 
     line = json.loads(text_json)
+    timing = line.get("timing", "measured")
+    if not isinstance(timing, str) or timing not in _TRANSCRIPT_TIMINGS:
+        timing = "order_only"
+    index = line.get("index")
+    if type(index) is not int or index < 0:
+        index = None
     return TranscriptLine(
         speaker=line["speaker"],
         text=line["text"],
@@ -208,17 +284,59 @@ def stored_transcript_line(
         end_unix_nano=end_unix_nano,
         trace_id=trace_id.hex(),
         span_id=span_id.hex(),
+        timing=timing,
+        transcript_index=index,
     )
 
 
-def transcript_order(line: TranscriptLine) -> tuple[int, str, str]:
-    """Span start order, then trace and span ID (hex sorts as the bytes do)."""
+def transcript_order(
+    line: TranscriptLine, *, effective_start_unix_nano: int | None = None
+) -> tuple[int, str, int, int, str]:
+    """Effective start, trace, explicit source index, then span ID."""
 
-    return (line.start_unix_nano, line.trace_id, line.span_id)
+    return (
+        line.start_unix_nano if effective_start_unix_nano is None else effective_start_unix_nano,
+        line.trace_id,
+        0 if line.transcript_index is not None else 1,
+        line.transcript_index if line.transcript_index is not None else 0,
+        line.span_id,
+    )
+
+
+def ordered_transcript_lines(lines: Iterable[TranscriptLine]) -> list[TranscriptLine]:
+    """Order by time while retaining indexed provider source order within a trace.
+
+    An order-only line's span time is the call start. Use the greatest preceding
+    indexed time as its effective sort time so it stays between source neighbors
+    without giving its public line a fabricated timestamp. The monotonic maximum
+    also preserves source order if provider timestamps arrive out of order.
+    """
+
+    materialized = list(lines)
+    effective_starts: dict[tuple[str, str], int] = {}
+    by_trace: dict[str, list[TranscriptLine]] = {}
+    for line in materialized:
+        if line.transcript_index is not None:
+            by_trace.setdefault(line.trace_id, []).append(line)
+    for trace_lines in by_trace.values():
+        previous_start: int | None = None
+        for line in sorted(trace_lines, key=lambda item: (item.transcript_index, item.span_id)):
+            start = line.start_unix_nano
+            if previous_start is not None:
+                start = max(start, previous_start)
+            effective_starts[(line.trace_id, line.span_id)] = start
+            previous_start = start
+    return sorted(
+        materialized,
+        key=lambda line: transcript_order(
+            line,
+            effective_start_unix_nano=effective_starts.get((line.trace_id, line.span_id)),
+        ),
+    )
 
 
 def transcript_lines(spans: Iterable[OtlpSpan]) -> list[TranscriptLine]:
-    """The call's transcript, in span start order (then trace and span ID)."""
+    """The transcript lines from spans, ordered for the call detail."""
 
     lines: list[TranscriptLine] = []
     for span in spans:
@@ -226,6 +344,7 @@ def transcript_lines(spans: Iterable[OtlpSpan]) -> list[TranscriptLine]:
         if line is None:
             continue
         speaker, text = line
+        timing, index = _transcript_metadata(span)
         lines.append(
             TranscriptLine(
                 speaker=speaker,
@@ -234,9 +353,11 @@ def transcript_lines(spans: Iterable[OtlpSpan]) -> list[TranscriptLine]:
                 end_unix_nano=span.span.end_time_unix_nano,
                 trace_id=span.span.trace_id.hex(),
                 span_id=span.span.span_id.hex(),
+                timing=timing,
+                transcript_index=index,
             )
         )
-    return sorted(lines, key=transcript_order)
+    return ordered_transcript_lines(lines)
 
 
 def adapter_span(span: OtlpSpan) -> dict[str, Any]:

@@ -75,6 +75,7 @@ from __future__ import annotations
 
 import json
 import math
+from bisect import bisect_right
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -398,26 +399,33 @@ def _pipecat_anchors(spans: Sequence[OtlpSpan], children: dict) -> list[TurnAnch
 
 def _livekit_anchors(spans: Sequence[OtlpSpan], children: dict) -> list[TurnAnchors]:
     speaking = _named(spans, (LIVEKIT_SCOPE,), "user_speaking")
+    speaking_by_end = sorted(
+        speaking, key=lambda span: (span.span.end_time_unix_nano, _order(span))
+    )
+    speaking_end_times = [span.span.end_time_unix_nano for span in speaking_by_end]
+    speaking_by_parent: dict[tuple[bytes, bytes], list[OtlpSpan]] = {}
+    for span in speaking:
+        key = (span.span.trace_id, span.span.parent_span_id)
+        speaking_by_parent.setdefault(key, []).append(span)
+    for group in speaking_by_parent.values():
+        group.sort(key=_order)
     anchors = []
     for turn in _named(spans, (LIVEKIT_SCOPE,), "agent_turn"):
         kids = children.get((turn.span.trace_id, turn.span.span_id), [])
         played = _named(kids, (LIVEKIT_SCOPE,), "agent_speaking")
         agent_on = played[0].span.start_time_unix_nano if played else None
         by = turn.span.end_time_unix_nano if agent_on is None else agent_on
-        before = [span for span in speaking if span.span.end_time_unix_nano <= by]
         user_on: tuple[int, ...] = ()
         user_off = None
-        if before:
-            last = max(before, key=lambda span: (span.span.end_time_unix_nano, _order(span)))
-            same_turn = sorted(
-                (
-                    span
-                    for span in before
-                    if (span.span.trace_id, span.span.parent_span_id)
-                    == (last.span.trace_id, last.span.parent_span_id)
-                ),
-                key=_order,
-            )
+        previous_index = bisect_right(speaking_end_times, by) - 1
+        if previous_index >= 0:
+            last = speaking_by_end[previous_index]
+            parent_key = (last.span.trace_id, last.span.parent_span_id)
+            same_turn = [
+                span
+                for span in speaking_by_parent.get(parent_key, ())
+                if span.span.end_time_unix_nano <= by
+            ]
             user_on = tuple(span.span.start_time_unix_nano for span in same_turn)
             user_off = last.span.end_time_unix_nano
         latency = _seconds(_values(turn, _LIVEKIT_ANCHOR_KEYS).get("lk.e2e_latency"))

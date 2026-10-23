@@ -67,6 +67,7 @@ NOT_MEASURABLE_REASONS = frozenset(
         "not_one_timeline",
         "no_recording",
         "analysis_not_stored",
+        "boundary_uncertainty_too_high",
     }
 )
 GAP_BASES = frozenset({"anchors_checked", "continuous_timeline_assumed"})

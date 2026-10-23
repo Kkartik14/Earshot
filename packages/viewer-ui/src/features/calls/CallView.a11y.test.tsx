@@ -322,6 +322,22 @@ describe("a call without a projection (the Month 1 view)", () => {
     expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
   });
 
+  it("does not invent a timestamp for an order-only span transcript line", () => {
+    renderCall({
+      ...base,
+      projection: null,
+      projection_state: "none",
+      transcript: base.transcript.map((line) => ({
+        ...line,
+        start_unix_nano: null,
+        end_unix_nano: null,
+        timing: "order_only",
+      })),
+    });
+
+    expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
   it("links the call to its revision's incident", () => {
     renderCall({ ...base, projection: null, projection_state: "none" });
     expect(screen.getByRole("link", { name: "revision 1 incident" })).toHaveAttribute(

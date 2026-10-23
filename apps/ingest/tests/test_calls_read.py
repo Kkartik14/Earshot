@@ -301,12 +301,69 @@ def test_call_detail_lists_revisions_recordings_and_the_transcript_of_its_spans(
         "text",
         "start_unix_nano",
         "end_unix_nano",
+        "timing",
         "trace_id",
         "span_id",
     }
+    assert first["timing"] == "measured"
     assert first["start_unix_nano"].isdigit() and len(first["span_id"]) == 16
     for reply in (unknown, foreign):
         assert (reply.status, reply.problem_code()) == (404, "EARSHOT_CALL_NOT_FOUND")
+
+
+def test_call_detail_keeps_source_order_for_mixed_timing_connector_lines(tmp_path) -> None:
+    from earshot.connectors.base import transcript_line
+    from earshot.connectors.evidence import CALL, Evidence, EvidenceSpan, otlp_spans
+
+    world = _world(tmp_path)
+    call_span = EvidenceSpan(CALL, 0, START, START + 4 * SECOND)
+    lines = (
+        transcript_line(
+            0,
+            speaker="user",
+            text="measured first",
+            start=START + 2 * SECOND,
+            end=START + 2 * SECOND + 500_000_000,
+            timing="measured",
+        ),
+        transcript_line(
+            1,
+            speaker="agent",
+            text="untimed second",
+            start=START,
+            end=START,
+            timing="order_only",
+        ),
+        transcript_line(
+            2,
+            speaker="user",
+            text="measured third",
+            start=START + 3 * SECOND,
+            end=START + 3 * SECOND + 500_000_000,
+            timing="measured",
+        ),
+    )
+    evidence = Evidence(
+        provider="vapi",
+        provider_call_id="mixed_timing_transcript",
+        spans=(call_span, *(line for line in lines if line is not None)),
+    )
+    spans = otlp_spans(
+        evidence,
+        session_key="vapi:mixed_timing_transcript",
+        translator_version="test",
+    )
+    [call_id] = world.calls.record_spans("default", spans).call_ids
+
+    with serve(create_app(store=world.store)) as port:
+        detail = _json(port, f"/v1/calls/{call_id}")
+
+    assert [(line["text"], line["timing"]) for line in detail["transcript"]] == [
+        ("measured first", "measured"),
+        ("untimed second", "order_only"),
+        ("measured third", "measured"),
+    ]
+    assert detail["transcript"][1]["start_unix_nano"] is None
 
 
 def test_an_open_calls_transcript_grows_as_its_spans_arrive(tmp_path) -> None:
@@ -360,7 +417,7 @@ def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_s
     # call's traces once per span: 312 ms a detail read (and a claim's write-lock hold)
     # at 1M spans, whatever the call's own size. Each statement that reads one call's
     # spans must start from the call's traces and reach its spans by trace.
-    from earshot.storage_call_reads import TRANSCRIPT_SQL
+    from earshot.storage_call_reads import LEGACY_TRANSCRIPT_SQL, TRANSCRIPT_SQL
     from earshot.storage_closer import (
         SNAPSHOT_KEYS_SQL,
         SNAPSHOT_RESOURCES_SQL,
@@ -381,6 +438,7 @@ def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_s
         )
     statements = {
         "transcript": (TRANSCRIPT_SQL, ("default", call_id)),
+        "legacy transcript": (LEGACY_TRANSCRIPT_SQL, ("default", call_id)),
         "claim span keys": (SNAPSHOT_KEYS_SQL, ("default", call_id)),
         "snapshot resources": (SNAPSHOT_RESOURCES_SQL, ("default", "default", call_id)),
         "snapshot spans": (SNAPSHOT_SPANS_SQL, ("default", call_id)),
@@ -393,7 +451,9 @@ def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_s
                 tuple(row)[-1]
                 for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}", parameters)
             ]
-            assert len(connection.execute(sql, parameters).fetchall()) > 0, name
+            rows = connection.execute(sql, parameters).fetchall()
+            if name != "legacy transcript":
+                assert rows, name
 
     def driven_from_traces(plan: list[str]) -> bool:
         steps = [step for step in plan if step.split()[:2] in (["SEARCH", "t"], ["SEARCH", "s"])]
