@@ -1,30 +1,33 @@
 # `@earshot/viewer-ui`
 
-Earshot's Observe feature, API client, generated API types, and incident views.
-The package is framework neutral: hosts provide route IDs and a link component;
-it does not depend on React Router or Next.js.
+Earshot's Observe feature (React views for calls and incidents), a typed client
+for the Earshot API, and the generated API types. It is framework neutral: the
+host provides route IDs and a link component, and the package depends on neither
+React Router nor Next.js.
 
-## Availability
+## Install
 
-This package is private and is not published. Earshot's Vite and Next.js hosts
-consume it through the repository workspace. During local Platform integration,
-link this package from the `Earshot-task3` checkout in Platform's workspace; do
-not depend on a registry release. Publishing is a separate release step.
+```bash
+npm install @earshot/viewer-ui react @tanstack/react-query
+```
 
-The package expects the host's React Query provider to wrap the feature. React
-and React Query are peer dependencies so the host and feature share the same
-React instance and query cache. `openapi-fetch` is installed as a package
-dependency.
+React and React Query are peer dependencies, so the host and the feature share
+one React instance and one query cache. The package version matches the Earshot
+server release whose API it was generated from.
+
+The package ships ES modules, type declarations and CSS Modules. Use a bundler
+that handles CSS Modules (Vite, webpack, Next.js). With Next.js, add
+`@earshot/viewer-ui` to `transpilePackages`.
 
 ## Mount the Observe feature
 
-For standalone viewer hosts, import `styles/tokens.css` and `styles/global.css`.
-For an embedded host, import only `styles/embedded.css`; its tokens are scoped
-to the Observe feature. Do not import the standalone styles into the shared
-document because they change `html`, `body`, anchors, focus rules, and
-root-level custom properties.
+For a standalone viewer, import `styles/tokens.css` and `styles/global.css`. For
+an embedded host, import only `styles/embedded.css`; its tokens are scoped to
+the feature. Do not import the standalone styles into a shared document: they
+change `html`, `body`, anchors, focus rules and root-level custom properties.
 
-Render `ObserveFeature` inside the host's authenticated project shell:
+Render `ObserveFeature` inside the host's authenticated project shell, under the
+host's React Query provider:
 
 ```tsx
 import "@earshot/viewer-ui/styles/embedded.css";
@@ -47,7 +50,7 @@ export function ObservePage() {
       scope={{ projectId: "canonical-project-id", authContextId: "host-auth-context-id" }}
     >
       <ObserveFeature
-        route={{ kind: "session", sessionId: "session-id-from-platform" }}
+        route={{ kind: "session", sessionId: "session-id" }}
         currentPath="/observe"
         LinkComponent={HostLink}
         embedded
@@ -57,47 +60,44 @@ export function ObservePage() {
 }
 ```
 
-For Next.js, add `@earshot/viewer-ui` to `transpilePackages`. Keep the API on a
-same-origin path and configure the corresponding base path with
-`configureApiBasePath`. The Platform app can resolve `/observe?sessionId=...`
-to the `session` route above. The resolver uses the authenticated project's
-incident and live-session APIs; when more than one artifact shares a session ID,
-it asks the user to choose by immutable bundle ID. The chooser links to
-`/sessions/{bundleId}`, so the host must map that path back to
-`ObserveFeature` with `route={{ kind: "incident", bundleId }}` as well as mapping
-the session route.
+- Keep the Earshot API on a same-origin path and pass that path to
+  `configureApiBasePath`.
+- When several incidents share a session ID, the session route asks the user to
+  choose one and links to `/sessions/{bundleId}`. Map that path back to
+  `ObserveFeature` with `route={{ kind: "incident", bundleId }}`.
+- An embedded fleet view shows neutral empty-state guidance. Set
+  `emptyFleetHint` when the host offers a way to send data to Earshot.
+- When the host knows a call of its own but Earshot has no incident for it yet,
+  render `route={{ kind: "capture-status", hostCallId, capture }}`. `capture` is
+  the state the host reports: `waiting`, `delayed`, `missing`, or `rejected` with
+  a `reasonCode`. The page labels it as host-reported and shows no evidence.
+  `CaptureStatus` renders the same view outside `ObserveFeature`.
 
-The standalone fleet empty state suggests ingesting a voice session. An embedded
-host defaults to neutral “no turn metrics” guidance because the host may not
-provide an ingestion action. Set `emptyFleetHint` on `ObserveFeature` when the
-host has a supported, user-accessible way to populate Earshot.
+## Security and cache scope
 
 The host owns user authentication and project authorization. Do not send
-Platform service tokens, project API keys, provider credentials, or artifact
-content to the browser. `projectId` is the canonical selected project ID.
-`authContextId` is a nonsecret opaque cache namespace that the host rotates when
-the user, project, or effective authorization changes. Never pass a bearer,
-cookie, CSRF token, or other credential as the cache namespace.
+service tokens, project API keys, provider credentials or artifact content to
+the browser.
 
-All Observe queries include both scope values in their keys, pass cancellation
-signals to fetch, and remove their scoped cache on scope change or unmount. The
-cleanup removes only keys under the reserved `earshot` prefix; it leaves the
-host's other React Query data intact. On logout, either unmount the provider or
-call `clearViewerQueries(queryClient)` to remove all Earshot-owned entries while
-preserving host queries. The host should unmount the provider when its
-authenticated shell closes.
+`projectId` is the canonical selected project ID. `authContextId` is a
+non-secret, opaque cache namespace that the host rotates when the user, project
+or effective authorization changes; never pass a bearer token, cookie, CSRF
+token or other credential as the namespace. Every Observe query key carries both
+values under the reserved `earshot` prefix, and the provider removes its scoped
+cache on scope change or unmount. On logout, unmount the provider or call
+`clearViewerQueries(queryClient)`; the host's other queries are left intact.
 
 ## Development
 
-The standalone Vite and Next.js hosts in Earshot use this workspace package.
-API types are generated from the backend OpenAPI artifact:
+Inside the Earshot repository the package exports its TypeScript sources, so the
+Vite and Next.js viewers use them directly. `pnpm pack` swaps in the compiled
+`dist` entry points from `publishConfig`, so build and pack with pnpm:
 
 ```bash
-pnpm --filter @earshot/viewer-ui gen:api
+pnpm --filter @earshot/viewer-ui gen:api     # regenerate API types from spec/
 pnpm --filter @earshot/viewer-ui typecheck
 pnpm --filter @earshot/viewer-ui test
+pnpm --filter @earshot/viewer-ui build       # tsc -> dist, plus CSS and API types
 ```
 
-The package stays private while the Platform integration is developed. A
-separate release can make it installable from a registry after its public API,
-versioning, and release checks are ready.
+Licensed under Apache-2.0.

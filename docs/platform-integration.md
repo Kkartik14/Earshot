@@ -281,7 +281,7 @@ can promise that behavior.
 Earshot only knows about calls whose producer registers a live journal or
 submits an incident. A missing or delayed delivery has no incident to query, so
 Platform remains the source of call delivery status. The viewer accepts a
-host-reported `call-status` route for waiting, delayed, missing, or rejected
+host-reported `capture-status` route for waiting, delayed, missing, or rejected
 evidence and says Earshot has not verified an incident. Once an artifact is
 available, its finality, completeness, recovery, coverage, and omission records
 describe partial or withheld evidence. The UI does not invent a transcript or
@@ -293,20 +293,22 @@ The proposed runtime mapping is metadata-only by default. Transcript text,
 audio, tool inputs/results, model prompts/responses, provider secrets,
 diagnostic payloads, raw OTLP, and unconstrained attribute maps are excluded.
 Expanding capture requires explicit policy, purpose, and retention terms.
-Earshot does not ingest or serve audio bytes. Artifact retention governs
+In hosted mode Earshot does not ingest or serve audio bytes: the Recordings routes
+answer 403 there in 0.2.0. Artifact retention governs
 evidence lifetime; purge removes the immutable artifact, analyses, projections,
 and external references. The viewer surfaces the privacy manifest and recorded
 omissions alongside evidence.
 
 ## Viewer package and standalone use
 
-The React feature is in the Earshot-owned, private `@earshot/viewer-ui` workspace
-package, currently versioned `0.1.0`. React and React Query are peer dependencies;
-the package has no React Router or Next.js runtime dependency. Next.js hosts transpile
-the package and provide navigation. Platform's local integration links the package
-source from the Earshot Task 3 checkout while it remains unpublished; publication is a
-separate release step. Embedded hosts import `styles/embedded.css`, not the standalone
-global styles.
+The React feature is in the Earshot-owned `@earshot/viewer-ui` package, now
+publish-ready at `0.2.0`: it is published to npm from the same tag and at the same
+version as the Python distribution (see [npm packages](./release.md#npm-packages)), and
+the published package ships compiled JavaScript in `dist/`. React and React Query are
+peer dependencies; the package has no React Router or Next.js runtime dependency. Hosts
+provide navigation. Until 0.2.0 is published, Platform's local integration links the
+workspace source, which exports TypeScript, so a Next.js host transpiles it. Embedded
+hosts import `styles/embedded.css`, not the standalone global styles.
 
 The Vite `apps/viewer` remains bundled into the Python wheel and single-process
 Docker image. `apps/viewer-next` remains an optional standalone Next.js host

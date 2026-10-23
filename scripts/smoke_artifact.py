@@ -92,7 +92,8 @@ def _smoke_server(
     try:
         base_url = f"http://127.0.0.1:{port}"
         readiness = json.loads(_read_when_ready(f"{base_url}/readyz", process))
-        if readiness != {"status": "ready"}:
+        # A fresh store has nothing to re-project (AC1.10).
+        if readiness != {"status": "ready", "projections_pending": 0}:
             raise RuntimeError(f"unexpected readiness response: {readiness!r}")
         incidents = json.loads(_read_when_ready(f"{base_url}/v1/incidents", process))
         if incidents.get("items") != []:
@@ -155,13 +156,21 @@ def smoke_artifact(path: Path) -> None:
             environment=environment,
         )
         _run([str(earshot), "--help"], cwd=workspace, environment=environment)
-        listed = _run(
+        # Commands that open the store need the server extra and say so.
+        refused = subprocess.run(
             [str(earshot), "list", "--data-dir", str(workspace / "cli-data")],
             cwd=workspace,
-            environment=environment,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
         )
-        if json.loads(listed.stdout).get("items") != []:
-            raise RuntimeError("base CLI did not return an empty incident list")
+        if refused.returncode != 2 or "earshot-observability[server]" not in refused.stderr:
+            raise RuntimeError(
+                "base CLI did not refuse a store command with the server-extra hint: "
+                f"exit {refused.returncode}, stderr {refused.stderr!r}"
+            )
 
         server_requirement = f"earshot-observability[server] @ {artifact.as_uri()}"
         _run(
@@ -189,6 +198,13 @@ def smoke_artifact(path: Path) -> None:
             cwd=workspace,
             environment=environment,
         )
+        listed = _run(
+            [str(earshot), "list", "--data-dir", str(workspace / "cli-data")],
+            cwd=workspace,
+            environment=environment,
+        )
+        if json.loads(listed.stdout).get("items") != []:
+            raise RuntimeError("server CLI did not return an empty incident list")
         _smoke_server(earshot, workspace=workspace, environment=environment)
 
 

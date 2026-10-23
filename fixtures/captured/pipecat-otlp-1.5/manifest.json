@@ -1,0 +1,195 @@
+{
+  "description": "OTLP/HTTP protobuf requests exported by one real Pipecat call, in arrival order, plus that call's per-speaker recordings.",
+  "provenance": {
+    "captured_on": "2026-10-19",
+    "source_kind": "real_call",
+    "conversation_id": "pipecat-otlp-156876d7-4d62-427a-9295-cee8c3186dcb",
+    "caller_script": [
+      "Hi, I would like to book a table for two people tomorrow evening.",
+      "Seven thirty works for us. Could we sit somewhere quiet near the window?",
+      "Perfect, that is everything I needed. Thank you very much, goodbye."
+    ],
+    "providers": {
+      "stt": {
+        "provider": "deepgram",
+        "model": "nova-3-general"
+      },
+      "llm": {
+        "provider": "groq",
+        "model": "openai/gpt-oss-20b"
+      },
+      "tts": {
+        "provider": "cartesia",
+        "model": "sonic-3"
+      }
+    },
+    "versions": {
+      "pipecat-ai": "1.5.0",
+      "opentelemetry-sdk": "1.44.0",
+      "opentelemetry-exporter-otlp-proto-http": "1.44.0",
+      "opentelemetry-proto": "1.44.0",
+      "deepgram-sdk": "7.13.0",
+      "python": "3.11.15"
+    },
+    "exported_span_count_tee": 17,
+    "driver": "examples/pipecat_otlp/run_call.py",
+    "sink": "scripts/otlp_capture_sink.py",
+    "builder": "scripts/build_pipecat_otlp_fixture.py"
+  },
+  "scrub_rules": [
+    "Resource attribute service.instance.id is replaced with 'captured-instance'.",
+    "Resource attributes under host.* and process.* (if any) become 'captured-<key>'.",
+    "Any string value equal to CARTESIA_VOICE_ID (tts voice_id, settings.voice) becomes 'captured-cartesia-voice'.",
+    "The local username and hostname are replaced with 'captured-user' / 'captured-host' wherever they occur inside string values.",
+    "Each request is decompressed and re-serialized with SerializeToString(deterministic=True).",
+    "The build aborts if any .env value (except GROQ_MODEL and CARTESIA_MODEL, which Pipecat records as gen_ai.request.model) occurs anywhere in the fixture bytes.",
+    "Trace/span IDs, timestamps, transcripts and LLM/TTS text are kept as captured: the caller is a fixed synthetic script and the agent text is model output."
+  ],
+  "requests": [
+    {
+      "file": "001.pb",
+      "sha256": "82c686434720ebb1442303dbd57c9331294c95dc9ef5d7477b7610bd151282cb",
+      "span_count": 1,
+      "span_names": {
+        "stt": 1
+      },
+      "received_unix_nano": "1792372166047630000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 872
+      }
+    },
+    {
+      "file": "002.pb",
+      "sha256": "a64c68f675b123c1bf853baa9e7afdde6662e33cf74b0ad7ebea6e58b1c14aa8",
+      "span_count": 2,
+      "span_names": {
+        "llm": 1,
+        "tts": 1
+      },
+      "received_unix_nano": "1792372171090546000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 1644
+      }
+    },
+    {
+      "file": "003.pb",
+      "sha256": "4b47427683e88e6674680a1c333782faa44a258a0883a343b073f2ca5de2a2dd",
+      "span_count": 3,
+      "span_names": {
+        "llm": 1,
+        "stt": 1,
+        "turn": 1
+      },
+      "received_unix_nano": "1792372176103576000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 2024
+      }
+    },
+    {
+      "file": "004.pb",
+      "sha256": "0f7a30b3470c8119b67838ffb7c967b87a3cfb0bd87ceac862209fd8cb343aa4",
+      "span_count": 3,
+      "span_names": {
+        "llm": 1,
+        "stt": 1,
+        "tts": 1
+      },
+      "received_unix_nano": "1792372181115960000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 2505
+      }
+    },
+    {
+      "file": "005.pb",
+      "sha256": "847ed65a4ae2d08394ad1c601fdb129d4de1821af417765ea58caa76c29fe514",
+      "span_count": 3,
+      "span_names": {
+        "llm": 1,
+        "stt": 1,
+        "turn": 1
+      },
+      "received_unix_nano": "1792372186123314000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 2324
+      }
+    },
+    {
+      "file": "006.pb",
+      "sha256": "a5c0ec465f9e0a687e1eb0d3593639be137693e3b2261b399d6bef2b3b0e5366",
+      "span_count": 3,
+      "span_names": {
+        "llm": 1,
+        "stt": 1,
+        "tts": 1
+      },
+      "received_unix_nano": "1792372191130021000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 2670
+      }
+    },
+    {
+      "file": "007.pb",
+      "sha256": "2278573b709d449c875bc9e473a7f6ce22833b9a034e0ed1a2078eac15385523",
+      "span_count": 2,
+      "span_names": {
+        "conversation": 1,
+        "turn": 1
+      },
+      "received_unix_nano": "1792372193326084000",
+      "wire": {
+        "content_type": "application/x-protobuf",
+        "content_encoding": "identity",
+        "size": 811
+      }
+    }
+  ],
+  "span_count": 17,
+  "span_names": {
+    "conversation": 1,
+    "llm": 5,
+    "stt": 5,
+    "tts": 3,
+    "turn": 3
+  },
+  "scopes": {
+    "pipecat": [
+      "llm",
+      "stt",
+      "tts"
+    ],
+    "pipecat.turn": [
+      "conversation",
+      "turn"
+    ]
+  },
+  "audio": {
+    "started_at_unix_nano": "1792372161387965000",
+    "processing": "none: tracks are written exactly as AudioBufferProcessor emitted them",
+    "user": {
+      "file": "audio/user.wav",
+      "sample_rate": 16000,
+      "channels": 1,
+      "duration_s": 32.486,
+      "sha256": "fe65147baa47c22b5c420bf695556b402f1bf54ad6cd9102da8d5c86dd307aa1"
+    },
+    "agent": {
+      "file": "audio/agent.wav",
+      "sample_rate": 16000,
+      "channels": 1,
+      "duration_s": 32.486,
+      "sha256": "a03b25e73a42834b3bd9e85d59f6f9c7c511ebc4c08c0097d61064b2157f5148"
+    }
+  }
+}

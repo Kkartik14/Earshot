@@ -21,8 +21,8 @@ export type ObserveRoute =
   | { kind: "session"; sessionId: string }
   | { kind: "live"; sessionId: string }
   | {
-      kind: "call-status";
-      callId: string;
+      kind: "capture-status";
+      hostCallId: string;
       capture:
         | { state: "waiting"; detail?: string }
         | { state: "delayed"; detail?: string }

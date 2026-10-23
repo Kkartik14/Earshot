@@ -3,8 +3,8 @@
 ## Prerequisites
 
 - Python 3.11+
-- Node 20+ only for the legacy TypeScript prototype/viewer work
-- `pnpm` for existing TS packages
+- Node 20+ only for the TypeScript viewer and browser packages
+- `pnpm` for the TypeScript workspace
 
 ## Install
 
@@ -89,6 +89,32 @@ python scripts/check_wheel.py /tmp/earshot-dist/*.whl
 python scripts/check_sdist.py /tmp/earshot-dist/*.tar.gz
 python scripts/smoke_artifact.py /tmp/earshot-dist/*.whl
 python scripts/smoke_artifact.py /tmp/earshot-dist/*.tar.gz
+```
+
+Plain `pytest` runs every test, including the ones marked `slow` (about 10 s or more
+each: the 10,000-incident reprojection boot, the random-SIGKILL OTLP property test, the
+1 GiB blob and recording memory tests, and the replay and real-provider quick-start e2e
+tests). While you work, skip them and run only the slow tests of the modules you changed:
+
+```bash
+pytest -m "not slow"                                   # everything but the slow tests
+pytest -m slow apps/ingest/tests/test_recordings_memory.py   # the slow tests you touched
+pytest -m slow                                         # every slow test
+```
+
+CI and the release gate run plain `pytest`, so no `slow` test is skipped there.
+
+One test still skips in CI: the real-provider e2e
+(`apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`, marked `real_providers`)
+runs one real Pipecat call into Earshot on Postgres and S3. It needs `DEEPGRAM_API_KEY`,
+`GROQ_API_KEY`, `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID` in the environment, the
+example's `requirements.txt`, and the S3 test server; without any of them it skips. It
+reads keys from the process environment only, never from `.env`, so a plain local
+`pytest` places no paid calls. The release gate runs it with
+`EARSHOT_REQUIRE_REAL_PROVIDERS=1`, which turns a skip into a failure:
+
+```bash
+(set -a; . ./.env; set +a; EARSHOT_REQUIRE_REAL_PROVIDERS=1 pytest -q -m real_providers)
 ```
 
 Tests intentionally mutate valid fixtures. A passing test should prove a property or

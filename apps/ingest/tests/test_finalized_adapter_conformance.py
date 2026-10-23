@@ -13,7 +13,7 @@ import test_ringg_connector as ringg
 import test_vapi_connector as vapi
 from adapter_conformance import assert_canonical_payload_conforms
 from earshot.connectors import HostedProviderIngestion, MappingSecretResolver
-from earshot.storage import IncidentStore
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -83,7 +83,7 @@ CASES = (
 def _capture(case: FinalizedCase, data_dir: Path) -> bytes:
     data_dir.mkdir()
     (data_dir / "instance-correlation.key").write_bytes(IDENTITY_KEY)
-    store = IncidentStore(data_dir)
+    store = make_store(data_dir)
     store.create_project("support", display_name="Support")
     endpoint = store.create_connector(
         "support",

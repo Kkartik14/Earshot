@@ -33,6 +33,7 @@ from .base import (
     DEFAULT_ADAPTER_TRACKING_ENTRIES,
     AdapterDependencyError,
     AdapterTrackingStatus,
+    otel_id,
     seconds_to_nano,
     stable_id,
     validate_tracking_limit,
@@ -293,22 +294,6 @@ def _turn_id_from_span(span: object, attributes: Mapping[str, Any]) -> str | Non
     return candidate
 
 
-def _otel_id(raw: object, width: int) -> str | None:
-    if isinstance(raw, int):
-        if raw <= 0 or raw >= 1 << (width * 4):
-            return None
-        return f"{raw:0{width}x}"
-    if isinstance(raw, str):
-        candidate = raw.lower().removeprefix("0x")
-        if len(candidate) == width and candidate != "0" * width:
-            try:
-                int(candidate, 16)
-            except ValueError:
-                return None
-            return candidate
-    return None
-
-
 class LiveKitAdapter:
     def __init__(
         self,
@@ -391,10 +376,10 @@ class LiveKitAdapter:
             if request_id is not None:
                 attributes.setdefault("earshot.request.id", str(request_id))
         context = value(span, "context")
-        trace_id = _otel_id(value(context, "trace_id"), 32) if context is not None else None
-        span_id = _otel_id(value(context, "span_id"), 16) if context is not None else None
-        trace_id = trace_id or _otel_id(value(span, "trace_id"), 32)
-        span_id = span_id or _otel_id(value(span, "span_id"), 16)
+        trace_id = otel_id(value(context, "trace_id"), 32) if context is not None else None
+        span_id = otel_id(value(context, "span_id"), 16) if context is not None else None
+        trace_id = trace_id or otel_id(value(span, "trace_id"), 32)
+        span_id = span_id or otel_id(value(span, "span_id"), 16)
         if trace_id is None or span_id is None:
             raise TypeError("LiveKit span lacks a valid OpenTelemetry trace/span identity")
 
@@ -404,8 +389,8 @@ class LiveKitAdapter:
         end = self._time_point(raw_end) if raw_end is not None else None
 
         parent = value(span, "parent")
-        parent_span_id = _otel_id(value(parent, "span_id"), 16) if parent is not None else None
-        parent_span_id = parent_span_id or _otel_id(value(span, "parent_span_id"), 16)
+        parent_span_id = otel_id(value(parent, "span_id"), 16) if parent is not None else None
+        parent_span_id = parent_span_id or otel_id(value(span, "parent_span_id"), 16)
         supplied_parent_scope = value(span, "parent_scope")
         if supplied_parent_scope:
             raw_parent_scope = str(supplied_parent_scope)
@@ -436,8 +421,8 @@ class LiveKitAdapter:
         links: list[CausalLink] = []
         for native_link in value(span, "links", ()) or ():
             link_context = value(native_link, "context")
-            linked_trace_id = _otel_id(value(link_context, "trace_id"), 32)
-            linked_span_id = _otel_id(value(link_context, "span_id"), 16)
+            linked_trace_id = otel_id(value(link_context, "trace_id"), 32)
+            linked_span_id = otel_id(value(link_context, "span_id"), 16)
             if linked_trace_id is None or linked_span_id is None:
                 continue
             link_attributes = dict(value(native_link, "attributes", {}) or {})

@@ -32,6 +32,7 @@ def main() -> None:
         raise SystemExit("unresolved semantic references: " + ", ".join(missing_references))
 
     sys.path.insert(0, str(SOURCE))
+    from earshot.call_capture import RECEIVER_ATTRIBUTES
     from earshot.privacy import _SAFE_EXACT
     from earshot.versions import SEMANTIC_PROFILE_VERSION
 
@@ -43,6 +44,8 @@ def main() -> None:
         )
 
     required = {key for key in _SAFE_EXACT if key.startswith("earshot.")}
+    # The attributes the OTLP receiver interprets (session key, end of call).
+    required.update(key for key in RECEIVER_ATTRIBUTES if key.startswith("earshot."))
     pattern = re.compile(
         r'["\'](earshot\.(?:metric|duration)\.[a-z0-9_.]+'
         r'|earshot\.analysis\.synthetic_projection)["\']'

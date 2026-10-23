@@ -6,7 +6,6 @@ import hashlib
 import json
 import math
 import os
-import sqlite3
 import threading
 import time
 from collections import deque
@@ -14,6 +13,7 @@ from typing import Any
 
 from earshot.codec import encode_incident_protobuf
 from earshot.storage import (
+    DATABASE_ERRORS,
     DeliveryInProgressError,
     DeliveryReceiptConflictError,
     IncidentStore,
@@ -191,7 +191,7 @@ class HostedProviderIngestion:
                     completed_at_unix_nano=now_nano,
                     lease_token=claim.lease_token,
                 )
-            except (StorageError, sqlite3.Error, OSError) as error:
+            except (StorageError, *DATABASE_ERRORS, OSError) as error:
                 raise DeliveryPublicationError from error
             return DeliveryOutcome(claim.receipt_id, "ignored", connector.project_id, None, None)
         assert claim.lease_token is not None
@@ -235,7 +235,7 @@ class HostedProviderIngestion:
                 bundle_id=result.record.bundle_id,
                 canonical_sha256=result.record.digest,
             )
-        except (StorageError, sqlite3.Error, OSError) as error:
+        except (StorageError, *DATABASE_ERRORS, OSError) as error:
             self._fail_claim(
                 claim.receipt_id,
                 lease_token=claim.lease_token,
@@ -282,7 +282,7 @@ class HostedProviderIngestion:
                 lease_token=lease_token,
                 failure_code=failure_code,
             )
-        except (StorageError, sqlite3.Error, OSError):
+        except (StorageError, *DATABASE_ERRORS, OSError):
             # Preserve the original stable connector error. A lost lease must
             # never let a stale worker overwrite the current owner's Receipt.
             return

@@ -39,6 +39,7 @@ from earshot.live import LiveConfig, LiveSessionRegistry
 from earshot.privacy import CaptureClass, CaptureGovernance, CapturePolicy, ExportConfig
 from earshot.recorder import IncidentRecorder, RecorderConfig
 from earshot.storage import IncidentStore
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -106,7 +107,7 @@ def _build(
     poll_interval_ms: int = QUIET_POLL_MS,
 ) -> _Harness:
     journals = tmp_path / "journals"
-    store = IncidentStore(tmp_path / "data")
+    store = make_store(tmp_path / "data")
     settings = dataclasses.replace(live or LiveConfig(), poll_interval_ms=poll_interval_ms)
     registry = LiveSessionRegistry(journal_dir=journals, config=settings)
     app = create_app(store=store, config=config, live_registry=registry, analyzer=None)
@@ -115,7 +116,7 @@ def _build(
 
 def test_journal_refresh_cannot_publish_after_project_deletion_fence(tmp_path, monkeypatch) -> None:
     project_id = "tenant-refresh-delete-race"
-    store = IncidentStore(tmp_path / "data")
+    store = make_store(tmp_path / "data")
     store.create_project(project_id, display_name="Refresh race")
     journals = tmp_path / "journals"
     writer = _writer(journals)
@@ -158,7 +159,7 @@ def test_journal_refresh_releases_deletion_fence_between_publish_batches(
     tmp_path,
 ) -> None:
     project_id = "tenant-refresh-batches"
-    store = IncidentStore(tmp_path / "data")
+    store = make_store(tmp_path / "data")
     store.create_project(project_id, display_name="Refresh batches")
     journals = tmp_path / "journals"
     writer = _writer(journals)

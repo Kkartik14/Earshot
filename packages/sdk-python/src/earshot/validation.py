@@ -1973,7 +1973,7 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
             )
 
     if profile.analysis is not None:
-        from .codec import IncidentCodecError, analysis_input_sha256
+        from .codec import IncidentCodecError, analysis_input_digests
 
         issues.append(
             ValidationIssue(
@@ -1991,12 +1991,12 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
             issues,
         )
         try:
-            expected_analysis_input = analysis_input_sha256(bundle)
+            expected_analysis_inputs = analysis_input_digests(bundle)
         except IncidentCodecError:
-            expected_analysis_input = None
+            expected_analysis_inputs = None
         if (
-            expected_analysis_input is not None
-            and profile.analysis.input_sha256 != expected_analysis_input
+            expected_analysis_inputs is not None
+            and profile.analysis.input_sha256 not in expected_analysis_inputs
         ):
             issues.append(
                 ValidationIssue(
@@ -2238,13 +2238,17 @@ def validate_derived_analysis(
                 message="analyzer version must use a governed version identifier",
             )
         )
-    from .codec import IncidentCodecError, analysis_input_sha256
+    from .codec import IncidentCodecError, analysis_input_digests
 
     try:
-        expected_digest = analysis_input_sha256(bundle)
+        expected_digests = analysis_input_digests(bundle)
     except IncidentCodecError:
-        expected_digest = None
-    if expected_digest is not None and analysis.input_sha256 != expected_digest:
+        expected_digests = ()
+    expected_digest = None
+    if expected_digests and analysis.input_sha256 in expected_digests:
+        expected_digest = analysis.input_sha256
+    elif expected_digests:
+        expected_digest = expected_digests[0]
         issues.append(
             ValidationIssue(
                 code="EARSHOT_ANALYSIS_INPUT_MISMATCH",

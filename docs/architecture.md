@@ -34,9 +34,7 @@ The first two framework seams are Python. A single Python 3.11 implementation no
 owns SDK capture, privacy filtering, contract validation, analysis, SQLite storage,
 CLI, and the local API. This avoids two semantic authorities while the contract is
 still alpha. Browser/viewer clients consume generated JSON Schema/protobuf bindings
-and shared conformance fixtures.
-
-The earlier TypeScript packages remain an M0 prototype and are not the contract authority.
+and shared conformance fixtures. No TypeScript package is a contract authority.
 
 ## Artifact versus telemetry export
 

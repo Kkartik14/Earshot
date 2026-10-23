@@ -27,8 +27,8 @@ from fastapi.testclient import TestClient
 from earshot.analysis import analyze_incident
 from earshot.api import CAPTURE_PROTOCOL_VERSION, ApiConfig, create_app
 from earshot.contract import IncidentBundle
-from earshot.storage import IncidentStore
 from earshot.validation import validate_incident
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -46,7 +46,7 @@ LABEL_SENTINEL = "SENTINEL Headset (Bluetooth)"
 
 
 def app_client(tmp_path, *, config: ApiConfig | None = None):
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     app = create_app(store=store, config=config, analyzer=analyze_incident)
     return store, TestClient(app)
 

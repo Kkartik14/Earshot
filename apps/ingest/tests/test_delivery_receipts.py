@@ -11,6 +11,7 @@ from earshot.storage import (
     StorageError,
 )
 from incident_factory import make_valid_bundle
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -26,7 +27,7 @@ def _connector(store: IncidentStore):
 
 
 def test_expired_receipt_lease_reclaims_with_cas_ownership(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     connector = _connector(store)
     delivery_key = store.fingerprint("delivery:test", "delivery-1")
     first = store.claim_delivery(
@@ -93,7 +94,7 @@ def test_expired_receipt_lease_reclaims_with_cas_ownership(tmp_path) -> None:
 
 
 def test_failed_receipt_can_retry_with_a_new_lease_token(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     connector = _connector(store)
     delivery_key = store.fingerprint("delivery:test", "delivery-2")
     first = store.claim_delivery(
@@ -124,7 +125,7 @@ def test_failed_receipt_can_retry_with_a_new_lease_token(tmp_path) -> None:
 def test_receipt_and_external_identity_cannot_bind_another_projects_incident(
     tmp_path,
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     connector = _connector(store)
     store.create_project("other", display_name="Other")
     bundle = make_valid_bundle(bundle_id="other-project-incident")
@@ -160,7 +161,7 @@ def test_receipt_and_external_identity_cannot_bind_another_projects_incident(
 
 
 def test_claim_delivery_rejects_a_forged_connector_project(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     connector = _connector(store)
     store.create_project("other", display_name="Other")
 

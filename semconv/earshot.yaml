@@ -5,11 +5,17 @@
 # future operations, roles, event names, evidence sources, and availability
 # reasons. Existing gen_ai.* and OpenInference attributes should be retained and
 # reused where they already describe the underlying model/tool operation.
-# The general OpenTelemetry `session.id` convention is reused for telemetry
-# correlation rather than duplicated as `earshot.session.id`. Its Development
-# status means adapters must pin the semconv revision they implement. This file
-# vendors the session.id definition from OpenTelemetry semantic-conventions
-# v1.41.1 (git ead83b9b0fa36540c1642fce46e874f002ac23f1, verified 2026-07-11).
+# `earshot.session.id` is the host's own session key. Earshot's OTLP receiver
+# groups spans into calls by it first, then by `gen_ai.conversation.id`, the
+# general OpenTelemetry `session.id`, and `conversation.id` (on the resource it
+# reads `earshot.session.id` only). This reverses the earlier rule that
+# `session.id` was reused rather than duplicated as `earshot.session.id`: a key
+# the host sets explicitly must not depend on a framework's choice of
+# conventions (see ADR 0005). `session.id` is still reused for telemetry
+# correlation; its Development status means adapters must pin the semconv
+# revision they implement. This file vendors the session.id definition from
+# OpenTelemetry semantic-conventions v1.41.1 (git
+# ead83b9b0fa36540c1642fce46e874f002ac23f1, verified 2026-07-11).
 earshot_semantic_profile_version: 0.2.0
 groups:
   - id: registry.earshot
@@ -20,6 +26,14 @@ groups:
         type: string
         requirement_level: opt_in
         brief: A unique session identifier, reused from the pinned OpenTelemetry semantic-conventions registry.
+      - id: earshot.session.id
+        type: string
+        requirement_level: recommended
+        brief: The host's session key for the call a span belongs to, 1 to 256 UTF-8 bytes after trimming; the first key Earshot's receiver consults, on a span or on its resource.
+      - id: earshot.call.ended
+        type: boolean
+        requirement_level: opt_in
+        brief: Set to true on any span to signal that its call has ended, so the call closes after a short grace period.
       - id: earshot.turn.id
         type: string
         requirement_level: opt_in

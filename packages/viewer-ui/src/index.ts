@@ -1,5 +1,5 @@
 export { ObserveFeature } from "./ObserveFeature";
-export { CallCaptureStatus } from "./features/sessions/CallCaptureStatus";
+export { CaptureStatus } from "./features/sessions/CaptureStatus";
 export type { IncidentReference } from "./features/inspector/IncidentReferences";
 export type { ObserveRoute, ViewerLinkComponent, ViewerLinkProps } from "./navigation";
 export { exchangeProjectKey, getViewerSession, logoutViewerSession } from "./api/auth";

@@ -7,17 +7,20 @@ treated as potentially sensitive rather than silently retained.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import math
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 if TYPE_CHECKING:
     from .contract import IncidentBundle
+
+_Result = TypeVar("_Result")
 
 
 class CaptureClass(StrEnum):
@@ -699,6 +702,30 @@ _CLASS_PATTERNS: tuple[tuple[CaptureClass, tuple[str, ...]], ...] = (
 )
 
 
+# Key classification is memoized (it runs for every attribute of every span the
+# OTLP receiver stores and every record a recorder builds, over a small working set
+# of keys), but only for keys this short: senders choose the keys, and a memo keyed
+# by any string pins whatever it is given. 4096 keys of at most 256 characters hold
+# a few MiB at most; a longer key is classified again each time.
+MEMOIZED_KEY_MAX_LENGTH = 256
+_MEMOIZED_KEYS = 4096
+
+
+def memoize_short_keys(function: Callable[[str], _Result]) -> Callable[[str], _Result]:
+    """Memoize a pure function of one attribute key, for short keys only."""
+
+    memoized = functools.lru_cache(maxsize=_MEMOIZED_KEYS)(function)
+
+    @functools.wraps(function)
+    def classify(key: str) -> _Result:
+        return memoized(key) if len(key) <= MEMOIZED_KEY_MAX_LENGTH else function(key)
+
+    classify.cache_info = memoized.cache_info  # type: ignore[attr-defined]
+    classify.cache_clear = memoized.cache_clear  # type: ignore[attr-defined]
+    return classify
+
+
+@memoize_short_keys
 def classify_attribute(key: str) -> CaptureClass:
     lowered = key.lower()
     if key in _SAFE_EXACT or key.startswith(_SAFE_PREFIXES):

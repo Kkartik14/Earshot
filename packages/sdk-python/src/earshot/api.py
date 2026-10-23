@@ -11,9 +11,9 @@ import json
 import logging
 import math
 import os
-import sqlite3
 import tempfile
 import time
+import uuid
 import zlib
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
@@ -27,12 +27,32 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+)
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
 
+from . import otlp_receiver
+from . import recordings as recording_media
 from .analysis import ANALYZER_VERSION
 from .auth import HostedJwksUnavailable, HostedJwtVerifier, InvalidHostedToken, validate_jwks_url
+from .blobstore import (
+    BlobNotFoundError,
+    BlobStore,
+    ContentDigestError,
+    ContentDigestMismatchError,
+    LocalBlobStore,
+    parse_content_digest,
+)
 from .browser_session import BrowserSessionStore
+from .call_capture import spans_from_request, valid_session_key
 from .capture import (
     CAPTURE_CALL_ID_PREFIX,
     CaptureCallCapacityError,
@@ -109,6 +129,12 @@ from .live import (
     make_event,
     render_sse,
 )
+from .maintenance import (
+    MaintenanceLoop,
+    ServerLock,
+    database_lock_watchdog,
+    reprojection_job,
+)
 from .pipeline import pipeline
 from .privacy import (
     ExportPolicyError,
@@ -118,18 +144,38 @@ from .privacy import (
 )
 from .query import EvidenceQuery, compare_incidents, detect_contradictions
 from .storage import (
+    DATABASE_ERRORS,
     DEFAULT_PROJECT_ID,
     MAX_EXPIRED_PURGE_BATCH_SIZE,
     TURN_METRIC_LIMITATIONS,
     ArtifactCorruptionError,
+    DatabaseUnavailableError,
+    IncidentBelongsToCallError,
     IncidentConflictError,
     IncidentNotFoundError,
     IncidentPurgedError,
     IncidentStore,
     InvalidCursorError,
     ProjectInactiveError,
+    StorageBusyError,
     StorageError,
     StoredAnalysis,
+)
+from .storage_call_purge import CallNotFoundError, CallPurger, call_retention_job
+from .storage_call_reads import CallDetail, CallReads, CallRevision, CallSummary
+from .storage_calls import CallStore, CallTimings, parked_trace_job
+from .storage_closer import Closer, MaterializerProcess, call_closer_job
+from .storage_recordings import (
+    REQUEST_LOCK_BUDGET_SECONDS,
+    Recording,
+    RecordingConflictError,
+    RecordingError,
+    RecordingManifest,
+    RecordingNotFoundError,
+    RecordingStore,
+    blob_deletion_job,
+    blob_sweep_job,
+    recording_upload_sweep_job,
 )
 from .summary import FRAMEWORK_NAME_MAX_LENGTH, summarize_project
 from .validation import (
@@ -181,6 +227,224 @@ class ConnectorProblemResponse(ApiModel):
 
 class HealthResponse(ApiModel):
     status: str
+
+
+class ReadinessResponse(ApiModel):
+    status: str
+    # Incidents whose read models (graph rows, turn facts, expiry and export
+    # columns) are still from an older release; they converge in the background
+    # and never make the server unready. Absent when the store is unavailable.
+    projections_pending: int | None = None
+
+
+class OtlpStatsResponse(ApiModel):
+    """The OTLP receiver's rare-event counters and gauges for one project (AC5.12)."""
+
+    rejected_spans: int
+    span_conflicts: int
+    parked_traces_discarded: int
+    key_disagreements: int
+    revision_cap_reached: int
+    purged_call_evidence_dropped: int
+    parked_traces: int
+    open_calls: int
+
+
+class CallResolveRequest(ApiModel):
+    session_key: Annotated[str, StringConstraints(max_length=4096)]
+
+
+class CallResolveResponse(ApiModel):
+    call_id: str
+
+
+class CallRevisionSummary(ApiModel):
+    """A call's latest revision, as the call list shows it."""
+
+    revision: int
+    bundle_id: str
+    close_reason: Literal["end_signal", "quiet_period", "late_data"]
+    finality: Literal["final", "provisional"]
+
+
+class CallRevisionResponse(CallRevisionSummary):
+    """One revision of a call: its bundle, and the evidence it was built from."""
+
+    span_count: int
+    recording_count: int
+    created_unix_nano: str
+
+
+class CallSummaryResponse(ApiModel):
+    """One call. ``session_key`` is null when it was not stored (``metadata_only``
+    projects and trace-keyed calls)."""
+
+    call_id: str
+    key_source: str
+    state: Literal["open", "closed"]
+    session_key: str | None
+    first_evidence_unix_nano: str
+    last_evidence_unix_nano: str
+    span_count: int
+    recording_count: int
+    latest_revision: CallRevisionSummary | None
+    materialize_error: str | None
+
+
+class CallPageResponse(ApiModel):
+    items: list[CallSummaryResponse]
+    next_cursor: str | None
+
+
+class TranscriptLineResponse(ApiModel):
+    """One transcript line and the span it was read from."""
+
+    speaker: Literal["user", "agent"]
+    text: str
+    start_unix_nano: str
+    end_unix_nano: str
+    trace_id: str
+    span_id: str
+
+
+class CallDetailResponse(CallSummaryResponse):
+    """One call with its revisions, recordings and transcript (read from its spans)."""
+
+    revisions: list[CallRevisionResponse]
+    recordings: list[RecordingResponse]
+    evidence_after_latest_revision: bool
+    transcript: list[TranscriptLineResponse]
+    transcript_coverage: Literal["available", "not_captured_by_preset", "not_observed"]
+
+
+_NO_NUL = r"^[^\x00]*$"
+
+
+def _call_time(value: str) -> str:
+    if not recording_media.valid_start_unix_nano(value):
+        raise ValueError("the time must be at most 2^63 - 1 nanoseconds")
+    return value
+
+
+# A Unix nanosecond time a Call carries: the catalog and the closer keep these as
+# signed 64-bit integers, as the OTLP receiver bounds span times, so [1, 2^63 - 1].
+CallTimeNano = Annotated[
+    str,
+    StringConstraints(pattern=r"^[1-9][0-9]{0,18}$"),
+    AfterValidator(_call_time),
+]
+
+
+class RecordingCreateRequest(ApiModel):
+    """A recording's manifest. Without ``recording_id`` the server mints a UUID, and
+    the request is then not idempotent."""
+
+    recording_id: (
+        Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")] | None
+    ) = None
+    session_key: Annotated[str, StringConstraints(max_length=4096, pattern=_NO_NUL)]
+    speaker: Literal["user", "agent", "mixed"]
+    content_type: Literal["audio/wav", "audio/ogg", "audio/mpeg", "audio/webm", "audio/flac"]
+    started_at_unix_nano: CallTimeNano
+    label: (
+        Annotated[
+            str,
+            StringConstraints(max_length=recording_media.LABEL_MAX_LENGTH, pattern=_NO_NUL),
+        ]
+        | None
+    ) = None
+
+
+class RecordingResponse(ApiModel):
+    """One recording; ``upload_path`` is relative to the server's base URL."""
+
+    recording_id: str
+    call_id: str
+    state: Literal["pending", "stored", "failed"]
+    upload_path: str
+    speaker: Literal["user", "agent", "mixed"]
+    content_type: str
+    label: str | None
+    started_at_unix_nano: str
+    size: int | None
+    sha256: str | None
+    duration_ms: int | None
+    created_unix_nano: str
+    stored_unix_nano: str | None
+
+
+def _recording_body(recording: Recording) -> dict[str, Any]:
+    return {
+        "recording_id": recording.recording_id,
+        "call_id": recording.call_id,
+        "state": recording.state,
+        "upload_path": recording_media.upload_path(recording.recording_id),
+        "speaker": recording.speaker,
+        "content_type": recording.content_type,
+        "label": recording.label,
+        "started_at_unix_nano": recording.started_at_unix_nano,
+        "size": recording.size,
+        "sha256": recording.sha256,
+        "duration_ms": recording.duration_ms,
+        "created_unix_nano": str(recording.created_unix_nano),
+        "stored_unix_nano": (
+            None if recording.stored_unix_nano is None else str(recording.stored_unix_nano)
+        ),
+    }
+
+
+def _call_revision_body(revision: CallRevision, *, detail: bool) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "revision": revision.revision,
+        "bundle_id": revision.bundle_id,
+        "close_reason": revision.close_reason,
+        "finality": revision.finality,
+    }
+    if detail:
+        body["span_count"] = revision.span_count
+        body["recording_count"] = revision.recording_count
+        body["created_unix_nano"] = str(revision.created_unix_nano)
+    return body
+
+
+def _call_summary_body(call: CallSummary) -> dict[str, Any]:
+    return {
+        "call_id": call.call_id,
+        "key_source": call.key_source,
+        "state": call.state,
+        "session_key": call.session_key,
+        "first_evidence_unix_nano": str(call.first_evidence_unix_nano),
+        "last_evidence_unix_nano": str(call.last_evidence_unix_nano),
+        "span_count": call.span_count,
+        "recording_count": call.recording_count,
+        "latest_revision": (
+            None
+            if call.latest_revision is None
+            else _call_revision_body(call.latest_revision, detail=False)
+        ),
+        "materialize_error": call.materialize_error,
+    }
+
+
+def _call_detail_body(call: CallDetail) -> dict[str, Any]:
+    return {
+        **_call_summary_body(call.summary),
+        "revisions": [_call_revision_body(revision, detail=True) for revision in call.revisions],
+        "recordings": [_recording_body(recording) for recording in call.recordings],
+        "evidence_after_latest_revision": call.summary.evidence_after_latest_revision,
+        "transcript": [
+            {
+                "speaker": line.speaker,
+                "text": line.text,
+                "start_unix_nano": str(line.start_unix_nano),
+                "end_unix_nano": str(line.end_unix_nano),
+                "trace_id": line.trace_id,
+                "span_id": line.span_id,
+            }
+            for line in call.transcript
+        ],
+        "transcript_coverage": call.transcript_coverage,
+    }
 
 
 class BrowserSessionResponse(ApiModel):
@@ -871,6 +1135,12 @@ _ERROR_RESPONSES = {
     for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 503)
 }
 
+# A recording upload can also time out waiting for its body (408).
+_UPLOAD_ERROR_RESPONSES = {
+    status: {"model": ProblemResponse}
+    for status in (400, 401, 403, 404, 408, 409, 410, 413, 415, 422, 429, 500, 503)
+}
+
 _CONNECTOR_ERROR_RESPONSES = {
     status: {
         "model": ProblemResponse | ConnectorProblemResponse,
@@ -888,6 +1158,127 @@ _CONNECTOR_ERROR_RESPONSES = {
         ),
     }
     for status in (400, 401, 404, 409, 413, 415, 429, 500, 503)
+}
+
+_OTLP_BINARY = {"schema": {"type": "string", "format": "binary"}}
+_OTLP_STATUS_CONTENT = {
+    otlp_receiver.PROTOBUF_MEDIA_TYPE: _OTLP_BINARY,
+    otlp_receiver.JSON_MEDIA_TYPE: {
+        "schema": {
+            "type": "object",
+            "description": "google.rpc.Status: code (gRPC code), message; details is empty.",
+            "properties": {"code": {"type": "integer"}, "message": {"type": "string"}},
+        }
+    },
+}
+_OTLP_RETRY_AFTER = {
+    "Retry-After": {
+        "description": "Whole seconds before the request should be retried.",
+        "schema": {"type": "integer", "minimum": 1},
+    }
+}
+_OTLP_TRACES_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": (
+            "Stored. An ExportTraceServiceResponse in the request's encoding: empty, or "
+            "with partial_success.rejected_spans and error_message when spans were "
+            "rejected."
+        ),
+        "content": {
+            otlp_receiver.PROTOBUF_MEDIA_TYPE: _OTLP_BINARY,
+            otlp_receiver.JSON_MEDIA_TYPE: {"schema": {"type": "object"}},
+        },
+    },
+    400: {
+        "description": "The body is not an ExportTraceServiceRequest.",
+        "content": _OTLP_STATUS_CONTENT,
+    },
+    413: {"description": "The body is over its size bound.", "content": _OTLP_STATUS_CONTENT},
+    415: {
+        "description": "Unsupported Content-Type or Content-Encoding.",
+        "content": _OTLP_STATUS_CONTENT,
+    },
+    503: {
+        "description": "Busy: retry after Retry-After seconds.",
+        "content": _OTLP_STATUS_CONTENT,
+        "headers": _OTLP_RETRY_AFTER,
+    },
+    410: {
+        "description": "The project began deletion before the spans were written.",
+        "content": _OTLP_STATUS_CONTENT,
+    },
+    # Host and authentication checks run before the route and keep problem JSON.
+    **{status: {"model": ProblemResponse} for status in (401, 403)},
+}
+_OTLP_TRACES_REQUEST = {
+    "parameters": [
+        {
+            "name": "Content-Encoding",
+            "in": "header",
+            "required": False,
+            "schema": {
+                "type": "string",
+                "enum": list(otlp_receiver.CONTENT_ENCODINGS),
+                "default": "identity",
+            },
+        }
+    ],
+    "requestBody": {
+        "required": False,
+        "content": {
+            otlp_receiver.PROTOBUF_MEDIA_TYPE: _OTLP_BINARY,
+            otlp_receiver.JSON_MEDIA_TYPE: {
+                "schema": {
+                    "type": "object",
+                    "description": "OTLP/JSON ExportTraceServiceRequest (hex trace and span IDs).",
+                }
+            },
+        },
+    },
+}
+
+_AUDIO_BINARY = {"schema": {"type": "string", "format": "binary"}}
+# A recording upload reaches the blob store in writes of about this size.
+_RECORDING_WRITE_BYTES = 1024 * 1024
+# A recording upload that receives no body bytes for this long is ended with 408
+# ``EARSHOT_UPLOAD_IDLE_TIMEOUT``: an upload in flight holds its call, so a client
+# whose connection died without a FIN must not hold it forever. However it trickles,
+# an upload still running the upload hold cap after it started
+# (``CallTimings.upload_hold_seconds``) is ended with 408
+# ``EARSHOT_UPLOAD_DEADLINE_EXCEEDED``.
+UPLOAD_IDLE_TIMEOUT_SECONDS = 60.0
+_RECORDING_UPLOAD_REQUEST = {
+    "parameters": [
+        {
+            "name": "Content-Digest",
+            "in": "header",
+            "required": False,
+            "description": "RFC 9530 sha-256 digest of the body; a mismatch stores nothing (400).",
+            "schema": {"type": "string"},
+        }
+    ],
+    "requestBody": {
+        "required": True,
+        "content": {
+            media_type: _AUDIO_BINARY for media_type in recording_media.RECORDING_CONTENT_TYPES
+        },
+    },
+}
+_RECORDING_CONTENT_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "The whole recording.",
+        "content": {
+            media_type: _AUDIO_BINARY for media_type in recording_media.RECORDING_CONTENT_TYPES
+        },
+    },
+    206: {
+        "description": "The one byte range the Range header asked for.",
+        "content": {
+            media_type: _AUDIO_BINARY for media_type in recording_media.RECORDING_CONTENT_TYPES
+        },
+    },
+    416: {"model": ProblemResponse, "description": "The range starts past the end."},
+    **_ERROR_RESPONSES,
 }
 
 _INCIDENT_REQUEST_BODY = {
@@ -1047,6 +1438,13 @@ class ApiConfig:
     # reads from the same module, so the two ends cannot drift apart.
     max_checkpoint_body_bytes: int = MAX_CHECKPOINT_BATCH_BYTES
     max_json_depth: int = 64
+    # OTLP/HTTP receiver (``POST /v1/traces``). The wire body is bounded by
+    # ``max_body_bytes``; these bound it after decompression, per encoding. The
+    # admission limiter caps requests in flight at the database pool size.
+    otlp_max_protobuf_bytes: int = 32 * 1024 * 1024
+    otlp_max_json_bytes: int = 4 * 1024 * 1024
+    otlp_max_concurrent_requests: int = 8
+    recording_max_bytes: int = 512 * 1024 * 1024
     default_page_size: int = 50
     analyzer_version: str = ANALYZER_VERSION
     behind_tls_proxy: bool = False
@@ -1115,6 +1513,15 @@ class ApiConfig:
             )
         if self.max_json_depth < 1:
             raise ValueError("max_json_depth must be positive")
+        for name in (
+            "otlp_max_protobuf_bytes",
+            "otlp_max_json_bytes",
+            "otlp_max_concurrent_requests",
+            "recording_max_bytes",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
         if self.viewer_session_capacity < 1:
             raise ValueError("viewer_session_capacity must be positive")
         if self.viewer_session_ttl_seconds < 1:
@@ -1163,7 +1570,7 @@ async def _run_retention_cleanup(
                 limit=batch_size,
                 compact_when_drained=True,
             )
-        except (StorageError, sqlite3.Error, OSError) as error:
+        except (StorageError, *DATABASE_ERRORS, OSError) as error:
             _LOGGER.error(
                 "storage maintenance cleanup batch failed (%s)",
                 type(error).__name__,
@@ -1207,9 +1614,18 @@ _HOSTED_SCOPE_BY_METHOD: dict[str, str] = {
 }
 
 
+# Operator-only call surfaces: OTLP export, calls, recordings and the receiver's
+# stats. No hosted scope is defined for them yet, for any method, so a hosted JWT
+# gets 403 ``EARSHOT_OPERATION_UNAVAILABLE`` (AC5.8).
+_HOSTED_UNAVAILABLE_PATHS = ("/v1/traces", "/v1/otlp/stats")
+_HOSTED_UNAVAILABLE_PREFIXES = ("/v1/calls", "/v1/recordings")
+
+
 def _hosted_required_scope(method: str, path: str) -> str | None:
     """Return the least-privilege scope for one hosted project-data operation."""
     if path.startswith("/v1/auth/"):
+        return None
+    if path in _HOSTED_UNAVAILABLE_PATHS or path.startswith(_HOSTED_UNAVAILABLE_PREFIXES):
         return None
     if method.upper() == "DELETE" and path.startswith("/v1/incidents/") and path.count("/") == 3:
         return "earshot:artifact:delete"
@@ -1218,6 +1634,23 @@ def _hosted_required_scope(method: str, path: str) -> str | None:
     if path.startswith("/v1/projects/") and method.upper() == "DELETE":
         return "earshot:project:delete"
     return _HOSTED_SCOPE_BY_METHOD.get(method.upper())
+
+
+def _bearer_credential(authorization: str) -> str:
+    """The credential of an ``Authorization: Bearer <credential>`` header, or ``""``."""
+
+    scheme, separator, credential = authorization.partition(" ")
+    return credential if separator and scheme.lower() == "bearer" else ""
+
+
+def _is_operator_token(settings: ApiConfig, supplied: str) -> bool:
+    """Whether a bearer credential is the configured operator token (``EARSHOT_TOKEN``)."""
+
+    return bool(
+        supplied
+        and settings.token
+        and hmac.compare_digest(supplied.encode(), settings.token.encode())
+    )
 
 
 def _unauthorized_response() -> JSONResponse:
@@ -1295,7 +1728,9 @@ def _issue_dict(issue: ValidationIssue) -> dict[str, object]:
     }
 
 
-async def _read_body(request: Request, maximum: int, *, subject: str = "incident") -> bytes:
+def _check_content_length(request: Request, maximum: int, *, subject: str) -> None:
+    """Refuse a body whose declared ``Content-Length`` is over ``maximum`` (413) or invalid."""
+
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:
@@ -1308,47 +1743,96 @@ async def _read_body(request: Request, maximum: int, *, subject: str = "incident
                 "invalid Content-Length header",
             ) from error
 
+
+async def _read_body(
+    request: Request, maximum: int, *, subject: str = "incident", allow_empty: bool = False
+) -> bytes:
+    _check_content_length(request, maximum, subject=subject)
+
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
         if len(body) > maximum:
             raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", f"{subject} body exceeds limit")
-    if not body:
+    if not body and not allow_empty:
         raise ApiProblem(400, "EARSHOT_EMPTY_BODY", f"{subject} body is empty")
     return bytes(body)
 
 
-def _decompress_gzip(payload: bytes, maximum: int) -> bytes:
-    """Decode one strict gzip member without allocating beyond the body limit."""
+def _decompress(
+    payload: bytes,
+    maximum: int,
+    encoding: str,
+    *,
+    subject: str = "incident",
+    allow_empty: bool = False,
+) -> bytes:
+    """Decode one gzip member, or one deflate stream (zlib format, else raw), without
+    allocating beyond ``maximum`` decoded bytes. An empty decoded body is malformed
+    unless ``allow_empty`` (OTLP, where an empty request is valid)."""
 
+    if encoding == "gzip":
+        return _inflate(
+            payload,
+            maximum,
+            16 + zlib.MAX_WBITS,
+            subject=subject,
+            name="gzip",
+            allow_empty=allow_empty,
+        )
+    if encoding != "deflate":
+        raise ValueError(f"unsupported content encoding: {encoding!r}")
     try:
-        decompressor = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        # RFC 9110 "deflate" is the zlib format, as the Python OTLP exporter sends it;
+        # some clients send a raw deflate stream instead.
+        return _inflate(
+            payload,
+            maximum,
+            zlib.MAX_WBITS,
+            subject=subject,
+            name="deflate",
+            allow_empty=allow_empty,
+        )
+    except ApiProblem as problem:
+        if problem.status_code != 400:
+            raise
+    return _inflate(
+        payload,
+        maximum,
+        -zlib.MAX_WBITS,
+        subject=subject,
+        name="deflate",
+        allow_empty=allow_empty,
+    )
+
+
+def _inflate(
+    payload: bytes,
+    maximum: int,
+    wbits: int,
+    *,
+    subject: str,
+    name: str,
+    allow_empty: bool = False,
+) -> bytes:
+    malformed = ApiProblem(
+        400, f"EARSHOT_MALFORMED_{name.upper()}", f"{subject} {name} body is malformed"
+    )
+    too_large = ApiProblem(
+        413, "EARSHOT_BODY_TOO_LARGE", f"{subject} body exceeds limit after decompression"
+    )
+    try:
+        decompressor = zlib.decompressobj(wbits)
         decoded = bytearray(decompressor.decompress(payload, maximum + 1))
         if len(decoded) > maximum or decompressor.unconsumed_tail:
-            raise ApiProblem(
-                413,
-                "EARSHOT_BODY_TOO_LARGE",
-                "incident body exceeds limit after decompression",
-            )
+            raise too_large
         decoded.extend(decompressor.flush(maximum + 1 - len(decoded)))
     except zlib.error as error:
-        raise ApiProblem(
-            400,
-            "EARSHOT_MALFORMED_GZIP",
-            "incident gzip body is malformed",
-        ) from error
+        raise malformed from error
     if len(decoded) > maximum:
-        raise ApiProblem(
-            413,
-            "EARSHOT_BODY_TOO_LARGE",
-            "incident body exceeds limit after decompression",
-        )
-    if not decompressor.eof or decompressor.unused_data or not decoded:
-        raise ApiProblem(
-            400,
-            "EARSHOT_MALFORMED_GZIP",
-            "incident gzip body is malformed",
-        )
+        raise too_large
+    if not decompressor.eof or decompressor.unused_data or not (decoded or allow_empty):
+        raise malformed
     return bytes(decoded)
 
 
@@ -2210,8 +2694,28 @@ def create_app(
     live_registry: LiveSessionRegistry | None = None,
     capture_journal_dir: str | Path | None = None,
     enable_platform_adapter: bool = False,
+    server_lock: ServerLock | None = None,
+    call_timings: CallTimings | None = None,
+    blob_store: BlobStore | None = None,
+    upload_idle_timeout_seconds: float = UPLOAD_IDLE_TIMEOUT_SECONDS,
 ) -> FastAPI:
+    """Build the API around ``store`` (or a SQLite store in ``data_dir``).
+
+    ``server_lock`` is a lock the caller already holds for this server's lifetime
+    (Postgres ``K_server`` or SQLite ``.server.lock``, from
+    ``storage.acquire_server_lock``). The app takes it
+    over: a maintenance-loop watchdog checks it every tick and exits the process
+    if it is lost, and shutdown releases it. ``call_timings`` are the call
+    lifecycle durations (``EARSHOT_CALL_*``) the OTLP receiver's calls follow.
+    ``blob_store`` holds recordings (``EARSHOT_BLOB_URL``); without one, a store
+    with a data directory keeps them in ``<data-dir>/blobs``. A recording upload
+    that receives no body bytes for ``upload_idle_timeout_seconds``, or is still
+    running ``call_timings.upload_hold_seconds`` after it started, is ended (408).
+    """
+
     settings = config or ApiConfig()
+    if not upload_idle_timeout_seconds > 0:
+        raise ValueError("upload_idle_timeout_seconds must be positive")
     repository = store or IncidentStore(data_dir)
     if enable_platform_adapter and settings.auth_mode != "hosted_jwt":
         raise ValueError("Platform adapter requires auth_mode='hosted_jwt'")
@@ -2286,27 +2790,81 @@ def create_app(
     # that the transaction recovery then truncates from disk.
     live.start()
 
+    calls = CallStore(repository, timings=call_timings)
+    call_reads = CallReads(repository)
+    if blob_store is None and repository.data_dir is not None:
+        blob_store = LocalBlobStore(repository.data_dir / "blobs")
+    recordings = RecordingStore(repository, calls=calls, blobs=blob_store)
+    # A recording upload is ended (408) once it has run as long as a pending
+    # recording may hold its call.
+    upload_deadline_seconds = calls.timings.upload_hold_seconds
+    call_purger = CallPurger(repository, calls=calls, recordings=recordings)
+
+    maintenance = MaintenanceLoop()
+    if server_lock is not None:
+        maintenance.add_job("database-server-lock", database_lock_watchdog(server_lock))
+    # Opening the store never re-projects; incidents whose projections predate
+    # this release converge here, after the server is serving (AC1.10).
+    maintenance.add_job("incident-reprojection", reprojection_job(repository))
+    if blob_store is not None:
+        # At startup: what crashed uploads left (spool files, multipart uploads).
+        maintenance.add_job("blob-spool-sweep", blob_sweep_job(blob_store))
+        maintenance.add_job("blob-deletions", blob_deletion_job(recordings))
+    maintenance.add_job("recording-upload-sweep", recording_upload_sweep_job(recordings))
+    # Calls (FR-6): close due calls into revisions; resolve parked traces (AC4.4).
+    # Revisions are built in a child process the loop starts and stops, never in
+    # the interpreter that answers OTLP requests.
+    closer = Closer(
+        repository, calls=calls, recordings=recordings, materializer=MaterializerProcess()
+    )
+    maintenance.add_job("call-closer", call_closer_job(closer))
+    maintenance.add_job("parked-trace-collection", parked_trace_job(calls))
+    # A call whose latest revision expired goes whole, never revision by revision.
+    maintenance.add_job("call-retention", call_retention_job(call_purger))
+
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        """Run bounded retention maintenance and close live capture resources."""
+        """Run bounded retention maintenance and close live capture resources.
+
+        The closer's materializer child starts before the server serves: a server
+        that cannot build revisions refuses to start
+        (``EARSHOT_MATERIALIZER_START_FAILED``; uvicorn exits with status 3).
+        """
 
         live.start()
         retention_stop = asyncio.Event()
-        retention_task = asyncio.create_task(
-            _run_retention_cleanup(repository, settings, retention_stop),
-            name="earshot-retention-cleanup",
-        )
+        maintenance_stop = asyncio.Event()
+        retention_task: asyncio.Task[None] | None = None
+        maintenance_task: asyncio.Task[None] | None = None
         try:
+            await asyncio.to_thread(closer.start)
+            retention_task = asyncio.create_task(
+                _run_retention_cleanup(repository, settings, retention_stop),
+                name="earshot-retention-cleanup",
+            )
+            maintenance_task = asyncio.create_task(
+                maintenance.run(maintenance_stop), name="earshot-maintenance"
+            )
             yield
         finally:
             retention_stop.set()
+            maintenance_stop.set()
             try:
-                await retention_task
+                if retention_task is not None:
+                    await retention_task
+                if maintenance_task is not None:
+                    await maintenance_task
+                else:
+                    await maintenance.aclose()  # the jobs never ran; close what they hold
             finally:
                 try:
                     live.close()
                 finally:
-                    capture_calls.close()
+                    try:
+                        capture_calls.close()
+                    finally:
+                        if server_lock is not None:
+                            server_lock.release()
 
     app = FastAPI(
         title="Earshot local ingest",
@@ -2330,6 +2888,9 @@ def create_app(
     )
     app.state.live = live
     app.state.capture_calls = capture_calls
+    app.state.calls = calls
+    app.state.recordings = recordings
+    otlp_admission = otlp_receiver.AdmissionLimiter(settings.otlp_max_concurrent_requests)
     app.state.hosted_jwt_verifier = (
         HostedJwtVerifier(
             issuer=settings.jwt_issuer or "",
@@ -2412,6 +2973,16 @@ def create_app(
             "scheme": "bearer",
             "bearerFormat": "JWT",
         }
+        if settings.auth_mode == "hosted_jwt":
+            # Operator-only operations always answer 403 to a hosted JWT; the hosted
+            # contract does not list them.
+            paths = schema.get("paths", {})
+            for path in list(paths):
+                if path.startswith("/v1/") and (
+                    path in _HOSTED_UNAVAILABLE_PATHS
+                    or path.startswith(_HOSTED_UNAVAILABLE_PREFIXES)
+                ):
+                    del paths[path]
         for path, path_item in schema.get("paths", {}).items():
             if not path.startswith("/v1/"):
                 continue
@@ -2492,6 +3063,13 @@ def create_app(
             status_code=410,
         )
 
+    @app.exception_handler(IncidentBelongsToCallError)
+    async def handle_belongs_to_call(_: Request, error: IncidentBelongsToCallError) -> JSONResponse:
+        return JSONResponse(
+            {"error": {"code": error.code, "message": str(error), "call_id": error.call_id}},
+            status_code=409,
+        )
+
     @app.exception_handler(IncidentConflictError)
     async def handle_conflict(_: Request, __: IncidentConflictError) -> JSONResponse:
         return JSONResponse(
@@ -2526,6 +3104,28 @@ def create_app(
                 }
             },
             status_code=503,
+        )
+
+    @app.exception_handler(StorageBusyError)
+    async def handle_storage_busy(_: Request, error: StorageBusyError) -> JSONResponse:
+        # A budgeted write found the store's locks held past its budget: the
+        # store is healthy, so the client is told when to retry.
+        return JSONResponse(
+            {
+                "error": {
+                    "code": StorageBusyError.code,
+                    "message": "incident storage is busy; retry shortly",
+                }
+            },
+            status_code=503,
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        )
+
+    @app.exception_handler(RecordingError)
+    async def handle_recording_error(_: Request, error: RecordingError) -> JSONResponse:
+        return JSONResponse(
+            {"error": {"code": error.code, "message": str(error)}},
+            status_code=error.status_code,
         )
 
     @app.exception_handler(ProjectInactiveError)
@@ -2571,8 +3171,6 @@ def create_app(
             status_code=403,
         )
 
-    @app.exception_handler(sqlite3.Error)
-    @app.exception_handler(OSError)
     async def handle_storage_system_error(_: Request, __: Exception) -> JSONResponse:
         return JSONResponse(
             {
@@ -2583,6 +3181,10 @@ def create_app(
             },
             status_code=503,
         )
+
+    # Database errors of either dialect, and filesystem errors, are storage outages.
+    for storage_system_error in (*DATABASE_ERRORS, OSError):
+        app.add_exception_handler(storage_system_error, handle_storage_system_error)
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next: Callable[..., Any]) -> Response:
@@ -2611,23 +3213,46 @@ def create_app(
                 },
                 status_code=503,
             )
+        # The Host check stops DNS rebinding against a server that answers without
+        # a credential: a loopback listener with no token, or a trusted local
+        # network. Behind a TLS proxy every request needs a credential and the
+        # proxy forwards the public Host, so the check does not apply there.
         local_only_host_boundary = settings.auth_mode != "hosted_jwt" and (
-            settings.trust_local_network or (not settings.token and _is_loopback(settings.host))
+            settings.trust_local_network
+            or (
+                not settings.token and _is_loopback(settings.host) and not settings.behind_tls_proxy
+            )
         )
+        # A bearer credential checked as a project API key, at most once per request.
+        api_key_checked = False
+        principal = None
         if (
             local_only_host_boundary
             and transport_protected_path
             and not _host_header_is_loopback(request.headers.get("host", ""))
         ):
-            return JSONResponse(
-                {
-                    "error": {
-                        "code": "EARSHOT_UNTRUSTED_HOST",
-                        "message": "loopback API requires a loopback Host header",
-                    }
-                },
-                status_code=400,
-            )
+            # Under trust_local_network a valid project API key or the operator
+            # token is exempt: a rebinding page cannot send a credential it does not
+            # have (AC5.9). This is what lets a bot in another container export to
+            # http://earshot:4319.
+            supplied = _bearer_credential(request.headers.get("authorization", ""))
+            exempt = False
+            if settings.trust_local_network and supplied and request.url.path.startswith("/v1/"):
+                exempt = _is_operator_token(settings, supplied)
+                if not exempt:
+                    principal = await run_in_threadpool(repository.authenticate_api_key, supplied)
+                    api_key_checked = True
+                    exempt = principal is not None
+            if not exempt:
+                return JSONResponse(
+                    {
+                        "error": {
+                            "code": "EARSHOT_UNTRUSTED_HOST",
+                            "message": "loopback API requires a loopback Host header",
+                        }
+                    },
+                    status_code=400,
+                )
         if request.url.path.startswith("/v1/"):
             if settings.auth_mode == "hosted_jwt":
                 if request.url.path.startswith("/v1/auth/"):
@@ -2742,12 +3367,10 @@ def create_app(
                 request.state.browser_session_token = ""
                 return await call_next(request)
             authorization = request.headers.get("authorization", "")
-            scheme, separator, credential = authorization.partition(" ")
-            supplied = credential if separator and scheme.lower() == "bearer" else ""
-            principal = None
+            supplied = _bearer_credential(authorization)
             browser_session = None
             browser_token = ""
-            if supplied:
+            if supplied and not api_key_checked:
                 principal = await run_in_threadpool(
                     repository.authenticate_api_key,
                     supplied,
@@ -2765,9 +3388,7 @@ def create_app(
                         if not issuer_active:
                             app.state.browser_sessions.revoke(browser_token)
                             browser_session = None
-            legacy_valid = bool(
-                supplied and settings.token and hmac.compare_digest(supplied, settings.token)
-            )
+            legacy_valid = _is_operator_token(settings, supplied)
             auth_required = _authentication_required(settings)
             bearer_valid = principal is not None or legacy_valid
             session_valid = browser_session is not None
@@ -2929,14 +3550,570 @@ def create_app(
 
     @app.get(
         "/readyz",
-        response_model=HealthResponse,
-        responses={503: {"model": HealthResponse}},
+        response_model=ReadinessResponse,
+        responses={503: {"model": ReadinessResponse}},
     )
     def ready() -> JSONResponse:
-        is_ready = repository.ready()
+        if repository.ready():
+            try:
+                pending = repository.projections_pending()
+            except (StorageError, *DATABASE_ERRORS, OSError):
+                pass
+            else:
+                return JSONResponse({"status": "ready", "projections_pending": pending})
+        return JSONResponse({"status": "unavailable"}, status_code=503)
+
+    def otlp_status(status_code: int, message: str, media_type: str) -> Response:
+        """An OTLP handler error: a ``google.rpc.Status`` in the request's encoding.
+        Every 503 says when to retry."""
+
+        headers = (
+            {"Retry-After": str(otlp_receiver.RETRY_AFTER_SECONDS)} if status_code == 503 else None
+        )
+        return Response(
+            otlp_receiver.status_body(status_code, message, media_type),
+            status_code=status_code,
+            media_type=media_type,
+            headers=headers,
+        )
+
+    @app.post(
+        "/v1/traces",
+        response_class=Response,
+        responses=_OTLP_TRACES_RESPONSES,
+        openapi_extra=_OTLP_TRACES_REQUEST,
+        description=(
+            "OTLP/HTTP trace export (protobuf or JSON). Spans are stored into Calls "
+            "in one transaction; the reply is sent after it commits. Errors this "
+            "route raises are google.rpc.Status bodies; host and authentication "
+            "errors keep Earshot's problem JSON."
+        ),
+    )
+    async def otlp_traces_endpoint(request: Request) -> Response:
+        media_type = otlp_receiver.request_media_type(request.headers.get("content-type"))
+        if media_type is None:
+            # No request encoding to answer in: the Collector falls back to JSON.
+            return otlp_status(
+                415,
+                "Content-Type must be application/x-protobuf or application/json",
+                otlp_receiver.JSON_MEDIA_TYPE,
+            )
+        encoding = otlp_receiver.request_content_encoding(request.headers.get("content-encoding"))
+        if encoding is None:
+            return otlp_status(
+                415, "Content-Encoding must be identity, gzip or deflate", media_type
+            )
+        if not otlp_admission.try_acquire():
+            return otlp_status(503, "the receiver is at its concurrency limit; retry", media_type)
+        try:
+            return await receive_otlp(request, media_type, encoding)
+        except ApiProblem as problem:
+            return otlp_status(problem.status_code, problem.message, media_type)
+        except otlp_receiver.OtlpDecodeError:
+            return otlp_status(400, "the body is not an ExportTraceServiceRequest", media_type)
+        except (StorageBusyError, DatabaseUnavailableError):
+            # Locks past the budget, a pool timeout, or a lost database connection.
+            return otlp_status(503, "storage is busy; retry", media_type)
+        except ProjectInactiveError:
+            return otlp_status(410, "project is not accepting requests", media_type)
+        except (StorageError, *DATABASE_ERRORS, OSError):
+            return otlp_status(503, "storage is temporarily unavailable; retry", media_type)
+        finally:
+            otlp_admission.release()
+
+    async def receive_otlp(request: Request, media_type: str, encoding: str) -> Response:
+        body = await _read_body(request, settings.max_body_bytes, subject="OTLP", allow_empty=True)
+        decoded_limit = (
+            settings.otlp_max_json_bytes
+            if media_type == otlp_receiver.JSON_MEDIA_TYPE
+            else settings.otlp_max_protobuf_bytes
+        )
+        if body and encoding != "identity":
+            body = await run_in_threadpool(
+                _decompress, body, decoded_limit, encoding, subject="OTLP", allow_empty=True
+            )
+        elif len(body) > decoded_limit:
+            raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", "OTLP body exceeds limit")
+        project_id = request.state.project_id
+
+        def decode_and_store() -> tuple[int, str]:
+            export = otlp_receiver.decode_export_request(body, media_type)
+            checked = otlp_receiver.validate_spans(spans_from_request(export))
+            if checked.accepted or checked.rejected_spans:
+                # One request, one transaction; the reply is sent after it commits.
+                calls.record_spans(
+                    project_id,
+                    checked.accepted,
+                    rejected_spans=checked.rejected_spans,
+                    budget_s=otlp_receiver.LOCK_BUDGET_SECONDS,
+                )
+            if checked.rejected_spans:
+                _LOGGER.info("EARSHOT_OTLP_SPANS_REJECTED: %s", checked.error_message)
+            return checked.rejected_spans, checked.error_message
+
+        rejected, message = await run_in_threadpool(decode_and_store)
+        return Response(
+            otlp_receiver.export_response_body(rejected, message, media_type),
+            media_type=media_type,
+        )
+
+    @app.get(
+        "/v1/otlp/stats",
+        response_model=OtlpStatsResponse,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "The authenticated project's OTLP rare-event counters and its parked-trace "
+            "and open-call gauges."
+        ),
+    )
+    def otlp_stats_endpoint(request: Request) -> dict[str, int]:
+        return calls.otlp_stats(request.state.project_id)
+
+    @app.post(
+        "/v1/calls:resolve",
+        response_model=CallResolveResponse,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "The call a session key names in the authenticated project, in the key's "
+            "current generation. 404 otherwise; the key is never echoed."
+        ),
+    )
+    def resolve_call_endpoint(body: CallResolveRequest, request: Request) -> dict[str, str]:
+        call_id = calls.resolve_call(request.state.project_id, body.session_key)
+        if call_id is None:
+            raise ApiProblem(404, "EARSHOT_CALL_NOT_FOUND", "no call for that session key")
+        return {"call_id": call_id}
+
+    @app.get(
+        "/v1/calls",
+        response_model=CallPageResponse,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "The authenticated project's calls, newest first evidence first. Pages are "
+            "keyed on each call's first evidence time and ID, which never change, so "
+            "paging is stable while calls arrive and receive evidence."
+        ),
+    )
+    def list_calls_endpoint(
+        request: Request,
+        state: Literal["open", "closed"] | None = None,
+        limit: int = Query(default=settings.default_page_size, ge=1, le=100),
+        cursor: str | None = None,
+    ) -> JSONResponse:
+        try:
+            page = call_reads.list_calls(
+                request.state.project_id, state=state, limit=limit, cursor=cursor
+            )
+        except InvalidCursorError as error:
+            raise ApiProblem(
+                400, "EARSHOT_INVALID_CURSOR", "invalid call pagination cursor"
+            ) from error
         return JSONResponse(
-            {"status": "ready" if is_ready else "unavailable"},
-            status_code=200 if is_ready else 503,
+            {
+                "items": [_call_summary_body(item) for item in page.items],
+                "next_cursor": page.next_cursor,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(
+        "/v1/calls/{call_id}",
+        response_model=CallDetailResponse,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "One call with its revisions, recordings and transcript. The transcript is "
+            "read from the call's spans, so an open call's transcript grows as they "
+            "arrive; under metadata_only it is empty (not_captured_by_preset)."
+        ),
+    )
+    def get_call_endpoint(call_id: str, request: Request) -> JSONResponse:
+        detail = call_reads.get_call(request.state.project_id, call_id)
+        if detail is None:
+            raise ApiProblem(404, "EARSHOT_CALL_NOT_FOUND", "call not found")
+        return JSONResponse(_call_detail_body(detail), headers={"Cache-Control": "no-store"})
+
+    @app.delete(
+        "/v1/calls/{call_id}",
+        status_code=204,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "Purge the call and all its evidence: spans, recordings and their blobs, "
+            "and every revision incident. Evidence for its session key is refused for "
+            "LONG_QUIET + 24 h; after that the key starts a new call."
+        ),
+    )
+    def purge_call_endpoint(call_id: str, request: Request) -> Response:
+        try:
+            call_purger.purge_call(request.state.project_id, call_id)
+        except CallNotFoundError as error:
+            raise ApiProblem(404, error.code, "call not found") from error
+        return Response(status_code=204)
+
+    # --- recordings (FR-9) ---------------------------------------------------------------
+
+    def recording_blobs() -> BlobStore:
+        if recordings.blobs is None:
+            raise ApiProblem(
+                503, "EARSHOT_BLOB_STORE_UNAVAILABLE", "no blob store is configured for recordings"
+            )
+        return recordings.blobs
+
+    async def project_recording(project_id: str, recording_id: str) -> Recording:
+        # An ID outside the pattern cannot name a recording.
+        if not recording_media.valid_recording_id(recording_id):
+            raise RecordingNotFoundError
+        recording = await run_in_threadpool(recordings.get, project_id, recording_id)
+        if recording is None:
+            raise RecordingNotFoundError
+        return recording
+
+    @app.post(
+        "/v1/recordings",
+        response_model=RecordingResponse,
+        status_code=201,
+        responses={
+            200: {
+                "model": RecordingResponse,
+                "description": "The recording exists already with this manifest.",
+            },
+            **_ERROR_RESPONSES,
+        },
+        description=(
+            "Create a mono recording of the call a session key names, creating the call "
+            "if needed. The same recording_id with the same manifest answers 200 with the "
+            "recording; another manifest, or a failed recording, is 409. A call holds at "
+            "most 16 recordings; a 17th is 409. Without recording_id the server mints one "
+            "and the request is not idempotent. Upload the bytes to upload_path."
+        ),
+    )
+    def create_recording_endpoint(body: RecordingCreateRequest, request: Request) -> JSONResponse:
+        session_key = valid_session_key(body.session_key)
+        if session_key is None:
+            raise ApiProblem(
+                422,
+                "EARSHOT_INVALID_SESSION_KEY",
+                "session_key must be 1 to 256 bytes of UTF-8 after trimming",
+            )
+        manifest = RecordingManifest(
+            recording_id=body.recording_id or str(uuid.uuid4()),
+            session_key=session_key,
+            speaker=body.speaker,
+            content_type=body.content_type,
+            started_at_unix_nano=body.started_at_unix_nano,
+            label=body.label,
+        )
+        recording, created = recordings.create(
+            request.state.project_id, manifest, budget_s=REQUEST_LOCK_BUDGET_SECONDS
+        )
+        return JSONResponse(_recording_body(recording), status_code=201 if created else 200)
+
+    @app.get(
+        "/v1/recordings/{recording_id}",
+        response_model=RecordingResponse,
+        responses=_ERROR_RESPONSES,
+        description="A recording's metadata, in the authenticated project.",
+    )
+    async def get_recording_endpoint(recording_id: str, request: Request) -> JSONResponse:
+        recording = await project_recording(request.state.project_id, recording_id)
+        return JSONResponse(_recording_body(recording))
+
+    def inspect_wav(inspector: recording_media.WavInspector, chunk: bytes) -> None:
+        try:
+            inspector.feed(chunk)
+        except recording_media.WavHeaderError as error:
+            raise ApiProblem(
+                422, "EARSHOT_RECORDING_INVALID_WAV", "the body is not a WAV file Earshot can read"
+            ) from error
+        if inspector.header_complete and inspector.channels != 1:
+            raise ApiProblem(
+                422,
+                "EARSHOT_RECORDING_NOT_MONO",
+                "recordings are mono in this release; upload one track per speaker",
+            )
+
+    async def recording_chunks(request: Request, deadline: float) -> AsyncIterator[bytes]:
+        """The body in writes of about ``_RECORDING_WRITE_BYTES``, bounded in total.
+
+        An upload in flight holds its call, so its time is bounded twice: a body that
+        sends nothing for ``upload_idle_timeout_seconds`` (a connection that died
+        without a FIN) is ended with 408 ``EARSHOT_UPLOAD_IDLE_TIMEOUT``, and one
+        still arriving at ``deadline`` (event-loop time; a trickle) with 408
+        ``EARSHOT_UPLOAD_DEADLINE_EXCEEDED``.
+        """
+
+        loop = asyncio.get_running_loop()
+        pending = bytearray()
+        size = 0
+        body = request.stream().__aiter__()
+        while True:
+            remaining = deadline - loop.time()
+            try:
+                if remaining <= 0:
+                    raise TimeoutError
+                chunk = await asyncio.wait_for(
+                    anext(body), timeout=min(upload_idle_timeout_seconds, remaining)
+                )
+            except StopAsyncIteration:
+                break
+            except TimeoutError as error:
+                if remaining < upload_idle_timeout_seconds:
+                    raise ApiProblem(
+                        408,
+                        "EARSHOT_UPLOAD_DEADLINE_EXCEEDED",
+                        f"the upload did not finish within {upload_deadline_seconds:g} s",
+                        headers={"Connection": "close"},
+                    ) from error
+                raise ApiProblem(
+                    408,
+                    "EARSHOT_UPLOAD_IDLE_TIMEOUT",
+                    f"no body bytes arrived for {upload_idle_timeout_seconds:g} s",
+                    headers={"Connection": "close"},
+                ) from error
+            size += len(chunk)
+            if size > settings.recording_max_bytes:
+                raise ApiProblem(413, "EARSHOT_BODY_TOO_LARGE", "recording body exceeds limit")
+            pending += chunk
+            if len(pending) >= _RECORDING_WRITE_BYTES:
+                yield bytes(pending)
+                pending.clear()
+        if pending:
+            yield bytes(pending)
+        if size == 0:
+            raise ApiProblem(400, "EARSHOT_EMPTY_BODY", "recording body is empty")
+
+    async def stream_recording(
+        request: Request,
+        blobs: BlobStore,
+        blob_key: str,
+        expected: bytes | None,
+        *,
+        wav: bool,
+        deadline: float,
+    ) -> tuple[str, int, int | None]:
+        """Stream the body into ``blob_key`` and commit it: ``(sha256, size, duration_ms)``."""
+
+        inspector = recording_media.WavInspector() if wav else None
+        writer = await run_in_threadpool(blobs.begin_put, blob_key)
+        try:
+            size = 0
+            async for chunk in recording_chunks(request, deadline):
+                if inspector is not None and not inspector.header_complete:
+                    inspect_wav(inspector, chunk)
+                await run_in_threadpool(writer.write, chunk)
+                size += len(chunk)
+            duration_ms = None
+            if inspector is not None:
+                try:
+                    inspector.finish(size)
+                except recording_media.WavHeaderError as error:
+                    raise ApiProblem(
+                        422,
+                        "EARSHOT_RECORDING_INVALID_WAV",
+                        "the body is not a WAV file Earshot can read",
+                    ) from error
+                duration_ms = inspector.duration_ms()
+            try:
+                sha256, stored = await run_in_threadpool(writer.commit, expected_sha256=expected)
+            except ContentDigestMismatchError as error:
+                raise ApiProblem(
+                    400, "EARSHOT_CONTENT_DIGEST_MISMATCH", "the body does not match its digest"
+                ) from error
+            return sha256, stored, duration_ms
+        except BaseException:
+            with contextlib.suppress(Exception):
+                await run_in_threadpool(writer.abort)
+            raise
+
+    async def begin_upload(project_id: str, recording_id: str) -> Any:
+        """``recordings.begin_upload`` in the threadpool, as an ``UploadAttempt``.
+
+        A thread cannot be cancelled: a request cancelled while the thread runs
+        leaves it to register the attempt anyway, and the handler never reaches the
+        ``finally`` that ends it. Such an attempt is ended as soon as the thread
+        returns, so it cannot hold its call for good (tribunal round 3, R3-2).
+        """
+
+        task = asyncio.ensure_future(
+            run_in_threadpool(
+                recordings.begin_upload,
+                project_id,
+                recording_id,
+                budget_s=REQUEST_LOCK_BUDGET_SECONDS,
+            )
+        )
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            task.add_done_callback(lambda done: end_abandoned_upload(project_id, done))
+            raise
+
+    def end_abandoned_upload(project_id: str, task: asyncio.Future[Any]) -> None:
+        if task.cancelled() or task.exception() is not None:
+            return
+        blob_key = task.result().blob_key
+        if blob_key is not None:
+            recordings.end_upload(project_id, blob_key)
+
+    async def hash_recording(request: Request, expected: bytes | None, deadline: float) -> str:
+        """Hash the body without writing it anywhere (an upload to a stored recording)."""
+
+        hasher = hashlib.sha256()
+        async for chunk in recording_chunks(request, deadline):
+            await run_in_threadpool(hasher.update, chunk)
+        if expected is not None and not hmac.compare_digest(hasher.digest(), expected):
+            raise ApiProblem(
+                400, "EARSHOT_CONTENT_DIGEST_MISMATCH", "the body does not match its digest"
+            )
+        return hasher.hexdigest()
+
+    @app.put(
+        "/v1/recordings/{recording_id}/content",
+        response_model=RecordingResponse,
+        responses=_UPLOAD_ERROR_RESPONSES,
+        openapi_extra=_RECORDING_UPLOAD_REQUEST,
+        description=(
+            "Upload a pending recording's bytes (mono; Content-Type is the recording's "
+            "content_type). The body streams to the blob store under a server-chosen key "
+            "and is stored when it commits; concurrent uploads store exactly one. An "
+            "upload to a stored recording is only hashed: the same bytes answer 200, "
+            "other bytes 409. A failed recording is 409. While the body streams, the "
+            "recording's Call is not closed; a body that sends nothing for 60 s, or "
+            "is still arriving at the upload hold cap (600 s by default) after the "
+            "request started, is 408."
+        ),
+    )
+    async def upload_recording_endpoint(recording_id: str, request: Request) -> JSONResponse:
+        deadline = asyncio.get_running_loop().time() + upload_deadline_seconds
+        project_id = request.state.project_id
+        recording = await project_recording(project_id, recording_id)
+        blobs = recording_blobs()
+        if recording.state == "failed":
+            raise RecordingConflictError
+        if _content_type(request) != recording.content_type:
+            raise ApiProblem(
+                415,
+                "EARSHOT_UNSUPPORTED_MEDIA_TYPE",
+                "Content-Type must be the recording's content_type",
+            )
+        if request.headers.get("content-encoding", "").strip().lower() not in {"", "identity"}:
+            raise ApiProblem(
+                415,
+                "EARSHOT_UNSUPPORTED_CONTENT_ENCODING",
+                "a recording body is sent without a Content-Encoding",
+            )
+        digest_header = request.headers.get("content-digest")
+        try:
+            expected = None if digest_header is None else parse_content_digest(digest_header)
+        except ContentDigestError as error:
+            raise ApiProblem(
+                400, "EARSHOT_INVALID_CONTENT_DIGEST", "Content-Digest needs a sha-256 digest"
+            ) from error
+        _check_content_length(request, settings.recording_max_bytes, subject="recording")
+        attempt = await begin_upload(project_id, recording_id)
+        try:
+            if attempt.blob_key is None:
+                if await hash_recording(request, expected, deadline) != attempt.recording.sha256:
+                    raise RecordingConflictError("the body differs from the stored recording")
+                return JSONResponse(_recording_body(attempt.recording))
+        except ClientDisconnect as error:
+            raise ApiProblem(400, "EARSHOT_CLIENT_DISCONNECTED", "the body ended early") from error
+        blob_key = attempt.blob_key
+        stored: Recording | None = None
+        try:
+            sha256, size, duration_ms = await stream_recording(
+                request,
+                blobs,
+                blob_key,
+                expected,
+                wav=recording.content_type == recording_media.WAV_CONTENT_TYPE,
+                deadline=deadline,
+            )
+            stored = await run_in_threadpool(
+                recordings.finish_upload,
+                project_id,
+                recording_id,
+                blob_key,
+                sha256=sha256,
+                size=size,
+                duration_ms=duration_ms,
+                budget_s=REQUEST_LOCK_BUDGET_SECONDS,
+            )
+            if stored is not None:
+                return JSONResponse(_recording_body(stored))
+            # Another upload stored the recording first (or it failed meanwhile).
+            current = await run_in_threadpool(recordings.get, project_id, recording_id)
+            if current is not None and current.state == "stored" and current.sha256 == sha256:
+                return JSONResponse(_recording_body(current))
+            raise RecordingConflictError
+        except ClientDisconnect as error:
+            raise ApiProblem(400, "EARSHOT_CLIENT_DISCONNECTED", "the body ended early") from error
+        finally:
+            try:
+                if stored is None:
+                    await run_in_threadpool(
+                        recordings.discard_upload,
+                        project_id,
+                        blob_key,
+                        budget_s=REQUEST_LOCK_BUDGET_SECONDS,
+                    )
+            finally:
+                # Even when a cancellation interrupts the discard: an attempt left "in
+                # flight" would never be swept and would hold its call for good.
+                recordings.end_upload(project_id, blob_key)
+
+    @app.get(
+        "/v1/recordings/{recording_id}/content",
+        response_class=Response,
+        responses=_RECORDING_CONTENT_RESPONSES,
+        description=(
+            "A stored recording's bytes, streamed through the server on every blob "
+            "backend. One Range (bytes=a-b, a-, -n) is answered with 206; several are "
+            "answered whole. A recording that is not stored is 409."
+        ),
+    )
+    async def recording_content_endpoint(recording_id: str, request: Request) -> Response:
+        recording = await project_recording(request.state.project_id, recording_id)
+        if recording.state != "stored" or recording.blob_key is None or recording.size is None:
+            raise ApiProblem(
+                409, "EARSHOT_RECORDING_NOT_STORED", "the recording has no stored content yet"
+            )
+        blobs = recording_blobs()
+        size = recording.size
+        try:
+            byte_range = recording_media.parse_byte_range(request.headers.get("range"), size)
+        except recording_media.RangeNotSatisfiable as error:
+            raise ApiProblem(
+                416,
+                "EARSHOT_RANGE_NOT_SATISFIABLE",
+                (
+                    f"the Range header is longer than "
+                    f"{recording_media.MAX_RANGE_HEADER_LENGTH} bytes"
+                    if isinstance(error, recording_media.RangeTooLong)
+                    else "the range starts past the end of the recording"
+                ),
+                headers={"Content-Range": f"bytes */{size}"},
+            ) from error
+        start, end = (0, size) if byte_range is None else (byte_range.start, byte_range.end)
+        try:
+            reader = await run_in_threadpool(blobs.open_range, recording.blob_key, start, end)
+        except BlobNotFoundError as error:
+            raise ApiProblem(
+                500, "EARSHOT_RECORDING_CONTENT_MISSING", "the stored recording is missing"
+            ) from error
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(end - start),
+            "ETag": f'"{recording.sha256}"',
+            "Cache-Control": "no-store",
+        }
+        if byte_range is not None:
+            headers["Content-Range"] = byte_range.content_range(size)
+        return StreamingResponse(
+            reader,
+            status_code=206 if byte_range is not None else 200,
+            media_type=recording.content_type,
+            headers=headers,
+            background=BackgroundTask(reader.close),
         )
 
     @app.post(
@@ -3209,9 +4386,10 @@ def create_app(
         payload = await _read_body(request, settings.max_body_bytes)
         if content_encoding == "gzip":
             payload = await run_in_threadpool(
-                _decompress_gzip,
+                _decompress,
                 payload,
                 settings.max_body_bytes,
+                "gzip",
             )
         content_type = _content_type(request)
         parsed_json: dict[str, Any] | None = None
@@ -3855,6 +5033,16 @@ def create_app(
             finalize=False,
             compact=capture_cleanup_complete,
         )
+        if not storage_cleanup_complete:
+            # The project's recording blobs are deleted after the commit that
+            # journaled them; then the catalog check runs again.
+            await run_in_threadpool(recordings.drain_blob_deletions, project_id=project_id)
+            storage_cleanup_complete = await run_in_threadpool(
+                repository.delete_project_data,
+                project_id,
+                finalize=False,
+                compact=capture_cleanup_complete,
+            )
         if capture_cleanup_complete and storage_cleanup_complete:
             await run_in_threadpool(repository.mark_project_deleted, project_id)
             lifecycle = "deleted"

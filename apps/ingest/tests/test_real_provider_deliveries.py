@@ -46,8 +46,8 @@ from earshot.connectors import (
     MappingSecretResolver,
     RawProviderDelivery,
 )
-from earshot.storage import IncidentStore
 from earshot.validation import validate_incident
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -102,7 +102,7 @@ def test_real_provider_delivery_authenticates_and_normalizes(capture_path, tmp_p
     body = base64.b64decode(spec["body_base64"])
     headers = tuple((str(name).encode(), str(value).encode()) for name, value in spec["headers"])
 
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     store.create_project("real", display_name="Real capture")
     endpoint = store.create_connector("real", provider=provider, secret_ref=_SECRET_REF)
     ingestion = HostedProviderIngestion(

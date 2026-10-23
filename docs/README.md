@@ -3,10 +3,22 @@
 These documents are the public, reproducible source of truth. They are sufficient
 to implement another producer or consumer without access to `docs/private`.
 
-The current release is a pre-v1 alpha. Implemented server/runtime surfaces are listed
-in the repository [capability table](../README.md#earshot); browser/mobile capture,
-generic live OTLP receiving, media replay, and regression-fixture export are planned and
-are not shipped APIs.
+The current release is a pre-v1 alpha. What Earshot receives today is listed in the
+repository [README](../README.md#what-earshot-receives-today); mobile capture, OTLP over
+gRPC, a call view in the viewer, and regression-fixture export are planned and are not
+shipped APIs.
+
+## Run Earshot
+
+- [OTLP quick start](./otlp-quickstart.md) — the HTTP exporter, API keys and the host
+  rule, session keys, close timing, recordings, and errors and retries.
+- [Storage and blobs](./storage-and-blobs.md) — SQLite or Postgres, migrations, upgrading
+  from 0.1.x, the correlation key, and local or S3 blob URLs.
+- [Production notes](./production.md) — one server per database, no transaction-pooling
+  proxy, a Collector in front, S3 lifecycle, readiness, and backups.
+- [Server configuration](./configuration.md) — every variable of `earshot serve` and
+  the ASGI app, before and after 0.2.0.
+- [Changelog](../CHANGELOG.md) — what changed in each release, breaking changes first.
 
 ## Start here
 
@@ -15,8 +27,8 @@ are not shipped APIs.
   JSON representation.
 - [Semantic profile](./semantic-conventions.md) — `earshot.*` operations, events,
   links, coverage, and evidence vocabulary.
-- [Privacy](./privacy.md) — metadata-only default, filtering, omissions, retention,
-  and safe export.
+- [Privacy](./privacy.md) — Capture Presets, the producer capture policy, omissions,
+  media, call purge, retention, and erasure limits.
 - [Backend API](./backend-api.md) — project-scoped ingest, retrieval, metrics, and purge.
 - [Hosted-provider connectors](./connectors.md) — trust, replay, normalization, and
   provider-specific evidence limits.
@@ -24,14 +36,16 @@ are not shipped APIs.
   and current diagnosis boundary.
 - [SDK and recorder](./sdk.md) — one-line setup, recorder lifecycle, adapters, and
   fail-open guarantees.
-- [Storage and retention](./storage.md) — CAS/SQLite transaction ordering, graph
+- [Storage internals](./storage.md) — CAS/SQLite transaction ordering, graph
   projections, expiry, reconciliation, and erasure limits.
 - [Conformance](./conformance.md) — required fixtures and release gates.
 - [Retained real captures](./captured-fixtures.md) — captured-adapter provenance,
   privacy scrubbing, validation, and unavailable real-evidence gaps.
 - [Development](./development.md) — setup, regeneration, tests, and local operation.
 - [Release packaging](./release.md) — distribution identity, build verification, and
-  publication guardrails.
+  publication guardrails; the owner's [release checklist](./release-checklist.md).
+- [Architecture decisions](./adr/) — ADRs 0001 to 0007, including capture presets, the
+  OTLP receiver, storage, and the Call.
 - [Pipecat adapter](./adapters/pipecat.md) and
   [LiveKit adapter](./adapters/livekit.md) — adapter contracts and limitations.
 - [TVIC runtime adapter](./adapters/tvic.md) — runtime observation mapping,

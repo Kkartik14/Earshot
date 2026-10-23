@@ -8,11 +8,14 @@ import warnings
 from pathlib import Path
 
 import pytest
+import rfc8785
 
 import earshot.codec as codec
 from earshot.codec import (
     IncidentCodecError,
     IncidentDepthError,
+    analysis_input_digests,
+    analysis_input_sha256,
     canonical_profile_json,
     decode_incident_json,
     decode_incident_protobuf,
@@ -262,6 +265,45 @@ def test_protobuf_decoder_rejects_digest_valid_noncanonical_profile_json(valid_b
         decode_incident_protobuf(_mutated_envelope(valid_bundle, mutate))
 
 
+def _without_profile_key(bundle: IncidentBundle, key: str) -> bytes:
+    """``bundle``'s protobuf with one top-level key removed from its profile JSON."""
+
+    def mutate(envelope) -> None:
+        profile = json.loads(bytes(envelope.canonical_profile_json))
+        del profile[key]
+        envelope.canonical_profile_json = rfc8785.dumps(profile)
+        envelope.profile_sha256 = hashlib.sha256(envelope.canonical_profile_json).hexdigest()
+
+    return _mutated_envelope(bundle, mutate)
+
+
+def test_a_contract_0_1_0_profile_written_before_clock_relations_still_decodes(
+    valid_bundle,
+) -> None:
+    # Earshot 0.1.0 wrote no "clock_relations" key; later releases write "[]" for
+    # the same contract-0.1.0 profile. Both are that profile's stored bytes.
+    manifest = valid_bundle.profile.manifest.model_copy(update={"schema_version": "0.1.0"})
+    legacy = valid_bundle.model_copy(
+        update={"profile": valid_bundle.profile.model_copy(update={"manifest": manifest})}
+    )
+    stored = _without_profile_key(legacy, "clock_relations")
+
+    decoded = decode_incident_protobuf(stored, validate=False)
+
+    assert decoded.profile == legacy.profile
+    # An analysis bound to the stored artifact is bound to the decoded incident;
+    # the encoder still writes today's form.
+    assert analysis_input_digests(decoded) == (
+        hashlib.sha256(codec._encode_incident_protobuf_unchecked(decoded)).hexdigest(),
+        hashlib.sha256(stored).hexdigest(),
+    )
+    assert analysis_input_digests(valid_bundle) == (analysis_input_sha256(valid_bundle),)
+    with pytest.raises(IncidentCodecError, match="not RFC 8785/JCS canonical"):
+        decode_incident_protobuf(_without_profile_key(legacy, "media_refs"), validate=False)
+    with pytest.raises(IncidentCodecError, match="not RFC 8785/JCS canonical"):
+        decode_incident_protobuf(_without_profile_key(valid_bundle, "clock_relations"))
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     [
@@ -462,3 +504,24 @@ def test_codec_rejects_semantically_invalid_bundle_before_serialization(valid_bu
     assert not validate_incident(invalid).ok
     with pytest.raises(Exception, match="EARSHOT_DANGLING_REF"):
         encode_incident_protobuf(invalid)
+
+
+def test_analysis_input_digest_reuses_canonical_bytes_only_without_embedded_analysis(
+    valid_bundle,
+) -> None:
+    from earshot.analysis import analyze_incident
+
+    canonical = encode_incident_protobuf(valid_bundle)
+    assert codec.analysis_input_sha256(
+        valid_bundle, canonical_payload=canonical
+    ) == codec.analysis_input_sha256(valid_bundle)
+
+    digest = codec.analysis_input_sha256(valid_bundle)
+    analysis = analyze_incident(valid_bundle, input_sha256=digest, generated_at_unix_nano="1")
+    analysed = valid_bundle.model_copy(
+        update={"profile": valid_bundle.profile.model_copy(update={"analysis": analysis})}
+    )
+    # Embedded analysis is never part of the canonical bytes, so bytes offered
+    # for an analysed bundle are not its evidence artifact and are not trusted.
+    assert codec.analysis_input_sha256(analysed, canonical_payload=canonical) == digest
+    assert codec.analysis_input_sha256(analysed, canonical_payload=b"not the evidence") == digest

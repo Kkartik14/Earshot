@@ -1,9 +1,17 @@
-"""Immutable local incident storage backed by SQLite and content-addressed files.
+"""Immutable incident storage: a SQLite or Postgres catalog plus canonical artifacts.
 
-Canonical protobuf artifacts own evidence content and graph truth. SQLite is the
-durable catalog, tombstone, ordering, and publication authority; neither half is a
-standalone backup. Derived analysis is separate and keyed by artifact digest and
-analyzer version.
+Canonical protobuf artifacts own evidence content and graph truth. The catalog is
+the durable tombstone, ordering, and publication authority. On SQLite the
+artifacts are content-addressed files beside the catalog and neither half is a
+standalone backup; on Postgres they are ``bytea`` rows in the catalog itself,
+written in the incident's transaction. Derived analysis is separate and keyed by
+artifact digest and analyzer version.
+
+SQL runs through the dialect-neutral connection shim in ``storage_database``;
+dialect-specific statements go through ``connection.dialect.sql(...)``. Alembic
+(``storage_migrations``) owns the schema and is imported when a store opens, so
+importing this module needs no ``server`` extra but opening a store does. A
+``postgresql://`` store also needs the ``postgres`` extra (``storage_postgres``).
 """
 
 from __future__ import annotations
@@ -30,13 +38,21 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from .call_capture import CAPTURE_PRESETS, UNAVAILABLE_CAPTURE_PRESETS
+from .clock import Clock, SystemClock
 from .contract import DerivedAnalysis
+from .credential_cache import CredentialVerdictCache
+from .storage_database import DatabaseConnection, Row, SQLiteDatabase
+from .storage_projection import ProjectionRows, compute_projection_rows, write_projection_rows
 from .versions import (
     ELEVENLABS_NORMALIZER_VERSION,
+    INCIDENT_PROJECTION_VERSION,
     RETELL_NORMALIZER_VERSION,
     RINGG_NORMALIZER_VERSION,
-    TURN_FACT_PROJECTION_VERSION,
     VAPI_NORMALIZER_VERSION,
+)
+from .versions import (
+    TURN_FACT_PROJECTION_VERSION as TURN_FACT_PROJECTION_VERSION,  # re-exported
 )
 
 try:  # Unix file locking protects multiple local server processes sharing a store.
@@ -87,7 +103,7 @@ if hasattr(os, "register_at_fork"):
     )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from earshot.contract import IncidentBundle
 
@@ -112,12 +128,35 @@ class IncidentPurgedError(StorageError):
     pass
 
 
+class IncidentBelongsToCallError(StorageError):
+    """The incident is a revision of a call: it is purged only with its call (AC14.3)."""
+
+    code = "EARSHOT_INCIDENT_BELONGS_TO_CALL"
+
+    def __init__(self, call_id: str) -> None:
+        super().__init__("the incident is a revision of a call; purge the call")
+        self.call_id = call_id
+
+
 class ProjectInactiveError(StorageError):
     """A project lifecycle fence rejected a new or late write."""
 
 
 class ArtifactCorruptionError(StorageError):
     pass
+
+
+class CapturePresetUnavailableError(StorageError):
+    """A capture preset this release does not implement (``redacted``)."""
+
+    code = "EARSHOT_PRESET_UNAVAILABLE"
+    status_code = 422
+
+    def __init__(self, preset: str) -> None:
+        super().__init__(
+            f"{self.code}: the {preset} capture preset is not available in this release; "
+            f"use {' or '.join(CAPTURE_PRESETS)}"
+        )
 
 
 class InvalidCursorError(StorageError):
@@ -132,6 +171,224 @@ class DeliveryInProgressError(StorageError):
     def __init__(self, message: str, *, retry_after_seconds: int) -> None:
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
+
+
+class StorageOpenError(StorageError):
+    """A store refused to open, with a stable code and an operator-safe message."""
+
+    code = "EARSHOT_STORAGE_OPEN_FAILED"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(f"{self.code}: {message}")
+
+
+class SchemaTooNewError(StorageOpenError):
+    """The catalog was migrated by a newer Earshot: its revision is unknown here."""
+
+    code = "EARSHOT_SCHEMA_TOO_NEW"
+
+
+class SchemaBehindError(StorageOpenError):
+    """The catalog needs a migration and automatic migration was turned off."""
+
+    code = "EARSHOT_SCHEMA_BEHIND"
+
+
+class CatalogIntegrityError(StorageOpenError):
+    """A migration would have committed rows that break a foreign key."""
+
+    code = "EARSHOT_CATALOG_INTEGRITY"
+
+
+class StorageRuntimeUnavailableError(StorageOpenError):
+    """The storage runtime (SQLAlchemy, Alembic) is not installed."""
+
+    code = "EARSHOT_SERVER_EXTRA_REQUIRED"
+
+
+class DatabaseInUseError(StorageOpenError):
+    """Another server already holds this Postgres database (``K_server``) or this
+    SQLite data directory (``.server.lock``)."""
+
+    code = "EARSHOT_DATABASE_IN_USE"
+
+
+class CorrelationKeyRequiredError(StorageOpenError):
+    """A Postgres catalog needs a configured correlation key, and none is usable."""
+
+    code = "EARSHOT_CORRELATION_KEY_REQUIRED"
+
+
+class CorrelationKeyMismatchError(StorageOpenError):
+    """The configured correlation key is not the one this catalog was written with."""
+
+    code = "EARSHOT_CORRELATION_KEY_MISMATCH"
+
+
+class DatabaseError(StorageError):
+    """A database statement failed. The API answers it as storage unavailable (503)."""
+
+
+class DatabaseUnavailableError(DatabaseError):
+    """The database cannot serve now: connection, pool timeout, lock or serialization."""
+
+
+class StorageBusyError(StorageError):
+    """A mutation with a lock budget could not take the store's locks in time.
+
+    The API answers it with 503 and ``Retry-After``: the store is healthy but
+    another writer (or a SQLite compaction) holds it now.
+    """
+
+    code = "EARSHOT_STORAGE_BUSY"
+    retry_after_seconds = 3
+
+
+class DatabaseLockLostError(StorageError):
+    """The server lost its ``K_server`` session, and with it the database."""
+
+    code = "EARSHOT_DATABASE_LOCK_LOST"
+
+
+# Every exception a catalog statement can raise, on either dialect. SQLite keeps
+# raising the stdlib's own errors; Postgres errors arrive as ``DatabaseError``.
+DATABASE_ERRORS: tuple[type[Exception], ...] = (sqlite3.Error, DatabaseError)
+CORRELATION_KEY_ENVIRONMENT = "EARSHOT_CORRELATION_KEY"
+CORRELATION_KEY_FILE_ENVIRONMENT = "EARSHOT_CORRELATION_KEY_FILE"
+_CORRELATION_KEY_ID_META = "correlation_key_id"
+
+
+def _storage_migrations() -> Any:
+    """Import the migration runner, which needs the ``server`` extra."""
+
+    try:
+        from . import storage_migrations
+    except ModuleNotFoundError as error:
+        if error.name not in {"sqlalchemy", "alembic"}:
+            raise
+        raise StorageRuntimeUnavailableError(
+            "opening an incident store needs the server extra; install "
+            "'earshot-observability[server]'"
+        ) from None
+    return storage_migrations
+
+
+def _storage_postgres() -> Any:
+    """Import the Postgres runtime, which needs the ``server`` and ``postgres`` extras."""
+
+    _storage_migrations()
+    try:
+        from . import storage_postgres
+    except ModuleNotFoundError as error:
+        if error.name not in {"psycopg", "psycopg_binary"}:
+            raise
+        raise StorageRuntimeUnavailableError(
+            "a postgresql:// database needs the postgres extra; install "
+            "'earshot-observability[server,postgres]'"
+        ) from None
+    return storage_postgres
+
+
+SERVER_LOCK_FILE = ".server.lock"
+
+
+class SQLiteServerLock:
+    """The one-server-per-data-directory lock on SQLite, held for the server's lifetime.
+
+    An exclusive, non-blocking ``flock`` on ``<data-dir>/.server.lock``. The
+    recordings and blob layer assume one server owns its catalog and blob location
+    (uploads in flight are tracked in memory), so a second server or worker on the
+    same data directory is refused, as ``K_server`` refuses one on Postgres. CLI
+    commands never take it: they keep the per-mutation ``.store.lock`` and work
+    while the server runs. The kernel drops the lock when the process ends, however
+    it ends.
+    """
+
+    def __init__(self, handle: Any) -> None:
+        self._handle = handle
+        self._pid = os.getpid()
+
+    @classmethod
+    def acquire(cls, data_dir: str | Path) -> SQLiteServerLock:
+        directory = Path(data_dir).expanduser().resolve()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        handle = _open_advisory_lock(directory / SERVER_LOCK_FILE)
+        if fcntl is not None:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                handle.close()
+                raise DatabaseInUseError(
+                    "another Earshot server is running on this data directory; run one "
+                    "server (and one worker) per data directory"
+                ) from None
+            except OSError as error:
+                handle.close()
+                raise StorageOpenError(
+                    f"could not take the server lock ({type(error).__name__})"
+                ) from None
+        return cls(handle)
+
+    def verify(self) -> None:
+        """Raise ``DatabaseLockLostError`` in a forked child: the lock is the parent's."""
+
+        if os.getpid() != self._pid:
+            raise DatabaseLockLostError("the server lock belongs to the parent process")
+
+    def release(self) -> None:
+        if os.getpid() == self._pid:
+            with contextlib.suppress(Exception):
+                self._handle.close()
+
+
+def acquire_server_lock(database_url: str | None, data_dir: str | Path | None = None) -> Any | None:
+    """Take the server lock: ``K_server`` on Postgres, ``.server.lock`` on SQLite.
+
+    A second server, or a second worker, gets ``DatabaseInUseError``
+    (``EARSHOT_DATABASE_IN_USE``). On SQLite the lock is on ``data_dir``; without
+    one there is nothing to lock (``None``).
+    """
+
+    if database_url is not None:
+        return _storage_postgres().PostgresServerLock.acquire(database_url)
+    if data_dir is None:
+        return None
+    return SQLiteServerLock.acquire(data_dir)
+
+
+def resolve_correlation_key() -> bytes:
+    """Read the configured correlation key (``EARSHOT_CORRELATION_KEY`` or ``_FILE``).
+
+    The value is 32 bytes: base64 in the variable; raw (an existing
+    ``instance-correlation.key`` works as is) or base64 in the file, which must be
+    mode 0600 and not a symbolic link.
+    """
+
+    from .checkpoint.keys import resolve_at_rest_key
+
+    try:
+        key = resolve_at_rest_key(
+            None,
+            env_var=CORRELATION_KEY_ENVIRONMENT,
+            env_file_var=CORRELATION_KEY_FILE_ENVIRONMENT,
+            label="correlation key",
+        )
+    except ValueError as error:
+        raise CorrelationKeyRequiredError(str(error)) from None
+    if key is None:
+        raise CorrelationKeyRequiredError(
+            f"a Postgres catalog needs {CORRELATION_KEY_ENVIRONMENT} or "
+            f"{CORRELATION_KEY_FILE_ENVIRONMENT} (a 32-byte key); to keep the "
+            "identities of a SQLite store, point the file variable at its "
+            "instance-correlation.key"
+        )
+    return key
+
+
+def _correlation_key_id(key: bytes) -> str:
+    """A one-way identifier of the correlation key, safe to store beside the data."""
+
+    return hmac.new(key, b"earshot.correlation-key-id.v1\x00instance", hashlib.sha256).hexdigest()
 
 
 DEFAULT_PROJECT_ID = "default"
@@ -153,6 +410,8 @@ class ProjectRecord:
     project_id: str
     display_name: str
     created_at_unix_nano: str
+    capture_preset: str = CAPTURE_PRESETS[0]
+    lifecycle_state: str = "active"
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +620,57 @@ class IngestResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedIncident:
+    """An incident ready to store (``IncidentStore.ingest_prepared``): its canonical
+    encoding, its projected rows and the catalog columns, derived from a valid
+    bundle with no I/O by ``prepare_incident``. Plain data, so it can be built in
+    another process (the call closer's materializer) and stored by this one."""
+
+    project_id: str
+    canonical_payload: bytes
+    projection: ProjectionRows
+    bundle_id: str
+    session_id: str
+    schema_version: str
+    status: str
+    finality: str
+    completeness: str
+    framework: str | None
+    created_at_unix_nano: str
+
+
+def prepare_incident(
+    bundle: IncidentBundle, project_id: str, *, canonical_payload: bytes | None = None
+) -> PreparedIncident:
+    """Validate and encode ``bundle`` and derive its projections: the half of
+    ``ingest`` that needs no lock and no database (Fowler, second pass, 6)."""
+
+    from .codec import encode_incident_protobuf
+    from .validation import assert_valid_incident
+
+    assert_valid_incident(bundle)
+    expected_payload = encode_incident_protobuf(bundle)
+    if canonical_payload is None:
+        canonical_payload = expected_payload
+    elif canonical_payload != expected_payload:
+        raise StorageError("payload is not the canonical encoding of the incident")
+    manifest = bundle.profile.manifest
+    return PreparedIncident(
+        project_id=project_id,
+        canonical_payload=canonical_payload,
+        projection=compute_projection_rows(bundle, project_id, canonical_payload=canonical_payload),
+        bundle_id=manifest.bundle_id,
+        session_id=manifest.session_id,
+        schema_version=manifest.schema_version,
+        status=bundle.profile.session.status,
+        finality=manifest.finality,
+        completeness=manifest.completeness,
+        framework=manifest.adapters[0].framework if manifest.adapters else None,
+        created_at_unix_nano=manifest.created_at_unix_nano,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class IncidentPage:
     items: tuple[IncidentRecord, ...]
     next_cursor: str | None
@@ -384,382 +694,73 @@ class StoredAnalysis:
         }
 
 
-_SCHEMA_VERSION = 19
 _MAX_CURSOR_ENCODED_CHARS = 4096
 _MAX_CURSOR_DECODED_BYTES = 512
 _SQLITE_INT64_MAX = (1 << 63) - 1
+
+
+@dataclass(frozen=True, slots=True)
+class MutationTimingStats:
+    """Lock wait and hold durations of one operation's store mutations."""
+
+    count: int
+    last_wait_seconds: float
+    last_hold_seconds: float
+    max_wait_seconds: float
+    max_hold_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticationStats:
+    """API-key authentication work since the store opened."""
+
+    secret_verifications: int
+    verdict_cache_hits: int
+
+
+# The retention loop compacts SQLite (checkpoint plus VACUUM) after a purge drain
+# at most this often; a VACUUM blocks every writer while it runs (AC11.5).
+COMPACTION_INTERVAL_NANO = 10 * 60 * 1_000_000_000
+
+# ``api_keys.last_used_at_unix_nano`` is advisory: it is written at most this often
+# per key, so a busy exporter does not take the write lock on every request.
+KEY_USE_RECORD_INTERVAL_NANO = 60 * 1_000_000_000
+# How long an authenticated request waits for the write lock to record a key's
+# use. Past it the write is skipped and a later request retries it: the request
+# already passed the revocation check (AC2.2), and it must not queue behind a long
+# writer, a compaction or another process for a timestamp (AC5.7).
+KEY_USE_RECORD_BUDGET_SECONDS = 0.1
+
+
+@dataclass(frozen=True, slots=True)
+class ReprojectionBatch:
+    """The outcome of one ``reproject_stale`` batch."""
+
+    reprojected: int
+    failed: tuple[str, ...]
+    resume_after: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectionConvergence:
+    """The outcome of ``converge_projections``: what was done and what is left."""
+
+    reprojected: int
+    failed: tuple[str, ...]
+    pending: int
+
+
 MAX_EXPIRED_PURGE_BATCH_SIZE = 10_000
+# One reprojection batch decodes and analyses this many incidents outside the
+# write lock, then writes them in one short mutation.
+REPROJECTION_BATCH_SIZE = 100
+# Holding the store write lock longer than this stalls every other writer, OTLP
+# included, so it is logged with the operation that did it.
+SLOW_MUTATION_SECONDS = 1.0
+# How often a budgeted mutation retries a lock another process holds.
+LOCK_POLL_SECONDS = 0.02
 _STARTUP_EXPIRED_PURGE_BATCH_SIZE = 1000
 _SQLITE_SAFE_BIND_LIMIT = 900
-
-_SCHEMA = """
-
-CREATE TABLE IF NOT EXISTS projects (
-    project_id TEXT PRIMARY KEY,
-    display_name TEXT NOT NULL,
-    created_at_unix_nano INTEGER NOT NULL,
-    lifecycle_state TEXT NOT NULL DEFAULT 'active'
-        CHECK (lifecycle_state IN ('active', 'deleting', 'deleted')),
-    delete_started_at_unix_nano INTEGER,
-    deleted_at_unix_nano INTEGER
-);
-
-INSERT OR IGNORE INTO projects(project_id, display_name, created_at_unix_nano)
-VALUES ('default', 'Default', 0);
-
-CREATE TABLE IF NOT EXISTS api_keys (
-    key_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-    label TEXT NOT NULL,
-    secret_salt BLOB NOT NULL,
-    secret_hash BLOB NOT NULL,
-    created_at_unix_nano INTEGER NOT NULL,
-    last_used_at_unix_nano INTEGER,
-    revoked_at_unix_nano INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS api_keys_project_idx
-    ON api_keys(project_id, revoked_at_unix_nano, created_at_unix_nano DESC);
-
-CREATE TABLE IF NOT EXISTS incidents (
-    bundle_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL DEFAULT 'default'
-        REFERENCES projects(project_id),
-    session_id TEXT NOT NULL,
-    schema_version TEXT NOT NULL,
-    object_digest TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
-    status TEXT NOT NULL,
-    finality TEXT NOT NULL,
-    completeness TEXT NOT NULL,
-    framework TEXT,
-    created_at_unix_nano TEXT NOT NULL,
-    ingested_at_unix_nano INTEGER NOT NULL,
-    expires_at_unix_nano TEXT,
-    export_allowed_local_api INTEGER NOT NULL DEFAULT 1
-        CHECK (export_allowed_local_api IN (0, 1)),
-    export_allowed_local_cli INTEGER NOT NULL DEFAULT 1
-        CHECK (export_allowed_local_cli IN (0, 1))
-);
-
-CREATE TABLE IF NOT EXISTS incident_ingest_order (
-    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-    bundle_id TEXT NOT NULL UNIQUE REFERENCES incidents(bundle_id) ON DELETE CASCADE
-);
-
-CREATE TRIGGER IF NOT EXISTS incidents_track_ingest_order
-AFTER INSERT ON incidents
-WHEN NOT EXISTS (
-    SELECT 1 FROM incident_ingest_order WHERE bundle_id = NEW.bundle_id
-)
-BEGIN
-    INSERT INTO incident_ingest_order(bundle_id) VALUES (NEW.bundle_id);
-END;
-
-CREATE UNIQUE INDEX IF NOT EXISTS incidents_project_bundle_idx
-    ON incidents(project_id, bundle_id);
-
--- Mutable cross-product relationships are catalog metadata, not part of the
--- immutable incident artifact or its digest-bound analysis.
-CREATE TABLE IF NOT EXISTS incident_external_references (
-    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-    bundle_id TEXT NOT NULL,
-    namespace TEXT NOT NULL,
-    record_type TEXT NOT NULL,
-    external_id TEXT NOT NULL,
-    linked_at_unix_nano INTEGER NOT NULL,
-    PRIMARY KEY (project_id, bundle_id, namespace, record_type),
-    FOREIGN KEY (project_id, bundle_id)
-        REFERENCES incidents(project_id, bundle_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS incident_external_reference_lookup_idx
-    ON incident_external_references(project_id, namespace, record_type, external_id);
-
-CREATE INDEX IF NOT EXISTS incidents_session_idx
-    ON incidents(project_id, session_id, ingested_at_unix_nano DESC, bundle_id DESC);
-CREATE INDEX IF NOT EXISTS incidents_project_idx
-    ON incidents(project_id, ingested_at_unix_nano DESC, bundle_id DESC);
-CREATE INDEX IF NOT EXISTS incidents_digest_idx ON incidents(object_digest);
-CREATE INDEX IF NOT EXISTS incidents_expiry_idx
-    ON incidents(length(expires_at_unix_nano), expires_at_unix_nano)
-    WHERE expires_at_unix_nano IS NOT NULL;
-CREATE INDEX IF NOT EXISTS incidents_export_local_api_idx
-    ON incidents(project_id, export_allowed_local_api,
-                 ingested_at_unix_nano DESC, bundle_id DESC);
-CREATE INDEX IF NOT EXISTS incidents_export_local_cli_idx
-    ON incidents(project_id, export_allowed_local_cli,
-                 ingested_at_unix_nano DESC, bundle_id DESC);
-
-CREATE TABLE IF NOT EXISTS analyses (
-    bundle_id TEXT NOT NULL REFERENCES incidents(bundle_id) ON DELETE CASCADE,
-    analyzer_version TEXT NOT NULL,
-    input_digest TEXT NOT NULL,
-    generated_at_unix_nano TEXT NOT NULL,
-    output_json BLOB NOT NULL,
-    PRIMARY KEY (bundle_id, analyzer_version, input_digest)
-);
-
-CREATE TABLE IF NOT EXISTS tombstones (
-    bundle_id_sha256 TEXT PRIMARY KEY CHECK (length(bundle_id_sha256) = 64),
-    project_id TEXT NOT NULL REFERENCES projects(project_id),
-    purged_at_unix_nano INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS pending_object_deletions (
-    project_id TEXT NOT NULL REFERENCES projects(project_id),
-    object_digest TEXT NOT NULL CHECK (length(object_digest) = 64),
-    queued_at_unix_nano INTEGER NOT NULL,
-    PRIMARY KEY (project_id, object_digest)
-);
-CREATE INDEX IF NOT EXISTS pending_object_deletions_project_idx
-    ON pending_object_deletions(project_id, queued_at_unix_nano, object_digest);
-
-CREATE TABLE IF NOT EXISTS pending_ingests (
-    intent_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(project_id),
-    object_digest TEXT NOT NULL CHECK (length(object_digest) = 64),
-    started_at_unix_nano INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS pending_ingests_project_idx
-    ON pending_ingests(project_id, started_at_unix_nano, intent_id);
-CREATE INDEX IF NOT EXISTS pending_ingests_digest_idx
-    ON pending_ingests(object_digest);
-
-CREATE TABLE IF NOT EXISTS storage_maintenance (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    purge_generation INTEGER NOT NULL DEFAULT 0 CHECK (purge_generation >= 0),
-    scrubbed_generation INTEGER NOT NULL DEFAULT 0 CHECK (scrubbed_generation >= 0)
-);
-INSERT OR IGNORE INTO storage_maintenance(singleton) VALUES (1);
-
-CREATE TABLE IF NOT EXISTS legacy_deletion_reviews (
-    project_id TEXT PRIMARY KEY REFERENCES projects(project_id),
-    detected_at_unix_nano INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS operations (
-    bundle_id TEXT NOT NULL REFERENCES incidents(bundle_id) ON DELETE CASCADE,
-    operation_id TEXT NOT NULL,
-    operation_name TEXT NOT NULL,
-    status TEXT NOT NULL,
-    participant_id TEXT,
-    stream_id TEXT,
-    turn_id TEXT,
-    trace_id TEXT,
-    span_id TEXT,
-    parent_span_id TEXT,
-    parent_scope TEXT NOT NULL,
-    started_source_time_unix_nano TEXT,
-    started_observed_time_unix_nano TEXT,
-    started_monotonic_time_nano TEXT,
-    started_clock_domain_id TEXT,
-    ended_source_time_unix_nano TEXT,
-    ended_observed_time_unix_nano TEXT,
-    ended_monotonic_time_nano TEXT,
-    ended_clock_domain_id TEXT,
-    evidence_source TEXT,
-    evidence_confidence TEXT,
-    evidence_availability TEXT,
-    capture_class TEXT NOT NULL,
-    PRIMARY KEY (bundle_id, operation_id)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS operations_otel_identity_idx
-    ON operations(bundle_id, trace_id, span_id)
-    WHERE trace_id IS NOT NULL AND span_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS operations_turn_idx
-    ON operations(bundle_id, turn_id, operation_name);
-CREATE INDEX IF NOT EXISTS operations_participant_stream_idx
-    ON operations(bundle_id, participant_id, stream_id);
-CREATE INDEX IF NOT EXISTS operations_parent_idx
-    ON operations(bundle_id, trace_id, parent_span_id);
-
-CREATE TABLE IF NOT EXISTS causal_links (
-    bundle_id TEXT NOT NULL,
-    source_operation_id TEXT NOT NULL,
-    link_index INTEGER NOT NULL CHECK (link_index >= 0),
-    relationship TEXT NOT NULL,
-    target_scope TEXT NOT NULL,
-    target_operation_id TEXT,
-    trace_id TEXT,
-    span_id TEXT,
-    PRIMARY KEY (bundle_id, source_operation_id, link_index),
-    FOREIGN KEY (bundle_id, source_operation_id)
-        REFERENCES operations(bundle_id, operation_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS causal_links_target_idx
-    ON causal_links(bundle_id, target_operation_id);
-CREATE INDEX IF NOT EXISTS causal_links_otel_target_idx
-    ON causal_links(bundle_id, trace_id, span_id);
-
-CREATE TABLE IF NOT EXISTS events (
-    bundle_id TEXT NOT NULL REFERENCES incidents(bundle_id) ON DELETE CASCADE,
-    event_id TEXT NOT NULL,
-    event_name TEXT NOT NULL,
-    operation_id TEXT,
-    participant_id TEXT,
-    stream_id TEXT,
-    turn_id TEXT,
-    trace_id TEXT,
-    span_id TEXT,
-    source_time_unix_nano TEXT,
-    observed_time_unix_nano TEXT,
-    monotonic_time_nano TEXT,
-    clock_domain_id TEXT,
-    evidence_source TEXT,
-    evidence_confidence TEXT,
-    evidence_availability TEXT,
-    capture_class TEXT NOT NULL,
-    PRIMARY KEY (bundle_id, event_id),
-    FOREIGN KEY (bundle_id, operation_id)
-        REFERENCES operations(bundle_id, operation_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS events_turn_idx
-    ON events(bundle_id, turn_id, event_name);
-CREATE INDEX IF NOT EXISTS events_operation_idx
-    ON events(bundle_id, operation_id);
-CREATE INDEX IF NOT EXISTS events_participant_stream_idx
-    ON events(bundle_id, participant_id, stream_id);
-
-CREATE TABLE IF NOT EXISTS turn_metrics (
-    project_id TEXT NOT NULL REFERENCES projects(project_id),
-    bundle_id TEXT NOT NULL REFERENCES incidents(bundle_id) ON DELETE CASCADE,
-    session_id TEXT NOT NULL,
-    turn_id TEXT NOT NULL,
-    turn_index INTEGER NOT NULL CHECK (turn_index >= 0),
-    started_at_unix_nano TEXT,
-    framework TEXT,
-    provider TEXT,
-    model TEXT,
-    language TEXT,
-    status TEXT NOT NULL,
-    stt_finalization_ms REAL,
-    stt_finalization_availability TEXT NOT NULL,
-    stt_finalization_basis TEXT NOT NULL,
-    stt_finalization_confidence TEXT NOT NULL,
-    stt_finalization_limitation TEXT,
-    eou_ms REAL,
-    eou_availability TEXT NOT NULL,
-    eou_basis TEXT NOT NULL,
-    eou_confidence TEXT NOT NULL,
-    eou_limitation TEXT,
-    first_token_ms REAL,
-    first_token_availability TEXT NOT NULL,
-    first_token_basis TEXT NOT NULL,
-    first_token_confidence TEXT NOT NULL,
-    first_token_limitation TEXT,
-    generated_response_ms REAL,
-    generated_response_availability TEXT NOT NULL,
-    generated_response_basis TEXT NOT NULL,
-    generated_response_confidence TEXT NOT NULL,
-    generated_response_limitation TEXT,
-    sent_response_ms REAL,
-    sent_response_availability TEXT NOT NULL,
-    sent_response_basis TEXT NOT NULL,
-    sent_response_confidence TEXT NOT NULL,
-    sent_response_limitation TEXT,
-    received_response_ms REAL,
-    received_response_availability TEXT NOT NULL,
-    received_response_basis TEXT NOT NULL,
-    received_response_confidence TEXT NOT NULL,
-    received_response_limitation TEXT,
-    render_start_response_ms REAL,
-    render_start_response_availability TEXT NOT NULL,
-    render_start_response_basis TEXT NOT NULL,
-    render_start_response_confidence TEXT NOT NULL,
-    render_start_response_limitation TEXT,
-    response_ms REAL,
-    response_availability TEXT NOT NULL,
-    response_basis TEXT NOT NULL,
-    response_confidence TEXT NOT NULL,
-    response_limitation TEXT,
-    turn_duration_ms REAL,
-    turn_duration_availability TEXT NOT NULL,
-    turn_duration_basis TEXT NOT NULL,
-    turn_duration_confidence TEXT NOT NULL,
-    turn_duration_limitation TEXT,
-    tool_operation_count INTEGER NOT NULL CHECK (tool_operation_count >= 0),
-    tool_total_work_ms REAL NOT NULL CHECK (tool_total_work_ms >= 0),
-    interruption_count INTEGER CHECK (interruption_count >= 0),
-    interruption_availability TEXT NOT NULL,
-    interruption_basis TEXT NOT NULL,
-    interruption_confidence TEXT NOT NULL,
-    interruption_limitation TEXT,
-    provider_measurements_json BLOB NOT NULL,
-    projection_version TEXT NOT NULL,
-    contract_version TEXT NOT NULL,
-    PRIMARY KEY (bundle_id, turn_id)
-);
-
-CREATE INDEX IF NOT EXISTS turn_metrics_project_time_idx
-    ON turn_metrics(project_id, started_at_unix_nano, bundle_id, turn_index);
-CREATE INDEX IF NOT EXISTS turn_metrics_project_dimensions_idx
-    ON turn_metrics(project_id, framework, provider, model, language, status);
-
-CREATE TABLE IF NOT EXISTS connectors (
-    endpoint_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    secret_ref TEXT NOT NULL,
-    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-    normalizer_version TEXT NOT NULL,
-    created_at_unix_nano INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS connectors_project_idx
-    ON connectors(project_id, provider, enabled);
-
-CREATE TABLE IF NOT EXISTS delivery_receipts (
-    receipt_id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-    endpoint_id TEXT NOT NULL REFERENCES connectors(endpoint_id) ON DELETE CASCADE,
-    delivery_key_hmac TEXT NOT NULL CHECK (length(delivery_key_hmac) = 64),
-    body_sha256 TEXT NOT NULL CHECK (length(body_sha256) = 64),
-    event_type TEXT NOT NULL,
-    state TEXT NOT NULL,
-    first_received_at_unix_nano INTEGER NOT NULL,
-    completed_at_unix_nano INTEGER,
-    lease_until_unix_nano INTEGER,
-    attempt_count INTEGER NOT NULL CHECK (attempt_count >= 1),
-    bundle_id TEXT REFERENCES incidents(bundle_id) ON DELETE SET NULL,
-    canonical_sha256 TEXT,
-    failure_code TEXT,
-    UNIQUE(endpoint_id, delivery_key_hmac)
-);
-
-CREATE INDEX IF NOT EXISTS delivery_receipts_project_state_idx
-    ON delivery_receipts(project_id, state, first_received_at_unix_nano DESC);
-
-CREATE TABLE IF NOT EXISTS external_identities (
-    project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
-    endpoint_id TEXT NOT NULL REFERENCES connectors(endpoint_id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    key_kind TEXT NOT NULL,
-    value_hmac TEXT NOT NULL CHECK (length(value_hmac) = 64),
-    bundle_id TEXT NOT NULL REFERENCES incidents(bundle_id) ON DELETE CASCADE,
-    sensitivity TEXT NOT NULL,
-    created_at_unix_nano INTEGER NOT NULL,
-    PRIMARY KEY (project_id, endpoint_id, key_kind, value_hmac, bundle_id)
-);
-"""
-
-
-def _execute_sql_script(connection: sqlite3.Connection, script: str) -> None:
-    """Execute a static SQL script without sqlite3.executescript's implicit commit."""
-
-    pending: list[str] = []
-    for line in script.splitlines(keepends=True):
-        pending.append(line)
-        statement = "".join(pending)
-        if sqlite3.complete_statement(statement):
-            if statement.strip():
-                connection.execute(statement)
-            pending.clear()
-    if "".join(pending).strip():
-        raise StorageError("incident database schema script is incomplete")
 
 
 def _sha256(payload: bytes) -> str:
@@ -787,6 +788,32 @@ def _fsync_file(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def _default_catalog_path(data_dir: Path) -> Path:
+    return data_dir / "earshot.sqlite3"
+
+
+def describe_catalog_revision(
+    data_dir: str | Path, *, database_url: str | None = None
+) -> dict[str, object]:
+    """Report the catalog's schema revision without opening the store or writing.
+
+    The result has the head revision this binary ships, the catalog's revision
+    (``None`` before Alembic manages it) and a state: ``empty``, ``legacy``,
+    ``behind``, ``current`` or ``unsupported``. A SQLite catalog also reports its
+    ``user_version``; Postgres has none.
+    """
+
+    migrations = _storage_migrations()
+    if database_url is not None:
+        database = _storage_postgres().PostgresDatabase(database_url, pool_size=2)
+        try:
+            return migrations.current_postgres_revision(database)
+        finally:
+            database.close()
+    catalog = _default_catalog_path(Path(data_dir).expanduser().resolve())
+    return migrations.current_sqlite_revision(SQLiteDatabase(str(catalog)))
 
 
 def _load_or_create_instance_key(path: Path, *, allow_create: bool) -> bytes:
@@ -817,31 +844,75 @@ def _load_or_create_instance_key(path: Path, *, allow_create: bool) -> bytes:
     return value
 
 
-def _effective_expiry(bundle: IncidentBundle) -> str | None:
-    """Return the earliest retention deadline governing retained evidence.
-
-    A class-level TTL is relative to the immutable bundle creation timestamp. An
-    immutable bundle cannot selectively delete one class in place, so its most
-    restrictive captured-class deadline governs the complete artifact.
-    """
-
-    created = int(bundle.profile.manifest.created_at_unix_nano)
-    deadlines: list[int] = []
-    for policy in bundle.profile.privacy.capture_classes:
-        if not policy.captured or policy.retention is None:
-            continue
-        retention = policy.retention
-        if retention.expires_at_unix_nano is not None:
-            deadlines.append(int(retention.expires_at_unix_nano))
-        if retention.ttl_nano is not None:
-            deadlines.append(created + int(retention.ttl_nano))
-    return str(min(deadlines)) if deadlines else None
-
-
 def _not_expired_sql(column: str) -> str:
     """Build the indexed decimal-text comparison used at read boundaries."""
 
     return f"({column} IS NULL OR length({column}) > ? OR (length({column}) = ? AND {column} > ?))"
+
+
+# What a project owns; project deletion empties each, and only then marks the
+# project deleted (AC14.5). The call tables come last, in deletion order.
+_PROJECT_CALL_KEY_TABLES = (
+    "otlp_resources",
+    "call_key_generations",
+    "call_tombstones",
+    "otlp_counters",
+)
+_PROJECT_OWNED_TABLES = (
+    "incidents",
+    "delivery_receipts",
+    "external_identities",
+    "connectors",
+    "api_keys",
+    "turn_metrics",
+    "pending_object_deletions",
+    "pending_ingests",
+    "legacy_deletion_reviews",
+    "spans",
+    "call_traces",
+    "recordings",
+    "call_revisions",
+    "calls",
+    *_PROJECT_CALL_KEY_TABLES,
+    "pending_blob_deletions",
+)
+
+
+# Call revisions (FR-6) are incidents. A call's earlier revisions stay readable but
+# are superseded by its latest one, so turn metrics count each call once; and a
+# revision is never reaped on its own, only with its call (AC14.4).
+_CALL_REVISION_SQL = (
+    "EXISTS (SELECT 1 FROM call_revisions WHERE call_revisions.bundle_id = incidents.bundle_id)"
+)
+_SUPERSEDED_REVISION_SQL = (
+    "EXISTS (SELECT 1 FROM call_revisions JOIN calls "
+    "ON calls.project_id = call_revisions.project_id AND calls.call_id = call_revisions.call_id "
+    "WHERE call_revisions.bundle_id = incidents.bundle_id "
+    "AND call_revisions.revision <> calls.latest_revision)"
+)
+
+
+def _revision_call_id(connection: DatabaseConnection, bundle_id: str) -> str | None:
+    """The call whose revision this incident is, or ``None``."""
+
+    row = connection.execute(
+        "SELECT call_id FROM call_revisions WHERE bundle_id = ?", (bundle_id,)
+    ).fetchone()
+    return None if row is None else str(row["call_id"])
+
+
+def _expired_alone(connection: DatabaseConnection, bundle_id: str, expiry: str | None) -> bool:
+    """Whether an incident's own retention deadline has passed and it expires alone.
+
+    A call revision never expires alone, not even when read: it expires with its
+    call, once the call's latest revision has (AC14.4).
+    """
+
+    return (
+        expiry is not None
+        and _decimal_lte(expiry, str(time.time_ns()))
+        and _revision_call_id(connection, bundle_id) is None
+    )
 
 
 def _expired_sql(column: str) -> str:
@@ -853,37 +924,33 @@ def _expired_sql(column: str) -> str:
     )
 
 
-def _export_allowed(bundle: IncidentBundle, destination: str) -> bool:
-    for policy in bundle.profile.privacy.capture_classes:
-        if not policy.captured or policy.export is None:
-            continue
-        export = policy.export
-        if not export.allowed:
-            return False
-        if export.destinations and destination not in export.destinations:
-            return False
-    return True
+def _sqlite_lock_contention(error: sqlite3.OperationalError) -> bool:
+    """Whether SQLite refused for lock contention (``SQLITE_BUSY`` or ``SQLITE_LOCKED``)."""
 
-
-def _evidence_columns(evidence: Any | None) -> tuple[str | None, str | None, str | None]:
-    if evidence is None:
-        return None, None, None
-    return evidence.source, evidence.confidence, evidence.availability
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+    return "locked" in str(error)
 
 
 def _decimal_lte(value: str, other: str) -> bool:
     return len(value) < len(other) or (len(value) == len(other) and value <= other)
 
 
-def _encode_cursor(record: IncidentRecord) -> str:
-    raw = json.dumps(
-        [record.ingested_at_unix_nano, record.bundle_id],
-        separators=(",", ":"),
-    ).encode("utf-8")
+def encode_page_cursor(unix_nano: int | str, identifier: str) -> str:
+    """A keyset page cursor: the last item's ``(time, ID)`` sort key, opaque to clients."""
+
+    raw = json.dumps([str(unix_nano), identifier], separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _decode_cursor(cursor: str) -> tuple[int, str]:
+def _encode_cursor(record: IncidentRecord) -> str:
+    return encode_page_cursor(record.ingested_at_unix_nano, record.bundle_id)
+
+
+def decode_page_cursor(cursor: str) -> tuple[int, str]:
+    """The ``(time, ID)`` of an ``encode_page_cursor`` value; ``InvalidCursorError`` else."""
+
     try:
         if not isinstance(cursor, str) or not cursor or len(cursor) > _MAX_CURSOR_ENCODED_CHARS:
             raise ValueError
@@ -896,13 +963,18 @@ def _decode_cursor(cursor: str) -> tuple[int, str]:
             not isinstance(value, list)
             or len(value) != 2
             or not isinstance(value[0], str)
-            or not value[0].isdigit()
+            # ASCII digits only: ``isdigit`` and ``int`` also take other scripts' digits.
+            or not (value[0].isascii() and value[0].isdigit())
             or (len(value[0]) > 1 and value[0].startswith("0"))
             or not isinstance(value[1], str)
             or not value[1]
             or len(value[1]) > 256
+            # An ID is UTF-8 text without NUL, as every stored ID is; JSON can carry a
+            # lone surrogate (not encodable) or a NUL (refused by Postgres text).
+            or "\x00" in value[1]
         ):
             raise ValueError
+        value[1].encode("utf-8")
         cursor_time = int(value[0])
         if cursor_time > _SQLITE_INT64_MAX:
             raise ValueError
@@ -915,10 +987,10 @@ def _decode_cursor(cursor: str) -> tuple[int, str]:
         UnicodeEncodeError,
         RecursionError,
     ) as error:
-        raise InvalidCursorError("invalid incident pagination cursor") from error
+        raise InvalidCursorError("invalid pagination cursor") from error
 
 
-def _record(row: sqlite3.Row) -> IncidentRecord:
+def _record(row: Row) -> IncidentRecord:
     return IncidentRecord(
         project_id=row["project_id"],
         bundle_id=row["bundle_id"],
@@ -935,7 +1007,7 @@ def _record(row: sqlite3.Row) -> IncidentRecord:
     )
 
 
-def _turn_fact(row: sqlite3.Row) -> TurnFact:
+def _turn_fact(row: Row) -> TurnFact:
     return TurnFact(
         project_id=row["project_id"],
         bundle_id=row["bundle_id"],
@@ -1005,7 +1077,17 @@ def _turn_fact(row: sqlite3.Row) -> TurnFact:
     )
 
 
-def _connector_record(row: sqlite3.Row) -> ConnectorRecord:
+def _project_record(row: Row) -> ProjectRecord:
+    return ProjectRecord(
+        project_id=row["project_id"],
+        display_name=row["display_name"],
+        created_at_unix_nano=str(row["created_at_unix_nano"]),
+        capture_preset=row["capture_preset"],
+        lifecycle_state=row["lifecycle_state"],
+    )
+
+
+def _connector_record(row: Row) -> ConnectorRecord:
     return ConnectorRecord(
         endpoint_id=row["endpoint_id"],
         project_id=row["project_id"],
@@ -1124,28 +1206,66 @@ class ContentAddressedObjects:
 
 
 class IncidentStore:
-    """Thread/process-safe facade over SQLite and content-addressed evidence.
+    """Thread/process-safe facade over the catalog and its canonical artifacts.
 
-    Purge uses SQLite ``secure_delete``, WAL checkpoint/truncation, ``VACUUM``,
+    On SQLite, purge uses ``secure_delete``, WAL checkpoint/truncation, ``VACUUM``,
     fsync, and CAS unlinking. This removes ordinary live/free-page remnants but is
     necessarily best effort: copy-on-write filesystems, SSD wear levelling,
-    snapshots, and external backups can retain historical blocks. Deployments that
-    require cryptographic erasure should encrypt evidence with disposable keys.
+    snapshots, and external backups can retain historical blocks. On Postgres,
+    purge deletes the rows (artifact bytes included) and nothing more: the server
+    reclaims the pages later (autovacuum), and its WAL, replicas and backups keep
+    copies until they age out. Deployments that require cryptographic erasure
+    should encrypt evidence with disposable keys.
     """
 
-    def __init__(self, data_dir: str | Path, *, database_path: str | Path | None = None):
-        self.data_dir = Path(data_dir).expanduser().resolve()
-        self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.data_dir, 0o700)
-        self._database_uri = False
-        self._anchor_connection: sqlite3.Connection | None = None
+    def __init__(
+        self,
+        data_dir: str | Path | None = None,
+        *,
+        database_path: str | Path | None = None,
+        database_url: str | None = None,
+        correlation_key: bytes | None = None,
+        auto_migrate: bool = True,
+        clock: Clock | None = None,
+    ):
+        # Fail before touching the filesystem when the storage runtime is missing.
+        self._migrations = _storage_migrations()
+        self._auto_migrate = auto_migrate
+        # The store's time source for its own schedules (credential verdicts,
+        # usage records, compaction); tests inject a ``ManualClock``.
+        self._clock: Clock = clock or SystemClock()
+        self._credential_verdicts = CredentialVerdictCache(clock=self._clock)
+        self._authentication_lock = threading.Lock()
+        self._secret_verifications = 0
+        self._verdict_cache_hits = 0
+        self._key_use_recorded: dict[str, int] = {}
+        self._last_compaction_monotonic: int | None = None
         self._write_lock = threading.RLock()
         self._compaction_thread_lock = threading.Lock()
         self._mutation_depth = 0
+        self._mutation_thread: int | None = None
+        self._mutation_deadline: float | None = None
+        self._timing_lock = threading.Lock()
+        self._mutation_timings: dict[str, MutationTimingStats] = {}
         self._closed = False
         self._process_owner_pid = os.getpid()
         self._fork_reset_error: str | None = None
         self._identity_key = b""
+        self._anchor_connection: sqlite3.Connection | None = None
+        self._database_uri = False
+        if database_url is not None:
+            if database_path is not None:
+                raise ValueError("database_path and database_url are alternatives")
+            self._open_postgres(data_dir, database_url, correlation_key)
+            return
+        if correlation_key is not None:
+            raise ValueError("a SQLite store keeps its correlation key in its data directory")
+        if data_dir is None:
+            raise ValueError("a SQLite store needs a data directory")
+        self._catalog_artifacts = False
+        self.data_dir = Path(data_dir).expanduser().resolve()
+        self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(self.data_dir, 0o700)
         self._lock_path = self.data_dir / ".store.lock"
         self._compaction_lock_path = self.data_dir / ".compaction.lock"
         if database_path is not None and str(database_path) == ":memory:":
@@ -1153,20 +1273,17 @@ class IncidentStore:
             # plus an anchor keeps one logical database alive across those calls.
             self.database_path = f"file:earshot-{uuid.uuid4().hex}?mode=memory&cache=shared"
             self._database_uri = True
-            self._anchor_connection = sqlite3.connect(
-                self.database_path,
-                timeout=10.0,
-                uri=True,
-            )
-            self._configure_connection(self._anchor_connection)
+            self._database = SQLiteDatabase(self.database_path, uri=True)
+            self._anchor_connection = self._database.connect()
         else:
             database = (
                 Path(database_path).expanduser().resolve()
                 if database_path is not None
-                else self.data_dir / "earshot.sqlite3"
+                else _default_catalog_path(self.data_dir)
             )
             database.parent.mkdir(parents=True, exist_ok=True)
             self.database_path = str(database)
+            self._database = SQLiteDatabase(self.database_path)
         self.objects = ContentAddressedObjects(self.data_dir / "objects" / "sha256")
         self._lock_handle = _open_advisory_lock(self._lock_path)
         try:
@@ -1175,7 +1292,7 @@ class IncidentStore:
             self._lock_handle.close()
             raise
         try:
-            with self._mutation():
+            with self._mutation("open"):
                 existing_catalog = not self._database_uri and self._existing_catalog_is_valid()
                 existing_objects = self.objects.has_objects()
                 existing_correlation_state = self._catalog_has_correlation_state()
@@ -1200,6 +1317,70 @@ class IncidentStore:
             self._compaction_lock_handle.close()
             raise
 
+    def _open_postgres(
+        self,
+        data_dir: str | Path | None,
+        database_url: str,
+        correlation_key: bytes | None,
+    ) -> None:
+        """Open a Postgres catalog. Nothing is written to the local filesystem.
+
+        Artifacts are catalog rows, the write lock is ``K_write`` and the
+        correlation key comes from configuration (AC1.7), so ``data_dir`` is only
+        recorded, never created.
+        """
+
+        postgres = _storage_postgres()
+        self._catalog_artifacts = True
+        self.data_dir = None if data_dir is None else Path(data_dir).expanduser().resolve()
+        self.database_path = None
+        self.objects = None
+        key = resolve_correlation_key() if correlation_key is None else correlation_key
+        if len(key) != 32:
+            raise CorrelationKeyRequiredError("the correlation key must be 32 bytes")
+        self._database = postgres.PostgresDatabase(database_url)
+        try:
+            with self._mutation("open"):
+                self._initialize()
+                self._identity_key = self._bind_correlation_key(key)
+            self._reconcile()
+            with _INCIDENT_STORES_LOCK:
+                _INCIDENT_STORES.add(self)
+        except BaseException:
+            self._database.close()
+            raise
+
+    def _bind_correlation_key(self, key: bytes) -> bytes:
+        """Record the key's ID on first open, and refuse any other key afterwards.
+
+        Only a one-way key ID is stored. A catalog that already holds correlated
+        rows but no key ID cannot prove which key wrote them, so it is refused
+        rather than silently bound to whatever key is configured now.
+        """
+
+        key_id = _correlation_key_id(key)
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM earshot_meta WHERE key = ?", (_CORRELATION_KEY_ID_META,)
+            ).fetchone()
+            if row is None:
+                if self._catalog_has_correlation_state():
+                    raise CorrelationKeyMismatchError(
+                        "the catalog holds correlated data but no correlation key ID; "
+                        "it cannot be matched to the configured key"
+                    )
+                connection.begin_write()
+                connection.execute(
+                    "INSERT INTO earshot_meta(key, value) VALUES (?, ?)",
+                    (_CORRELATION_KEY_ID_META, key_id),
+                )
+            elif row["value"] != key_id:
+                raise CorrelationKeyMismatchError(
+                    "the configured correlation key is not the key this catalog was "
+                    "written with; configure the original key"
+                )
+        return key
+
     def _reset_after_fork(self) -> None:
         """Give a child process its own thread and advisory-lock state."""
 
@@ -1209,7 +1390,22 @@ class IncidentStore:
         self._write_lock = threading.RLock()
         self._compaction_thread_lock = threading.Lock()
         self._mutation_depth = 0
+        self._mutation_thread = None
+        self._mutation_deadline = None
+        self._timing_lock = threading.Lock()
+        # Another thread may have held these at fork; the child starts clean.
+        self._authentication_lock = threading.Lock()
+        self._credential_verdicts = CredentialVerdictCache(clock=self._clock)
         self._process_owner_pid = child_pid
+        if self._catalog_artifacts:
+            # Postgres: drop the inherited pool and lock connection (never closing
+            # the parent's sessions); the child connects afresh on first use.
+            if self._closed:
+                self._fork_reset_error = "incident store is closed"
+                return
+            self._database.reset_after_fork()
+            self._fork_reset_error = None
+            return
         if self._closed:
             self._fork_reset_error = "incident store is closed"
             with contextlib.suppress(OSError):
@@ -1266,6 +1462,13 @@ class IncidentStore:
             raise StorageError(self._fork_reset_error)
 
     def _existing_catalog_is_valid(self) -> bool:
+        """Whether the SQLite catalog file exists, passes ``quick_check`` and has incidents.
+
+        It guards the file CAS against a lost catalog file, so only SQLite runs it:
+        a Postgres catalog has no file to lose and keeps its artifacts inside.
+        """
+
+        self._database.dialect.only_sqlite("catalog-file-validity-probe")
         if self._database_uri:
             return True
         database = Path(self.database_path)
@@ -1288,6 +1491,20 @@ class IncidentStore:
             return False
 
     def _catalog_has_correlation_state(self) -> bool:
+        if self._catalog_artifacts:
+            # Postgres: the schema is current (this runs after migration) and any
+            # read failure propagates, so the open fails closed.
+            with self._connect() as connection:
+                return any(
+                    connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+                    for table in (
+                        "incidents",
+                        "delivery_receipts",
+                        "external_identities",
+                        "tombstones",
+                    )
+                )
+        self._database.dialect.only_sqlite("catalog-file-correlation-probe")
         if self._database_uri:
             return False
         database = Path(self.database_path)
@@ -1329,46 +1546,139 @@ class IncidentStore:
         return False
 
     @contextlib.contextmanager
-    def _mutation(self) -> Iterator[None]:
-        """Serialize filesystem+database mutations across threads and processes."""
+    def _mutation(self, operation: str, *, budget_s: float | None = None) -> Iterator[None]:
+        """Serialize filesystem+database mutations across threads and processes.
+
+        The outermost mutation records how long it waited for the locks and how
+        long it held them under ``operation`` (``mutation_timing_stats``), and a
+        hold longer than ``SLOW_MUTATION_SECONDS`` logs ``EARSHOT_SLOW_MUTATION``.
+
+        Without ``budget_s`` a mutation waits for its locks as long as it takes.
+        With it, the total wait for every lock is bounded: the in-process lock,
+        then ``K_write`` (Postgres) or ``.store.lock`` (SQLite), then on SQLite the
+        database's own write lock, whose ``busy_timeout`` is clamped to what is
+        left. Past the budget it raises ``StorageBusyError`` and writes nothing.
+        """
 
         self._ensure_process_ownership()
-        with self._write_lock:
+        started = time.perf_counter()
+        deadline = None if budget_s is None else started + budget_s
+        if deadline is None:
+            self._write_lock.acquire()
+        elif not self._write_lock.acquire(timeout=max(0.0, deadline - started)):
+            raise StorageBusyError(f"{operation}: the store is busy in this process")
+        try:
             if self._closed:
                 raise StorageError("incident store is closed")
-            outermost = self._mutation_depth == 0
-            if outermost and fcntl is not None:
-                fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_EX)
-            self._mutation_depth += 1
-            try:
+            if self._mutation_depth > 0:
+                # Nested: the outermost mutation already holds every lock.
+                self._mutation_depth += 1
+                try:
+                    yield
+                finally:
+                    self._mutation_depth -= 1
+                return
+            with self._store_write_lock(operation, deadline):
+                acquired = time.perf_counter()
+                self._mutation_depth += 1
+                self._mutation_thread = threading.get_ident()
+                self._mutation_deadline = deadline
+                try:
+                    yield
+                except sqlite3.OperationalError as error:
+                    if deadline is not None and _sqlite_lock_contention(error):
+                        raise StorageBusyError(
+                            f"{operation}: the SQLite write lock stayed busy past the budget"
+                        ) from error
+                    raise
+                finally:
+                    self._mutation_deadline = None
+                    self._mutation_thread = None
+                    self._mutation_depth -= 1
+                    released = time.perf_counter()
+                    self._record_mutation_timing(operation, acquired - started, released - acquired)
+        finally:
+            self._write_lock.release()
+
+    @contextlib.contextmanager
+    def _store_write_lock(self, operation: str, deadline: float | None) -> Iterator[None]:
+        """The cross-process write lock: ``K_write`` on Postgres, ``.store.lock`` on SQLite."""
+
+        if self._catalog_artifacts:
+            # Postgres: K_write, held across every transaction of this mutation.
+            with self._database.write_lock(deadline=deadline):
                 yield
-            finally:
-                self._mutation_depth -= 1
-                if outermost and fcntl is not None:
-                    fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_UN)
+            return
+        if fcntl is not None:
+            self._lock_store_file(operation, deadline)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(self._lock_handle.fileno(), fcntl.LOCK_UN)
 
-    @staticmethod
-    def _configure_connection(connection: sqlite3.Connection) -> None:
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 10000")
-        connection.execute("PRAGMA synchronous = FULL")
-        connection.execute("PRAGMA secure_delete = ON")
-        connection.execute("PRAGMA temp_store = MEMORY")
-        connection.execute("PRAGMA wal_autocheckpoint = 1000")
-        connection.execute("PRAGMA journal_size_limit = 0")
+    def _lock_store_file(self, operation: str, deadline: float | None) -> None:
+        descriptor = self._lock_handle.fileno()
+        if deadline is None:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            return
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                remaining = deadline - time.perf_counter()
+                if remaining <= 0:
+                    raise StorageBusyError(
+                        f"{operation}: another process holds the store write lock"
+                    ) from None
+                time.sleep(min(LOCK_POLL_SECONDS, remaining))
 
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            self.database_path,
-            timeout=10.0,
-            uri=self._database_uri,
-        )
-        self._configure_connection(connection)
+    def _record_mutation_timing(self, operation: str, wait: float, hold: float) -> None:
+        with self._timing_lock:
+            previous = self._mutation_timings.get(operation)
+            self._mutation_timings[operation] = MutationTimingStats(
+                count=1 if previous is None else previous.count + 1,
+                last_wait_seconds=wait,
+                last_hold_seconds=hold,
+                max_wait_seconds=wait if previous is None else max(previous.max_wait_seconds, wait),
+                max_hold_seconds=hold if previous is None else max(previous.max_hold_seconds, hold),
+            )
+        if hold > SLOW_MUTATION_SECONDS:
+            _LOGGER.warning(
+                "EARSHOT_SLOW_MUTATION: %s held the store write lock for %.3f s "
+                "(waited %.3f s for it)",
+                operation,
+                hold,
+                wait,
+            )
+
+    def mutation_timing_stats(self) -> dict[str, MutationTimingStats]:
+        """Lock wait and hold durations of this store's mutations, by operation name.
+
+        Only outermost mutations are counted; a nested one runs inside its
+        caller's hold. The names are fixed by the code, so the map stays small.
+        """
+
+        with self._timing_lock:
+            return dict(self._mutation_timings)
+
+    def _connect(self) -> DatabaseConnection:
+        connection = self._database.connect()
+        deadline = self._mutation_deadline
+        if (
+            deadline is not None
+            and not self._catalog_artifacts
+            and self._mutation_thread == threading.get_ident()
+        ):
+            # A budgeted mutation waits for SQLite's write lock only as long as
+            # its budget has left (the connection default is 10 s).
+            remaining_ms = max(0, int((deadline - time.perf_counter()) * 1000))
+            connection.execute(f"PRAGMA busy_timeout = {remaining_ms}")
         return connection
 
     @contextlib.contextmanager
-    def _listing_connection(self) -> Iterator[sqlite3.Connection]:
+    def _listing_connection(self) -> Iterator[DatabaseConnection]:
         """Open a listing snapshot with the locking its SQLite mode requires."""
 
         # WAL readers do not block file-backed writers, so only hold the local
@@ -1386,241 +1696,27 @@ class IncidentStore:
                 connection.close()
 
     def _initialize(self) -> None:
-        with self._mutation(), self._connect() as connection:
-            version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if version > _SCHEMA_VERSION:
-                raise StorageError("incident database schema is newer than this binary")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("BEGIN IMMEDIATE")
-            if version < 19:
-                # Listing scans in result order and filters expiry as a residual
-                # predicate. The expiry-first indexes forced a sort across live
-                # rows and added write work without a remaining query owner.
-                connection.execute("DROP INDEX IF EXISTS incidents_project_expiry_idx")
-                connection.execute("DROP INDEX IF EXISTS incidents_project_no_expiry_idx")
-            # Project ownership is needed by later migrations (notably scoped
-            # tombstones), so establish the authorization root before inspecting
-            # or rebuilding any legacy table that now references it.
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS projects (
-                    project_id TEXT PRIMARY KEY,
-                    display_name TEXT NOT NULL,
-                    created_at_unix_nano INTEGER NOT NULL,
-                    lifecycle_state TEXT NOT NULL DEFAULT 'active'
-                        CHECK (lifecycle_state IN ('active', 'deleting', 'deleted')),
-                    delete_started_at_unix_nano INTEGER,
-                    deleted_at_unix_nano INTEGER
+        """Bring the catalog schema to the head revision, or refuse to open it."""
+
+        with self._mutation("migrate"):
+            if self._catalog_artifacts:
+                self._migrations.prepare_postgres_catalog(
+                    self._database,
+                    auto_migrate=self._auto_migrate,
                 )
-                """
+                self._migrations.require_postgres_head_shape(self._database)
+                return
+            self._migrations.prepare_sqlite_catalog(
+                self._database,
+                auto_migrate=self._auto_migrate,
             )
-            project_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(projects)")
-            }
-            for column, declaration in {
-                "lifecycle_state": (
-                    "TEXT NOT NULL DEFAULT 'active' "
-                    "CHECK (lifecycle_state IN ('active', 'deleting', 'deleted'))"
-                ),
-                "delete_started_at_unix_nano": "INTEGER",
-                "deleted_at_unix_nano": "INTEGER",
-            }.items():
-                if column not in project_columns:
-                    connection.execute(f"ALTER TABLE projects ADD COLUMN {column} {declaration}")
-            legacy_deleting_projects = (
-                connection.execute(
-                    "SELECT project_id FROM projects WHERE lifecycle_state = 'deleting'"
-                ).fetchall()
-                if version < 13
-                else ()
-            )
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO projects(
-                    project_id, display_name, created_at_unix_nano
-                ) VALUES ('default', 'Default', 0);
-                """
-            )
-            incidents_exists = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'incidents'"
-            ).fetchone()
-            columns = (
-                {row["name"] for row in connection.execute("PRAGMA table_info(incidents)")}
-                if incidents_exists
-                else set()
-            )
-            additions = {
-                "project_id": "TEXT NOT NULL DEFAULT 'default'",
-                "expires_at_unix_nano": "TEXT",
-                "export_allowed_local_api": (
-                    "INTEGER NOT NULL DEFAULT 1 CHECK (export_allowed_local_api IN (0, 1))"
-                ),
-                "export_allowed_local_cli": (
-                    "INTEGER NOT NULL DEFAULT 1 CHECK (export_allowed_local_cli IN (0, 1))"
-                ),
-            }
-            if incidents_exists:
-                for column, declaration in additions.items():
-                    if column not in columns:
-                        connection.execute(
-                            f"ALTER TABLE incidents ADD COLUMN {column} {declaration}"
-                        )
-                session_index = connection.execute(
-                    "SELECT sql FROM sqlite_master "
-                    "WHERE type = 'index' AND name = 'incidents_session_idx'"
-                ).fetchone()
-                if session_index is not None and "project_id" not in str(session_index["sql"]):
-                    connection.execute("DROP INDEX incidents_session_idx")
-                for index_name in (
-                    "incidents_export_local_api_idx",
-                    "incidents_export_local_cli_idx",
-                ):
-                    destination_index = connection.execute(
-                        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
-                        (index_name,),
-                    ).fetchone()
-                    if destination_index is not None and "project_id" not in str(
-                        destination_index["sql"]
-                    ):
-                        connection.execute(f"DROP INDEX {index_name}")
-            analyses_columns = {
-                row["name"]: str(row["type"]).upper()
-                for row in connection.execute("PRAGMA table_info(analyses)")
-            }
-            if analyses_columns.get("generated_at_unix_nano") == "INTEGER":
-                if not connection.in_transaction:
-                    connection.execute("BEGIN IMMEDIATE")
-                connection.execute("ALTER TABLE analyses RENAME TO analyses_integer_time")
-                connection.execute(
-                    """
-                    CREATE TABLE analyses (
-                        bundle_id TEXT NOT NULL
-                            REFERENCES incidents(bundle_id) ON DELETE CASCADE,
-                        analyzer_version TEXT NOT NULL,
-                        input_digest TEXT NOT NULL,
-                        generated_at_unix_nano TEXT NOT NULL,
-                        output_json BLOB NOT NULL,
-                        PRIMARY KEY (bundle_id, analyzer_version, input_digest)
-                    )
-                    """
-                )
-                connection.execute(
-                    """
-                    INSERT INTO analyses (
-                        bundle_id, analyzer_version, input_digest,
-                        generated_at_unix_nano, output_json
-                    )
-                    SELECT
-                        bundle_id, analyzer_version, input_digest,
-                        CAST(generated_at_unix_nano AS TEXT), output_json
-                    FROM analyses_integer_time
-                    """
-                )
-                connection.execute("DROP TABLE analyses_integer_time")
-            tombstone_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(tombstones)")
-            }
-            if "bundle_id" in tombstone_columns:
-                if not connection.in_transaction:
-                    connection.execute("BEGIN IMMEDIATE")
-                legacy_tombstones = connection.execute(
-                    "SELECT bundle_id, purged_at_unix_nano FROM tombstones"
-                ).fetchall()
-                connection.execute("ALTER TABLE tombstones RENAME TO tombstones_plaintext")
-                connection.execute(
-                    """
-                    CREATE TABLE tombstones (
-                        bundle_id_sha256 TEXT PRIMARY KEY
-                            CHECK (length(bundle_id_sha256) = 64),
-                        project_id TEXT NOT NULL REFERENCES projects(project_id),
-                        purged_at_unix_nano INTEGER NOT NULL
-                    )
-                    """
-                )
-                connection.executemany(
-                    """
-                    INSERT INTO tombstones(
-                        bundle_id_sha256, project_id, purged_at_unix_nano
-                    ) VALUES (?, 'default', ?)
-                    """,
-                    (
-                        (_tombstone_key(row["bundle_id"]), row["purged_at_unix_nano"])
-                        for row in legacy_tombstones
-                    ),
-                )
-                connection.execute("DROP TABLE tombstones_plaintext")
-            elif tombstone_columns and "project_id" not in tombstone_columns:
-                if not connection.in_transaction:
-                    connection.execute("BEGIN IMMEDIATE")
-                connection.execute("ALTER TABLE tombstones RENAME TO tombstones_unscoped")
-                connection.execute(
-                    """
-                    CREATE TABLE tombstones (
-                        bundle_id_sha256 TEXT PRIMARY KEY
-                            CHECK (length(bundle_id_sha256) = 64),
-                        project_id TEXT NOT NULL REFERENCES projects(project_id),
-                        purged_at_unix_nano INTEGER NOT NULL
-                    )
-                    """
-                )
-                connection.execute(
-                    """
-                    INSERT INTO tombstones(
-                        bundle_id_sha256, project_id, purged_at_unix_nano
-                    )
-                    SELECT bundle_id_sha256, 'default', purged_at_unix_nano
-                    FROM tombstones_unscoped
-                    """
-                )
-                connection.execute("DROP TABLE tombstones_unscoped")
-            turn_metric_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(turn_metrics)")
-            }
-            if turn_metric_columns and not {
-                "stt_finalization_ms",
-                "language",
-            }.issubset(turn_metric_columns):
-                # Turn Facts are a fully rebuildable read model. Recreating the
-                # projection is safer than manufacturing evidence fields for old
-                # rows during a migration; reconciliation below repopulates it
-                # from the canonical Incident artifacts.
-                connection.execute("DROP TABLE turn_metrics")
-            _execute_sql_script(connection, _SCHEMA)
-            if version < 15 and connection.execute("SELECT 1 FROM tombstones LIMIT 1").fetchone():
-                # Catalogs created before the scrub generation cannot distinguish
-                # completed purges from interrupted physical cleanup.
-                self._mark_scrub_required(connection)
-            if legacy_deleting_projects:
-                connection.executemany(
-                    """
-                    INSERT INTO legacy_deletion_reviews(project_id, detected_at_unix_nano)
-                    VALUES (?, ?)
-                    ON CONFLICT(project_id) DO NOTHING
-                    """,
-                    ((row["project_id"], time.time_ns()) for row in legacy_deleting_projects),
-                )
-            if version < 17:
-                # Backfill the arrival sequence once so startup sweeps can exclude
-                # concurrent rows without counting or materializing the backlog.
-                connection.execute(
-                    """
-                    INSERT INTO incident_ingest_order(bundle_id)
-                    SELECT incidents.bundle_id
-                    FROM incidents
-                    LEFT JOIN incident_ingest_order AS ingest_order
-                        ON ingest_order.bundle_id = incidents.bundle_id
-                    WHERE ingest_order.bundle_id IS NULL
-                    ORDER BY incidents.rowid
-                    """
-                )
-            connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-            connection.commit()
+            self._migrations.require_sqlite_head_shape(self._database)
         self._harden_database_permissions()
         if not self._database_uri:
             _fsync_directory(Path(self.database_path).parent)
 
     def _harden_database_permissions(self) -> None:
-        if self._database_uri:
+        if self._database_uri or self._catalog_artifacts:
             return
         database = Path(self.database_path)
         for path in (database, Path(f"{database}-wal"), Path(f"{database}-shm")):
@@ -1628,64 +1724,29 @@ class IncidentStore:
                 os.chmod(path, 0o600)
 
     def _reconcile(self) -> None:
-        """Repair derived indexes without guessing whether unreferenced evidence is disposable."""
+        """Recover interrupted writes and honor retention at open; never re-project.
 
-        from .codec import IncidentCodecError, decode_incident_protobuf
+        Every step here is bounded by recovery or retention work, not by the size
+        of the catalog. Incidents whose projections are older than this release
+        (``projections_pending``) are re-projected later by ``reproject_stale``,
+        which the server runs in the background once it is serving (AC1.10).
+        """
 
-        with self._mutation():
-            self.objects.cleanup_temporary_files()
+        if not self._catalog_artifacts:
+            with self._mutation("startup_cleanup_temporary_files"):
+                self.objects.cleanup_temporary_files()
         while True:
-            with self._mutation():
+            with self._mutation("startup_recover_ingests"):
                 recovered_ingests = self._cleanup_pending_ingests_locked(
                     limit=_STARTUP_EXPIRED_PURGE_BATCH_SIZE
                 )
             if recovered_ingests < _STARTUP_EXPIRED_PURGE_BATCH_SIZE:
                 break
-        # Honor indexed retention before decoding artifacts. Expiry cleanup uses
+        # Honor indexed retention before anything is served. Expiry cleanup uses
         # bounded lock intervals so a startup backlog does not monopolize a store
         # shared with already-running workers.
         self._purge_expired_for_reconciliation(str(time.time_ns()))
-        with self._mutation(), self._connect() as connection:
-            decode_now = str(time.time_ns())
-            rows = connection.execute(
-                "SELECT bundle_id, object_digest FROM incidents WHERE "
-                + _not_expired_sql("expires_at_unix_nano")
-                + " ORDER BY bundle_id",
-                (len(decode_now), len(decode_now), decode_now),
-            ).fetchall()
-            connection.execute("BEGIN IMMEDIATE")
-            for row in rows:
-                payload = self.objects.get(row["object_digest"])
-                try:
-                    bundle = decode_incident_protobuf(payload)
-                except IncidentCodecError as error:
-                    raise ArtifactCorruptionError(
-                        "stored incident cannot be decoded during reconciliation"
-                    ) from error
-                if bundle.profile.manifest.bundle_id != row["bundle_id"]:
-                    raise ArtifactCorruptionError(
-                        "stored incident identity does not match its index"
-                    )
-                self._replace_graph_projection(connection, bundle)
-                connection.execute(
-                    """
-                        UPDATE incidents
-                        SET expires_at_unix_nano = ?,
-                            export_allowed_local_api = ?,
-                            export_allowed_local_cli = ?
-                        WHERE bundle_id = ?
-                        """,
-                    (
-                        _effective_expiry(bundle),
-                        int(_export_allowed(bundle, "local_api")),
-                        int(_export_allowed(bundle, "local_cli")),
-                        row["bundle_id"],
-                    ),
-                )
-            connection.commit()
-        # The decode pass may have backfilled deadlines for a v1 database.
-        self._purge_expired_for_reconciliation(str(time.time_ns()))
-        with self._mutation():
+        with self._mutation("startup_scrub_check"):
             scrub_required = self._scrub_required_locked()
         if scrub_required:
             # A process may have crashed after logical deletion/CAS unlink but
@@ -1693,17 +1754,215 @@ class IncidentStore:
             # Keep SQLite compaction outside the cross-process mutation lock.
             try:
                 self._scrub_deleted_pages(skip_if_current=True)
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, *DATABASE_ERRORS) as error:
                 raise StorageError("artifact purge requires retry") from error
         self._harden_database_permissions()
 
+    def projections_pending(self) -> int:
+        """How many incidents still have projections from an older release.
+
+        They are readable, but their graph rows, turn facts, and expiry and export
+        columns may be missing or out of date until ``reproject_stale`` reaches
+        them. Fresh ingests are always current. The count uses an index.
+        """
+
+        self._ensure_process_ownership()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) FROM incidents "
+                "WHERE projection_version IS NULL OR projection_version < ?",
+                (INCIDENT_PROJECTION_VERSION,),
+            ).fetchone()
+        return int(row[0])
+
+    def reproject_stale(
+        self,
+        *,
+        limit: int = REPROJECTION_BATCH_SIZE,
+        after: str | None = None,
+    ) -> ReprojectionBatch:
+        """Re-project up to ``limit`` stale incidents, in bundle order after ``after``.
+
+        Artifacts are read, decoded and analysed without the write lock; one
+        short mutation then writes the batch, skipping any incident that was
+        purged, replaced or re-projected in the meantime. An incident whose
+        artifact cannot be read, decoded or analysed stays stale and is named in
+        ``failed``; it never holds up the others. Expired incidents are left to
+        the retention reaper. ``resume_after`` continues this pass and is
+        ``None`` once the pass has reached the last stale incident.
+        """
+
+        from .codec import decode_incident_protobuf
+
+        if not 1 <= limit <= MAX_EXPIRED_PURGE_BATCH_SIZE:
+            raise ValueError(f"limit must be between 1 and {MAX_EXPIRED_PURGE_BATCH_SIZE}")
+        self._ensure_process_ownership()
+        now = str(time.time_ns())
+        parameters: tuple[object, ...] = (INCIDENT_PROJECTION_VERSION, len(now), len(now), now)
+        cursor_filter = ""
+        if after is not None:
+            cursor_filter = " AND bundle_id > ?"
+            parameters += (after,)
+        computed: list[tuple[str, ProjectionRows]] = []
+        failed: list[str] = []
+        failure_kinds: set[str] = set()
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT bundle_id, project_id, object_digest FROM incidents "
+                "WHERE (projection_version IS NULL OR projection_version < ?) AND "
+                + _not_expired_sql("expires_at_unix_nano")
+                + cursor_filter
+                + " ORDER BY bundle_id LIMIT ?",
+                (*parameters, limit),
+            ).fetchall()
+            for row in rows:
+                try:
+                    payload = self._read_artifact(connection, row["object_digest"])
+                    bundle = decode_incident_protobuf(payload)
+                    if bundle.profile.manifest.bundle_id != row["bundle_id"]:
+                        raise ArtifactCorruptionError(
+                            "stored incident identity does not match its index"
+                        )
+                    projection = compute_projection_rows(
+                        bundle, row["project_id"], canonical_payload=payload
+                    )
+                except DATABASE_ERRORS:
+                    raise
+                except Exception as error:
+                    # This incident cannot be projected; the rest of the batch can.
+                    failed.append(row["bundle_id"])
+                    failure_kinds.add(type(error).__name__)
+                    continue
+                computed.append((row["object_digest"], projection))
+        reprojected = 0
+        if computed:
+            with self._mutation("reproject_stale"), self._connect() as connection:
+                connection.begin_write()
+                bundle_ids = [projection.bundle_id for _, projection in computed]
+                current: dict[str, tuple[str, int | None]] = {}
+                for offset in range(0, len(bundle_ids), _SQLITE_SAFE_BIND_LIMIT):
+                    chunk = bundle_ids[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
+                    placeholders = ", ".join("?" for _ in chunk)
+                    current.update(
+                        (row["bundle_id"], (row["object_digest"], row["projection_version"]))
+                        for row in connection.execute(
+                            "SELECT bundle_id, object_digest, projection_version "
+                            f"FROM incidents WHERE bundle_id IN ({placeholders})",
+                            chunk,
+                        ).fetchall()
+                    )
+                # Skip anything purged, replaced or re-projected since it was read.
+                still_stale = [
+                    projection
+                    for digest, projection in computed
+                    if projection.bundle_id in current
+                    and current[projection.bundle_id][0] == digest
+                    and (
+                        current[projection.bundle_id][1] is None
+                        or current[projection.bundle_id][1] < INCIDENT_PROJECTION_VERSION
+                    )
+                ]
+                write_projection_rows(connection, still_stale)
+                connection.commit()
+                reprojected = len(still_stale)
+        if failed:
+            _LOGGER.warning(
+                "EARSHOT_PROJECTION_FAILED: %d stale incidents could not be re-projected "
+                "(%s); they stay pending",
+                len(failed),
+                ", ".join(sorted(failure_kinds)),
+            )
+        return ReprojectionBatch(
+            reprojected=reprojected,
+            failed=tuple(failed),
+            resume_after=rows[-1]["bundle_id"] if len(rows) == limit else None,
+        )
+
+    def mark_projections_stale(self) -> int:
+        """Mark every incident's projections stale, so the next pass rebuilds them all.
+
+        An operator tool: after restoring a backup, or to repair projections lost
+        in some other way, it makes re-projection verify every artifact's digest
+        and identity and rebuild every projected row. Returns how many incidents.
+        """
+
+        with self._mutation("mark_projections_stale"), self._connect() as connection:
+            connection.begin_write()
+            marked = connection.execute("UPDATE incidents SET projection_version = NULL").rowcount
+            connection.commit()
+        return int(marked)
+
+    def converge_projections(
+        self,
+        *,
+        batch_size: int = REPROJECTION_BATCH_SIZE,
+        time_budget_seconds: float | None = None,
+    ) -> ProjectionConvergence:
+        """Make one full pass of ``reproject_stale`` over every stale incident.
+
+        This is the path for a process without the server's background task (the
+        CLI). With ``time_budget_seconds`` it stops after the batch that crosses
+        the budget; ``pending`` says what is left either way.
+        """
+
+        if self.projections_pending() == 0:
+            return ProjectionConvergence(reprojected=0, failed=(), pending=0)
+        deadline = (
+            None if time_budget_seconds is None else time.perf_counter() + time_budget_seconds
+        )
+        reprojected = 0
+        failed: list[str] = []
+        after: str | None = None
+        while True:
+            batch = self.reproject_stale(limit=batch_size, after=after)
+            reprojected += batch.reprojected
+            failed.extend(batch.failed)
+            after = batch.resume_after
+            if after is None or (deadline is not None and time.perf_counter() >= deadline):
+                break
+        return ProjectionConvergence(
+            reprojected=reprojected,
+            failed=tuple(failed),
+            pending=self.projections_pending(),
+        )
+
+    def _read_artifact(self, connection: DatabaseConnection, digest: str) -> bytes:
+        """Return verified canonical bytes: a CAS file on SQLite, a catalog row on Postgres."""
+
+        if not self._catalog_artifacts:
+            return self.objects.get(digest)
+        row = connection.execute(
+            "SELECT payload FROM artifacts WHERE digest = ?", (digest,)
+        ).fetchone()
+        if row is None:
+            raise ArtifactCorruptionError("incident artifact is missing")
+        payload = bytes(row["payload"])
+        if _sha256(payload) != digest:
+            raise ArtifactCorruptionError("incident artifact digest mismatch")
+        return payload
+
+    def _delete_artifact_files(self, digests: tuple[str, ...]) -> None:
+        """Unlink proven-dead CAS files. A Postgres catalog never journals any."""
+
+        if not digests:
+            return
+        if self._catalog_artifacts:
+            raise StorageError("a Postgres catalog has no artifact files to delete")
+        self.objects.delete_many(digests)
+
     def _purge_expired_for_reconciliation(self, now: str) -> int:
-        # The AUTOINCREMENT high-water mark defines an exact, finite startup
+        # The ingest-order high-water mark defines an exact, finite startup
         # workset without counting or materializing every expired row. New
         # arrivals receive larger sequence values and remain for the reaper.
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("startup_expiry_high_water"), self._connect() as connection:
             row = connection.execute(
-                "SELECT seq FROM sqlite_sequence WHERE name = 'incident_ingest_order'"
+                connection.dialect.sql(
+                    "ingest-order-high-water",
+                    sqlite="SELECT seq FROM sqlite_sequence WHERE name = 'incident_ingest_order'",
+                    # A sequence is never reused, so the largest stored value bounds
+                    # every row that exists now, exactly as the AUTOINCREMENT mark does.
+                    postgresql="SELECT COALESCE(MAX(sequence), 0) FROM incident_ingest_order",
+                )
             ).fetchone()
             high_water = int(row[0]) if row is not None else 0
 
@@ -1727,7 +1986,11 @@ class IncidentStore:
 
     def close(self) -> None:
         with self._write_lock, self._compaction_thread_lock:
-            if not self._closed:
+            if not self._closed and self._catalog_artifacts:
+                self._closed = True
+                if self._process_owner_pid == os.getpid():
+                    self._database.close()
+            elif not self._closed:
                 self._closed = True
                 if self._anchor_connection is not None:
                     self._anchor_connection.close()
@@ -1753,14 +2016,16 @@ class IncidentStore:
                     return False
                 with self._connect() as connection:
                     connection.execute("SELECT 1").fetchone()
+                if self._catalog_artifacts:
+                    return True
                 return os.access(self.objects.root, os.W_OK) and os.access(
                     self.objects.tmp, os.W_OK
                 )
-        except (StorageError, OSError, sqlite3.Error):
+        except (StorageError, OSError, *DATABASE_ERRORS):
             return False
 
     @staticmethod
-    def _require_active_project(connection: sqlite3.Connection, project_id: str) -> None:
+    def _require_active_project(connection: DatabaseConnection, project_id: str) -> None:
         row = connection.execute(
             "SELECT lifecycle_state FROM projects WHERE project_id = ?",
             (project_id,),
@@ -1793,7 +2058,7 @@ class IncidentStore:
         refused.
         """
 
-        with self._mutation():
+        with self._mutation("project_access_scope"):
             with self._connect() as connection:
                 self._require_active_project(connection, project_id)
             yield
@@ -1810,8 +2075,8 @@ class IncidentStore:
 
         if project_id == DEFAULT_PROJECT_ID:
             raise ValueError("the built-in default project cannot be deleted")
-        with self._mutation(), self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._mutation("begin_project_deletion"), self._connect() as connection:
+            connection.begin_write()
             project = connection.execute(
                 "SELECT lifecycle_state FROM projects WHERE project_id = ?",
                 (project_id,),
@@ -1835,8 +2100,8 @@ class IncidentStore:
     def mark_project_deleted(self, project_id: str) -> None:
         """Complete the lifecycle only after all owned data cleanup has succeeded."""
 
-        with self._mutation(), self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._mutation("mark_project_deleted"), self._connect() as connection:
+            connection.begin_write()
             project = connection.execute(
                 "SELECT lifecycle_state FROM projects WHERE project_id = ?",
                 (project_id,),
@@ -1848,17 +2113,7 @@ class IncidentStore:
                 return
             if project["lifecycle_state"] != "deleting":
                 raise StorageError("project deletion has not been started")
-            for table in (
-                "incidents",
-                "delivery_receipts",
-                "external_identities",
-                "connectors",
-                "api_keys",
-                "turn_metrics",
-                "pending_object_deletions",
-                "pending_ingests",
-                "legacy_deletion_reviews",
-            ):
+            for table in _PROJECT_OWNED_TABLES:
                 if connection.execute(
                     f"SELECT 1 FROM {table} WHERE project_id = ? LIMIT 1",
                     (project_id,),
@@ -1899,9 +2154,9 @@ class IncidentStore:
         if lifecycle == "deleted":
             return True
         try:
-            with self._mutation():
+            with self._mutation("delete_project_data"):
                 with self._connect() as connection:
-                    connection.execute("BEGIN IMMEDIATE")
+                    connection.begin_write()
                     rows = connection.execute(
                         """
                         SELECT bundle_id, object_digest FROM incidents
@@ -1940,21 +2195,46 @@ class IncidentStore:
                         is not None
                     )
                     if not incidents_remain:
+                        from .storage_call_purge import delete_project_calls
+
+                        # Calls and all their evidence, then parked traces (FR-14);
+                        # their blobs are journaled for deletion after commit.
+                        calls_remain = not delete_project_calls(
+                            connection,
+                            project_id,
+                            limit=batch_size,
+                            now=self._clock.unix_nano(),
+                        )
                         for table in (
                             "delivery_receipts",
                             "external_identities",
                             "connectors",
                             "api_keys",
                             "turn_metrics",
+                            # What only calls referred to, once no call is left.
+                            *(() if calls_remain else _PROJECT_CALL_KEY_TABLES),
                         ):
                             connection.execute(
-                                f"""
+                                connection.dialect.sql(
+                                    "batched-project-row-delete",
+                                    sqlite=f"""
                                 DELETE FROM {table}
                                 WHERE rowid IN (
                                     SELECT rowid FROM {table}
                                     WHERE project_id = ? LIMIT ?
                                 )
                                 """,
+                                    # ctid is the row's physical address; it is
+                                    # stable within this statement, and every
+                                    # writer waits on K_write meanwhile.
+                                    postgresql=f"""
+                                DELETE FROM {table}
+                                WHERE ctid = ANY(ARRAY(
+                                    SELECT ctid FROM {table}
+                                    WHERE project_id = ? LIMIT ?
+                                ))
+                                """,
+                                ),
                                 (project_id, batch_size),
                             )
                             if connection.execute(
@@ -1973,29 +2253,22 @@ class IncidentStore:
                     limit=batch_size,
                 )
                 with self._connect() as connection:
+                    # Journaled recording blobs are deleted after commit by the
+                    # RecordingStore (``drain_blob_deletions``); until they are,
+                    # deletion stays pending.
                     pending = any(
                         connection.execute(
                             f"SELECT 1 FROM {table} WHERE project_id = ? LIMIT 1",
                             (project_id,),
                         ).fetchone()
                         is not None
-                        for table in (
-                            "incidents",
-                            "delivery_receipts",
-                            "external_identities",
-                            "connectors",
-                            "api_keys",
-                            "turn_metrics",
-                            "pending_object_deletions",
-                            "pending_ingests",
-                            "legacy_deletion_reviews",
-                        )
+                        for table in _PROJECT_OWNED_TABLES
                     )
                 if pending:
                     return False
         except StorageCleanupPendingError:
             return False
-        except (OSError, sqlite3.Error):
+        except (OSError, *DATABASE_ERRORS):
             return False
 
         if compact:
@@ -2006,25 +2279,38 @@ class IncidentStore:
                 self._scrub_deleted_pages()
             except StorageCleanupPendingError:
                 return False
-            except (OSError, sqlite3.Error):
+            except (OSError, *DATABASE_ERRORS):
                 return False
 
         if finalize:
             self.mark_project_deleted(project_id)
         return True
 
-    @staticmethod
     def _queue_unreferenced_object_deletions(
-        connection: sqlite3.Connection,
+        self,
+        connection: DatabaseConnection,
         project_id: str,
         digests: set[str],
     ) -> None:
-        """Persist only CAS deletions proven to follow this project's artifacts."""
+        """Release the artifacts of just-deleted incidents that nothing references now.
+
+        SQLite journals the CAS files for deletion after commit. Postgres deletes
+        the ``artifacts`` rows in the caller's transaction: liveness is derived
+        from ``incidents.object_digest`` (``incidents_digest_idx``), never counted.
+        """
 
         digest_values = tuple(sorted(digests))
         for offset in range(0, len(digest_values), _SQLITE_SAFE_BIND_LIMIT):
             batch = digest_values[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
             placeholders = ",".join("?" for _ in batch)
+            if self._catalog_artifacts:
+                connection.execute(
+                    f"DELETE FROM artifacts WHERE digest IN ({placeholders}) "
+                    "AND NOT EXISTS (SELECT 1 FROM incidents "
+                    "WHERE incidents.object_digest = artifacts.digest)",
+                    batch,
+                )
+                continue
             referenced = {
                 row["object_digest"]
                 for row in connection.execute(
@@ -2063,7 +2349,7 @@ class IncidentStore:
         if limit < 1:
             raise ValueError("pending ingest cleanup limit must be positive")
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            connection.begin_write()
             if intent_id is not None:
                 if project_id is None:
                     rows = connection.execute(
@@ -2103,7 +2389,7 @@ class IncidentStore:
                         batch,
                     ).fetchall()
                 )
-            self.objects.delete_many(
+            self._delete_artifact_files(
                 tuple(digest for digest in digests if digest not in referenced)
             )
             for offset in range(0, len(rows), _SQLITE_SAFE_BIND_LIMIT):
@@ -2113,7 +2399,7 @@ class IncidentStore:
                     f"DELETE FROM pending_ingests WHERE intent_id IN ({placeholders})",
                     tuple(row["intent_id"] for row in batch),
                 )
-            if rows:
+            if rows and not self._catalog_artifacts:
                 self._mark_scrub_required(connection)
             connection.commit()
         return len(rows)
@@ -2129,7 +2415,7 @@ class IncidentStore:
         if limit < 1:
             raise ValueError("pending object cleanup limit must be positive")
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            connection.begin_write()
             if project_id is None:
                 rows = connection.execute(
                     """
@@ -2160,7 +2446,7 @@ class IncidentStore:
                         batch,
                     ).fetchall()
                 )
-            self.objects.delete_many(
+            self._delete_artifact_files(
                 tuple(digest for digest in digests if digest not in referenced)
             )
             delete_batch_size = _SQLITE_SAFE_BIND_LIMIT // 2
@@ -2181,14 +2467,16 @@ class IncidentStore:
         return len(rows)
 
     @staticmethod
-    def _mark_scrub_required(connection: sqlite3.Connection) -> None:
+    def _mark_scrub_required(connection: DatabaseConnection) -> None:
         connection.execute(
             "UPDATE storage_maintenance "
             "SET purge_generation = purge_generation + 1 WHERE singleton = 1"
         )
 
     def _scrub_required_locked(self) -> bool:
-        if self._database_uri:
+        # Neither an in-memory SQLite catalog nor a Postgres one has pages for this
+        # process to scrub; Postgres purges never record a scrub generation.
+        if self._database_uri or self._catalog_artifacts:
             return False
         with self._connect() as connection:
             return (
@@ -2209,7 +2497,7 @@ class IncidentStore:
         if not display_name or len(display_name) > 128:
             raise ValueError("display_name must contain between 1 and 128 characters")
         created_at = time.time_ns()
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("create_project"), self._connect() as connection:
             connection.execute(
                 """
                 INSERT INTO projects(project_id, display_name, created_at_unix_nano)
@@ -2219,6 +2507,50 @@ class IncidentStore:
             )
             connection.commit()
         return ProjectRecord(project_id, display_name, str(created_at))
+
+    def get_project(self, project_id: str) -> ProjectRecord | None:
+        """Return a project's record, or ``None`` if it was never provisioned."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT project_id, display_name, created_at_unix_nano, capture_preset,
+                       lifecycle_state
+                FROM projects WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchone()
+        return None if row is None else _project_record(row)
+
+    def set_capture_preset(self, project_id: str, preset: str) -> ProjectRecord:
+        """Choose what the OTLP receiver keeps of this project's future evidence.
+
+        ``full`` keeps content; ``metadata_only`` drops content, identity and the
+        session-key attributes before anything is stored. Evidence already stored
+        is not rewritten. ``redacted`` raises ``CapturePresetUnavailableError``.
+        """
+
+        if preset in UNAVAILABLE_CAPTURE_PRESETS:
+            raise CapturePresetUnavailableError(preset)
+        if preset not in CAPTURE_PRESETS:
+            raise ValueError(f"capture preset must be {' or '.join(CAPTURE_PRESETS)}")
+        with self._mutation("set_capture_preset"), self._connect() as connection:
+            connection.begin_write()
+            self._require_active_project(connection, project_id)
+            connection.execute(
+                "UPDATE projects SET capture_preset = ? WHERE project_id = ?",
+                (preset, project_id),
+            )
+            row = connection.execute(
+                """
+                SELECT project_id, display_name, created_at_unix_nano, capture_preset,
+                       lifecycle_state
+                FROM projects WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchone()
+            connection.commit()
+        return _project_record(row)
 
     def project_exists(self, project_id: str) -> bool:
         """Return whether an authorization scope has been provisioned."""
@@ -2243,7 +2575,7 @@ class IncidentStore:
         secret_hash = hashlib.scrypt(
             secret.encode("utf-8"), salt=salt, n=1 << 14, r=8, p=1, dklen=32
         )
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("issue_api_key"), self._connect() as connection:
             self._require_active_project(connection, project_id)
             connection.execute(
                 """
@@ -2282,6 +2614,8 @@ class IncidentStore:
         key_id, separator, secret = encoded.partition(".")
         if not separator or len(key_id) != 16 or not secret or len(secret) > 128:
             return None
+        # Every request reads the key's row: an indexed, lock-free SELECT that sees a
+        # revocation or a project deletion from any process at once (FR-2).
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -2295,35 +2629,86 @@ class IncidentStore:
             ).fetchone()
             if row is None:
                 return None
-        supplied_hash = hashlib.scrypt(
-            secret.encode("utf-8"),
-            salt=bytes(row["secret_salt"]),
-            n=1 << 14,
-            r=8,
-            p=1,
-            dklen=32,
-        )
-        if not hmac.compare_digest(supplied_hash, bytes(row["secret_hash"])):
-            return None
-        with self._mutation(), self._connect() as connection:
-            updated = connection.execute(
-                """
-                UPDATE api_keys SET last_used_at_unix_nano = ?
-                WHERE key_id = ? AND revoked_at_unix_nano IS NULL
-                  AND EXISTS (
-                      SELECT 1 FROM projects
-                      WHERE projects.project_id = api_keys.project_id
-                        AND projects.lifecycle_state = 'active'
-                  )
-                """,
-                (time.time_ns(), key_id),
+        # Only the secret check is remembered, by the credential's digest.
+        credential_digest = hashlib.sha256(credential.encode("utf-8")).hexdigest()
+        if self._credential_verdicts.verdict(credential_digest) == key_id:
+            with self._authentication_lock:
+                self._verdict_cache_hits += 1
+        else:
+            supplied_hash = hashlib.scrypt(
+                secret.encode("utf-8"),
+                salt=bytes(row["secret_salt"]),
+                n=1 << 14,
+                r=8,
+                p=1,
+                dklen=32,
             )
-            if updated.rowcount != 1:
-                # Revocation may win after the hash check but before usage is
-                # recorded. Never authenticate that race.
+            with self._authentication_lock:
+                self._secret_verifications += 1
+            if not hmac.compare_digest(supplied_hash, bytes(row["secret_hash"])):
                 return None
-            connection.commit()
+            self._credential_verdicts.remember(credential_digest, key_id)
+        if not self._record_key_use(key_id):
+            # Revocation won after the read above; never authenticate that race.
+            self._credential_verdicts.forget(credential_digest)
+            return None
         return ApiPrincipal(project_id=row["project_id"], key_id=key_id)
+
+    def _record_key_use(self, key_id: str) -> bool:
+        """Write ``last_used_at`` at most once a minute per key, in its own mutation.
+
+        Returns ``False`` only when the write found the key revoked or its project
+        inactive. A store busy past ``KEY_USE_RECORD_BUDGET_SECONDS`` skips the write
+        (the next request retries it) and returns ``True``.
+        """
+
+        now = self._clock.monotonic_nano()
+        with self._authentication_lock:
+            previous = self._key_use_recorded.get(key_id)
+            if previous is not None and now - previous < KEY_USE_RECORD_INTERVAL_NANO:
+                return True
+            # Claim this minute's write so concurrent requests do not queue for it.
+            self._key_use_recorded[key_id] = now
+        try:
+            with (
+                self._mutation("record_api_key_use", budget_s=KEY_USE_RECORD_BUDGET_SECONDS),
+                self._connect() as connection,
+            ):
+                updated = connection.execute(
+                    """
+                    UPDATE api_keys SET last_used_at_unix_nano = ?
+                    WHERE key_id = ? AND revoked_at_unix_nano IS NULL
+                      AND EXISTS (
+                          SELECT 1 FROM projects
+                          WHERE projects.project_id = api_keys.project_id
+                            AND projects.lifecycle_state = 'active'
+                      )
+                    """,
+                    (self._clock.unix_nano(), key_id),
+                )
+                if updated.rowcount != 1:
+                    return False
+                connection.commit()
+        except BaseException as error:
+            with self._authentication_lock:
+                if self._key_use_recorded.get(key_id) == now:
+                    if previous is None:
+                        del self._key_use_recorded[key_id]
+                    else:
+                        self._key_use_recorded[key_id] = previous
+            if isinstance(error, StorageBusyError):
+                return True
+            raise
+        return True
+
+    def authentication_stats(self) -> AuthenticationStats:
+        """How often API-key secrets were verified, and how often a verdict was reused."""
+
+        with self._authentication_lock:
+            return AuthenticationStats(
+                secret_verifications=self._secret_verifications,
+                verdict_cache_hits=self._verdict_cache_hits,
+            )
 
     def api_key_is_active(self, project_id: str, key_id: str) -> bool:
         """Check whether a key-backed browser session still has an active issuer."""
@@ -2344,7 +2729,7 @@ class IncidentStore:
             )
 
     def revoke_api_key(self, project_id: str, key_id: str) -> None:
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("revoke_api_key"), self._connect() as connection:
             result = connection.execute(
                 """
                 UPDATE api_keys SET revoked_at_unix_nano = ?
@@ -2373,7 +2758,7 @@ class IncidentStore:
         selected_normalizer = normalizer_version or _CONNECTOR_NORMALIZER_VERSIONS[provider]
         if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", identifier):
             raise ValueError("endpoint_id must be an opaque portable identifier")
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("create_connector"), self._connect() as connection:
             self._require_active_project(connection, project_id)
             connection.execute(
                 """
@@ -2432,8 +2817,8 @@ class IncidentStore:
         now_unix_nano: int,
         lease_nano: int = 30_000_000_000,
     ) -> DeliveryClaim:
-        with self._mutation(), self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._mutation("claim_delivery"), self._connect() as connection:
+            connection.begin_write()
             self._require_active_project(connection, connector.project_id)
             stored_connector_row = connection.execute(
                 "SELECT * FROM connectors WHERE endpoint_id = ?",
@@ -2526,8 +2911,8 @@ class IncidentStore:
             raise ValueError("applied delivery requires a canonical incident binding")
         if state == "ignored" and (bundle_id is not None or canonical_sha256 is not None):
             raise ValueError("ignored delivery cannot bind a canonical incident")
-        with self._mutation(), self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._mutation("complete_delivery"), self._connect() as connection:
+            connection.begin_write()
             project_row = connection.execute(
                 """
                 SELECT project.lifecycle_state
@@ -2586,7 +2971,7 @@ class IncidentStore:
         lease_token: int,
         failure_code: str,
     ) -> None:
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("fail_delivery"), self._connect() as connection:
             project_row = connection.execute(
                 """
                 SELECT project.lifecycle_state
@@ -2619,8 +3004,8 @@ class IncidentStore:
         bundle_id: str,
         sensitivity: str = "identity",
     ) -> None:
-        with self._mutation(), self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._mutation("record_external_identity"), self._connect() as connection:
+            connection.begin_write()
             self._require_active_project(connection, connector.project_id)
             stored_connector = connection.execute(
                 """
@@ -2645,12 +3030,26 @@ class IncidentStore:
             ):
                 raise StorageError("external identity cannot cross connector and incident projects")
             connection.execute(
-                """
+                connection.dialect.sql(
+                    "insert-or-ignore-external-identity",
+                    sqlite="""
                 INSERT OR IGNORE INTO external_identities(
                     project_id, endpoint_id, provider, key_kind, value_hmac,
                     bundle_id, sensitivity, created_at_unix_nano
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
+                    # Only the duplicate is ignored here. OR IGNORE would also skip
+                    # NOT NULL and CHECK violations, but these values cannot violate
+                    # them: value_hmac is a 64-hex fingerprint and the connector and
+                    # incident rows were verified above.
+                    postgresql="""
+                INSERT INTO external_identities(
+                    project_id, endpoint_id, provider, key_kind, value_hmac,
+                    bundle_id, sensitivity, created_at_unix_nano
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                ),
                 (
                     connector.project_id,
                     connector.endpoint_id,
@@ -2664,675 +3063,56 @@ class IncidentStore:
             )
             connection.commit()
 
-    @staticmethod
-    def _replace_graph_projection(
-        connection: sqlite3.Connection,
-        bundle: IncidentBundle,
-    ) -> None:
-        """Replace derived graph rows inside the caller's incident transaction."""
-
-        bundle_id = bundle.profile.manifest.bundle_id
-        connection.execute("DELETE FROM events WHERE bundle_id = ?", (bundle_id,))
-        connection.execute("DELETE FROM causal_links WHERE bundle_id = ?", (bundle_id,))
-        connection.execute("DELETE FROM operations WHERE bundle_id = ?", (bundle_id,))
-
-        operation_rows: list[tuple[object, ...]] = []
-        link_rows: list[tuple[object, ...]] = []
-        for operation in bundle.profile.operations:
-            evidence_source, evidence_confidence, evidence_availability = _evidence_columns(
-                operation.evidence
-            )
-            ended = operation.ended_at
-            operation_rows.append(
-                (
-                    bundle_id,
-                    operation.operation_id,
-                    operation.operation_name,
-                    operation.status,
-                    operation.participant_id,
-                    operation.stream_id,
-                    operation.turn_id,
-                    operation.trace_id,
-                    operation.span_id,
-                    operation.parent_span_id,
-                    operation.parent_scope,
-                    operation.started_at.source_time_unix_nano,
-                    operation.started_at.observed_time_unix_nano,
-                    operation.started_at.monotonic_time_nano,
-                    operation.started_at.clock_domain_id,
-                    ended.source_time_unix_nano if ended else None,
-                    ended.observed_time_unix_nano if ended else None,
-                    ended.monotonic_time_nano if ended else None,
-                    ended.clock_domain_id if ended else None,
-                    evidence_source,
-                    evidence_confidence,
-                    evidence_availability,
-                    operation.capture_class,
-                )
-            )
-            link_rows.extend(
-                (
-                    bundle_id,
-                    operation.operation_id,
-                    link_index,
-                    link.relationship,
-                    link.target_scope,
-                    link.target_operation_id,
-                    link.trace_id,
-                    link.span_id,
-                )
-                for link_index, link in enumerate(operation.links)
-            )
-
-        connection.executemany(
-            """
-            INSERT INTO operations (
-                bundle_id, operation_id, operation_name, status,
-                participant_id, stream_id, turn_id, trace_id, span_id,
-                parent_span_id, parent_scope,
-                started_source_time_unix_nano, started_observed_time_unix_nano,
-                started_monotonic_time_nano, started_clock_domain_id,
-                ended_source_time_unix_nano, ended_observed_time_unix_nano,
-                ended_monotonic_time_nano, ended_clock_domain_id,
-                evidence_source, evidence_confidence, evidence_availability,
-                capture_class
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-            """,
-            operation_rows,
-        )
-        connection.executemany(
-            """
-            INSERT INTO causal_links (
-                bundle_id, source_operation_id, link_index, relationship,
-                target_scope, target_operation_id, trace_id, span_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            link_rows,
-        )
-
-        event_rows: list[tuple[object, ...]] = []
-        for event in bundle.profile.events:
-            evidence_source, evidence_confidence, evidence_availability = _evidence_columns(
-                event.evidence
-            )
-            event_rows.append(
-                (
-                    bundle_id,
-                    event.event_id,
-                    event.event_name,
-                    event.operation_id,
-                    event.participant_id,
-                    event.stream_id,
-                    event.turn_id,
-                    event.trace_id,
-                    event.span_id,
-                    event.time.source_time_unix_nano,
-                    event.time.observed_time_unix_nano,
-                    event.time.monotonic_time_nano,
-                    event.time.clock_domain_id,
-                    evidence_source,
-                    evidence_confidence,
-                    evidence_availability,
-                    event.capture_class,
-                )
-            )
-        connection.executemany(
-            """
-            INSERT INTO events (
-                bundle_id, event_id, event_name, operation_id,
-                participant_id, stream_id, turn_id, trace_id, span_id,
-                source_time_unix_nano, observed_time_unix_nano,
-                monotonic_time_nano, clock_domain_id,
-                evidence_source, evidence_confidence, evidence_availability,
-                capture_class
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            event_rows,
-        )
-        IncidentStore._replace_turn_projection(connection, bundle)
-
-    @staticmethod
-    def _replace_turn_projection(
-        connection: sqlite3.Connection,
-        bundle: IncidentBundle,
-    ) -> None:
-        """Replace the fleet read model from the same canonical Incident."""
-
-        from .analysis import _ClockAligner, analyze_incident, comparable_delta
-        from .codec import analysis_input_sha256
-
-        bundle_id = bundle.profile.manifest.bundle_id
-        incident_row = connection.execute(
-            "SELECT project_id FROM incidents WHERE bundle_id = ?", (bundle_id,)
-        ).fetchone()
-        if incident_row is None:
-            raise StorageError("turn projection requires a cataloged incident")
-        project_id = str(incident_row["project_id"])
-        connection.execute("DELETE FROM turn_metrics WHERE bundle_id = ?", (bundle_id,))
-
-        analysis = analyze_incident(
-            bundle,
-            input_sha256=analysis_input_sha256(bundle),
-            generated_at_unix_nano="0",
-        )
-        aligner = _ClockAligner(bundle.profile.clock_relations)
-        operation_by_id = {
-            operation.operation_id: operation for operation in bundle.profile.operations
-        }
-        event_by_id = {event.event_id: event for event in bundle.profile.events}
-        framework = (
-            bundle.profile.manifest.adapters[0].framework
-            if bundle.profile.manifest.adapters
-            else None
-        )
-        coverage_by_signal = {item.signal: item for item in bundle.profile.coverage}
-
-        def metric_values(metric: Any) -> tuple[object, ...]:
-            value_ms: float | None = None
-            if metric.availability == "available":
-                if metric.unit == "ns":
-                    value_ms = float(metric.value) / 1_000_000
-                elif metric.unit == "ms":
-                    value_ms = float(metric.value)
-                elif metric.unit == "s":
-                    value_ms = float(metric.value) * 1_000
-                else:
-                    raise StorageError("analysis metric uses an unsupported latency unit")
-            return (
-                value_ms,
-                metric.availability,
-                metric.basis,
-                metric.confidence,
-                metric.limitation,
-            )
-
-        def provider_metric_values(
-            metric: Any,
-            *,
-            basis: str,
-            limitation: str,
-        ) -> tuple[object, ...]:
-            value, availability, _, confidence, existing_limitation = metric_values(metric)
-            return (
-                value,
-                availability,
-                basis,
-                confidence,
-                existing_limitation or limitation,
-            )
-
-        def absent_metric(
-            signal: str,
-            *,
-            basis: str,
-            limitation: str,
-        ) -> tuple[object, ...]:
-            coverage = coverage_by_signal.get(signal)
-            availability = (
-                coverage.availability
-                if coverage is not None and coverage.availability != "available"
-                else "not_observed"
-            )
-            reason = coverage.reason if coverage is not None else None
-            return (
-                None,
-                availability,
-                basis,
-                "unavailable",
-                reason or limitation,
-            )
-
-        def delta_metric(
-            start: Any,
-            end: Any,
-            *,
-            basis: str,
-            evidence: tuple[Any, ...],
-            limitation: str | None = None,
-        ) -> tuple[object, ...]:
-            delta = comparable_delta(start, end, aligner)
-            if delta.availability != "available" or delta.nanoseconds is None:
-                return (
-                    None,
-                    delta.availability,
-                    basis,
-                    "unavailable",
-                    delta.limitation or limitation,
-                )
-            confidence = delta.confidence
-            evidence_confidences = {item.confidence for item in evidence if item is not None}
-            if "inferred" in evidence_confidences:
-                confidence = "inferred"
-            elif "estimated" in evidence_confidences:
-                confidence = "estimated"
-            return (
-                delta.nanoseconds / 1_000_000,
-                "available",
-                basis,
-                confidence,
-                limitation,
-            )
-
-        def event_delta_metric(
-            events: list[Any],
-            start_name: str,
-            end_name: str,
-            *,
-            basis: str,
-        ) -> tuple[object, ...] | None:
-            starts = [item for item in events if item.event_name == start_name]
-            ends = [item for item in events if item.event_name == end_name]
-            if not starts or not ends:
-                return None
-            if len(starts) != 1 or len(ends) != 1:
-                return (
-                    None,
-                    "unavailable",
-                    basis,
-                    "unavailable",
-                    "ambiguous_event_boundaries",
-                )
-            start = starts[0]
-            end = ends[0]
-            return delta_metric(
-                start.time,
-                end.time,
-                basis=basis,
-                evidence=(start.evidence, end.evidence),
-            )
-
-        rows: list[tuple[object, ...]] = []
-        for turn_index, turn in enumerate(analysis.projections.turns):
-            operations = [
-                operation_by_id[operation_id]
-                for operation_id in turn.operation_ids
-                if operation_id in operation_by_id
-            ]
-            events = [
-                event_by_id[event_id] for event_id in turn.event_ids if event_id in event_by_id
-            ]
-            wall_times = [
-                value
-                for value in (
-                    *(operation.started_at.source_time_unix_nano for operation in operations),
-                    *(event.time.source_time_unix_nano for event in events),
-                )
-                if value is not None
-            ]
-            started_at = min(wall_times, key=int) if wall_times else None
-            # Fleet dimensions describe the response-generating model stage. A
-            # transcriber, endpointing model, or synthesizer may use a different
-            # provider, so accepting the first gen_ai.* attribute would silently
-            # mislabel multi-provider turns. Prefer the governed LLM operation;
-            # native speech-to-speech runtimes can identify their unified agent
-            # stage instead. Other stage-specific providers remain available in
-            # the canonical operation graph and provider measurements.
-            dimension_operations = [
-                operation for operation in operations if operation.operation_name == "llm"
-            ]
-            if not dimension_operations:
-                dimension_operations = [
-                    operation
-                    for operation in operations
-                    if operation.operation_name in {"agent", "agent_response"}
-                ]
-            dimension_pairs: set[tuple[str | None, str | None]] = set()
-            for operation in dimension_operations:
-                provider_value = operation.attributes.get(
-                    "gen_ai.provider.name",
-                    operation.resource.get("gen_ai.provider.name"),
-                )
-                model_value = operation.attributes.get(
-                    "gen_ai.request.model",
-                    operation.resource.get("gen_ai.request.model"),
-                )
-                provider_value = provider_value if isinstance(provider_value, str) else None
-                model_value = model_value if isinstance(model_value, str) else None
-                if provider_value is not None or model_value is not None:
-                    dimension_pairs.add((provider_value, model_value))
-            if len(dimension_pairs) == 1:
-                provider, model = next(iter(dimension_pairs))
-            else:
-                provider = None
-                model = None
-            language_values = {
-                value
-                for operation in operations
-                if operation.operation_name == "stt"
-                for value in (
-                    operation.attributes.get(
-                        "earshot.language.code",
-                        operation.resource.get("earshot.language.code"),
-                    ),
-                )
-                if isinstance(value, str)
-            }
-            language = next(iter(language_values)) if len(language_values) == 1 else None
-            status = (
-                "failed"
-                if any(
-                    operation.status in {"error", "failed", "timeout"} for operation in operations
-                )
-                else "completed"
-            )
-            metrics = turn.metrics
-            provider_measurements = json.dumps(
-                {
-                    name: metric.model_dump(mode="json", exclude_none=True)
-                    for name, metric in sorted(metrics.provider_measurements.items())
-                },
-                allow_nan=False,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
-            stt_finalization = event_delta_metric(
-                events,
-                "earshot.speech.ended",
-                "earshot.transcript.final",
-                basis="speech_end_to_transcript_final",
-            )
-            if stt_finalization is None:
-                provider_stt = metrics.provider_measurements.get("earshot.stt.finalization_latency")
-                provider_basis = "provider_finalization_latency"
-                provider_limitation = "final_transcript_boundary_not_observed"
-                if provider_stt is None:
-                    provider_stt = metrics.provider_measurements.get("lk.eou.transcription_delay")
-                    provider_basis = "provider_transcription_delay"
-                    provider_limitation = "provider_defined_transcription_boundary"
-                stt_finalization = (
-                    provider_metric_values(
-                        provider_stt,
-                        basis=provider_basis,
-                        limitation=provider_limitation,
-                    )
-                    if provider_stt is not None and provider_stt.availability == "available"
-                    else absent_metric(
-                        "stt.final",
-                        basis="speech_end_to_transcript_final",
-                        limitation="final_transcript_boundary_not_observed",
-                    )
-                )
-
-            eou = event_delta_metric(
-                events,
-                "earshot.speech.ended",
-                "earshot.turn.committed",
-                basis="speech_end_to_turn_commit",
-            )
-            if eou is None:
-                provider_eou = metrics.provider_measurements.get("lk.eou.endpointing_delay")
-                eou = (
-                    provider_metric_values(
-                        provider_eou,
-                        basis="provider_endpointing_delay",
-                        limitation="provider_defined_endpointing_boundary",
-                    )
-                    if provider_eou is not None and provider_eou.availability == "available"
-                    else absent_metric(
-                        "turn.end",
-                        basis="speech_end_to_turn_commit",
-                        limitation="end_of_turn_boundary_not_observed",
-                    )
-                )
-
-            lifecycle_operations = [
-                operation
-                for operation in operations
-                if operation.operation_name == "framework_operation"
-                and operation.attributes.get("earshot.framework.operation.name") == "turn"
-            ]
-            if len(lifecycle_operations) == 1 and lifecycle_operations[0].ended_at is not None:
-                lifecycle = lifecycle_operations[0]
-                turn_duration = delta_metric(
-                    lifecycle.started_at,
-                    lifecycle.ended_at,
-                    basis="native_turn_lifecycle",
-                    evidence=(lifecycle.evidence,),
-                )
-            else:
-                turn_duration = absent_metric(
-                    "turn.lifecycle",
-                    basis="native_turn_lifecycle",
-                    limitation=(
-                        "multiple_turn_lifecycle_intervals"
-                        if len(lifecycle_operations) > 1
-                        else "turn_lifecycle_interval_not_observed"
-                    ),
-                )
-
-            interruption_events = [
-                event for event in events if event.event_name.startswith("earshot.interruption.")
-            ]
-            accepted_interruptions = [
-                event
-                for event in interruption_events
-                if event.event_name == "earshot.interruption.accepted"
-            ]
-            ignored_interruptions = [
-                event
-                for event in interruption_events
-                if event.event_name == "earshot.interruption.ignored"
-            ]
-            terminal_interruptions = accepted_interruptions + ignored_interruptions
-            if terminal_interruptions:
-                interruption_evidence = {
-                    event.evidence.confidence
-                    for event in terminal_interruptions
-                    if event.evidence is not None
-                }
-                interruption_confidence = (
-                    "inferred"
-                    if "inferred" in interruption_evidence
-                    else "estimated"
-                    if "estimated" in interruption_evidence
-                    else "measured"
-                )
-                interruption = (
-                    len(accepted_interruptions),
-                    "available",
-                    "accepted_interruption_events",
-                    interruption_confidence,
-                    None,
-                )
-            elif interruption_events:
-                interruption = (
-                    None,
-                    "unavailable",
-                    "accepted_interruption_events",
-                    "unavailable",
-                    "interruption_outcome_not_observed",
-                )
-            else:
-                interruption_coverage = coverage_by_signal.get(
-                    "interruption.per_turn"
-                ) or coverage_by_signal.get("interruption")
-                unassigned_interruption = any(
-                    event.event_name.startswith("earshot.interruption.") and event.turn_id is None
-                    for event in bundle.profile.events
-                )
-                if (
-                    interruption_coverage is not None
-                    and interruption_coverage.availability == "available"
-                ):
-                    interruption = (
-                        0,
-                        "available",
-                        "accepted_interruption_events",
-                        "measured",
-                        None,
-                    )
-                elif interruption_coverage is not None:
-                    interruption = (
-                        None,
-                        interruption_coverage.availability,
-                        "accepted_interruption_events",
-                        "unavailable",
-                        interruption_coverage.reason or "interruption_signal_unavailable",
-                    )
-                elif unassigned_interruption:
-                    interruption = (
-                        None,
-                        "unavailable",
-                        "accepted_interruption_events",
-                        "unavailable",
-                        "turn_correlation_not_observed",
-                    )
-                else:
-                    interruption = (
-                        None,
-                        "not_observed",
-                        "accepted_interruption_events",
-                        "unavailable",
-                        "interruption_signal_not_observed",
-                    )
-            rows.append(
-                (
-                    project_id,
-                    bundle_id,
-                    bundle.profile.session.session_id,
-                    turn.turn_id,
-                    turn_index,
-                    started_at,
-                    framework,
-                    provider,
-                    model,
-                    language,
-                    status,
-                    *stt_finalization,
-                    *eou,
-                    *metric_values(metrics.first_token_latency),
-                    *metric_values(metrics.generated_response_latency),
-                    *metric_values(metrics.sent_response_latency),
-                    *metric_values(metrics.received_response_latency),
-                    *metric_values(metrics.render_start_response_latency),
-                    *metric_values(metrics.response_latency),
-                    *turn_duration,
-                    metrics.tools.operation_count,
-                    metrics.tools.total_work_ms,
-                    *interruption,
-                    provider_measurements,
-                    TURN_FACT_PROJECTION_VERSION,
-                    bundle.profile.manifest.schema_version,
-                )
-            )
-
-        columns = (
-            "project_id",
-            "bundle_id",
-            "session_id",
-            "turn_id",
-            "turn_index",
-            "started_at_unix_nano",
-            "framework",
-            "provider",
-            "model",
-            "language",
-            "status",
-            "stt_finalization_ms",
-            "stt_finalization_availability",
-            "stt_finalization_basis",
-            "stt_finalization_confidence",
-            "stt_finalization_limitation",
-            "eou_ms",
-            "eou_availability",
-            "eou_basis",
-            "eou_confidence",
-            "eou_limitation",
-            "first_token_ms",
-            "first_token_availability",
-            "first_token_basis",
-            "first_token_confidence",
-            "first_token_limitation",
-            "generated_response_ms",
-            "generated_response_availability",
-            "generated_response_basis",
-            "generated_response_confidence",
-            "generated_response_limitation",
-            "sent_response_ms",
-            "sent_response_availability",
-            "sent_response_basis",
-            "sent_response_confidence",
-            "sent_response_limitation",
-            "received_response_ms",
-            "received_response_availability",
-            "received_response_basis",
-            "received_response_confidence",
-            "received_response_limitation",
-            "render_start_response_ms",
-            "render_start_response_availability",
-            "render_start_response_basis",
-            "render_start_response_confidence",
-            "render_start_response_limitation",
-            "response_ms",
-            "response_availability",
-            "response_basis",
-            "response_confidence",
-            "response_limitation",
-            "turn_duration_ms",
-            "turn_duration_availability",
-            "turn_duration_basis",
-            "turn_duration_confidence",
-            "turn_duration_limitation",
-            "tool_operation_count",
-            "tool_total_work_ms",
-            "interruption_count",
-            "interruption_availability",
-            "interruption_basis",
-            "interruption_confidence",
-            "interruption_limitation",
-            "provider_measurements_json",
-            "projection_version",
-            "contract_version",
-        )
-        placeholders = ", ".join("?" for _ in columns)
-        connection.executemany(
-            f"INSERT INTO turn_metrics ({', '.join(columns)}) VALUES ({placeholders})",
-            rows,
-        )
-
     def ingest(
         self,
         bundle: IncidentBundle,
         canonical_payload: bytes | None = None,
         *,
         project_id: str = DEFAULT_PROJECT_ID,
+        before_commit: Callable[[DatabaseConnection], None] | None = None,
     ) -> IngestResult:
         """Persist an already validated bundle atomically.
 
         Validation and encoding are delegated to the contract modules so direct
         storage callers receive the same guarantees as HTTP ingest callers.
+
+        ``before_commit`` runs inside the transaction that writes the catalog
+        row (or finds it already written), just before it commits; whatever it
+        writes commits with the incident, and if it raises nothing commits. The
+        call closer finishes a revision this way (FR-6, AC6.3).
         """
 
-        from .codec import encode_incident_protobuf
-        from .validation import assert_valid_incident
+        return self.ingest_prepared(
+            prepare_incident(bundle, project_id, canonical_payload=canonical_payload),
+            before_commit=before_commit,
+        )
 
-        assert_valid_incident(bundle)
-        expected_payload = encode_incident_protobuf(bundle)
-        if canonical_payload is None:
-            canonical_payload = expected_payload
-        elif canonical_payload != expected_payload:
-            raise StorageError("payload is not the canonical encoding of the incident")
+    def ingest_prepared(
+        self,
+        prepared: PreparedIncident,
+        *,
+        before_commit: Callable[[DatabaseConnection], None] | None = None,
+    ) -> IngestResult:
+        """Persist an incident ``prepare_incident`` built: the locked half of
+        ``ingest``. ``before_commit`` is as for ``ingest``."""
 
-        manifest = bundle.profile.manifest
-        framework = manifest.adapters[0].framework if manifest.adapters else None
+        canonical_payload = prepared.canonical_payload
+        project_id = prepared.project_id
+        projection = prepared.projection
+        framework = prepared.framework
         ingested_at = time.time_ns()
-        expiry = _effective_expiry(bundle)
-        export_local_api = int(_export_allowed(bundle, "local_api"))
-        export_local_cli = int(_export_allowed(bundle, "local_cli"))
 
-        with self._mutation():
+        with self._mutation("ingest"):
             digest = _sha256(canonical_payload)
             intent_id = uuid.uuid4().hex
             intent_staged = False
             try:
                 with self._connect() as connection:
-                    connection.execute("BEGIN IMMEDIATE")
+                    connection.begin_write()
                     self._require_active_project(connection, project_id)
                     tombstone = connection.execute(
                         "SELECT project_id FROM tombstones WHERE bundle_id_sha256 = ?",
-                        (_tombstone_key(manifest.bundle_id),),
+                        (_tombstone_key(prepared.bundle_id),),
                     ).fetchone()
                     if tombstone is not None:
                         if tombstone["project_id"] == project_id:
@@ -3344,7 +3124,7 @@ class IncidentStore:
                         )
 
                     existing = connection.execute(
-                        "SELECT * FROM incidents WHERE bundle_id = ?", (manifest.bundle_id,)
+                        "SELECT * FROM incidents WHERE bundle_id = ?", (prepared.bundle_id,)
                     ).fetchone()
                     if existing is not None:
                         if existing["project_id"] != project_id:
@@ -3356,67 +3136,65 @@ class IncidentStore:
                                 "bundle identifier already exists with different content"
                             )
 
-                    # Persist project provenance before publishing the CAS object.
-                    # If the process stops between the filesystem link and index
-                    # commit, deletion/reconciliation can still erase the orphan.
-                    connection.execute(
-                        """
-                        INSERT INTO pending_ingests(
-                            intent_id, project_id, object_digest, started_at_unix_nano
-                        ) VALUES (?, ?, ?, ?)
-                        """,
-                        (intent_id, project_id, digest, time.time_ns()),
-                    )
-                    intent_staged = True
-                    connection.commit()
-
-                published_digest, _ = self.objects.put(canonical_payload)
-                if published_digest != digest:
-                    raise StorageError("content-addressed object digest changed during ingest")
-
-                with self._connect() as connection:
-                    connection.execute("BEGIN IMMEDIATE")
-                    self._require_active_project(connection, project_id)
-                    existing = connection.execute(
-                        "SELECT * FROM incidents WHERE bundle_id = ?", (manifest.bundle_id,)
-                    ).fetchone()
-                    if existing is not None:
-                        if existing["project_id"] != project_id:
-                            raise IncidentConflictError(
-                                "bundle identifier already belongs to another project"
-                            )
-                        if existing["object_digest"] != digest:
-                            raise IncidentConflictError(
-                                "bundle identifier already exists with different content"
-                            )
-                        self._replace_graph_projection(connection, bundle)
+                    if not self._catalog_artifacts:
+                        # Persist project provenance before publishing the CAS object.
+                        # If the process stops between the filesystem link and index
+                        # commit, deletion/reconciliation can still erase the orphan.
+                        # A Postgres artifact is a row in the incident's own
+                        # transaction, so it can never be orphaned.
                         connection.execute(
                             """
-                            UPDATE incidents
-                            SET expires_at_unix_nano = ?,
-                                export_allowed_local_api = ?,
-                                export_allowed_local_cli = ?
-                            WHERE bundle_id = ?
+                            INSERT INTO pending_ingests(
+                                intent_id, project_id, object_digest, started_at_unix_nano
+                            ) VALUES (?, ?, ?, ?)
                             """,
-                            (
-                                expiry,
-                                export_local_api,
-                                export_local_cli,
-                                manifest.bundle_id,
-                            ),
+                            (intent_id, project_id, digest, time.time_ns()),
                         )
-                        connection.execute(
-                            "DELETE FROM pending_ingests WHERE intent_id = ?",
-                            (intent_id,),
-                        )
+                        intent_staged = True
+                    connection.commit()
+
+                if not self._catalog_artifacts:
+                    published_digest, _ = self.objects.put(canonical_payload)
+                    if published_digest != digest:
+                        raise StorageError("content-addressed object digest changed during ingest")
+
+                with self._connect() as connection:
+                    connection.begin_write()
+                    self._require_active_project(connection, project_id)
+                    existing = connection.execute(
+                        "SELECT * FROM incidents WHERE bundle_id = ?", (prepared.bundle_id,)
+                    ).fetchone()
+                    if existing is not None:
+                        if existing["project_id"] != project_id:
+                            raise IncidentConflictError(
+                                "bundle identifier already belongs to another project"
+                            )
+                        if existing["object_digest"] != digest:
+                            raise IncidentConflictError(
+                                "bundle identifier already exists with different content"
+                            )
+                        write_projection_rows(connection, [projection])
+                        if intent_staged:
+                            connection.execute(
+                                "DELETE FROM pending_ingests WHERE intent_id = ?",
+                                (intent_id,),
+                            )
+                        if before_commit is not None:
+                            before_commit(connection)
                         connection.commit()
                         refreshed = connection.execute(
                             "SELECT * FROM incidents WHERE bundle_id = ?",
-                            (manifest.bundle_id,),
+                            (prepared.bundle_id,),
                         ).fetchone()
                         assert refreshed is not None
                         return IngestResult(record=_record(refreshed), created=False)
 
+                    if self._catalog_artifacts:
+                        connection.execute(
+                            "INSERT INTO artifacts(digest, payload) VALUES (?, ?) "
+                            "ON CONFLICT (digest) DO NOTHING",
+                            (digest, canonical_payload),
+                        )
                     connection.execute(
                         """
                         INSERT INTO incidents (
@@ -3424,36 +3202,55 @@ class IncidentStore:
                             size_bytes, status, finality, completeness, framework,
                             created_at_unix_nano, ingested_at_unix_nano,
                             expires_at_unix_nano, export_allowed_local_api,
-                            export_allowed_local_cli
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            export_allowed_local_cli, projection_version
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            manifest.bundle_id,
+                            prepared.bundle_id,
                             project_id,
-                            manifest.session_id,
-                            manifest.schema_version,
+                            prepared.session_id,
+                            prepared.schema_version,
                             digest,
                             len(canonical_payload),
-                            bundle.profile.session.status,
-                            manifest.finality,
-                            manifest.completeness,
+                            prepared.status,
+                            prepared.finality,
+                            prepared.completeness,
                             framework,
-                            manifest.created_at_unix_nano,
+                            prepared.created_at_unix_nano,
                             ingested_at,
-                            expiry,
-                            export_local_api,
-                            export_local_cli,
+                            projection.expires_at_unix_nano,
+                            projection.export_allowed_local_api,
+                            projection.export_allowed_local_cli,
+                            INCIDENT_PROJECTION_VERSION,
                         ),
                     )
-                    self._replace_graph_projection(connection, bundle)
+                    # Record the arrival order in the same transaction. This is the
+                    # schema-v19 trigger incidents_track_ingest_order, made explicit
+                    # so every dialect runs the same statement.
+                    connection.execute(
+                        """
+                        INSERT INTO incident_ingest_order(bundle_id)
+                        SELECT bundle_id FROM incidents
+                        WHERE bundle_id = ?
+                            AND NOT EXISTS (
+                                SELECT 1 FROM incident_ingest_order
+                                WHERE incident_ingest_order.bundle_id = incidents.bundle_id
+                            )
+                        """,
+                        (prepared.bundle_id,),
+                    )
+                    write_projection_rows(connection, [projection], replace=False)
                     row = connection.execute(
-                        "SELECT * FROM incidents WHERE bundle_id = ?", (manifest.bundle_id,)
+                        "SELECT * FROM incidents WHERE bundle_id = ?", (prepared.bundle_id,)
                     ).fetchone()
                     assert row is not None
-                    connection.execute(
-                        "DELETE FROM pending_ingests WHERE intent_id = ?",
-                        (intent_id,),
-                    )
+                    if intent_staged:
+                        connection.execute(
+                            "DELETE FROM pending_ingests WHERE intent_id = ?",
+                            (intent_id,),
+                        )
+                    if before_commit is not None:
+                        before_commit(connection)
                     connection.commit()
                     self._harden_database_permissions()
                     return IngestResult(record=_record(row), created=True)
@@ -3484,7 +3281,7 @@ class IncidentStore:
     ) -> bool:
         """Whether this project has stored or purged this immutable bundle ID."""
 
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("bundle_identity_exists"), self._connect() as connection:
             self._require_active_project(connection, project_id)
             incident = connection.execute(
                 "SELECT 1 FROM incidents WHERE bundle_id = ? AND project_id = ?",
@@ -3509,7 +3306,7 @@ class IncidentStore:
     ) -> IncidentRecord:
         expired = False
         record: IncidentRecord | None = None
-        with self._mutation():
+        with self._mutation("get_record"):
             with self._connect() as connection:
                 self._require_active_project(connection, project_id)
                 row = connection.execute(
@@ -3526,9 +3323,11 @@ class IncidentStore:
                     ).fetchone()
                     is not None
                 )
+                expires = row is not None and _expired_alone(
+                    connection, bundle_id, row["expires_at_unix_nano"]
+                )
             if row is not None:
-                expiry = row["expires_at_unix_nano"]
-                if expiry is not None and _decimal_lte(expiry, str(time.time_ns())):
+                if expires:
                     self._purge_existing_locked((bundle_id,), time.time_ns())
                     expired = True
                 else:
@@ -3554,8 +3353,8 @@ class IncidentStore:
         """Set one catalog link without changing the immutable incident bytes."""
 
         linked_at = time.time_ns()
-        with self._mutation(), self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._mutation("set_external_reference"), self._connect() as connection:
+            connection.begin_write()
             self._require_active_project(connection, project_id)
             incident = connection.execute(
                 "SELECT expires_at_unix_nano FROM incidents WHERE bundle_id = ? AND project_id = ?",
@@ -3573,8 +3372,7 @@ class IncidentStore:
                 if tombstoned:
                     raise IncidentPurgedError("incident was purged")
                 raise IncidentNotFoundError("incident not found")
-            expiry = incident["expires_at_unix_nano"]
-            if expiry is not None and _decimal_lte(expiry, str(time.time_ns())):
+            if _expired_alone(connection, bundle_id, incident["expires_at_unix_nano"]):
                 # Release SQLite's write transaction before purge opens its own.
                 # The outer mutation lock remains held, so no other writer can
                 # recreate the incident or attach a reference in this interval.
@@ -3623,7 +3421,7 @@ class IncidentStore:
         # Keep the existence/retention check and catalog read in one serialized
         # operation so a concurrent purge cannot turn a successful read into a
         # misleading empty list.
-        with self._mutation():
+        with self._mutation("get_external_references"):
             self.get_record(bundle_id, project_id=project_id)
             with self._connect() as connection:
                 rows = connection.execute(
@@ -3655,8 +3453,8 @@ class IncidentStore:
     ) -> bool:
         """Remove one link; return whether a row existed."""
 
-        with self._mutation(), self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+        with self._mutation("delete_external_reference"), self._connect() as connection:
+            connection.begin_write()
             self._require_active_project(connection, project_id)
             incident = connection.execute(
                 "SELECT expires_at_unix_nano FROM incidents WHERE bundle_id = ? AND project_id = ?",
@@ -3674,8 +3472,7 @@ class IncidentStore:
                 if tombstoned:
                     raise IncidentPurgedError("incident was purged")
                 raise IncidentNotFoundError("incident not found")
-            expiry = incident["expires_at_unix_nano"]
-            if expiry is not None and _decimal_lte(expiry, str(time.time_ns())):
+            if _expired_alone(connection, bundle_id, incident["expires_at_unix_nano"]):
                 # Retention is checked in the same serialized operation as the
                 # catalog delete, so a deadline crossing cannot mutate a
                 # reference on an incident that should already be purged.
@@ -3698,9 +3495,12 @@ class IncidentStore:
         *,
         project_id: str = DEFAULT_PROJECT_ID,
     ) -> tuple[IncidentRecord, bytes]:
-        with self._mutation():
+        with self._mutation("get_artifact"):
             record = self.get_record(bundle_id, project_id=project_id)
-            return record, self.objects.get(record.digest)
+            if not self._catalog_artifacts:
+                return record, self.objects.get(record.digest)
+            with self._connect() as connection:
+                return record, self._read_artifact(connection, record.digest)
 
     def list_incidents(
         self,
@@ -3729,7 +3529,7 @@ class IncidentStore:
             clauses.append("session_id = ?")
             parameters.append(session_id)
         if cursor is not None:
-            cursor_time, cursor_bundle_id = _decode_cursor(cursor)
+            cursor_time, cursor_bundle_id = decode_page_cursor(cursor)
             clauses.append("(ingested_at_unix_nano, bundle_id) < (?, ?)")
             parameters.extend((cursor_time, cursor_bundle_id))
         now = str(time.time_ns())
@@ -3745,8 +3545,14 @@ class IncidentStore:
             )
         )
         query = (
-            f"SELECT * FROM incidents INDEXED BY {index_name} "
-            f"WHERE {' AND '.join(clauses)} "
+            self._database.dialect.sql(
+                "listing-index-hint",
+                sqlite=f"SELECT * FROM incidents INDEXED BY {index_name} ",
+                # Postgres has no index hints; its planner picks the same
+                # (project, ingested_at DESC, bundle_id DESC) indexes for this order.
+                postgresql="SELECT * FROM incidents ",
+            )
+            + f"WHERE {' AND '.join(clauses)} "
             "ORDER BY ingested_at_unix_nano DESC, bundle_id DESC LIMIT ?"
         )
         # The chosen index carries page order and avoids a temporary sort. SQLite
@@ -3754,7 +3560,7 @@ class IncidentStore:
         # expired catalog rows first. Listing never decodes artifacts or mutates
         # retention state.
         with self._listing_connection() as connection:
-            connection.execute("BEGIN")
+            connection.begin_read()
             self._require_active_project(connection, project_id)
             rows = connection.execute(query, (*parameters, limit + 1)).fetchall()
             has_more = len(rows) > limit
@@ -3776,6 +3582,7 @@ class IncidentStore:
             "JOIN incidents ON incidents.bundle_id = turn_metrics.bundle_id "
             "AND incidents.project_id = turn_metrics.project_id "
             "WHERE turn_metrics.project_id = ?"
+            f" AND NOT {_SUPERSEDED_REVISION_SQL}"
         )
         parameters: list[object] = [project_id]
         if session_id is not None:
@@ -3784,7 +3591,7 @@ class IncidentStore:
         query += f" AND {_not_expired_sql('incidents.expires_at_unix_nano')}"
         query += " ORDER BY turn_metrics.started_at_unix_nano, "
         query += "turn_metrics.bundle_id, turn_metrics.turn_index LIMIT ?"
-        with self._mutation():
+        with self._mutation("list_turn_facts"):
             with self._connect() as connection:
                 self._require_active_project(connection, project_id)
             now = str(time.time_ns())
@@ -3833,6 +3640,9 @@ class IncidentStore:
         ranking and nearest-rank percentiles stay byte-identical for final data.
 
         What the join removed is counted and returned, never dropped silently.
+
+        A call's revisions (FR-6) each project the whole call, so only its latest
+        revision counts; the earlier ones are superseded, not withheld.
         """
 
         metric_columns = {
@@ -3927,6 +3737,7 @@ class IncidentStore:
                     AND incidents.project_id = turn_metrics.project_id
                 WHERE turn_metrics.project_id = ?
                   AND incidents.finality = 'final'
+                  AND NOT {_SUPERSEDED_REVISION_SQL}
                   AND {_not_expired_sql("incidents.expires_at_unix_nano")}
             ), totals AS (
                 SELECT COALESCE({group_column}, 'unknown') AS group_value,
@@ -4007,9 +3818,10 @@ class IncidentStore:
             JOIN incidents ON incidents.bundle_id = turn_metrics.bundle_id
                 AND incidents.project_id = turn_metrics.project_id
             WHERE turn_metrics.project_id = ?
+              AND NOT {_SUPERSEDED_REVISION_SQL}
               AND {_not_expired_sql("incidents.expires_at_unix_nano")}
         """
-        with self._mutation():
+        with self._mutation("summarize_turn_metric_fleet"):
             with self._connect() as connection:
                 self._require_active_project(connection, project_id)
             now = str(time.time_ns())
@@ -4047,7 +3859,7 @@ class IncidentStore:
         *,
         project_id: str = DEFAULT_PROJECT_ID,
     ) -> StoredAnalysis | None:
-        with self._mutation():
+        with self._mutation("get_analysis"):
             record = self.get_record(bundle_id, project_id=project_id)
             with self._connect() as connection:
                 row = connection.execute(
@@ -4121,7 +3933,7 @@ class IncidentStore:
             ).encode("utf-8")
         except (TypeError, ValueError) as error:
             raise StorageError("analysis output is not strict JSON") from error
-        with self._mutation():
+        with self._mutation("put_analysis"):
             with self._connect() as connection:
                 self._require_active_project(connection, project_id)
             record, artifact_payload = self.get_artifact(bundle_id, project_id=project_id)
@@ -4137,7 +3949,7 @@ class IncidentStore:
                 raise StorageError("analysis output is inconsistent with source evidence")
             generated_at = analysis.generated_at_unix_nano
             with self._connect() as connection:
-                connection.execute("BEGIN IMMEDIATE")
+                connection.begin_write()
                 connection.execute(
                     """
                     INSERT INTO analyses (
@@ -4158,7 +3970,7 @@ class IncidentStore:
         """Best-effort physically remove evidence and leave a minimal tombstone."""
 
         scrub_required = False
-        with self._mutation(), self._connect() as connection:
+        with self._mutation("purge"), self._connect() as connection:
             row = connection.execute(
                 "SELECT 1 FROM incidents WHERE bundle_id = ? AND project_id = ?",
                 (bundle_id, project_id),
@@ -4178,7 +3990,7 @@ class IncidentStore:
                         project_id=project_id,
                         limit=500,
                     )
-                except (OSError, sqlite3.Error) as error:
+                except (OSError, *DATABASE_ERRORS) as error:
                     raise StorageError("artifact purge requires retry") from error
                 if connection.execute(
                     "SELECT 1 FROM pending_object_deletions WHERE project_id = ? LIMIT 1",
@@ -4188,13 +4000,16 @@ class IncidentStore:
                         "artifact purge requires another cleanup retry"
                     )
             else:
+                call_id = _revision_call_id(connection, bundle_id)
+                if call_id is not None:
+                    raise IncidentBelongsToCallError(call_id)
                 self._purge_existing_locked((bundle_id,), time.time_ns())
             scrub_required = self._scrub_required_locked()
 
         if scrub_required:
             try:
                 self._scrub_deleted_pages(skip_if_current=True)
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, *DATABASE_ERRORS) as error:
                 raise StorageError("artifact purge requires retry") from error
 
     def purge_expired(
@@ -4206,9 +4021,13 @@ class IncidentStore:
     ) -> int:
         """Purge expired evidence and retry bounded CAS cleanup journals.
 
-        With ``compact_when_drained=True``, intermediate batches checkpoint and
-        truncate the WAL; the full VACUUM is deferred until this batch drains the
-        current expiry and pending-ingest backlogs. Pending ingest cleanup removes
+        With ``compact_when_drained=True`` (the server's retention loop),
+        intermediate batches checkpoint and truncate the WAL; the full VACUUM is
+        deferred until a batch drains the current expiry and pending-ingest
+        backlogs, and runs at most once every ``COMPACTION_INTERVAL_NANO`` on the
+        store clock. A VACUUM holds SQLite's write lock, so this keeps it from
+        stalling writers after every drained purge; a deferred scrub stays
+        recorded and runs on a later drain. Pending ingest cleanup removes
         only objects with a durable project owner and no incident reference.
         SQLite compaction runs after releasing the cross-process mutation lock so
         unrelated store operations can proceed.
@@ -4240,7 +4059,7 @@ class IncidentStore:
         # Selection walks the expiry index and may skip many late arrivals. Keep
         # that read outside the mutation lock; recheck this bounded candidate set
         # after taking the lock before deleting anything.
-        with self._mutation():
+        with self._mutation("startup_expiry_purge"):
             eligible_ids = self._eligible_expired_bundle_ids_locked(bundle_ids, now)
             if eligible_ids:
                 self._purge_existing_locked(eligible_ids, time.time_ns())
@@ -4255,23 +4074,23 @@ class IncidentStore:
             )
             try:
                 self._scrub_deleted_pages(compact=not has_more, skip_if_current=True)
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, *DATABASE_ERRORS) as error:
                 raise StorageError("artifact purge requires retry") from error
         return len(eligible_ids)
 
     def _finish_reconciliation_expiry_cleanup(self) -> None:
-        with self._mutation():
+        with self._mutation("startup_expiry_cleanup"):
             try:
                 self._cleanup_pending_object_deletions_locked(
                     limit=_STARTUP_EXPIRED_PURGE_BATCH_SIZE
                 )
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, *DATABASE_ERRORS) as error:
                 raise StorageError("artifact purge requires retry") from error
             scrub_required = self._scrub_required_locked()
         if scrub_required:
             try:
                 self._scrub_deleted_pages(skip_if_current=True)
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, *DATABASE_ERRORS) as error:
                 raise StorageError("artifact purge requires retry") from error
 
     def _eligible_expired_bundle_ids_locked(
@@ -4300,7 +4119,7 @@ class IncidentStore:
         *,
         compact_when_drained: bool,
     ) -> int:
-        with self._mutation():
+        with self._mutation("purge_expired"):
             removed = self._purge_expired_batch_locked(now, limit)
             scrub_required = self._scrub_required_locked()
             if compact_when_drained:
@@ -4310,13 +4129,15 @@ class IncidentStore:
                         connection.execute("SELECT 1 FROM pending_ingests LIMIT 1").fetchone()
                         is not None
                     )
-                compact = not expired_remains and not pending_ingests_remain
+                compact = (
+                    not expired_remains and not pending_ingests_remain and self._compaction_due()
+                )
             else:
                 compact = True
         if scrub_required:
             try:
                 self._scrub_deleted_pages(compact=compact, skip_if_current=True)
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, *DATABASE_ERRORS) as error:
                 raise StorageError("artifact purge requires retry") from error
         return removed
 
@@ -4329,7 +4150,7 @@ class IncidentStore:
         if not bundle_ids:
             try:
                 self._cleanup_pending_object_deletions_locked(limit=limit)
-            except (OSError, sqlite3.Error) as error:
+            except (OSError, *DATABASE_ERRORS) as error:
                 raise StorageError("artifact purge requires retry") from error
             removed = 0
         else:
@@ -4339,7 +4160,7 @@ class IncidentStore:
             self._cleanup_pending_ingests_locked(
                 limit=min(limit, _STARTUP_EXPIRED_PURGE_BATCH_SIZE)
             )
-        except (OSError, sqlite3.Error) as error:
+        except (OSError, *DATABASE_ERRORS) as error:
             raise StorageError("pending ingest cleanup requires retry") from error
         return removed
 
@@ -4372,6 +4193,7 @@ class IncidentStore:
                 SELECT incidents.bundle_id
                 FROM incidents{sequence_join}
                 WHERE {_expired_sql("incidents.expires_at_unix_nano")}
+                    AND NOT {_CALL_REVISION_SQL}
                     {sequence_filter}{project_filter}
                 ORDER BY length(incidents.expires_at_unix_nano),
                     incidents.expires_at_unix_nano
@@ -4387,64 +4209,80 @@ class IncidentStore:
         purged_at_unix_nano: int,
     ) -> None:
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            rows: list[sqlite3.Row] = []
-            for offset in range(0, len(bundle_ids), _SQLITE_SAFE_BIND_LIMIT):
-                batch = bundle_ids[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
-                placeholders = ",".join("?" for _ in batch)
-                rows.extend(
-                    connection.execute(
-                        "SELECT bundle_id, project_id, object_digest FROM incidents "
-                        f"WHERE bundle_id IN ({placeholders})",
-                        batch,
-                    ).fetchall()
-                )
-            if len(rows) != len(bundle_ids):
-                raise IncidentNotFoundError("incident not found")
-            for offset in range(0, len(bundle_ids), _SQLITE_SAFE_BIND_LIMIT):
-                batch = bundle_ids[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
-                placeholders = ",".join("?" for _ in batch)
-                connection.execute(
-                    f"DELETE FROM incidents WHERE bundle_id IN ({placeholders})",
-                    batch,
-                )
-            insert_batch_size = _SQLITE_SAFE_BIND_LIMIT // 3
-            for offset in range(0, len(rows), insert_batch_size):
-                batch = rows[offset : offset + insert_batch_size]
-                values = ",".join("(?, ?, ?)" for _ in batch)
-                parameters = tuple(
-                    value
-                    for row in batch
-                    for value in (
-                        _tombstone_key(row["bundle_id"]),
-                        row["project_id"],
-                        purged_at_unix_nano,
-                    )
-                )
-                connection.execute(
-                    """
-                    INSERT INTO tombstones(
-                        bundle_id_sha256, project_id, purged_at_unix_nano
-                    )
-                    VALUES """
-                    + values
-                    + " ON CONFLICT(bundle_id_sha256) DO NOTHING",
-                    parameters,
-                )
-            project_digests: dict[str, set[str]] = {}
-            for row in rows:
-                project_digests.setdefault(row["project_id"], set()).add(row["object_digest"])
-            for project_id, digests in project_digests.items():
-                self._queue_unreferenced_object_deletions(connection, project_id, digests)
-            if not self._database_uri:
-                self._mark_scrub_required(connection)
+            connection.begin_write()
+            purged = self._purge_incident_rows(connection, bundle_ids, purged_at_unix_nano)
             connection.commit()
 
         try:
-            self._cleanup_pending_object_deletions_locked(limit=max(1, len(rows)))
-        except (OSError, sqlite3.Error) as error:
+            self._cleanup_pending_object_deletions_locked(limit=max(1, purged))
+        except (OSError, *DATABASE_ERRORS) as error:
             # Tombstones and cleanup queue are durable; repeating purge safely retries.
             raise StorageError("artifact purge requires retry") from error
+
+    def _purge_incident_rows(
+        self,
+        connection: DatabaseConnection,
+        bundle_ids: tuple[str, ...],
+        purged_at_unix_nano: int,
+    ) -> int:
+        """Delete stored incidents, tombstone their IDs and queue their artifacts.
+
+        Runs in the caller's write transaction (under the store's write lock); the
+        caller commits, then runs the artifact cleanup. Returns how many incidents
+        were purged.
+        """
+
+        rows: list[Row] = []
+        for offset in range(0, len(bundle_ids), _SQLITE_SAFE_BIND_LIMIT):
+            batch = bundle_ids[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(
+                connection.execute(
+                    "SELECT bundle_id, project_id, object_digest FROM incidents "
+                    f"WHERE bundle_id IN ({placeholders})",
+                    batch,
+                ).fetchall()
+            )
+        if len(rows) != len(bundle_ids):
+            raise IncidentNotFoundError("incident not found")
+        for offset in range(0, len(bundle_ids), _SQLITE_SAFE_BIND_LIMIT):
+            batch = bundle_ids[offset : offset + _SQLITE_SAFE_BIND_LIMIT]
+            placeholders = ",".join("?" for _ in batch)
+            connection.execute(
+                f"DELETE FROM incidents WHERE bundle_id IN ({placeholders})",
+                batch,
+            )
+        insert_batch_size = _SQLITE_SAFE_BIND_LIMIT // 3
+        for offset in range(0, len(rows), insert_batch_size):
+            batch = rows[offset : offset + insert_batch_size]
+            values = ",".join("(?, ?, ?)" for _ in batch)
+            parameters = tuple(
+                value
+                for row in batch
+                for value in (
+                    _tombstone_key(row["bundle_id"]),
+                    row["project_id"],
+                    purged_at_unix_nano,
+                )
+            )
+            connection.execute(
+                """
+                INSERT INTO tombstones(
+                    bundle_id_sha256, project_id, purged_at_unix_nano
+                )
+                VALUES """
+                + values
+                + " ON CONFLICT(bundle_id_sha256) DO NOTHING",
+                parameters,
+            )
+        project_digests: dict[str, set[str]] = {}
+        for row in rows:
+            project_digests.setdefault(row["project_id"], set()).add(row["object_digest"])
+        for project_id, digests in project_digests.items():
+            self._queue_unreferenced_object_deletions(connection, project_id, digests)
+        if not self._database_uri and not self._catalog_artifacts:
+            self._mark_scrub_required(connection)
+        return len(rows)
 
     def _scrub_deleted_pages(
         self,
@@ -4459,7 +4297,11 @@ class IncidentStore:
         """
 
         self._ensure_process_ownership()
-        if self._database_uri:
+        # WAL checkpoint, VACUUM and file fsyncs act on a SQLite file. Postgres has
+        # no honest equivalent: purge already deleted the rows, the server reuses
+        # their pages after autovacuum, and WAL and backups keep copies until they
+        # age out. So there is nothing to do here, and no scrub is recorded.
+        if self._catalog_artifacts or self._database_uri:
             return
         with self._compaction_thread_lock:
             if self._closed:
@@ -4500,6 +4342,7 @@ class IncidentStore:
                 raise StorageCleanupPendingError("SQLite WAL is busy; cleanup requires retry")
             if compact:
                 connection.execute("VACUUM")
+                self._last_compaction_monotonic = self._clock.monotonic_nano()
                 checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
                 if checkpoint is not None and checkpoint[0] != 0:
                     raise StorageCleanupPendingError("SQLite WAL is busy; cleanup requires retry")
@@ -4517,13 +4360,25 @@ class IncidentStore:
             # remains pending for the next maintenance pass.
             with self._connect() as connection:
                 connection.execute(
-                    """
+                    connection.dialect.sql(
+                        "scalar-max-scrubbed-generation",
+                        sqlite="""
                     UPDATE storage_maintenance
                     SET scrubbed_generation = MAX(scrubbed_generation, ?)
                     WHERE singleton = 1
                     """,
+                        postgresql="""
+                    UPDATE storage_maintenance
+                    SET scrubbed_generation = GREATEST(scrubbed_generation, ?)
+                    WHERE singleton = 1
+                    """,
+                    ),
                     (generation,),
                 )
+
+    def _compaction_due(self) -> bool:
+        last = self._last_compaction_monotonic
+        return last is None or self._clock.monotonic_nano() - last >= COMPACTION_INTERVAL_NANO
 
     def cleanup_unreferenced_objects(self) -> int:
         """Sweep unreferenced CAS objects after an explicit maintenance decision.
@@ -4533,15 +4388,23 @@ class IncidentStore:
         maintenance may delete objects whose former owner cannot be proven.
         """
 
-        with self._mutation():
+        with self._mutation("cleanup_unreferenced_objects"):
             removed = self._cleanup_unreferenced_objects_locked()
             with self._connect() as connection:
-                connection.execute("BEGIN IMMEDIATE")
+                connection.begin_write()
                 connection.execute("DELETE FROM legacy_deletion_reviews")
                 connection.commit()
             return removed
 
     def _cleanup_unreferenced_objects_locked(self) -> int:
+        if self._catalog_artifacts:
+            # Normally a no-op: purge deletes unreferenced rows in its transaction.
+            with self._connect() as connection:
+                connection.begin_write()
+                return connection.execute(
+                    "DELETE FROM artifacts WHERE NOT EXISTS (SELECT 1 FROM incidents "
+                    "WHERE incidents.object_digest = artifacts.digest)"
+                ).rowcount
         with self._connect() as connection:
             referenced = {
                 row["object_digest"]

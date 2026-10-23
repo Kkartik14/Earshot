@@ -20,6 +20,7 @@ from earshot.codec import encode_incident_protobuf as encode_protobuf
 from earshot.contract import ExportPolicy
 from earshot.storage import IncidentStore
 from incident_factory import SECRET_SENTINEL, make_valid_bundle
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -85,7 +86,7 @@ def _restricted_bundle():
 
 @pytest.fixture
 def restricted_api(tmp_path):
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = _restricted_bundle()
     store.ingest(bundle, encode_protobuf(bundle))
     store.put_analysis(
@@ -128,7 +129,7 @@ def test_restricted_cached_analysis_export_is_denied(restricted_api) -> None:
 def test_cleanup_cannot_delete_an_object_between_cas_put_and_incident_commit(
     tmp_path, monkeypatch
 ) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     bundle = make_valid_bundle(bundle_id="inflight-bundle")
     payload = encode_protobuf(bundle)
     object_written = threading.Event()
@@ -174,7 +175,7 @@ def _nested(depth: int) -> object:
 
 
 def test_configured_depth_limit_applies_equally_to_json_and_protobuf(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     client = TestClient(create_app(store=store, config=ApiConfig(max_json_depth=8)))
     bundle = make_valid_bundle()
     policies = tuple(
@@ -213,7 +214,7 @@ def _expected_strong_etag(body: bytes) -> str:
 
 
 def test_content_negotiated_representations_have_sound_etags_and_vary(tmp_path) -> None:
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     client = TestClient(create_app(store=store))
     bundle = make_valid_bundle()
     client.post(
@@ -242,7 +243,7 @@ def test_content_negotiated_representations_have_sound_etags_and_vary(tmp_path) 
 
 def test_purge_removes_sensitive_bytes_from_sqlite_wal_and_shm(tmp_path) -> None:
     data_dir = tmp_path / "secure-purge"
-    store = IncidentStore(data_dir)
+    store = make_store(data_dir)
     bundle = _change_session(make_valid_bundle(), SECRET_SENTINEL)
     store.ingest(bundle, encode_protobuf(bundle))
     analysis_secret = b"purge_forensic_marker_835f0d6c"

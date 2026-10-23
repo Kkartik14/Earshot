@@ -40,6 +40,7 @@ from earshot.api import ApiConfig, create_app
 from earshot.contract import IncidentBundle
 from earshot.storage import IncidentStore
 from earshot.validation import validate_incident
+from store_support import make_store
 
 pytestmark = pytest.mark.integration
 
@@ -195,7 +196,7 @@ def test_app_lifespan_releases_capture_journal_writer_lease(tmp_path) -> None:
     from earshot.live import LiveSessionRegistry
 
     directory = tmp_path / "capture"
-    app = make_app(IncidentStore(tmp_path / "store"), directory)
+    app = make_app(make_store(tmp_path / "store"), directory)
     with TestClient(app), pytest.raises(CaptureJournalWriterConflictError):
         CaptureCallRegistry(LiveSessionRegistry(), journal_dir=directory)
 
@@ -209,7 +210,7 @@ def test_capture_journal_cannot_share_a_directory_with_checkpoint_sources(tmp_pa
     directory = tmp_path / "journals"
     with pytest.raises(ValueError, match="must differ from the checkpoint directory"):
         create_app(
-            store=IncidentStore(tmp_path / "store"),
+            store=make_store(tmp_path / "store"),
             live_registry=LiveSessionRegistry(journal_dir=directory),
             capture_journal_dir=directory,
         )
@@ -218,7 +219,7 @@ def test_capture_journal_cannot_share_a_directory_with_checkpoint_sources(tmp_pa
 def test_unavailable_capture_directory_returns_retryable_error(tmp_path) -> None:
     capture_path = tmp_path / "capture-files"
     capture_path.write_bytes(b"capture directory is unavailable")
-    app = make_app(IncidentStore(tmp_path / "store"), capture_path)
+    app = make_app(make_store(tmp_path / "store"), capture_path)
 
     with TestClient(app) as client:
         response = client.post(
@@ -243,7 +244,7 @@ def test_corrupt_capture_sidecar_cannot_replace_or_append_to_its_journal(tmp_pat
     from earshot.capture.durable import journal_path, sidecar_path
 
     capture_dir = tmp_path / "capture"
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     first_app = make_app(store, capture_dir)
     body = drain(1, [series(1)[0]])
     with TestClient(first_app) as client:
@@ -288,7 +289,7 @@ def test_parseable_invalid_capture_sidecar_never_authorizes_journal_deletion(
     from earshot.capture.durable import journal_path, sidecar_path
 
     capture_dir = tmp_path / "capture"
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     body = drain(1, [series(1)[0]])
     with TestClient(make_app(store, capture_dir)) as client:
         accepted = client.post("/v1/capture", json=body, headers=HEADERS)
@@ -320,7 +321,7 @@ def test_failed_sidecar_persistence_does_not_create_an_unowned_journal(
 ) -> None:
     capture_dir = tmp_path / "capture"
     capture_dir.mkdir()
-    client = TestClient(make_app(IncidentStore(tmp_path / "store"), capture_dir))
+    client = TestClient(make_app(make_store(tmp_path / "store"), capture_dir))
 
     def fail_replace(_source, _destination) -> None:
         raise OSError("simulated disk write failure")
@@ -342,9 +343,7 @@ def test_interrupted_drain_before_append_is_retried_after_restart(tmp_path, monk
 
     store_dir = tmp_path / "store"
     capture_dir = tmp_path / "capture"
-    before = TestClient(
-        make_app(IncidentStore(store_dir), capture_dir), raise_server_exceptions=False
-    )
+    before = TestClient(make_app(make_store(store_dir), capture_dir), raise_server_exceptions=False)
     first = before.post("/v1/capture", json=drain(1, [series(2)[0]]), headers=HEADERS)
     assert first.status_code == 202, first.text
     prior_sequence = first.json()["accepted_through"]
@@ -358,9 +357,7 @@ def test_interrupted_drain_before_append_is_retried_after_restart(tmp_path, monk
 
     before.app.state.live.close()
     before.app.state.capture_calls.close()
-    after = TestClient(
-        make_app(IncidentStore(store_dir), capture_dir), raise_server_exceptions=False
-    )
+    after = TestClient(make_app(make_store(store_dir), capture_dir), raise_server_exceptions=False)
     forged = after.post(
         "/v1/capture",
         json=drain(2, [stats_snapshot(9999, 9999, 999)]),
@@ -382,9 +379,7 @@ def test_interrupted_drain_after_append_is_applied_once_after_restart(
 
     store_dir = tmp_path / "store"
     capture_dir = tmp_path / "capture"
-    before = TestClient(
-        make_app(IncidentStore(store_dir), capture_dir), raise_server_exceptions=False
-    )
+    before = TestClient(make_app(make_store(store_dir), capture_dir), raise_server_exceptions=False)
     first = before.post("/v1/capture", json=drain(1, [series(2)[0]]), headers=HEADERS)
     assert first.status_code == 202, first.text
     prior_sequence = first.json()["accepted_through"]
@@ -401,9 +396,7 @@ def test_interrupted_drain_after_append_is_applied_once_after_restart(
 
     before.app.state.live.close()
     before.app.state.capture_calls.close()
-    after = TestClient(
-        make_app(IncidentStore(store_dir), capture_dir), raise_server_exceptions=False
-    )
+    after = TestClient(make_app(make_store(store_dir), capture_dir), raise_server_exceptions=False)
     retried = after.post("/v1/capture", json=drain(2, [series(2)[1]]), headers=HEADERS)
 
     assert retried.status_code in {200, 202}, retried.text
@@ -417,9 +410,7 @@ def test_failed_commit_marker_is_retried_before_replay_or_next_restart(
 ) -> None:
     store_dir = tmp_path / "store"
     capture_dir = tmp_path / "capture"
-    client = TestClient(
-        make_app(IncidentStore(store_dir), capture_dir), raise_server_exceptions=False
-    )
+    client = TestClient(make_app(make_store(store_dir), capture_dir), raise_server_exceptions=False)
     from earshot.capture import durable as capture_durable
 
     original_replace = capture_durable.os.replace
@@ -447,7 +438,7 @@ def test_failed_commit_marker_is_retried_before_replay_or_next_restart(
     client.app.state.capture_calls.close()
 
     after_restart = TestClient(
-        make_app(IncidentStore(store_dir), capture_dir), raise_server_exceptions=False
+        make_app(make_store(store_dir), capture_dir), raise_server_exceptions=False
     )
     restarted_retry = after_restart.post("/v1/capture", json=body, headers=HEADERS)
     assert restarted_retry.status_code == 200, restarted_retry.text
@@ -609,7 +600,7 @@ def test_unreplayable_journal_cannot_be_replaced_by_a_fresh_capture_call(tmp_pat
 def test_a_capture_drain_cannot_grow_its_durable_journal_past_the_byte_limit(tmp_path) -> None:
     from earshot.live import LiveConfig, LiveSessionRegistry
 
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     capture_dir = tmp_path / "capture"
     capture_dir.mkdir()
     live = LiveSessionRegistry(config=LiveConfig(max_capture_journal_bytes=32 * 1024))
@@ -682,7 +673,7 @@ def test_a_capture_drain_cannot_grow_its_durable_journal_past_the_byte_limit(tmp
 def test_active_capture_refuses_journal_directory_replacement_before_append(tmp_path) -> None:
     from earshot.capture.durable import journal_path, sidecar_path
 
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     capture_dir = tmp_path / "capture"
     app = make_app(store, capture_dir)
 
@@ -876,7 +867,7 @@ def test_an_oversized_existing_journal_is_not_loaded_and_remains_deletable(
     store_dir = tmp_path / "store"
     capture_dir = tmp_path / "capture"
     capture_dir.mkdir()
-    with TestClient(make_app(IncidentStore(store_dir), capture_dir)) as before:
+    with TestClient(make_app(make_store(store_dir), capture_dir)) as before:
         accepted = before.post("/v1/capture", json=drain(1, [series(1)[0]]), headers=HEADERS)
         assert accepted.status_code == 202, accepted.text
         journal = next(capture_dir.glob("*.eck"))
@@ -893,7 +884,7 @@ def test_an_oversized_existing_journal_is_not_loaded_and_remains_deletable(
     monkeypatch.setattr(Path, "read_bytes", refuse_oversized_read)
     live = LiveSessionRegistry(config=LiveConfig(max_capture_journal_bytes=journal_size - 1))
     app = create_app(
-        store=IncidentStore(store_dir),
+        store=make_store(store_dir),
         config=ApiConfig(token="t"),
         analyzer=analyze_incident,
         live_registry=live,
@@ -965,7 +956,7 @@ def test_memory_only_capture_expiry_drops_the_live_session(tmp_path) -> None:
         ),
         clock=lambda: now[0],
     )
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     app = create_app(
         store=store,
         config=ApiConfig(token="t"),
@@ -1019,7 +1010,7 @@ def test_memory_only_expiry_preserves_a_call_refreshed_after_stale_scan(
         original_set_handler(pause_before_project_fence)
 
     monkeypatch.setattr(live, "set_capture_expiry_handler", gate_registered_handler)
-    store = IncidentStore(tmp_path)
+    store = make_store(tmp_path)
     app = create_app(
         store=store,
         config=ApiConfig(token="t"),
@@ -1066,7 +1057,7 @@ def test_memory_only_expiry_preserves_a_call_refreshed_after_stale_scan(
 def test_interrupted_resync_drain_fences_every_other_new_sequence(tmp_path, monkeypatch) -> None:
     capture_dir = tmp_path / "capture"
     client = TestClient(
-        make_app(IncidentStore(tmp_path / "store"), capture_dir), raise_server_exceptions=False
+        make_app(make_store(tmp_path / "store"), capture_dir), raise_server_exceptions=False
     )
     from earshot.capture import durable as capture_durable
 
@@ -1105,7 +1096,7 @@ def test_interrupted_resync_drain_fences_every_other_new_sequence(tmp_path, monk
 def test_finalized_capture_retry_remains_idempotent_after_seal_and_restart(tmp_path) -> None:
     store_dir = tmp_path / "store"
     capture_dir = tmp_path / "capture"
-    before = TestClient(make_app(IncidentStore(store_dir), capture_dir))
+    before = TestClient(make_app(make_store(store_dir), capture_dir))
     ended = drain(
         1,
         [series(1)[0]],
@@ -1126,7 +1117,7 @@ def test_finalized_capture_retry_remains_idempotent_after_seal_and_restart(tmp_p
 
     before.app.state.live.close()
     before.app.state.capture_calls.close()
-    after = TestClient(make_app(IncidentStore(store_dir), capture_dir))
+    after = TestClient(make_app(make_store(store_dir), capture_dir))
 
     retry = after.post("/v1/capture", json=ended, headers=HEADERS)
     assert retry.status_code == 200, retry.text
@@ -1148,7 +1139,7 @@ def test_capture_restart_does_not_replay_frames_after_finalize(tmp_path) -> None
 
     store_dir = tmp_path / "store"
     capture_dir = tmp_path / "capture"
-    with TestClient(make_app(IncidentStore(store_dir), capture_dir)) as client:
+    with TestClient(make_app(make_store(store_dir), capture_dir)) as client:
         ended = drain(
             1,
             [series(1)[0]],
@@ -1172,7 +1163,7 @@ def test_capture_restart_does_not_replay_frames_after_finalize(tmp_path) -> None
         journal.write_bytes(original + suffix)
         corrupted = journal.read_bytes()
 
-    with TestClient(make_app(IncidentStore(store_dir), capture_dir)) as restarted:
+    with TestClient(make_app(make_store(store_dir), capture_dir)) as restarted:
         assert not restarted.app.state.live.contains(call_id, project_id="default")
         assert journal.read_bytes() == corrupted
 
@@ -1300,7 +1291,7 @@ def test_a_rejected_memory_only_first_drain_is_not_replayed_as_finalized(tmp_pat
     live.refresh()
     client = TestClient(
         create_app(
-            store=IncidentStore(tmp_path / "store"),
+            store=make_store(tmp_path / "store"),
             config=ApiConfig(token="t"),
             analyzer=analyze_incident,
             live_registry=live,
@@ -1335,7 +1326,7 @@ def test_sealed_capture_replay_retention_is_bounded_and_old_ids_stay_reserved(tm
     capture_dir = tmp_path / "capture"
     client = TestClient(
         make_app(
-            IncidentStore(store_dir),
+            make_store(store_dir),
             capture_dir,
             max_sealed_capture_replay_ledgers=1,
         )
@@ -1377,7 +1368,7 @@ def test_sealed_capture_replay_retention_is_bounded_and_old_ids_stay_reserved(tm
 
 
 def test_memory_capture_does_not_reopen_a_stored_call_after_memory_eviction(tmp_path) -> None:
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     client = TestClient(create_app(store=store, config=ApiConfig(token="t")))
     completed = drain(
         1,
@@ -1407,7 +1398,7 @@ def test_memory_capture_does_not_reopen_a_stored_call_after_memory_eviction(tmp_
 
 def test_checkpoint_upload_cannot_append_to_a_browser_capture_session(tmp_path) -> None:
     capture_dir = tmp_path / "capture"
-    client = TestClient(make_app(IncidentStore(tmp_path / "store"), capture_dir))
+    client = TestClient(make_app(make_store(tmp_path / "store"), capture_dir))
     accepted = client.post("/v1/capture", json=drain(1, [series(1)[0]]), headers=HEADERS)
     assert accepted.status_code == 202, accepted.text
     call_id = accepted.json()["call_id"]
@@ -1438,9 +1429,7 @@ def test_commit_directory_fsync_failure_keeps_the_committed_journal(tmp_path, mo
 
     store_dir = tmp_path / "store"
     capture_dir = tmp_path / "capture"
-    client = TestClient(
-        make_app(IncidentStore(store_dir), capture_dir), raise_server_exceptions=False
-    )
+    client = TestClient(make_app(make_store(store_dir), capture_dir), raise_server_exceptions=False)
     original_replace = capture_durable.os.replace
     original_fsync = capture_durable.os.fsync
     replacements = 0
@@ -1478,7 +1467,7 @@ def test_commit_directory_fsync_failure_keeps_the_committed_journal(tmp_path, mo
 
     client.app.state.live.close()
     client.app.state.capture_calls.close()
-    after = TestClient(make_app(IncidentStore(store_dir), capture_dir))
+    after = TestClient(make_app(make_store(store_dir), capture_dir))
     recovered = after.post("/v1/capture", json=body, headers=HEADERS)
 
     assert recovered.status_code == 200, recovered.text
@@ -1487,7 +1476,7 @@ def test_commit_directory_fsync_failure_keeps_the_committed_journal(tmp_path, mo
 
 
 def test_a_call_survives_a_backend_restart_and_a_client_resumes(tmp_path) -> None:
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     capture_dir = tmp_path / "capture"
     snaps = series(6)
 
@@ -1534,7 +1523,7 @@ def test_a_call_survives_a_backend_restart_and_a_client_resumes(tmp_path) -> Non
 
 
 def test_torn_capture_journal_fences_continuation_after_restart(tmp_path) -> None:
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     capture_dir = tmp_path / "capture"
     before = TestClient(make_app(store, capture_dir))
 
@@ -1732,7 +1721,7 @@ def test_memory_only_record_limit_rejects_a_terminal_drain_atomically(tmp_path) 
     large_live.close()
 
     live = LiveSessionRegistry(config=LiveConfig(max_journal_records=complete.accepted_through))
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     app = create_app(
         store=store,
         config=ApiConfig(token="t"),
@@ -2222,7 +2211,7 @@ def test_previous_capture_digest_versions_replay_while_new_drains_bind_rejection
 
 
 def test_a_rebuilt_call_seals_provisional_and_never_fabricates_a_close(tmp_path) -> None:
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     capture_dir = tmp_path / "capture"
     snaps = series(5)
 
@@ -2253,7 +2242,7 @@ def test_a_rebuilt_call_seals_provisional_and_never_fabricates_a_close(tmp_path)
 def test_a_call_continued_after_a_restart_seals_into_a_valid_artifact(tmp_path) -> None:
     """Continuing across a restart yields one valid artifact that declares the gap."""
 
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     capture_dir = tmp_path / "capture"
     snaps = series(8)
 
@@ -2282,7 +2271,7 @@ def test_a_call_continued_after_a_restart_seals_into_a_valid_artifact(tmp_path) 
 
 
 def test_a_durably_ended_call_stays_final_and_refuses_a_late_drain(tmp_path) -> None:
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     capture_dir = tmp_path / "capture"
     snaps = series(3)
 
@@ -2320,7 +2309,7 @@ def test_a_durably_ended_call_stays_final_and_refuses_a_late_drain(tmp_path) -> 
 def test_without_a_journal_directory_a_restart_drops_the_call(tmp_path) -> None:
     """Durability is opt-in: no directory, no on-disk copy, and a restart loses it."""
 
-    store = IncidentStore(tmp_path / "store")
+    store = make_store(tmp_path / "store")
     before = create_app(store=store, config=ApiConfig(token="t"), analyzer=analyze_incident)
     client = TestClient(before)
     call_id = None
@@ -2331,7 +2320,7 @@ def test_without_a_journal_directory_a_restart_drops_the_call(tmp_path) -> None:
     before.state.live.close()
 
     after = create_app(
-        store=IncidentStore(tmp_path / "store"),
+        store=make_store(tmp_path / "store"),
         config=ApiConfig(token="t"),
         analyzer=analyze_incident,
     )

@@ -111,7 +111,7 @@ export function useIncident(bundleId: string | undefined) {
   });
 }
 
-/** Mutable project-scoped links to the owning Platform call and optional Lab run. */
+/** Mutable project-scoped links from an incident to records a host keeps elsewhere. */
 export function useExternalReferences(bundleId: string | undefined) {
   const scope = useViewerQueryScope();
   return useQuery({
