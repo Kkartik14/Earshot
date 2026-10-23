@@ -83,7 +83,8 @@ seconds after the upload.
 curl http://127.0.0.1:4319/v1/calls
 ```
 
-A Call is listed as soon as its first Recording is created or its first span arrives.
+A Call is listed as soon as its first Recording is created or Earshot receives a span that
+resolves a session key.
 Pipecat sends its `conversation` span as an end signal. Earshot creates a final Revision
 after a 10-second grace period and any active recording uploads finish or reach their
 deadline. Without an end signal, five quiet minutes make a provisional Revision due, but

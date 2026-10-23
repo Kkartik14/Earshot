@@ -7,8 +7,9 @@
 ``--out`` of ``examples/pipecat_otlp/run_call.py``. The archive retains transcript
 and audio content, so its destination stays under the gitignored ``.earshot`` path.
 Every request is decoded, scrubbed and re-serialized deterministically. The command
-refuses to write an archive that still contains a value from ``--env`` (it reports
-key names, never values).
+refuses to write an archive that still contains a non-model ``--env`` value of
+at least eight characters (it reports key names, never values). The output must
+be a new, direct child of ``.earshot/private-captures``.
 """
 
 from __future__ import annotations
@@ -41,8 +42,9 @@ SCRUB_RULES = [
     "The local username and hostname are replaced with 'captured-user' / 'captured-host' "
     "wherever they occur inside string values.",
     "Each request is decompressed and re-serialized with SerializeToString(deterministic=True).",
-    "The build aborts if any .env value (except GROQ_MODEL and CARTESIA_MODEL, which Pipecat "
-    "records as gen_ai.request.model) occurs anywhere in the fixture bytes.",
+    "The build aborts if a non-model .env value of at least eight characters (except GROQ_MODEL "
+    "and CARTESIA_MODEL, which Pipecat records as gen_ai.request.model) occurs anywhere in the "
+    "fixture bytes.",
     "Trace/span IDs, timestamps, transcripts and LLM/TTS text are kept as captured: the caller "
     "is a fixed synthetic script and the agent text is model output.",
 ]
@@ -95,7 +97,20 @@ def _wav_info(path: Path) -> dict[str, object]:
         }
 
 
+def _archive_output(path: Path) -> Path:
+    archive_root = (ROOT / ".earshot" / "private-captures").resolve()
+    output = path.expanduser().resolve()
+    if output.parent != archive_root:
+        raise SystemExit(
+            "refusing archive: --out must be a direct child of .earshot/private-captures"
+        )
+    if output.exists():
+        raise SystemExit(f"refusing archive: output already exists: {output}")
+    return output
+
+
 def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str, object]:
+    out = _archive_output(out)
     run_manifest = json.loads((run / "manifest.json").read_text())
     voice = env.get("CARTESIA_VOICE_ID")
     exact = {voice: "captured-cartesia-voice"} if voice else {}
@@ -107,8 +122,6 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
         )
         if len(needle) >= 3
     }
-    if out.exists():
-        shutil.rmtree(out)
     (out / "audio").mkdir(parents=True)
 
     requests, names, scopes = [], Counter(), {}
