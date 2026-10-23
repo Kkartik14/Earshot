@@ -102,7 +102,12 @@ pytest -m slow apps/ingest/tests/test_recordings_memory.py   # the slow tests yo
 pytest -m slow                                         # every slow test
 ```
 
-CI and the release gate run plain `pytest`, so no `slow` test is skipped there.
+Manual CI dispatch runs the full SQLite suite, the listed Postgres storage and
+application contracts, and the full S3 blob store contract suite, then combines SQLite
+and Postgres coverage. Quick PR checks run only the isolated `unit` tests; add the
+`Merge Ready` label to run the comprehensive pull request lanes. The standard pull
+request lanes use targeted SQLite/Postgres/S3 checks and exclude `slow` tests where the
+command specifies `-m 'not slow'`.
 
 One test still skips in CI: the real-provider e2e
 (`apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`, marked `real_providers`)
@@ -120,12 +125,18 @@ reads keys from the process environment only, never from `.env`, so a plain loca
 Tests intentionally mutate valid fixtures. A passing test should prove a property or
 regression, not merely assert that its own valid sample is valid.
 
-The checked-in [CI workflow](../.github/workflows/ci.yml) runs these gates on every
-push and pull request. Its Python lane installs both bounded framework extras so the
-LiveKit 1.6 and Pipecat 1.6 real-object integration tests cannot silently skip. A
-separate clean-artifact lane bundles the viewer, builds the wheel and sdist together,
-and installs both in isolated base and `[server]` environments. Its TypeScript lane uses
-the committed pnpm lockfile and the Node version in `.nvmrc`.
+The checked-in [CI workflow](../.github/workflows/ci.yml) runs quick Python and
+TypeScript checks on each pull request update. The light-blue `Merge Ready` label starts
+the comprehensive lanes, including Postgres and S3, the Python and framework
+compatibility matrices, macOS, package artifacts, and the container. The workflow also
+runs the comprehensive lanes on pushes to `main`; a manual dispatch adds the full SQLite
+suite, the listed Postgres storage/application contracts, and the S3 blob store suite,
+then enforces combined SQLite/Postgres coverage. Its Python lane installs both
+bounded framework extras so the LiveKit 1.6 and Pipecat 1.6 real-object integration
+tests cannot silently skip. A separate clean-artifact lane bundles the viewer, builds
+the wheel and sdist together, and installs both in isolated base and `[server]`
+environments. TypeScript lanes use the committed pnpm lockfile and the Node version in
+`.nvmrc`.
 
 ## Run locally
 
