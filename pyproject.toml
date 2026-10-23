@@ -45,12 +45,12 @@ s3 = ["boto3>=1.36,<2"]
 # Opt-in envelope encryption (AES-256-GCM) for the durable spool at rest. The
 # base install stays dependency-light; import it lazily and only when a spool
 # key is configured.
-spool-encryption = ["cryptography>=42,<46"]
+spool-encryption = ["cryptography>=42,<51"]
 dev = [
   "alembic>=1.13,<2",
   "boto3>=1.36,<2",
   "build>=1.2,<2",
-  "cryptography>=42,<46",
+  "cryptography>=42,<51",
   "fastapi>=0.115,<1",
   # The OTLP receiver tests decode error bodies with the reference google.rpc.Status
   # and export spans with the real OpenTelemetry SDK and HTTP exporter.
