@@ -218,16 +218,18 @@ before upgrading a 0.1.x installation.
   names: the route `{ kind: "capture-status", hostCallId, capture }` and the
   `CaptureStatus` component. Hosts that linked the unpublished source must rename
   `call-status`, `callId` and `CallCaptureStatus`.
-- **Examples and fixtures**: `examples/pipecat_otlp/`, a real Pipecat 1.5 call exported
-  over OTLP; its captured fixture `fixtures/captured/pipecat-otlp-1.5/`; and upgrade
-  fixtures written by four 0.1.x releases in `fixtures/upgrade/`. `run_call.py` fails
+- **Examples and fixtures**: `examples/pipecat_otlp/` runs a real Pipecat 1.5 call over
+  OTLP. Receiver tests build synthetic Pipecat-shaped requests in memory. The raw call
+  fixture has been removed from the current tree, though its earlier commit remains in
+  repository history. The upgrade fixtures in `fixtures/upgrade/` were written by four
+  0.1.x releases. `run_call.py` fails
   when its call produced no `stt`, `llm` or `tts` span: Pipecat 1.5 only logs and retries
   when a provider refuses its key, so without the check such a call ends as if it had
   succeeded.
 - **End-to-end tests.** A replay test
   (`apps/ingest/tests/e2e/test_otlp_replay_quickstart.py`) runs the README quick start on
-  a real `earshot serve` with default settings: it replays the captured Pipecat 1.5 call
-  and uploads its two recordings, and it runs in CI. A real-provider test
+  a real `earshot serve` with default settings: it replays generated OTLP requests and
+  uploads synthetic recordings, and it runs in CI. A real-provider test
   (`apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`) runs one real Pipecat 1.5
   call (Deepgram, Groq, Cartesia) into Earshot on Postgres and S3. It skips without
   provider keys; `EARSHOT_REQUIRE_REAL_PROVIDERS=1` makes that a failure. Both require

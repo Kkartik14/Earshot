@@ -1,12 +1,14 @@
-"""Scrub a real Pipecat OTLP capture into ``fixtures/captured/pipecat-otlp-1.5``.
+"""Archive a real Pipecat OTLP capture in the ignored ``.earshot`` directory.
 
-    python scripts/build_pipecat_otlp_fixture.py \\
+    python scripts/archive_pipecat_otlp_capture.py \\
         --capture .earshot/otlp_capture/run1 --run .earshot/pipecat_otlp/run1
 
 ``--capture`` is the output of ``scripts/otlp_capture_sink.py``; ``--run`` is the
-``--out`` of ``examples/pipecat_otlp/run_call.py``. Every request is decoded, scrubbed
-and re-serialized deterministically; the build refuses to write a fixture that still
-contains any value from ``--env`` (it reports key names, never values).
+``--out`` of ``examples/pipecat_otlp/run_call.py``. The archive retains transcript
+and audio content, so its destination stays under the gitignored ``.earshot`` path.
+Every request is decoded, scrubbed and re-serialized deterministically. The command
+refuses to write an archive that still contains a value from ``--env`` (it reports
+key names, never values).
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from pathlib import Path
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5"
+DEFAULT_OUT = ROOT / ".earshot" / "private-captures" / "pipecat-otlp-1.5"
 NON_SECRET_ENV_KEYS = {"GROQ_MODEL", "CARTESIA_MODEL"}
 SCRUB_RULES = [
     "Resource attribute service.instance.id is replaced with 'captured-instance'.",
@@ -145,8 +147,8 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
     for track in ("user", "agent"):
         shutil.copyfile(run / f"{track}.wav", out / "audio" / f"{track}.wav")
     manifest = {
-        "description": "OTLP/HTTP protobuf requests exported by one real Pipecat call, in "
-        "arrival order, plus that call's per-speaker recordings.",
+        "description": "Local archive of OTLP/HTTP requests and recordings from one real "
+        "Pipecat call. This archive can contain transcript and audio content.",
         "provenance": {
             "captured_on": datetime.date.today().isoformat(),
             "source_kind": "real_call",
@@ -167,7 +169,7 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
             "exported_span_count_tee": run_manifest["exported_span_count"],
             "driver": "examples/pipecat_otlp/run_call.py",
             "sink": "scripts/otlp_capture_sink.py",
-            "builder": "scripts/build_pipecat_otlp_fixture.py",
+            "builder": "scripts/archive_pipecat_otlp_capture.py",
         },
         "scrub_rules": SCRUB_RULES,
         "requests": requests,
@@ -189,12 +191,12 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
         leaked = [key for key, value in secrets.items() if value.encode() in data]
         if leaked:
             shutil.rmtree(out)
-            raise SystemExit(f"refusing fixture: {path.name} contains the value of {leaked}")
+            raise SystemExit(f"refusing archive: {path.name} contains the value of {leaked}")
     return manifest
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build the scrubbed Pipecat OTLP fixture.")
+    parser = argparse.ArgumentParser(description="Archive a scrubbed Pipecat OTLP capture locally.")
     parser.add_argument("--capture", type=Path, required=True)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)

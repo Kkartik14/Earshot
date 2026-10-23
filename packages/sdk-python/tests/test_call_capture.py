@@ -20,7 +20,7 @@ from opentelemetry.proto.common.v1.common_pb2 import (
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, Span
 
-from captured_otlp import CAPTURED_SESSION_KEY, captured_requests
+from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 from earshot.call_capture import (
     SESSION_KEY_ATTRIBUTES,
     OtlpSpan,
@@ -49,7 +49,7 @@ DIAG = CaptureClass.DIAGNOSTIC_PAYLOAD
 
 # (raw key, class before normalization, class after normalization)
 CLASSIFICATION = [
-    # Pipecat 1.5 (research §1.4; the real capture carries the first four)
+    # Pipecat 1.5 (research §1.4; the synthetic example carries the first four)
     ("text", M, T),
     ("input", M, MODEL),
     ("output", M, MODEL),
@@ -153,8 +153,8 @@ def test_keys_are_classified_after_normalization(key, before, after) -> None:
     assert attribute_capture_class(key) is after
 
 
-def _fixture_spans() -> list[OtlpSpan]:
-    return [span for request in captured_requests() for span in spans_from_request(request)]
+def _synthetic_spans() -> list[OtlpSpan]:
+    return [span for request in synthetic_requests() for span in spans_from_request(request)]
 
 
 def _attributes(message) -> dict[str, object]:
@@ -165,11 +165,11 @@ def _string(key: str, value: str) -> KeyValue:
     return KeyValue(key=key, value=AnyValue(string_value=value))
 
 
-# --- The real capture ------------------------------------------------------------------
+# --- Synthetic request data ------------------------------------------------------------------
 
 
-def test_the_real_capture_flattens_to_its_seventeen_spans_with_their_scopes() -> None:
-    spans = _fixture_spans()
+def test_synthetic_requests_flatten_to_seventeen_spans_with_their_scopes() -> None:
+    spans = _synthetic_spans()
 
     assert len(spans) == 17
     assert {(span.scope.name, span.span.name) for span in spans} == {
@@ -182,10 +182,10 @@ def test_the_real_capture_flattens_to_its_seventeen_spans_with_their_scopes() ->
     assert {span.resource.attributes[0].key for span in spans} == {"telemetry.sdk.language"}
 
 
-def test_every_content_key_of_the_real_capture_is_content_after_normalization() -> None:
+def test_every_content_key_of_synthetic_requests_is_content_after_normalization() -> None:
     classes = {
         (span.span.name, key): attribute_capture_class(key)
-        for span in _fixture_spans()
+        for span in _synthetic_spans()
         for key in _attributes(span.span)
     }
 
@@ -203,7 +203,7 @@ def test_every_content_key_of_the_real_capture_is_content_after_normalization() 
 
 
 def test_not_given_is_absent_from_the_normalized_attributes() -> None:
-    llm = next(span for span in _fixture_spans() if span.span.name == "llm")
+    llm = next(span for span in _synthetic_spans() if span.span.name == "llm")
 
     raw = {item.key: item.value.string_value for item in llm.span.attributes}
     values = attribute_values(llm.span.attributes)
@@ -220,20 +220,20 @@ def test_not_given_is_absent_from_the_normalized_attributes() -> None:
 
 
 def test_full_keeps_every_span_and_resource_byte_for_byte() -> None:
-    for span in _fixture_spans():
+    for span in _synthetic_spans():
         kept = apply_capture_preset("full", span)
 
         assert span_payload(kept.span) == span_payload(span.span)
         assert resource_payload(kept) == resource_payload(span)
 
 
-def test_metadata_only_drops_content_identity_and_session_keys_from_the_real_capture() -> None:
+def test_metadata_only_drops_content_identity_and_session_keys_from_synthetic_requests() -> None:
     kept = {}
-    for span in _fixture_spans():
+    for span in _synthetic_spans():
         filtered = apply_capture_preset("metadata_only", span)
         kept.setdefault(span.span.name, set()).update(_attributes(filtered.span))
         payload = span_payload(filtered.span)
-        assert CAPTURED_SESSION_KEY.encode() not in payload
+        assert SYNTHETIC_SESSION_KEY.encode() not in payload
         for key in _attributes(filtered.span):
             assert attribute_capture_class(key) is M, key
             assert key not in SESSION_KEY_ATTRIBUTES, key
@@ -395,7 +395,7 @@ def test_classifying_sender_chosen_long_keys_retains_none_of_them() -> None:
 
 
 def test_presets_outside_this_release_are_refused() -> None:
-    span = _fixture_spans()[0]
+    span = _synthetic_spans()[0]
 
     for preset in ("redacted", "everything", ""):
         with pytest.raises(ValueError, match="capture preset"):
@@ -406,7 +406,7 @@ def test_presets_outside_this_release_are_refused() -> None:
 
 
 def test_payloads_are_deterministic_and_their_digest_is_sha256() -> None:
-    span = next(span for span in _fixture_spans() if span.span.name == "llm")
+    span = next(span for span in _synthetic_spans() if span.span.name == "llm")
 
     payload = span_payload(span.span)
     reordered = Span()
@@ -438,12 +438,12 @@ def _keyed(span_attributes=(), resource_attributes=()) -> OtlpSpan:
     )
 
 
-def test_the_real_capture_names_its_session_on_the_conversation_and_turn_spans() -> None:
-    keys = {(span.span.name, resolve_session_key(span)) for span in _fixture_spans()}
+def test_synthetic_requests_name_their_session_on_conversation_and_turn_spans() -> None:
+    keys = {(span.span.name, resolve_session_key(span)) for span in _synthetic_spans()}
 
     assert keys == {
-        ("conversation", SessionKey(CAPTURED_SESSION_KEY, "earshot.session.id")),
-        ("turn", SessionKey(CAPTURED_SESSION_KEY, "conversation.id")),
+        ("conversation", SessionKey(SYNTHETIC_SESSION_KEY, "earshot.session.id")),
+        ("turn", SessionKey(SYNTHETIC_SESSION_KEY, "conversation.id")),
         ("stt", None),
         ("llm", None),
         ("tts", None),
@@ -508,9 +508,9 @@ def test_an_invalid_or_non_string_key_counts_as_no_key() -> None:
 # --- End markers and session spans -------------------------------------------------------------
 
 
-def test_only_the_conversation_span_of_the_real_capture_ends_the_call() -> None:
+def test_only_the_conversation_span_of_synthetic_requests_ends_the_call() -> None:
     markers = {
-        (span.span.name, is_end_marker(span), is_session_span(span)) for span in _fixture_spans()
+        (span.span.name, is_end_marker(span), is_session_span(span)) for span in _synthetic_spans()
     }
 
     assert markers == {

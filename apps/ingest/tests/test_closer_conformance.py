@@ -1,6 +1,6 @@
 """AC7.6: the server path and the in-process Pipecat adapter derive the same turn facts.
 
-**Server path:** the real Pipecat 1.5 capture is sent over HTTP to a real server
+**Server path:** synthetic Pipecat-shaped OTLP requests are sent over HTTP to a real server
 (``POST /v1/traces``); its maintenance loop's closer turns the call into revision 1.
 **In-process path:** the same spans, as the OpenTelemetry SDK hands them to a span
 processor (``ReadableSpan``), go straight into ``PipecatAdapter.consume_span`` on a
@@ -19,7 +19,7 @@ from opentelemetry.sdk.util.instrumentation import InstrumentationScope
 from opentelemetry.trace import SpanContext, SpanKind, Status, StatusCode, TraceFlags
 
 from adapter_conformance import assert_capture_conforms, assert_same_turn_facts
-from captured_otlp import captured_requests
+from synthetic_otlp import synthetic_requests
 from earshot.adapters.pipecat import PipecatAdapter
 from earshot.api import create_app
 from earshot.call_capture import any_value, spans_from_request
@@ -67,7 +67,7 @@ def _readable(span) -> ReadableSpan:
 
 
 def _in_process_bundle():
-    spans = [span for request in captured_requests() for span in spans_from_request(request)]
+    spans = [span for request in synthetic_requests() for span in spans_from_request(request)]
     recorder = IncidentRecorder(
         session_id="in-process",
         bundle_id="in-process-call",
@@ -86,7 +86,7 @@ def test_the_server_path_derives_the_turn_facts_the_in_process_adapter_derives(
     store = make_store(tmp_path)
     app = create_app(store=store, call_timings=CallTimings(end_grace_seconds=0.05))
     with serve(app) as port:
-        for request in captured_requests():
+        for request in synthetic_requests():
             assert post_otlp(port, request.SerializeToString()).status == 200
         deadline = time.monotonic() + 15
         while not catalog_rows(tmp_path, "SELECT 1 FROM call_revisions"):

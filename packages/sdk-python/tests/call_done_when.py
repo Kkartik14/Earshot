@@ -1,9 +1,9 @@
 """FR-12's done-when checks for one call, shared by the two end-to-end tests.
 
 Both tests drive a real ``earshot serve`` process with one call's evidence: a real
-Pipecat call (``apps/ingest/tests/e2e_real``) or the real capture replayed
-(``apps/ingest/tests/e2e``). Both then ask the same questions of the server's
-HTTP API, its catalog and its blob store:
+Pipecat call (``apps/ingest/tests/e2e_real``) or the synthetic request sequence
+replayed in ``apps/ingest/tests/e2e``. Both then ask the same questions of the
+server's HTTP API, catalog, and blob store:
 
 - the call settles: ``state=closed``, not ``dirty``, no pending recording, and the
   latest revision holds both recordings (hard timeout 120 s);

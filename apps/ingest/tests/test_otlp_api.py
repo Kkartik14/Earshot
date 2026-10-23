@@ -3,7 +3,7 @@
 Every test runs the real app on a real uvicorn server (``otlp_support.serve``).
 The exporter tests build spans with the real OpenTelemetry SDK and send them with
 the real ``OTLPSpanExporter``, configured only by ``OTEL_EXPORTER_OTLP_*``. The
-call tests replay the real Pipecat 1.5 capture. Both dialects (``--db``).
+call tests replay synthetic Pipecat-shaped OTLP requests. Both dialects (``--db``).
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from opentelemetry.proto.common.v1.common_pb2 import InstrumentationScope
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans
 
-from captured_otlp import (
-    CAPTURED_SESSION_KEY,
-    CAPTURED_USER_ID,
-    captured_requests,
+from synthetic_otlp import (
+    SYNTHETIC_SESSION_KEY,
+    SYNTHETIC_USER_ID,
+    synthetic_requests,
     with_identity,
 )
 from earshot.api import ApiConfig, create_app
@@ -136,9 +136,9 @@ def test_protobuf_and_upper_case_hex_json_store_byte_identical_spans_and_resourc
     for media_type, path in ((PROTOBUF, tmp_path / "protobuf"), (JSON, tmp_path / "json")):
         with serve(create_app(store=make_store(path))) as port:
             if media_type == PROTOBUF:
-                replies[media_type] = _replay(port, with_links(captured_requests()))
+                replies[media_type] = _replay(port, with_links(synthetic_requests()))
             else:
-                for item in with_links(captured_requests()):
+                for item in with_links(synthetic_requests()):
                     reply = post_otlp(port, otlp_json(item, upper=True), media_type=JSON)
                     assert reply.status == 200, reply.body
                     replies.setdefault(media_type, []).append(reply)
@@ -574,15 +574,15 @@ TRACE_STATE = (
 )
 
 
-def test_resending_the_real_capture_stores_nothing_new_and_touches_no_call(tmp_path) -> None:
+def test_resending_synthetic_requests_stores_nothing_new_and_touches_no_call(tmp_path) -> None:
     with serve(create_app(store=make_store(tmp_path))) as port:
-        _replay(port, captured_requests())
+        _replay(port, synthetic_requests())
         before = (
             catalog_rows(tmp_path, STORED_SPANS),
             catalog_rows(tmp_path, CALL_STATE),
             catalog_rows(tmp_path, TRACE_STATE),
         )
-        replies = _replay(port, captured_requests())
+        replies = _replay(port, synthetic_requests())
         after = (
             catalog_rows(tmp_path, STORED_SPANS),
             catalog_rows(tmp_path, CALL_STATE),
@@ -600,8 +600,8 @@ def test_resending_the_real_capture_stores_nothing_new_and_touches_no_call(tmp_p
 def test_a_changed_payload_for_a_stored_span_keeps_the_first_write_and_counts_a_conflict(
     tmp_path,
 ) -> None:
-    first = captured_requests()[0]
-    changed = captured_requests()[0]
+    first = synthetic_requests()[0]
+    changed = synthetic_requests()[0]
     changed.resource_spans[0].scope_spans[0].spans[0].name = "stt-renamed"
     with serve(create_app(store=make_store(tmp_path))) as port:
         _replay(port, [first])
@@ -624,7 +624,7 @@ def test_stats_are_scoped_to_the_authenticated_project(tmp_path) -> None:
     rejected = make_request([make_span(9, 1, start=0), make_span(10, 1)])
     with serve(create_app(store=store)) as port:
         post_otlp(port, rejected.SerializeToString())  # default: 1 rejected, 1 parked
-        _replay(port, captured_requests()[:3], credential=other)  # other: 1 open call
+        _replay(port, synthetic_requests()[:3], credential=other)  # other: 1 open call
         default_stats, other_stats = _stats(port), _stats(port, other)
 
     assert default_stats == {
@@ -650,12 +650,12 @@ def test_resolve_finds_the_call_of_a_session_key_in_the_current_generation_only(
     store.create_project("other", display_name="Other")
     other = store.issue_api_key("other", label="other").credential
     with serve(create_app(store=store)) as port:
-        _replay(port, captured_requests())
-        found = _resolve(port, {"session_key": f"  {CAPTURED_SESSION_KEY}\n"})
-        foreign = _resolve(port, {"session_key": CAPTURED_SESSION_KEY}, other)
+        _replay(port, synthetic_requests())
+        found = _resolve(port, {"session_key": f"  {SYNTHETIC_SESSION_KEY}\n"})
+        foreign = _resolve(port, {"session_key": SYNTHETIC_SESSION_KEY}, other)
         unknown = _resolve(port, {"session_key": "call-never-seen"})
         invalid = _resolve(port, {"session_key": "x" * 300})
-        malformed = _resolve(port, {"key": CAPTURED_SESSION_KEY})
+        malformed = _resolve(port, {"key": SYNTHETIC_SESSION_KEY})
         # A call purge (WS8) bumps the key's generation; resolve follows it.
         with catalog(tmp_path) as connection:
             fingerprint = connection.execute("SELECT key_fingerprint FROM calls").fetchone()[0]
@@ -665,10 +665,10 @@ def test_resolve_finds_the_call_of_a_session_key_in_the_current_generation_only(
                 (fingerprint,),
             )
             connection.commit()
-        bumped = _resolve(port, {"session_key": CAPTURED_SESSION_KEY})
+        bumped = _resolve(port, {"session_key": SYNTHETIC_SESSION_KEY})
         # New evidence for the key (a new trace) starts the generation-1 call.
-        assert post_otlp(port, keyed_request(CAPTURED_SESSION_KEY, 99, 1)).status == 200
-        renewed = _resolve(port, {"session_key": CAPTURED_SESSION_KEY})
+        assert post_otlp(port, keyed_request(SYNTHETIC_SESSION_KEY, 99, 1)).status == 200
+        renewed = _resolve(port, {"session_key": SYNTHETIC_SESSION_KEY})
 
     call_ids = [row[0] for row in catalog_rows(tmp_path, "SELECT call_id FROM calls")]
     first_call = catalog_rows(tmp_path, "SELECT call_id FROM calls WHERE generation = 0")[0][0]
@@ -676,7 +676,7 @@ def test_resolve_finds_the_call_of_a_session_key_in_the_current_generation_only(
     assert (found.status, found.json()) == (200, {"call_id": first_call})
     for reply in (foreign, unknown, invalid, bumped):
         assert (reply.status, reply.problem_code()) == (404, "EARSHOT_CALL_NOT_FOUND")
-        assert CAPTURED_SESSION_KEY.encode() not in reply.body
+        assert SYNTHETIC_SESSION_KEY.encode() not in reply.body
         assert b"call-never-seen" not in reply.body
     assert malformed.status == 422
     assert (renewed.status, renewed.json()) == (200, {"call_id": second_call})
@@ -693,17 +693,17 @@ def test_metadata_only_stores_no_raw_key_and_no_user_id_through_the_receiver(
     store = make_store(tmp_path)
     store.set_capture_preset("default", preset)
     needles = [
-        CAPTURED_SESSION_KEY.encode(),
-        CAPTURED_USER_ID.encode(),
+        SYNTHETIC_SESSION_KEY.encode(),
+        SYNTHETIC_USER_ID.encode(),
         b"Seven thirty works for us.",  # an stt transcript
     ]
     with serve(create_app(store=store)) as port:
-        _replay(port, with_identity(captured_requests()))
-        resolved = _resolve(port, {"session_key": CAPTURED_SESSION_KEY})
+        _replay(port, with_identity(synthetic_requests()))
+        resolved = _resolve(port, {"session_key": SYNTHETIC_SESSION_KEY})
     store.close()  # the search reads the database files, WAL included
 
     assert resolved.status == 200
-    assert CAPTURED_SESSION_KEY.encode() not in resolved.body
+    assert SYNTHETIC_SESSION_KEY.encode() not in resolved.body
     if preset == "metadata_only":
         assert catalog_rows(tmp_path, "SELECT session_key, span_count FROM calls") == [(None, 17)]
         assert stored_needles(tmp_path, needles) == set()

@@ -3,9 +3,9 @@
 The materializer is the hosted connectors' server-side recorder pattern: an
 ``IncidentRecorder`` on a ``ManualClock`` with a fixed clock domain, fed spans in
 ``(start, trace_id, span_id)`` order through the adapter their instrumentation
-scope names (Pipecat in Month 1). Every test drives it with the real Pipecat 1.5
-capture (``fixtures/captured/pipecat-otlp-1.5``) decoded as the receiver decodes
-it, and stored as the receiver stores it.
+scope names (Pipecat in Month 1). Every test drives it with deterministic
+synthetic Pipecat-shaped OTLP requests, decoded as the receiver decodes them and
+stored as the receiver stores them.
 """
 
 from __future__ import annotations
@@ -19,7 +19,13 @@ import sys
 import pytest
 
 from adapter_conformance import assert_capture_conforms
-from captured_otlp import FIXTURE, captured_manifest, captured_requests
+from synthetic_otlp import (
+    SYNTHETIC_CALL_START,
+    SYNTHETIC_LINES,
+    SYNTHETIC_RECORDING_DURATION_S,
+    synthetic_recording_bytes,
+    synthetic_requests,
+)
 from earshot.adapters.pipecat import PipecatAdapter
 from earshot.call_capture import spans_from_request
 from earshot.clock import ManualClock
@@ -33,10 +39,10 @@ MANUAL_TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
 CALL_ID = "call_0123456789abcdef0123456789abcdef"
 
 
-def _captured_spans(requests=None):
+def _synthetic_spans(requests=None):
     return [
         span
-        for request in (captured_requests() if requests is None else requests)
+        for request in (synthetic_requests() if requests is None else requests)
         for span in spans_from_request(request)
     ]
 
@@ -102,19 +108,8 @@ def test_the_pipecat_adapter_consumes_spans_whose_links_carry_hex_ids() -> None:
 
 # --- transcript lines (AC7.3) ---------------------------------------------------------------
 
-USER_LINES = [
-    "Hi. I would like to book a table for two people tomorrow evening.",
-    "Seven thirty works for us.",
-    "Could we sit somewhere quiet near the window?",
-    "Perfect. That is everything I needed.",
-    "Thank you very much. Goodbye.",
-]
-AGENT_LINES = [
-    "Sure, what time would you like to come in tomorrow evening?",
-    "Sure, we\u2019ve booked a quiet window seat for you at 7:30. We look forward to "
-    "welcoming you tomorrow.",
-    "You're welcome! See you tomorrow.",
-]
+USER_LINES = [text for speaker, text in SYNTHETIC_LINES if speaker == "user"]
+AGENT_LINES = [text for speaker, text in SYNTHETIC_LINES if speaker == "agent"]
 
 
 def _lines(spans):
@@ -123,13 +118,13 @@ def _lines(spans):
     return [(line.speaker, line.text) for line in transcript_lines(spans)]
 
 
-def test_the_real_capture_gives_every_stt_transcript_and_every_completed_llm_output() -> None:
+def test_synthetic_requests_give_every_stt_transcript_and_completed_llm_output() -> None:
     from earshot.call_materializer import transcript_lines
 
-    spans = _captured_spans()
+    spans = _synthetic_spans()
     lines = transcript_lines(reversed(spans))  # arrival order does not matter
 
-    # is_final is false on all five stt spans of the real capture: not a filter.
+    # is_final is false on all five stt spans of the synthetic requests: not a filter.
     assert [line.text for line in lines if line.speaker == "user"] == USER_LINES
     # Two of the five llm spans were cancelled (no output): no line, no error.
     assert [line.text for line in lines if line.speaker == "agent"] == AGENT_LINES
@@ -157,19 +152,19 @@ def _set_attribute(span, key: str, value: str) -> None:
 
 def test_agent_lines_come_from_llm_output_on_1_5_and_1_6_shaped_spans_alike() -> None:
     # Pipecat 1.5 keeps only the last sentence in tts.text; 1.6 keeps the whole reply.
-    shaped_1_6 = _captured_spans()
+    shaped_1_6 = _synthetic_spans()
     outputs = iter(AGENT_LINES)
     for span in sorted(shaped_1_6, key=lambda item: item.span.start_time_unix_nano):
         if span.span.name == "tts":
             _set_attribute(span.span, "text", next(outputs))
 
-    assert _lines(shaped_1_6) == _lines(_captured_spans())
+    assert _lines(shaped_1_6) == _lines(_synthetic_spans())
     assert [text for speaker, text in _lines(shaped_1_6) if speaker == "agent"] == AGENT_LINES
 
 
 @pytest.mark.parametrize("transcript", ["NOT_GIVEN", "", "   "])
 def test_an_absent_or_blank_transcript_or_output_gives_no_line(transcript) -> None:
-    spans = _captured_spans()
+    spans = _synthetic_spans()
     for span in spans:
         if span.span.name == "stt":
             _set_attribute(span.span, "transcript", transcript)
@@ -180,7 +175,7 @@ def test_an_absent_or_blank_transcript_or_output_gives_no_line(transcript) -> No
 
 
 def test_only_pipecat_scopes_give_lines() -> None:
-    spans = [span for span in _captured_spans() if span.span.name in {"stt", "llm"}]
+    spans = [span for span in _synthetic_spans() if span.span.name in {"stt", "llm"}]
     for span in spans:
         span.scope.name = "some.other.framework"
 
@@ -199,7 +194,7 @@ def _stored(spans):
 
 
 def test_a_stored_span_reads_back_as_the_span_resource_and_scope_it_was_stored_from() -> None:
-    spans = _captured_spans(with_links(captured_requests()))
+    spans = _synthetic_spans(with_links(synthetic_requests()))
 
     assert _stored(spans) == spans
 
@@ -207,7 +202,7 @@ def test_a_stored_span_reads_back_as_the_span_resource_and_scope_it_was_stored_f
 def test_a_stored_span_becomes_the_dict_an_adapter_consumes() -> None:
     from earshot.call_materializer import adapter_span
 
-    spans = _captured_spans(with_links(captured_requests()))
+    spans = _synthetic_spans(with_links(synthetic_requests()))
     span = next(item for item in spans[1:] if item.span.name == "llm")
     span.span.status.code = 2  # STATUS_CODE_ERROR
     raw = span.span
@@ -244,7 +239,7 @@ def test_a_stored_span_becomes_the_dict_an_adapter_consumes() -> None:
 def test_span_status_codes_become_their_names(code, status) -> None:
     from earshot.call_materializer import adapter_span
 
-    span = _captured_spans()[0]
+    span = _synthetic_spans()[0]
     span.span.status.code = code
 
     assert adapter_span(span)["status"] == status
@@ -256,8 +251,7 @@ def test_span_status_codes_become_their_names(code, status) -> None:
 def _recording(speaker: str, **changes):
     from earshot.storage_recordings import Recording
 
-    audio = captured_manifest()["audio"]
-    body = (FIXTURE / audio[speaker]["file"]).read_bytes()
+    body = synthetic_recording_bytes(speaker)
     fields = {
         "project_id": "default",
         "recording_id": f"conv-1.{speaker}",
@@ -265,12 +259,12 @@ def _recording(speaker: str, **changes):
         "speaker": speaker,
         "content_type": "audio/wav",
         "label": None,
-        "started_at_unix_nano": audio["started_at_unix_nano"],
+        "started_at_unix_nano": SYNTHETIC_CALL_START,
         "state": "stored",
         "blob_key": f"recordings/default/{speaker}-attempt",
         "size": len(body),
         "sha256": hashlib.sha256(body).hexdigest(),
-        "duration_ms": round(audio[speaker]["duration_s"] * 1000),
+        "duration_ms": SYNTHETIC_RECORDING_DURATION_S * 1000,
         "created_unix_nano": 1,
         "stored_unix_nano": 2,
         **changes,
@@ -286,7 +280,7 @@ def _snapshot(spans=None, *, final=True, preset="full", revision=1, recordings=(
         revision=revision,
         final=final,
         capture_preset=preset,
-        spans=tuple(_stored(_captured_spans() if spans is None else spans)),
+        spans=tuple(_stored(_synthetic_spans() if spans is None else spans)),
         recordings=tuple(recordings),
     )
 
@@ -298,7 +292,7 @@ def _materialize(snapshot):
 
 
 def test_a_revision_is_the_calls_bundle_under_identities_derived_from_the_call() -> None:
-    spans = _captured_spans()
+    spans = _synthetic_spans()
     bundle = _materialize(_snapshot(spans, revision=3))
     profile = bundle.profile
 
@@ -392,7 +386,7 @@ def test_spans_of_an_unknown_scope_stay_out_of_the_bundle_and_are_declared() -> 
             scope="opentelemetry.instrumentation.httpx",
         )
     )
-    bundle = _materialize(_snapshot([*_captured_spans(), *foreign]))
+    bundle = _materialize(_snapshot([*_synthetic_spans(), *foreign]))
 
     assert len(bundle.profile.operations) == 17
     [coverage] = [item for item in bundle.profile.coverage if item.signal == "call.spans"]
@@ -417,7 +411,7 @@ def _omitted_fields(bundle) -> dict[str, str]:
 
 
 def test_llm_input_history_is_left_out_of_the_bundle_first_and_declared() -> None:
-    spans = _captured_spans()
+    spans = _synthetic_spans()
     history = "[" + ", ".join(['{"role": "user", "content": "' + "x" * 200 + '"}'] * 400) + "]"
     assert len(history) > 64 * 1024
     for span in spans:
@@ -554,14 +548,14 @@ def test_a_call_with_only_a_recording_still_materializes() -> None:
     assert len(bundle.profile.media_refs) == 1
     assert (
         bundle.profile.session.started_at.source_time_unix_nano
-        == (captured_manifest()["audio"]["started_at_unix_nano"])
+        == SYNTHETIC_CALL_START
     )
 
 
 def test_under_metadata_only_the_bundle_captures_no_content_class() -> None:
     from earshot.call_capture import apply_capture_preset
 
-    stored = [apply_capture_preset("metadata_only", span) for span in _captured_spans()]
+    stored = [apply_capture_preset("metadata_only", span) for span in _synthetic_spans()]
     bundle = _materialize(
         _snapshot(stored, preset="metadata_only", recordings=(_recording("user"),))
     )

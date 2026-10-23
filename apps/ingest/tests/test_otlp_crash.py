@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 from opentelemetry.proto.trace.v1.trace_pb2 import Span
 
-from captured_otlp import captured_requests
+from synthetic_otlp import synthetic_requests
 from earshot.call_capture import attribute_values
 from otlp_support import make_request, make_span, post_otlp, string_attribute
 from server_process import ServerProcess
@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[3]
 CRASH_EXIT_CODE = 137
 MARKER = "earshot.test.marker"
 CALL_TABLES = ("spans", "call_traces", "calls", "otlp_resources", "otlp_counters")
-# The rows the real capture's last request makes: two spans of one trace, one call,
+# The rows the synthetic final request makes: two spans of one trace, one call,
 # one resource and scope, no rare event.
 STORED_ONCE = {"spans": 2, "call_traces": 1, "calls": 1, "otlp_resources": 1, "otlp_counters": 0}
 
@@ -56,8 +56,8 @@ def _prepare_store(path: Path) -> None:
 
 def test_a_crash_before_the_otlp_commit_leaves_no_row(tmp_path) -> None:
     _prepare_store(tmp_path)
-    # The real capture's last request: the turn and the keyed conversation span.
-    request = captured_requests()[-1].SerializeToString()
+    # The synthetic final request: the turn and the keyed conversation span.
+    request = synthetic_requests()[-1].SerializeToString()
     crashing = ServerProcess.start(
         tmp_path,
         tmp_path / "server.log",
@@ -90,7 +90,7 @@ def test_the_otlp_crash_point_is_inert_without_test_mode(tmp_path, test_mode) ->
         environment["EARSHOT_TEST_MODE"] = test_mode
     server = ServerProcess.start(tmp_path, tmp_path / "server.log", **environment)
     try:
-        reply = post_otlp(server.port, captured_requests()[-1].SerializeToString())
+        reply = post_otlp(server.port, synthetic_requests()[-1].SerializeToString())
         alive = server.process.poll() is None
     finally:
         server.stop()

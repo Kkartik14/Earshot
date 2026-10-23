@@ -1,14 +1,12 @@
 """FR-12's provider-free replay e2e: the README quick start, on a real server.
 
 ``earshot serve`` runs with its default configuration (SQLite and local disk in
-its data directory, anonymous on loopback). The real Pipecat 1.5 capture
-(``fixtures/captured/pipecat-otlp-1.5``) is replayed as the exporter sent it:
-its requests in arrival order, as OTLP/HTTP POSTs with the exporter's content
-type. Its two real tracks go through the recordings API in the example's run
-order: both are created at the call's first audio (so the call is held), and
-uploaded after the spans. Then the call must pass the same done-when checks as
-the real-provider e2e (``call_done_when``), and its transcript must be the
-fixture's known caller script and the agent's replies.
+its data directory, anonymous on loopback). Deterministic, synthetic Pipecat-
+shaped requests are sent in seven OTLP/HTTP batches. Two-second silent WAVs go
+through the recordings API: both recordings are created before the spans and
+uploaded afterward. The resulting call must pass the same done-when checks as
+the real-provider e2e (``call_done_when``), and its transcript must match the
+synthetic caller and agent lines.
 """
 
 from __future__ import annotations
@@ -16,41 +14,35 @@ from __future__ import annotations
 import pytest
 
 from call_done_when import Earshot, SentCall, assert_done_when
-from captured_otlp import FIXTURE, captured_manifest
+from synthetic_otlp import (
+    SYNTHETIC_CALL_START,
+    SYNTHETIC_LINES,
+    SYNTHETIC_SESSION_KEY,
+    synthetic_recording_bytes,
+    synthetic_requests,
+)
 from server_process import ServerProcess
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sqlite_only, pytest.mark.slow]
 
-# Deepgram's transcript of the fixture's caller script, and the agent's replies
-# (``llm.output``, exactly as the model wrote them), in the order they were spoken.
-TRANSCRIPT = [
-    ("user", "Hi. I would like to book a table for two people tomorrow evening."),
-    ("agent", "Sure, what time would you like to come in tomorrow evening?"),
-    ("user", "Seven thirty works for us."),
-    ("user", "Could we sit somewhere quiet near the window?"),
-    (
-        "agent",
-        "Sure, we\u2019ve booked a quiet window seat for you at 7:30. "
-        "We look forward to welcoming you tomorrow.",
-    ),
-    ("user", "Perfect. That is everything I needed."),
-    ("user", "Thank you very much. Goodbye."),
-    ("agent", "You're welcome! See you tomorrow."),
-]
+TRANSCRIPT = SYNTHETIC_LINES
 
 
-def test_the_quick_start_turns_the_replayed_capture_into_a_closed_call_with_its_audio(
+def test_the_quick_start_turns_synthetic_requests_into_a_closed_call_with_its_audio(
     tmp_path,
 ) -> None:
-    manifest = captured_manifest()
-    audio = manifest["audio"]
+    requests = synthetic_requests()
     sent = SentCall(
-        session_key=manifest["provenance"]["conversation_id"],
-        exported_span_count=manifest["provenance"]["exported_span_count_tee"],
-        started_at_unix_nano=int(audio["started_at_unix_nano"]),
+        session_key=SYNTHETIC_SESSION_KEY,
+        exported_span_count=sum(
+            len(scope_spans.spans)
+            for request in requests
+            for resource_spans in request.resource_spans
+            for scope_spans in resource_spans.scope_spans
+        ),
+        started_at_unix_nano=SYNTHETIC_CALL_START,
         tracks={
-            speaker: (FIXTURE / audio[speaker]["file"]).read_bytes()
-            for speaker in ("user", "agent")
+            speaker: synthetic_recording_bytes(speaker) for speaker in ("user", "agent")
         },
     )
     data_dir = tmp_path / "data"
@@ -77,15 +69,15 @@ def test_the_quick_start_turns_the_replayed_capture_into_a_closed_call_with_its_
                 },
             )
             assert created["state"] == "pending"
-        # The exporter's requests, in arrival order, as it sent them.
-        for entry in manifest["requests"]:
+        # Replay each synthetic export batch in arrival order.
+        for request in requests:
             reply = earshot.call(
                 "POST",
                 "/v1/traces",
-                (FIXTURE / entry["file"]).read_bytes(),
-                {"Content-Type": entry["wire"]["content_type"]},
+                request.SerializeToString(),
+                {"Content-Type": "application/x-protobuf"},
             )
-            assert (reply.status, reply.body) == (200, b""), entry["file"]
+            assert (reply.status, reply.body) == (200, b"")
         # After the call: upload both tracks.
         for speaker, recording_id in recording_ids.items():
             reply = earshot.call(

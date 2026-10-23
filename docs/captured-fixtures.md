@@ -11,6 +11,10 @@ listed as captured unless its source evidence came from a real execution. Missin
 evidence is recorded in `unavailable_real_captures`; synthetic payload tests do not fill
 that gap.
 
+A raw Pipecat OTLP capture that was previously committed has been removed from the
+current tree. Its earlier commit remains in Git history, so this branch does not erase
+that historical copy. New source captures must stay outside version control.
+
 ## Currently retained
 
 | Surface  | Source evidence                                 | Captured   | Artifact                 |
@@ -32,8 +36,8 @@ applied.
 
 ## Capture and scrubbing policy
 
-Real source captures remain in the gitignored `.earshot` area and are never committed
-directly. Before an artifact enters `fixtures/captured`:
+Keep real source captures in the gitignored `.earshot` area. Do not commit them directly.
+Before an artifact enters `fixtures/captured`:
 
 1. Capture runs with the metadata-only policy. Credentials stay in environment
    variables and provider request/response bodies are not retained.

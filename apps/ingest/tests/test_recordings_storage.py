@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from captured_otlp import CAPTURED_SESSION_KEY, captured_requests
+from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
 from earshot.clock import ManualClock
@@ -364,9 +364,9 @@ def test_a_stored_recording_marks_an_open_call_dirty_and_due_a_quiet_period_late
 
 def test_a_stored_recording_on_an_ended_call_is_due_after_the_end_grace(tmp_path) -> None:
     recordings, calls, clock = _open(tmp_path)
-    for request in captured_requests():  # the real call: its conversation span ends it
+    for request in synthetic_requests():  # the synthetic call: its conversation span ends it
         calls.record_spans("default", spans_from_request(request))
-    recording, _ = recordings.create("default", manifest(session_key=CAPTURED_SESSION_KEY))
+    recording, _ = recordings.create("default", manifest(session_key=SYNTHETIC_SESSION_KEY))
     clock.advance(5 * SECOND)
 
     _upload(recordings)

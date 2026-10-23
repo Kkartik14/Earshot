@@ -1,7 +1,7 @@
 """The OTLP/HTTP receiver's pure half: negotiation, decoding, per-span checks, replies.
 
-Driven by the real Pipecat 1.5 capture (``fixtures/captured/pipecat-otlp-1.5``) and
-by spans built with the generated OTLP messages. Error bodies are decoded with the
+Driven by deterministic synthetic Pipecat-shaped OTLP requests and spans built
+with the generated OTLP messages. Error bodies are decoded with the
 reference ``google.rpc.Status`` message, not with Earshot's own encoder.
 """
 
@@ -20,7 +20,7 @@ from opentelemetry.proto.common.v1.common_pb2 import InstrumentationScope, KeyVa
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans, Span
 
-from captured_otlp import captured_requests
+from synthetic_otlp import synthetic_requests
 from earshot.call_capture import spans_from_request
 from earshot.otlp_receiver import (
     JSON_MEDIA_TYPE,
@@ -130,7 +130,7 @@ def _base64_ids(json_body: bytes) -> bytes:
 
 
 def test_protobuf_and_json_decode_the_real_capture_to_identical_bytes_links_included() -> None:
-    requests = with_links(captured_requests())
+    requests = with_links(synthetic_requests())
     assert sum(len(span.span.links) for r in requests for span in spans_from_request(r)) == 16
 
     for request in requests:

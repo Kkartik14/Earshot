@@ -1,8 +1,8 @@
 """The closer in real server processes: both entry points, and crash recovery (AC6.1, AC6.4).
 
 Real ``earshot serve`` and ``uvicorn apps.ingest.app:app`` processes, configured
-only through the environment, receive the real Pipecat 1.5 capture over HTTP; the
-closer in their maintenance loop turns it into revision 1. Short call timings
+only through the environment, receive synthetic Pipecat-shaped OTLP requests
+over HTTP; the closer in their maintenance loop turns them into revision 1. Short call timings
 (``EARSHOT_CALL_*_SECONDS``) keep each wait under a few seconds.
 
 The crash tests arm one of the closer's crash points (``after_claim_commit``,
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from captured_otlp import captured_requests
+from synthetic_otlp import synthetic_requests
 from otlp_support import make_request, make_span, post_otlp, serve, string_attribute
 from server_process import ServerProcess
 from store_support import catalog_rows, make_store
@@ -45,7 +45,7 @@ def _wait_for(check: Callable[[], bool], what: str, timeout: float = 20.0) -> No
 
 
 def _replay(port: int) -> None:
-    for request in captured_requests():
+    for request in synthetic_requests():
         reply = post_otlp(port, request.SerializeToString())
         assert reply.status == 200, reply.body
 
@@ -173,7 +173,7 @@ def test_a_crash_after_the_catalog_commit_leaves_one_revision_and_no_conflict(tm
             1,
             ("closed", 0, None, 1, True, 0, None),
         )
-        trace = captured_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
+        trace = synthetic_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
         late = make_request([make_span(int.from_bytes(trace, "big"), 900)])
         assert post_otlp(server.port, late.SerializeToString()).status == 200
         _wait_for(lambda: len(_revisions(tmp_path)) == 2, "revision 2 from late data")
@@ -273,7 +273,7 @@ def test_a_server_whose_materializer_stopped_reading_still_stops_when_asked(
     )
     try:
         _replay(server.port)
-        trace = captured_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
+        trace = synthetic_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
         padding = [string_attribute("padding", "x" * (4 << 20))]  # past any pipe buffer
         padded = make_request([make_span(int.from_bytes(trace, "big"), 950, attributes=padding)])
         assert post_otlp(server.port, padded.SerializeToString()).status == 200
