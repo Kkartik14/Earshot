@@ -1,8 +1,8 @@
 # Earshot pre-release first-principles audit
 
-> Historical audit snapshot. The defects below describe the pre-hardening worktree.
-> See [`pre-release-hardening-outcome.md`](pre-release-hardening-outcome.md) for the
-> implementation outcome and current release stance.
+> Historical audit snapshot. The findings below describe the pre-hardening worktree.
+> [`pre-release-hardening-outcome.md`](pre-release-hardening-outcome.md) records the
+> follow-up review and target release from that period.
 
 Date: 2026-07-22  
 Audited revision: `eb5a922048f6fe0b8a8573feb8b69d167c530415`  
@@ -116,17 +116,17 @@ Required change:
 - preferably generate a local credential/session even in the default deployment;
 - add a real default-Compose browser/rebinding regression test.
 
-### P0-2: Docker sends the ignored local `.env` into the build
+### P0-2: The build context included local `.env` files at the audited revision
 
-The repository has an ignored `.env`, but `.dockerignore` does not exclude `.env` or
-`.env.*`. The web stage executes `COPY . .`, so credentials are sent to the Docker daemon
-and become available to the stage, cache, remote builder, and package lifecycle scripts.
-The final runtime image does not deliberately copy the file, but that does not make the
-build boundary safe.
+At the audited revision (`eb5a922`, 2026-07-22), `.dockerignore` did not exclude `.env`
+or `.env.*`. The current `.dockerignore` excludes those patterns, local credentials, and
+key files. The web stage used `COPY . .` at the audited revision, so the original report
+recommended narrowing the build context as a separate hardening step.
 
-Required change: exclude `.env`, `.env.*`, `local/`, editor credentials, key material,
-and other secret patterns; replace `COPY . .` with the smallest workspace manifests and
-source directories the viewer build needs; add a build-context secret-canary test.
+The original recommendation was to replace `COPY . .` with the smallest workspace
+manifests and source directories the viewer build needs, then add a build-context
+secret-canary check. Recheck that recommendation against the current build before treating
+it as open work.
 
 ### P0-3: Reconfiguration silently strands active sessions
 

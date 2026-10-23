@@ -2,9 +2,9 @@
 
 The **client-side voice capture kernel**. It runs in the browser (or any
 DOM-ish/Node runtime), observes the live W3C media APIs, and emits a versioned
-`CapturePayload` in the **exact shape the earshot server engines consume** — then
-delivers it to the backend's capture endpoint. You capture on the client and
-diagnose on the server.
+`CapturePayload` in the **exact shape consumed by the Earshot server engines**.
+It then delivers the payload to the backend's capture endpoint. Capture happens
+on the client; diagnosis happens on the server.
 
 - `RTCPeerConnection.getStats()` snapshots → `analyze_webrtc_stats`
 - `AudioContext` state / latency / render position / sink + `getUserMedia` /
@@ -46,7 +46,7 @@ a real loopback `RTCPeerConnection` (an oscillator through a
 `MediaStreamAudioDestinationNode`, so no microphone permission) plus a real
 `AudioContext`, then delivering the result to a live `POST /v1/capture`.
 
-- `RTCStatsReport` member names and units match what this package expects — the
+- `RTCStatsReport` member names and units match this package's expectations. The
   server accepted the real payload with **zero** rejected stats, stat members,
   device events or device members, so client and server agree on the shape.
 - `media-playout` (`RTCAudioPlayoutStats`) and `getOutputTimestamp()` are both
@@ -62,15 +62,15 @@ a real loopback `RTCPeerConnection` (an oscillator through a
 
 ### Still unvalidated
 
-- **Safari and Firefox** — not exercised at all; vendor stat coverage varies.
-- **`getUserMedia` and the Permissions API `microphone` descriptor** — the pass
-  used a synthesised audio source, so the real microphone-permission path is
-  still only covered by unit tests.
+- **Safari and Firefox** have not been exercised; vendor stat coverage varies.
+- **`getUserMedia` and the Permissions API `microphone` descriptor** were not
+  exercised in the pass, which used a synthesised audio source. Unit tests are
+  the only coverage for the real microphone-permission path.
 - `AudioContext` `sinkchange` / `setSinkId` and `outputLatency`.
 
 Where a browser turns out not to expose a signal, the kernel records an explicit
-coverage note for it (see **Coverage** below) rather than guessing — so an
-unvalidated platform degrades into a stated unknown, not a wrong number.
+coverage note for it (see **Coverage** below) rather than guessing. An unvalidated
+platform therefore reports an unknown instead of a potentially wrong number.
 
 ## Usage
 
@@ -318,13 +318,13 @@ incident.
 Every `timestamp_ms` is a **raw** reading of the injected monotonic clock (e.g.
 `performance.now()`), never rebased to zero. `clockDomain.id` is stable for the
 recorder's lifetime, so the server records these readings as `monotonic_time_nano`
-inside their **own** browser `ClockDomain` — a browser timestamp is never treated
+inside their **own** browser `ClockDomain`. A browser timestamp is never treated
 as a server-clock observation. Because there is no calibration between the two
 clocks by default, cross-clock latency stays honestly _unavailable_ until a caller
 supplies a `ClockRelation`; `wallOriginMs` (from `performance.timeOrigin`) is what
 such a calibration aligns.
 
-## Transport — `POST /v1/capture`
+## Transport: `POST /v1/capture`
 
 `createCaptureTransport({ endpoint, projectId, getAuthContextId, ... })` posts drained payloads to the earshot
 backend's capture endpoint. That endpoint exists: it is implemented in
@@ -406,7 +406,7 @@ Nothing below is derived from a signal the platform does not expose.
 | Sample-rate mismatch               | `AudioContext.sampleRate` vs `MediaTrackSettings.sampleRate`                                                                         | claimed only when both are reported and they differ                                                                         |
 | Permission / device lifecycle      | Permissions API, `getUserMedia`, `devicechange`, track `ended`                                                                       | device ids are hashed                                                                                                       |
 
-## Coverage — what the browser could _not_ observe
+## Coverage: what the browser could _not_ observe
 
 `coverage[]` is never a formality. Alongside buffer overflow, `getStats()`
 failures and skipped overlapping samples, the kernel emits a note for each
@@ -432,7 +432,7 @@ is part of the artifact rather than only of the upload's acknowledgement.
 is recorded in `coverage`, never lost silently. `getStats()`/permission errors and
 skipped overlapping samples are likewise recorded as coverage. Caller-supplied
 notes (`recorder.recordCoverage`) are merged by signal and hard-capped, so a
-persistently failing uploader cannot grow the buffer without limit — the overflow
+persistently failing uploader cannot grow the buffer without limit. The overflow
 is itself a coverage note. An invalid polling interval (`<= 0`, `NaN`, `Infinity`)
 is rejected with a clear error.
 
@@ -447,11 +447,11 @@ refused (`422 EARSHOT_INCOHERENT_TRACE_CONTEXT`) rather than resolved by guessin
 **Ordering.** Every buffer here is append-only against one monotonic clock, so a
 drained batch is ordered by construction. The server relies on that and refuses a
 batch whose `timestamp_ms` readings move backwards
-(`422 EARSHOT_CAPTURE_NON_MONOTONIC`) — normalizing one would report an observation
+(`422 EARSHOT_CAPTURE_NON_MONOTONIC`). Normalizing one would report an observation
 at a coordinate the browser never read, and difference the cumulative `getStats`
 counters over a negative interval.
 
-## Privacy posture — metadata only
+## Privacy posture: metadata only
 
 - **No audio is ever read or retained.** The observed APIs expose counters,
   states and timings only; the kernel never touches audio samples.
@@ -465,8 +465,8 @@ counters over a negative interval.
   server engine reads (the `inbound-rtp` counters above, `candidate-pair`
   `currentRoundTripTime`/`selected`, `transport` `iceState`, `local-candidate`
   `networkType`, the `media-playout` render counters, plus
-  `type`/`id`/`kind`/`timestamp`). Every other member — and every stat type the
-  server does not consume — is dropped whole. So `base64Certificate`, DTLS
+  `type`/`id`/`kind`/`timestamp`). Every other member and every stat type the
+  server does not consume are dropped whole. So `base64Certificate`, DTLS
   `fingerprint`, `usernameFragment`, candidate
   `address`/`ip`/`port`/`relatedAddress`/`url`, `trackIdentifier`,
   `decoderImplementation` and anything else cannot leak by omission. Retained
@@ -476,13 +476,13 @@ counters over a negative interval.
   re-derives it from scratch and drops anything outside its own governed set
   before a value reaches an engine, reporting what it refused in the response and
   as coverage. Two independent allowlists, either of which is sufficient.
-- **The trace-context carries no secrets** — `traceId`/`spanId` are random
+- **The trace-context carries no secrets**. `traceId`/`spanId` are random
   correlation handles only.
 
 ## W3C-correctness
 
-A member that is **absent** on a source stat is **omitted** from the snapshot —
-it is never coerced to `0`. The server engines depend on this (a missing counter
+A member that is **absent** on a source stat is **omitted** from the snapshot.
+It is never coerced to `0`. The server engines depend on this (a missing counter
 is _unknown_, not a measurement). `outputLatency` and the render queue depth are
 W3C _estimates_ and the server keeps that distinction (`baseLatency` is
 `measured`). A `getOutputTimestamp()` result that is missing, non-finite, or
