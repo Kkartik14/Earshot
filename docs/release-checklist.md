@@ -32,8 +32,9 @@ One tag publishes four things:
    `packages/browser/package.json` and `packages/viewer-ui/package.json`, and add the
    `CHANGELOG.md` entry. The `validate` job rejects a tag that differs from
    `pyproject.toml`, and `build-npm` rejects a package that differs from it.
-2. Wait for CI on `main` to pass. That includes the `coverage` job, which enforces the
-   branch-coverage floor on SQLite and Postgres combined.
+2. Wait for the comprehensive CI run on `main` to pass. Then start the `ci` workflow
+   manually on `main` and wait for its `coverage` job to enforce the combined SQLite
+   and Postgres branch-coverage floor.
 3. Optional dry run: start the `release` workflow by hand on `main`. It builds and
    inspects the wheel, sdist and npm tarballs, and publishes nothing.
 4. Tag and push, as in `release.md`. Approve the `pypi` and `npm` deployments when
