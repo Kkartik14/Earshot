@@ -49,9 +49,13 @@ price added ──────────────────────�
   address space (`RLIMIT_AS`); macOS cannot cap it. The server never imports numpy or
   onnxruntime, and never runs analysis under the store's write lock. The child reads a
   copy of the audio spooled in `<data-dir>/analysis-tmp/`, swept at every start.
-- **Timeout and retries.** 30 s plus 0.25 × the audio's duration (15 minutes when the
-  duration is unknown). A crash, a timeout or an out-of-memory exit is retried after 1,
-  4 and 16 minutes, then is `failed` with its code. Audio the decoder cannot read, an
+- **Timeout and retries.** 30 s plus 0.25 × the audio's duration, at most 1 hour (15
+  minutes when the duration is unknown, or more than the file's bytes could hold). A
+  crash, a timeout, an out-of-memory exit or any other failure after the claim (the
+  spool, reading the Recording, writing the result) is retried after 1, 4 and 16
+  minutes, then is `failed` with its code. A lease that runs out counts as a failed
+  attempt (`EARSHOT_ANALYSIS_LEASE_EXPIRED`), so nothing is retried forever. A blob
+  written after the job's outputs were reserved and drained is deleted. Audio the decoder cannot read, an
   unsupported codec, a missing `signals` extra or a model whose sha256 does not match is
   `unavailable` with its code: terminal, and never a guessed result.
 - **What it computes**, per channel, in integer milliseconds from the file's first
@@ -66,16 +70,19 @@ price added ──────────────────────�
     v2 (8-bit, 256 source samples per pixel).
 - **Outputs.** The result document is stored on the row; the peaks are a blob. A user
   and an agent mono Recording on one timeline (the same `started_at`, durations within
-  20 ms) also get one stereo FLAC rendition, so the pair plays as one file. Blob keys are
-  journaled for deletion **before** any byte is written, so a crash or a purge mid-job
-  leaves nothing behind.
+  20 ms, and no other mono user or agent Recording at that start) also get one stereo
+  FLAC rendition, so the pair plays as one file. Blob keys are journaled for deletion
+  **before** any byte is written, so a crash or a purge mid-job leaves nothing behind.
 - **Versioned.** Every result carries `ALGORITHM_VERSION`. A server with a newer
   algorithm requeues older results at start, in bounded batches.
 
 ### The projection job: a pure function of the call's evidence
 
 - **Inputs.** The call's stored spans, its latest Revision's stored Recordings with their
-  analyses, and the price rows. It does not decode the Revision bundle: the bundle
+  analyses, and the price rows. A Revision holds exactly the spans and Recordings stored
+  when it was built (`first_revision` on each row, set when the Revision is claimed), so
+  evidence that arrives later changes the projection only once a later Revision holds
+  it, and `ended` follows that Revision's own close. It does not decode the Revision bundle: the bundle
   hashes some LiveKit names and rewrites providers, and the stored spans carry
   everything the view needs. `compute_projection` reads no clock, database or
   environment, so it runs outside every lock and a rerun gives the same projection.
@@ -154,18 +161,6 @@ Negative:
 
 ## Evidence
 
-Paths under `local/` are git-ignored planning and research records; they are not
-shipped.
-
-- `local/superpowers/month-2/final-plan.md`: FR-2, FR-3, and amendments M1, M2, M4, M6,
-  M8, M10, M11 and M28.
-- `local/superpowers/month-2/architecture-review.md`: "Where signals run", "Heard
-  latency", "Search".
-- `local/superpowers/month-2/goldens.md`: the speech runs, σ and gaps of both fixtures.
-- `local/superpowers/month-2/measurements.md`: analysis cost (§9.2), the 60-minute call
-  view (§9.1) and the done-when e2e.
-- `local/research/month-2/call-view-and-audio-signals.md`: the recorder behaviour of
-  Pipecat and LiveKit, and the signal definitions.
 - Code: `packages/sdk-python/src/earshot/signals/`, `storage_analysis.py`,
   `leased_jobs.py`, `call_timeline.py` (module docstring: the gap and the signals),
   `call_projection.py` and `storage_call_projections.py`.

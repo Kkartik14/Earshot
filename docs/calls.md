@@ -18,8 +18,9 @@ projections) and [ADR 0009](./adr/0009-cost-model.md) (cost). The exact schemas 
   give the turns, the reported latency, the transcript and the usage.
 - **A Recording on one timeline**, for the audible gap and the signals: one stereo
   Recording with `channel_speakers: ["user", "agent"]` (WAV, FLAC or Ogg Opus), or a
-  `user` and an `agent` mono Recording with the same `started_at_unix_nano` and
-  durations within 20 ms. Without one, no turn is measured, and the reason says why.
+  `user` and an `agent` mono Recording with the same `started_at_unix_nano`,
+  durations within 20 ms, and no other mono user or agent Recording at that start.
+  Without one, no turn is measured, and the reason says why.
 - **The `signals` extra** on the server (`pip install 'earshot-observability[server,signals]'`;
   the container image includes it). Without it every analysis is `unavailable` with
   `EARSHOT_SIGNALS_EXTRA_REQUIRED`; installing it requeues them at the next start.
@@ -62,6 +63,37 @@ some stored), `failed` or `unavailable`. To wait for a finished view, poll
 `GET /v1/calls/<call_id>` until `projection_state` is `current` and `analysis_state` is
 not `pending`. For a 30-second call this is about half a second after the Call closes.
 
+**What a projection reads.** Exactly the evidence its Revision holds: a span or Recording
+stored after the Revision was built changes the projection only once a later Revision
+holds it. A Recording's duration is the one its analysis decoded, else its header's.
+Only WAV, FLAC and Ogg Opus Recordings are split into one media channel per speaker;
+MP3 and WebM, whose headers Earshot does not read, are one media reference under the
+Recording's own speaker.
+
+When a catalog is upgraded to this feature, the Revisions it already holds keep the
+evidence they were built from: each stored span and Recording counts in its Call's latest
+Revision, except evidence stored after that Revision was built, which the next Revision
+picks up. Evidence stored while the latest Revision was being built cannot be told from
+what it holds, and counts in it.
+
+**Out-of-range values are unknown, never clamped.** A time outside the catalog's signed
+64-bit nanosecond range, and a reported latency or other producer-reported duration whose
+nanoseconds do not fit it, are unknown (`null`). So is a cost whose total does not
+fit 64 bits, which also makes the cost incomplete. A label (agent, outcome or tag)
+holding U+0000 is absent, and U+0000 is removed from transcript text, so it is never
+stored.
+
+**One bad Call does not stop the others.** A Call whose projection cannot be stored is
+logged with `EARSHOT_PROJECTION_FAILED` and one of these codes, then set aside and retried
+after 1 minute, then 4, then every 16, or as soon as it changes. The server keeps
+projecting other Calls.
+
+| Code                               | Meaning                                                                    |
+| ---------------------------------- | -------------------------------------------------------------------------- |
+| `EARSHOT_PROJECTION_INPUT_INVALID` | The Call's stored inputs could not be read or projected.                   |
+| `EARSHOT_PROJECTION_OUT_OF_RANGE`  | A value of the projection does not fit its column, or a text holds U+0000. |
+| `EARSHOT_PROJECTION_WRITE_REFUSED` | The database refused the write.                                            |
+
 ## The call view: `GET /v1/calls/<call_id>`
 
 Every 0.2.0 field is kept. `projection` adds:
@@ -101,7 +133,7 @@ caller heard over a network.
 | `recorder_timeline_discontinuity` | The recorder inserted time inside the gap (Pipecat's recorder only ever inserts time), so the raw gap is only an upper bound. |
 | `no_agent_audio`                  | No agent speech near the framework's agent-on point.                                                                          |
 | `no_clear_pairing`                | No user speech ends before the agent's, or other agent speech lies between.                                                   |
-| `not_one_timeline`                | The Recordings are not on one timeline (different starts, or durations more than 20 ms apart).                                |
+| `not_one_timeline`                | The Recordings are not on one timeline (different starts, durations over 20 ms apart, or an ambiguous mono pair).             |
 | `no_recording`                    | The Revision has no Recording.                                                                                                |
 | `analysis_not_stored`             | The analysis is pending, failed or unavailable; `analysis_state` says which.                                                  |
 | `boundary_uncertainty_too_high`   | The combined speech-edge uncertainty exceeds 100 ms, so the gap is withheld.                                                  |

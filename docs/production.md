@@ -189,14 +189,20 @@ its own:
   Recording you accept (`EARSHOT_RECORDING_MAX_BYTES`, 512 MiB by default).
 
 **Timeouts and retries.** An analysis may run for 30 s plus a quarter of the audio's
-duration (15 minutes when the duration is unknown); its lease is that plus 60 s. A crash,
-a timeout or an out-of-memory exit is retried after 1, 4 and 16 minutes, then is
-`failed`. Audio it cannot analyse is `unavailable` at once, never guessed:
+duration, at most 1 hour (15 minutes when the duration is unknown, or more than the
+file's bytes could hold); its lease is that plus 60 s. A crash, a timeout, an
+out-of-memory exit, or a failure on the server's side of the job (the spool directory,
+reading the Recording, writing the result) is retried after 1, 4 and 16 minutes, then is
+`failed`. A lease that runs out before its holder wrote an outcome counts as a failed
+attempt too, so no job is retried forever. A store that is only briefly busy delays the
+write and costs no attempt; one that stays busy past the retries leaves the job leased, and
+only the lease's expiry counts. Audio it cannot analyse is `unavailable` at once, never
+guessed:
 
 | State         | Codes                                                                                                                                                                                                                                                                                 |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `unavailable` | `EARSHOT_SIGNALS_EXTRA_REQUIRED`, `EARSHOT_ANALYSIS_DECODE_FAILED`, `EARSHOT_ANALYSIS_UNSUPPORTED_CODEC` (WebM, which libsndfile cannot read), `EARSHOT_ANALYSIS_NO_AUDIO`, `EARSHOT_ANALYSIS_CHANNEL_MISMATCH`, `EARSHOT_ANALYSIS_MODEL_MISMATCH`, `EARSHOT_ANALYSIS_SOURCE_MISSING` |
-| `failed`      | after three retries: `EARSHOT_ANALYSIS_CRASHED`, `EARSHOT_ANALYSIS_OUT_OF_MEMORY`, `EARSHOT_ANALYSIS_TIMEOUT`, `EARSHOT_ANALYSIS_SOURCE_UNREADABLE`, `EARSHOT_ANALYSIS_STORE_FAILED`                                                                                                  |
+| `failed`      | after three retries: `EARSHOT_ANALYSIS_CRASHED`, `EARSHOT_ANALYSIS_OUT_OF_MEMORY`, `EARSHOT_ANALYSIS_TIMEOUT`, `EARSHOT_ANALYSIS_SOURCE_UNREADABLE`, `EARSHOT_ANALYSIS_STORE_FAILED`, `EARSHOT_ANALYSIS_SPOOL_FAILED`, `EARSHOT_ANALYSIS_LEASE_EXPIRED`                               |
 
 **What it costs**, measured on an Apple M4 Pro (macOS, one run each; Linux not measured):
 
@@ -224,8 +230,11 @@ The `call-projection` job keeps each Call's projection (the list's columns and t
 view) current. It recomputes a Call after each Revision, each analysis result and each
 price change, 20 Calls per pass, outside the store's write lock, and writes only if the
 Call has not changed meanwhile. A Call whose projection cannot be computed is logged
-with `EARSHOT_PROJECTION_FAILED` and skipped until it changes again. After an upgrade,
-every Call with a Revision is projected once.
+with `EARSHOT_PROJECTION_FAILED` and its code (`EARSHOT_PROJECTION_INPUT_INVALID`,
+`EARSHOT_PROJECTION_OUT_OF_RANGE` or `EARSHOT_PROJECTION_WRITE_REFUSED`), and set aside:
+it is tried again after 1 minute, then 4, then every 16, or as soon as it changes. The
+other Calls are projected meanwhile. This record is held in memory, so a restart tries
+the Call once more. After an upgrade, every Call with a Revision is projected once.
 
 A price change reprices every affected Call from its stored usage, without reading its
 spans: 10,000 Calls took 9.9 s on SQLite on the machine above. The built-in prices are
