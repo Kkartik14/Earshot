@@ -321,10 +321,9 @@ def test_a_second_key_in_a_bound_trace_is_counted_and_the_first_binding_wins(tmp
     calls, _ = _open(tmp_path)
     requests = synthetic_requests()
     _replay(calls, requests[:3])
-    late_turn = requests[4]  # turn 2 (keyed) + stt + llm
-    turn = next(
-        span for span in late_turn.resource_spans[0].scope_spans[0].spans if span.name == "turn"
-    )
+    late_turn = requests[4]  # turn 2 arrives with its STT and LLM spans under separate scopes
+    scopes = late_turn.resource_spans[0].scope_spans
+    turn = next(span for scope in scopes for span in scope.spans if span.name == "turn")
     assert turn.name == "turn"
     for attribute in turn.attributes:
         if attribute.key == "conversation.id":
