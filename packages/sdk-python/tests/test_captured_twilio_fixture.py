@@ -1,9 +1,9 @@
-"""Integrity of the real Twilio call capture (Month 3 WS0, FR-4 AC4.1).
+"""Integrity of the real Twilio call capture.
 
 One outbound-API call with ``Record=true`` and ``RecordingChannels=dual`` was polled
 over the REST API (no webhooks). The fixture holds the scrubbed REST responses plus
 recordings **regenerated** with the raw media's exact container, codec, channels and
-frame count (T4(a)): the callee may be a person, so no captured audio is committed.
+frame count: the callee may be a person, so no captured audio is committed.
 These tests pin the poll contract, the verified channel order, and that no secret,
 number or SID from the raw capture reached the committed bytes.
 """

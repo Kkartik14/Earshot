@@ -1,4 +1,4 @@
-"""AC8.2, AC8.5 and AC8.6, pure half: a LiveKit call's stored spans as a revision and a transcript.
+"""Pure half: a LiveKit call's stored spans as a revision and a transcript.
 
 Every test drives the real LiveKit Agents 1.8.8 capture (``fixtures/captured/livekit-otlp-1.8``)
 decoded as the receiver decodes it and stored as the receiver stores it. The server path
@@ -96,7 +96,7 @@ def _in_process_bundle(preset: str = "full"):
     return recorder.close()
 
 
-# --- dispatch (AC8.2) ----------------------------------------------------------------------
+# --- dispatch ------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("preset", ["full", "metadata_only"])
@@ -163,7 +163,7 @@ def test_under_metadata_only_the_revision_holds_no_livekit_content() -> None:
         assert text not in encoded
 
 
-# --- transcript lines (AC8.6) -------------------------------------------------------------
+# --- transcript lines ---------------------------------------------------------------------
 
 
 def _lines(spans):

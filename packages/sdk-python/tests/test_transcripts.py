@@ -1,5 +1,5 @@
 """Uploaded transcripts: WebVTT and plain text parsed into lines, and the lines as
-evidence spans (FR-5).
+evidence spans.
 
 The parser is pure; these tests feed it the bytes a client would send. The spans
 are checked against the vocabulary the connectors write (``semconv/earshot.yaml``)

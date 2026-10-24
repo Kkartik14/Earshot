@@ -54,7 +54,7 @@ SETTLE_TIMEOUT_S = 120.0
 ALIGNMENT_BOUND_NANO = 5_000_000_000
 LOSS_COUNTERS = ("rejected_spans", "span_conflicts", "parked_traces_discarded")
 
-# The call view (FR-11).
+# The call view.
 PROJECTION_TIMEOUT_S = 120.0
 GAP_RANGE_MS = (0, 15_000)  # exclusive: a real turn's audible gap lies inside it
 MAX_GAP_UNCERTAINTY_MS = 100  # the release's accuracy target for a measured gap
@@ -222,7 +222,7 @@ class SettledCall:
 
 
 def assert_done_when(earshot: Earshot, sent: SentCall) -> SettledCall:
-    """Wait for the call of ``sent`` to settle, then check FR-12's assertions."""
+    """Wait for the call of ``sent`` to settle, then check the done-when assertions."""
 
     call_id = earshot.json("POST", "/v1/calls:resolve", {"session_key": sent.session_key})[
         "call_id"

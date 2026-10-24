@@ -1,10 +1,10 @@
-"""Integrity of the real ElevenLabs Agents conversation capture (Month 3 WS0, FR-4 AC4.2).
+"""Integrity of the real ElevenLabs Agents conversation capture.
 
 The fixture is one real conversation fetched with the conversations API
 (``GET /v1/convai/conversations/{id}``, its ``?format=opentelemetry`` variant and
 ``/audio``), scrubbed by ``scripts/scrub_provider_capture.py``. Both sides of the call
 are synthetic speech, so the audio is committed as captured. These tests pin the facts
-the WS3 import and the ``start_only`` transcript rule rely on, and prove that no secret
+the conversation import and the ``start_only`` transcript rule rely on, and prove that no secret
 or identifier from the raw capture reached the committed bytes.
 """
 

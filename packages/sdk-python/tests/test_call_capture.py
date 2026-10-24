@@ -1,12 +1,11 @@
-"""AC3.2, AC3.3, FR-4's pure half and AC8.1: what is kept of a span, and which session it names.
+"""The pure half: what is kept of a span, and which session it names.
 
 Classification runs on the *normalized* key: frameworks put content under keys
 Earshot's classifier reads as metadata (Pipecat's raw ``input``; LiveKit 1.7's
 ``lk.pii.*``). Every row below states the class before normalization (the
 classifier alone) and after it, so a key that silently leaks shows up as a row
-whose "after" is metadata. The keys are the ones the Month 1 research found
-(`local/research/month-1/voice-frameworks-telemetry.md` §1, §4, §5) and the
-ones the real Pipecat capture carries.
+whose "after" is metadata. The keys are the ones the frameworks' telemetry documents and
+the ones the real Pipecat capture carries.
 
 LiveKit keys have their own table (``LIVEKIT_KEYS``): every attribute key of
 LiveKit Agents 1.6.10, 1.7.1 and 1.8.8 (``telemetry/trace_types.py`` of each
@@ -63,7 +62,7 @@ DIAG = CaptureClass.DIAGNOSTIC_PAYLOAD
 
 # (raw key, class before normalization, class after normalization)
 CLASSIFICATION = [
-    # Pipecat 1.5 (research §1.4; the real capture carries the first four)
+    # Pipecat 1.5 (the real capture carries the first four)
     ("text", M, T),
     ("input", M, MODEL),
     ("output", M, MODEL),
@@ -78,7 +77,7 @@ CLASSIFICATION = [
     # identity
     ("enduser.id", M, ID),
     ("user.id", M, ID),
-    # phone and caller identifiers (tribunal round 1, L-6)
+    # phone and caller identifiers
     ("phone", M, ID),
     ("user.phone", M, ID),
     ("customer.phone", M, ID),
@@ -362,7 +361,7 @@ def test_every_livekit_key_of_the_real_1_8_capture_is_in_the_table() -> None:
 # class. Making ``classify_attribute`` agree would re-class attributes of bundles
 # that 0.2.x SDKs already produced (their validation would fail) and would make
 # records mixing these with transcript or model content refused, so the table is
-# authoritative for OTLP and these stay listed here (the WS4 log carries them).
+# authoritative for OTLP and these stay listed here (the decision log carries them).
 SDK_CLASSIFIER_DIFFERENCES = {
     "user_id": (ID, M),
     "user.id": (ID, M),
@@ -584,7 +583,7 @@ def _with_unknown_field(message, secret: bytes):
 
 
 def test_metadata_only_stores_no_unknown_protobuf_fields() -> None:
-    """Tribunal round 1, L-3: fields outside the known schema are not metadata."""
+    """Fields outside the known schema are not metadata."""
 
     span = Span(trace_id=b"\x01" * 16, span_id=b"\x02" * 8, name="llm")
     span.events.add(name="exception", time_unix_nano=5)
@@ -609,7 +608,7 @@ def test_metadata_only_stores_no_unknown_protobuf_fields() -> None:
 
 
 def test_metadata_only_drops_phone_and_caller_identifiers() -> None:
-    """Tribunal round 1, L-6: these keys are identity, so ``metadata_only`` drops them."""
+    """These keys are identity, so ``metadata_only`` drops them."""
 
     identifiers = {
         "phone": "+14155550101",
@@ -640,7 +639,7 @@ def test_metadata_only_drops_phone_and_caller_identifiers() -> None:
 
 
 def test_classifying_sender_chosen_long_keys_retains_none_of_them() -> None:
-    """Tribunal round 2, Linus N-2: the classification memo pinned every distinct key
+    """The classification memo pinned every distinct key
     it saw, so one 4 MiB key per request grew the server by 4 MiB for good."""
 
     def one_long_key(index: int) -> None:
