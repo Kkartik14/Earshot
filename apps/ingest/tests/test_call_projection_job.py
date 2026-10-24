@@ -1,10 +1,13 @@
-"""The call projection job on a real catalog (FR-3, FR-4, FR-10; M4, M5, M7, M25, M26).
+"""The call projection job on a real catalog.
 
 A call is built the way a server builds it: the real captures recorded through
 ``CallStore.record_spans``, its recordings stored in a real blob store, the call
 closed by the real ``Closer``, each recording analysed by the real analysis job in
 a child process, then projected by ``CallProjector``. Every test runs on the
 dialect under test.
+
+One test makes the database refuse a call's projection with a real trigger on
+``call_projections``: a fault the catalog itself raises, not a fake.
 """
 
 from __future__ import annotations
@@ -19,26 +22,37 @@ pytest.importorskip("numpy")
 pytest.importorskip("onnxruntime")
 pytest.importorskip("soundfile")
 
+from sqlalchemy import BigInteger, CheckConstraint
+
 from captured_livekit_otlp import (
     LIVEKIT_SESSION_KEY,
     livekit_manifest,
     livekit_requests,
 )
 from captured_otlp import CAPTURED_SESSION_KEY, captured_manifest, captured_requests
+from earshot import storage_schema
 from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
 from earshot.call_projection import CALL_PROJECTION_VERSION
 from earshot.clock import ManualClock
 from earshot.pricing_defaults import BUILTIN_PRICES
 from earshot.storage_analysis import AnalysisRunner, AnalysisStore
-from earshot.storage_call_projections import CallProjector, projection_job
+from earshot.storage_call_projections import (
+    COLUMN_RANGES,
+    PROJECTION_RETRY_SECONDS,
+    PROJECTION_WRITE_REFUSED,
+    TRANSCRIPT_TIME_RANGE,
+    CallProjector,
+    projection_job,
+)
 from earshot.storage_call_purge import CallPurger
 from earshot.storage_call_reads import CallFilters, CallReads
 from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_closer import Closer
 from earshot.storage_prices import NewPrice, PriceStore
 from earshot.storage_recordings import RecordingManifest, RecordingStore
-from store_support import catalog, catalog_rows, make_store, stored_needles
+from otlp_support import make_request, make_span, string_attribute
+from store_support import catalog, catalog_rows, current_dialect, make_store, stored_needles
 
 pytestmark = pytest.mark.integration
 
@@ -237,7 +251,7 @@ def test_a_livekit_call_with_its_stereo_ogg_is_projected_with_measured_turns(tmp
     )
 
 
-# --- staleness and the compare-and-set write (M4) ----------------------------------------------
+# --- staleness and the compare-and-set write ---------------------------------------------------
 
 
 def test_a_new_revision_makes_a_projection_stale_until_it_is_recomputed(tmp_path) -> None:
@@ -283,7 +297,6 @@ def test_a_call_that_cannot_be_projected_is_skipped_and_the_others_are_not(
     world = World(tmp_path)
     broken = world.replay(captured_requests())
     attributes = [("earshot.session.id", "fine")]
-    from otlp_support import make_request, make_span, string_attribute
 
     world.calls.record_spans(
         "default",
@@ -308,7 +321,245 @@ def test_a_call_that_cannot_be_projected_is_skipped_and_the_others_are_not(
     assert world.projector.run_pending().more is False
 
 
-# --- prices (M5, M7) ---------------------------------------------------------------------------
+# --- a call's failure is its own (one call never stalls the others) -----------------------------
+
+LATER_PROJECT = "zz-later"
+
+
+def _later_call(world: World) -> str:
+    """A healthy call in a project that sorts after ``default``, so the job reaches it
+    only after the call under test."""
+
+    world.store.create_project(LATER_PROJECT, display_name="Later")
+    span = make_span(9, 1, attributes=[string_attribute("earshot.session.id", "fine")])
+    world.calls.record_spans(LATER_PROJECT, spans_from_request(make_request([span])))
+    return world.calls.call_id(LATER_PROJECT, "fine", 0)
+
+
+def _state(world: World, project_id: str, call_id: str) -> str:
+    return world.reads.get_call(project_id, call_id).summary.projection_state
+
+
+def _spans_named(requests, name: str):
+    for request in requests:
+        for resource_spans in request.resource_spans:
+            for scope_spans in resource_spans.scope_spans:
+                yield from (span for span in scope_spans.spans if span.name == name)
+
+
+@pytest.mark.parametrize("seconds", [1e20, 1e30])
+def test_an_out_of_range_reported_latency_is_unknown_and_never_stalls_the_job(
+    tmp_path, seconds: float
+) -> None:
+    world = World(tmp_path)
+    requests = captured_requests()
+    for span in _spans_named(requests, "turn"):
+        for item in span.attributes:
+            if item.key == "turn.user_bot_latency_seconds":
+                item.value.double_value = seconds
+    poisoned = world.replay(requests)
+    later = _later_call(world)
+    world.close()
+
+    world.project()
+
+    assert _state(world, LATER_PROJECT, later) == "current"
+    assert _state(world, "default", poisoned) == "current"
+    summary = world.projection(poisoned)["summary"]
+    assert (summary.reported_latency_p50_ms, summary.reported_latency_max_ms) == (None, None)
+    assert world.projector.failure("default", poisoned) is None
+
+
+def test_text_holding_u0000_is_never_written_and_never_stalls_the_job(tmp_path) -> None:
+    world = World(tmp_path)
+    requests = captured_requests()
+    next(_spans_named(requests, "turn")).attributes.add(
+        key="earshot.agent.name"
+    ).value.string_value = "bad\x00agent"
+    for span in _spans_named(requests, "stt"):
+        for item in span.attributes:
+            if item.key == "transcript":
+                item.value.string_value += "\x00"
+    poisoned = world.replay(requests)
+    later = _later_call(world)
+    world.close()
+
+    world.project()
+
+    assert _state(world, LATER_PROJECT, later) == "current"
+    assert _state(world, "default", poisoned) == "current"
+    assert world.projection(poisoned)["summary"].agent == "earshot-pipecat-otlp-example"
+    texts = [text for (text,) in catalog_rows(tmp_path, "SELECT text FROM call_transcripts")]
+    assert texts and not any("\x00" in text for text in texts)
+
+
+def _refuse_projections_of(path: Path, call_id: str) -> None:
+    with catalog(path) as connection:
+        if current_dialect() == "sqlite":
+            connection.execute(
+                "CREATE TRIGGER refuse_projection BEFORE INSERT ON call_projections "
+                f"WHEN NEW.call_id = '{call_id}' BEGIN SELECT RAISE(ABORT, 'refused'); END"
+            )
+            return
+        connection.execute(
+            "CREATE FUNCTION refuse_projection() RETURNS trigger AS $$ BEGIN "
+            f"IF NEW.call_id = '{call_id}' THEN RAISE EXCEPTION 'refused'; END IF; "
+            "RETURN NEW; END $$ LANGUAGE plpgsql"
+        )
+        connection.execute(
+            "CREATE TRIGGER refuse_projection BEFORE INSERT ON call_projections "
+            "FOR EACH ROW EXECUTE FUNCTION refuse_projection()"
+        )
+
+
+def _accept_projections(path: Path) -> None:
+    with catalog(path) as connection:
+        if current_dialect() == "sqlite":
+            connection.execute("DROP TRIGGER refuse_projection")
+            return
+        connection.execute("DROP TRIGGER refuse_projection ON call_projections")
+        connection.execute("DROP FUNCTION refuse_projection()")
+
+
+def test_a_refused_write_sets_its_call_aside_with_backoff_and_the_job_moves_on(
+    tmp_path, caplog
+) -> None:
+    world = World(tmp_path)
+    refused = world.replay(captured_requests())
+    later = _later_call(world)
+    world.close()
+    _refuse_projections_of(tmp_path, refused)
+
+    world.project()  # returns: the refusal is the call's, not the job's
+
+    assert _state(world, LATER_PROJECT, later) == "current"
+    assert _state(world, "default", refused) == "none"
+    first = world.projector.failure("default", refused)
+    assert (first.code, first.attempts) == (PROJECTION_WRITE_REFUSED, 1)
+    assert f"EARSHOT_PROJECTION_FAILED: call {refused}" in caplog.text
+    assert PROJECTION_WRITE_REFUSED in caplog.text
+    world.project()  # set aside until its retry is due
+    assert world.projector.failure("default", refused).attempts == 1
+
+    world.clock.advance(PROJECTION_RETRY_SECONDS[0] * SECOND)
+    world.project()
+    second = world.projector.failure("default", refused)
+    assert second.attempts == 2
+    assert second.retry_unix_nano == world.clock.unix_nano() + PROJECTION_RETRY_SECONDS[1] * SECOND
+
+    _accept_projections(tmp_path)
+    world.clock.advance(PROJECTION_RETRY_SECONDS[1] * SECOND)
+    world.project()
+    assert _state(world, "default", refused) == "current"
+    assert world.projector.failure("default", refused) is None
+
+
+def test_the_bounds_checked_before_a_write_are_the_catalog_columns() -> None:
+    metadata = storage_schema.build_v19_baseline_metadata()
+    storage_schema.add_calls_tables(metadata)
+    for table, column in storage_schema.projection_columns():
+        metadata.tables[table].append_column(column)
+    storage_schema.add_projection_tables(metadata)
+
+    def bounds(table: str, name: str) -> tuple[int, int]:
+        column = metadata.tables[table].c[name]
+        checks = {
+            str(item.sqltext)
+            for item in (*column.constraints, *metadata.tables[table].constraints)
+            if isinstance(item, CheckConstraint)
+        }
+        bits = 64 if isinstance(column.type, BigInteger) else 32
+        low = 0 if f"{name} >= 0" in checks else -(2 ** (bits - 1))
+        return low, 2 ** (bits - 1) - 1
+
+    stamps = {
+        "revision",
+        "source_seq",
+        "price_version",
+        "builtin_price_version",
+        "projection_version",
+        "updated_unix_nano",
+    }
+    integers = {
+        column.name
+        for column in metadata.tables["call_projections"].columns
+        if column.type.python_type is int and column.name not in stamps
+    }
+    assert set(COLUMN_RANGES) == integers
+    assert {name: bounds("call_projections", name) for name in integers} == COLUMN_RANGES
+    assert bounds("call_transcripts", "start_ms") == TRANSCRIPT_TIME_RANGE
+    assert bounds("call_transcripts", "end_ms") == TRANSCRIPT_TIME_RANGE
+
+
+# --- a projection is its revision's ----------------------------------------------------------
+
+
+def test_a_projection_follows_its_revisions_close_not_a_later_end_signal(tmp_path) -> None:
+    world = World(tmp_path)
+    requests = livekit_requests()
+    call_id = world.replay(requests[:5])
+    world.close()  # revision 1 closes on the quiet period: provisional
+    for request in requests[5:]:  # the end signal arrives after it
+        world.calls.record_spans("default", spans_from_request(request))
+    with catalog(tmp_path) as connection:  # an analysis result lands, say
+        connection.execute("UPDATE calls SET projection_seq = projection_seq + 1")
+
+    world.project()
+
+    assert catalog_rows(
+        tmp_path, "SELECT latest_revision, end_signal_unix_nano IS NOT NULL FROM calls"
+    ) in ([(1, True)], [(1, 1)])
+    summary = world.projection(call_id)["summary"]
+    assert (summary.revision, summary.outcome) == (1, "interrupted")
+    world.close()
+    world.project()
+    summary = world.projection(call_id)["summary"]
+    assert (summary.revision, summary.outcome) == (2, "completed")
+
+
+def _shown(world: World, call_id: str) -> tuple:
+    summary = world.projection(call_id)["summary"]
+    return summary.revision, summary.turn_count, summary.outcome
+
+
+def test_late_evidence_changes_a_projection_only_once_a_revision_holds_it(tmp_path) -> None:
+    world = World(tmp_path)
+    requests = livekit_requests()
+    call_id = world.replay(requests[:5])
+    audio = livekit_manifest()["audio"]
+    world.store_recording(
+        "lk.stereo",
+        LIVEKIT_AUDIO.read_bytes(),
+        {
+            "session_key": LIVEKIT_SESSION_KEY,
+            "speaker": "mixed",
+            "channel_speakers": ("user", "agent"),
+            "content_type": "audio/ogg",
+            "started_at_unix_nano": audio["started_at_unix_nano"],
+        },
+        duration_ms=34_010,
+    )
+    world.close()
+    world.analyse()
+    world.project()
+    assert _shown(world, call_id) == (1, 2, "interrupted")
+
+    for request in requests[5:]:  # late evidence: the call is dirty, still at revision 1
+        world.calls.record_spans("default", spans_from_request(request))
+    with catalog(tmp_path) as connection:  # an algorithm upgrade requeues its analysis
+        connection.execute("UPDATE audio_analysis SET algorithm_version = 0")
+    world.runner.analyses.requeue(extra_available=True)
+    world.analyse()
+    world.project()
+    assert _shown(world, call_id) == (1, 2, "interrupted")
+    assert world.projection(call_id)["state"] == "current"
+
+    world.close()
+    world.project()
+    assert _shown(world, call_id) == (2, 3, "completed")
+
+
+# --- prices ------------------------------------------------------------------------------------
 
 
 def test_a_project_price_reprices_its_calls_from_their_usage_without_reading_spans(
@@ -360,7 +611,7 @@ def test_seeding_the_built_in_prices_is_idempotent(tmp_path) -> None:
     )
 
 
-# --- transcripts and search (AC3.7, M23, M25, M26) ---------------------------------------------
+# --- transcripts and search --------------------------------------------------------------------
 
 
 def test_the_projected_transcript_and_tags_are_searchable(tmp_path) -> None:
@@ -402,7 +653,7 @@ def test_a_metadata_only_call_writes_no_transcript(tmp_path) -> None:
     assert catalog_rows(tmp_path, "SELECT count(*) FROM call_transcripts") == [(0,)]
 
 
-# --- purge (FR-10, AC10.1, AC10.2) -------------------------------------------------------------
+# --- purge -------------------------------------------------------------------------------------
 
 
 def test_purging_a_projected_call_leaves_no_transcript_text_anywhere(tmp_path) -> None:

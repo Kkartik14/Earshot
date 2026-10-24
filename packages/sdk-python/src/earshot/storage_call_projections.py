@@ -1,4 +1,4 @@
-"""The call projection job: which calls are stale, and the compare-and-set write (FR-3, M4).
+"""The call projection job: which calls are stale, and the compare-and-set write.
 
 **Stale.** A call with a revision needs projecting when it has no projection, when
 its ``projection_seq`` moved past the projection's ``source_seq`` (a revision was
@@ -7,11 +7,15 @@ when its project's own price version or the built-in one moved past the
 projection's stamps, or when ``CALL_PROJECTION_VERSION`` did. Calls upgraded from a
 release without projections have no row, so they are projected too.
 
-**One pass per call.** In one read snapshot the job reads the call's stored spans,
-its stored recordings with their analyses, and the price rows; it computes the
-projection outside every lock (``call_projection.compute_projection``, pure); then
-one short mutation writes it **only if** the call's ``projection_seq``, its
-latest revision and its stored projection are still what the snapshot read.
+**One pass per call.** In one read snapshot the job reads its latest revision's
+evidence: the spans and stored recordings that revision was built from
+(``first_revision`` at most its number; evidence that arrived after it waits for the
+next revision), the recordings' analyses, whether that revision is final (its own
+close, never an end signal that came after it), and the price rows; it computes the
+projection outside every lock
+(``call_projection.compute_projection``, pure); then one short mutation writes it
+**only if** the call's ``projection_seq``, its latest revision and its stored
+projection are still what the snapshot read.
 Otherwise the result is discarded, the row stays stale, and a later pass
 recomputes it: a counter, not a flag, so a change landing mid-computation is
 never lost. The row is stamped with the versions the
@@ -24,8 +28,22 @@ from its stored usage (``usage_json``) and detail: no span is read or decoded.
 **Built-in prices** (``pricing_defaults``) are seeded by the job's first pass at
 every start; seeding is idempotent.
 
-A call whose projection fails to compute is logged (``EARSHOT_PROJECTION_FAILED``)
-and skipped until it changes again, so one bad call never stalls the others.
+**Bounds.** Before a projection is written, every value is checked against its
+catalog column: an integer outside the column's range (``Integer`` is 32-bit on
+Postgres, ``BigInteger`` 64-bit) or text holding U+0000 refuses the whole projection
+(``EARSHOT_PROJECTION_OUT_OF_RANGE``), so SQLite and Postgres store the same rows and
+nothing is clamped. ``compute_projection`` already makes the values it can reach
+unknown; this check is the boundary.
+
+**Failures are the call's, never the job's.** A call whose stored inputs cannot be
+read or projected (``EARSHOT_PROJECTION_INPUT_INVALID``), whose projection is out of
+range, or whose write the database refuses (``EARSHOT_PROJECTION_WRITE_REFUSED``) is
+logged (``EARSHOT_PROJECTION_FAILED``, with the code) and set aside: tried again after
+``PROJECTION_RETRY_SECONDS`` (1, 4, then every 16 minutes), or as soon as the call
+changes. The job moves on to the next call. The record is the job's memory
+(``CallProjector.failure``), so a restart tries the call once more. A busy,
+unreachable or closed store is not the call's failure: the pass ends, and a later
+tick resumes it.
 """
 
 from __future__ import annotations
@@ -34,6 +52,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -49,8 +68,9 @@ from .call_projection import (
     reprice,
 )
 from .maintenance import MAINTENANCE_LOCK_BUDGET_SECONDS
-from .storage import DATABASE_ERRORS, StorageBusyError, StorageError
-from .storage_closer import SNAPSHOT_RESOURCES_SQL, SNAPSHOT_SPANS_SQL
+from .storage import DatabaseError, DatabaseUnavailableError, StorageBusyError, StorageError
+from .storage_calls import call_spans_sql
+from .storage_closer import SNAPSHOT_RESOURCES_SQL
 from .storage_prices import PriceStore, price_rows
 
 if TYPE_CHECKING:
@@ -61,6 +81,13 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 PROJECTION_BATCH_SIZE = 20
+# How long a failed call is set aside before each retry (the last repeats).
+PROJECTION_RETRY_SECONDS = (60, 240, 960)
+_SECOND = 1_000_000_000
+# Stable failure codes (module docstring).
+PROJECTION_INPUT_INVALID = "EARSHOT_PROJECTION_INPUT_INVALID"
+PROJECTION_OUT_OF_RANGE = "EARSHOT_PROJECTION_OUT_OF_RANGE"
+PROJECTION_WRITE_REFUSED = "EARSHOT_PROJECTION_WRITE_REFUSED"
 # The summary columns a projection row holds, in ``call_projections`` order.
 _SUMMARY_COLUMNS = (
     "agent",
@@ -88,6 +115,35 @@ _SUMMARY_COLUMNS = (
     "provider_cost_basis",
     "analysis_state",
 )
+# The range of each integer the projection writes, as ``storage_schema`` declares its
+# column: ``Integer`` is 32-bit on Postgres, ``BigInteger`` 64-bit, and every one but
+# the evidence start is CHECKed >= 0. Text columns cannot hold U+0000.
+_INT32 = (0, 2**31 - 1)
+_INT64 = (0, 2**63 - 1)
+_SIGNED_INT64 = (-(2**63), 2**63 - 1)
+COLUMN_RANGES: dict[str, tuple[int, int]] = {
+    "started_unix_nano": _SIGNED_INT64,
+    "duration_ms": _INT64,
+    "turn_count": _INT32,
+    "reported_latency_p50_ms": _INT64,
+    "reported_latency_max_ms": _INT64,
+    "measurable_turns": _INT32,
+    "audible_gap_p50_ms": _INT64,
+    "audible_gap_max_ms": _INT64,
+    "talk_time_user_ms": _INT64,
+    "talk_time_agent_ms": _INT64,
+    "overlap_ms": _INT64,
+    "barge_in_count": _INT32,
+    "talk_over_count": _INT32,
+    "long_silence_count": _INT32,
+    "dead_air_ms": _INT64,
+    "cost_lower_bound_nano_usd": _INT64,
+    "cost_estimated_nano_usd": _INT64,
+    "cost_unknown_items": _INT32,
+    "provider_cost_nano_usd": _INT64,
+}
+TRANSCRIPT_TIME_RANGE = _SIGNED_INT64
+_TEXT_COLUMNS = ("agent", "framework", "outcome", "provider_cost_basis", "analysis_state")
 _STALE_SQL = (
     "SELECT c.project_id, c.call_id, c.projection_seq FROM calls c "
     "JOIN projects pr ON pr.project_id = c.project_id "
@@ -136,7 +192,69 @@ class ProjectionPass:
     more: bool
 
 
-def _recordings(connection: DatabaseConnection, project_id: str, call_id: str):
+@dataclass(frozen=True, slots=True)
+class ProjectionFailure:
+    """Why a call's projection failed at ``projection_seq``, how many passes in a row
+    failed there, and when the job tries it again."""
+
+    projection_seq: int
+    code: str
+    attempts: int
+    retry_unix_nano: int
+
+
+class ProjectionOutOfRangeError(ValueError):
+    """A computed value its catalog column cannot hold (``column`` names it)."""
+
+    def __init__(self, column: str) -> None:
+        super().__init__(f"{column} is outside its catalog column's range")
+        self.column = column
+
+
+def _in_range(value: Any, bounds: tuple[int, int]) -> bool:
+    return value is None or (
+        isinstance(value, int) and not isinstance(value, bool) and bounds[0] <= value <= bounds[1]
+    )
+
+
+def _check_columns(columns: dict[str, Any]) -> None:
+    for name, bounds in COLUMN_RANGES.items():
+        if name in columns and not _in_range(columns[name], bounds):
+            raise ProjectionOutOfRangeError(name)
+    for name in _TEXT_COLUMNS:
+        if "\x00" in (columns.get(name) or ""):
+            raise ProjectionOutOfRangeError(name)
+
+
+def check_bounds(projection: Projection) -> None:
+    """Raise ``ProjectionOutOfRangeError`` unless the catalog can store every value
+    of ``projection`` as it is (module docstring)."""
+
+    _check_columns(projection.columns)
+    if any("\x00" in tag for tag in projection.tags):
+        raise ProjectionOutOfRangeError("call_tags.tag")
+    for row in projection.transcript:
+        if "\x00" in row.text:
+            raise ProjectionOutOfRangeError("call_transcripts.text")
+        if not (
+            _in_range(row.start_ms, TRANSCRIPT_TIME_RANGE)
+            and _in_range(row.end_ms, TRANSCRIPT_TIME_RANGE)
+        ):
+            raise ProjectionOutOfRangeError("call_transcripts.start_ms")
+
+
+def _transient(error: BaseException) -> bool:
+    """Whether ``error`` is the store's (busy, unreachable, closed) rather than the
+    call's own (its inputs, or a statement the database refused for its values)."""
+
+    if isinstance(error, sqlite3.OperationalError | DatabaseUnavailableError):
+        return True
+    if isinstance(error, sqlite3.Error | DatabaseError):
+        return False
+    return isinstance(error, StorageError)
+
+
+def _recordings(connection: DatabaseConnection, project_id: str, call_id: str, revision: int):
     rows = connection.execute(
         "SELECT r.recording_id, r.speaker, r.channel_speakers_json, r.content_type, "
         "r.started_at_unix_nano, r.duration_ms, a.state, a.error_code, "
@@ -145,8 +263,8 @@ def _recordings(connection: DatabaseConnection, project_id: str, call_id: str):
         "FROM recordings r LEFT JOIN audio_analysis a ON a.project_id = r.project_id "
         "AND a.recording_id = r.recording_id "
         "WHERE r.project_id = ? AND r.call_id = ? AND r.state = 'stored' "
-        "ORDER BY r.recording_id",
-        (project_id, call_id),
+        "AND r.first_revision <= ? ORDER BY r.recording_id",
+        (project_id, call_id, revision),
     ).fetchall()
     return tuple(
         RecordingSource(
@@ -170,7 +288,12 @@ def _recordings(connection: DatabaseConnection, project_id: str, call_id: str):
     )
 
 
-def _spans(connection: DatabaseConnection, project_id: str, call_id: str):
+_REVISION_SPANS_SQL = call_spans_sql(
+    "s.trace_id, s.span_id, s.resource_digest, s.payload", condition="s.first_revision <= ?"
+)
+
+
+def _spans(connection: DatabaseConnection, project_id: str, call_id: str, revision: int):
     resources = {
         bytes(row["resource_digest"]): bytes(row["payload"])
         for row in connection.execute(
@@ -179,7 +302,9 @@ def _spans(connection: DatabaseConnection, project_id: str, call_id: str):
     }
     return tuple(
         stored_span(bytes(row["payload"]), resources[bytes(row["resource_digest"])])
-        for row in connection.execute(SNAPSHOT_SPANS_SQL, (project_id, call_id)).fetchall()
+        for row in connection.execute(
+            _REVISION_SPANS_SQL, (project_id, call_id, revision)
+        ).fetchall()
     )
 
 
@@ -188,9 +313,13 @@ class CallProjector:
 
     def __init__(self, store: IncidentStore) -> None:
         self.store = store
-        # (project, call, projection_seq) whose computation failed: skipped until the
-        # call changes.
-        self._failed: set[tuple[str, str, int]] = set()
+        # The calls whose last pass failed, by (project, call).
+        self._failed: dict[tuple[str, str], ProjectionFailure] = {}
+
+    def failure(self, project_id: str, call_id: str) -> ProjectionFailure | None:
+        """Why the call's last projection pass failed; ``None`` when it did not."""
+
+        return self._failed.get((project_id, call_id))
 
     # --- stale calls ------------------------------------------------------------------------
 
@@ -220,10 +349,12 @@ class CallProjector:
             connection.begin_read()
             call = connection.execute(
                 "SELECT c.projection_seq, c.latest_revision, c.first_evidence_unix_nano, "
-                "c.end_signal_unix_nano, pr.price_version, "
+                "r.finality, pr.price_version, "
                 "(SELECT version FROM builtin_price_version WHERE singleton = 1) AS builtin, "
                 "p.source_seq, p.projection_version, p.input_digest "
                 "FROM calls c JOIN projects pr ON pr.project_id = c.project_id "
+                "LEFT JOIN call_revisions r ON r.project_id = c.project_id "
+                "AND r.call_id = c.call_id AND r.revision = c.latest_revision "
                 "LEFT JOIN call_projections p ON p.project_id = c.project_id "
                 "AND p.call_id = c.call_id "
                 "WHERE c.project_id = ? AND c.call_id = ?",
@@ -268,9 +399,11 @@ class CallProjector:
                 call_id=call_id,
                 revision=int(call["latest_revision"]),
                 first_evidence_unix_nano=int(call["first_evidence_unix_nano"]),
-                ended=call["end_signal_unix_nano"] is not None,
-                spans=_spans(connection, project_id, call_id),
-                recordings=_recordings(connection, project_id, call_id),
+                ended=call["finality"] == "final",
+                spans=_spans(connection, project_id, call_id, int(call["latest_revision"])),
+                recordings=_recordings(
+                    connection, project_id, call_id, int(call["latest_revision"])
+                ),
             )
             return Snapshot(**common, kind="full", source=source)
 
@@ -287,11 +420,13 @@ class CallProjector:
                 project_id=snapshot.project_id,
                 at_unix_nano=snapshot.first_evidence_unix_nano,
             )
+            _check_columns(columns)
             priced = canonical_json([columns, detail["cost_items"]])
             digest = hashlib.sha256(f"{snapshot.stored_digest}:{priced}".encode()).hexdigest()
             return Computed(projection=None, cost_columns=columns, detail=detail, digest=digest)
         assert snapshot.source is not None
         projection = compute_projection(snapshot.source, snapshot.prices)
+        check_bounds(projection)
         return Computed(projection=projection, digest=projection.input_digest())
 
     def write(
@@ -412,29 +547,77 @@ class CallProjector:
     ) -> bool:
         """One pass for one call; ``True`` if a projection was written.
 
-        A call whose stored inputs cannot be read or projected (an unreadable span,
-        a malformed analysis result) is logged and remembered at its
-        ``projection_seq`` (``seq``, as ``stale`` read it): it is skipped until it
-        changes. Storage errors propagate, as transient.
+        A failure that is the call's own (module docstring) is recorded against its
+        ``projection_seq`` (``seq``, as ``stale`` read it, else the snapshot's) and
+        logged, and the pass returns ``False``. The store's own errors propagate.
         """
 
+        snapshot = None
         try:
             snapshot = self.snapshot(project_id, call_id)
             if snapshot is None:
                 return False
             computed = self.compute(snapshot)
-        except (StorageError, *DATABASE_ERRORS):
-            raise
         except Exception as error:
-            if seq is not None:
-                self._failed.add((project_id, call_id, seq))
-            _LOGGER.error(
-                "EARSHOT_PROJECTION_FAILED: call %s could not be projected (%s)",
-                call_id,
-                type(error).__name__,
+            if _transient(error):
+                raise
+            code = (
+                PROJECTION_OUT_OF_RANGE
+                if isinstance(error, ProjectionOutOfRangeError)
+                else PROJECTION_INPUT_INVALID
             )
+            self._fail(project_id, call_id, seq, snapshot, code, error)
             return False
-        return self.write(snapshot, computed, budget_s=budget_s)
+        try:
+            written = self.write(snapshot, computed, budget_s=budget_s)
+        except Exception as error:
+            if _transient(error):
+                raise
+            self._fail(project_id, call_id, seq, snapshot, PROJECTION_WRITE_REFUSED, error)
+            return False
+        self._failed.pop((project_id, call_id), None)
+        return written
+
+    def _fail(
+        self,
+        project_id: str,
+        call_id: str,
+        seq: int | None,
+        snapshot: Snapshot | None,
+        code: str,
+        error: BaseException,
+    ) -> None:
+        if seq is None and snapshot is not None:
+            seq = snapshot.projection_seq
+        delay = PROJECTION_RETRY_SECONDS[0]
+        if seq is not None:
+            previous = self._failed.get((project_id, call_id))
+            attempts = (
+                previous.attempts + 1
+                if previous is not None and previous.projection_seq == seq
+                else 1
+            )
+            delay = PROJECTION_RETRY_SECONDS[min(attempts, len(PROJECTION_RETRY_SECONDS)) - 1]
+            self._failed[(project_id, call_id)] = ProjectionFailure(
+                projection_seq=seq,
+                code=code,
+                attempts=attempts,
+                retry_unix_nano=self.store._clock.unix_nano() + delay * _SECOND,
+            )
+        _LOGGER.error(
+            "EARSHOT_PROJECTION_FAILED: call %s could not be projected (%s, %s); "
+            "tried again in %d s or when it changes",
+            call_id,
+            code,
+            type(error).__name__,
+            delay,
+        )
+
+    def _set_aside(self, project_id: str, call_id: str, seq: int, now: int) -> bool:
+        failure = self._failed.get((project_id, call_id))
+        return (
+            failure is not None and failure.projection_seq == seq and now < failure.retry_unix_nano
+        )
 
     def run_pending(
         self, *, limit: int = PROJECTION_BATCH_SIZE, budget_s: float | None = None
@@ -444,14 +627,16 @@ class CallProjector:
         projected = 0
         after = ("", "")
         examined = 0
+        now = self.store._clock.unix_nano()
         while True:
             batch = self.stale(limit=limit, after=after)
             if not batch:
                 return ProjectionPass(projected, more=False)
             for project_id, call_id, seq in batch:
                 after = (project_id, call_id)
-                # A call that failed is skipped, unread, until it changes.
-                if (project_id, call_id, seq) in self._failed:
+                # A call that failed is skipped, unread, until its retry is due or
+                # it changes.
+                if self._set_aside(project_id, call_id, seq, now):
                     continue
                 if self.project_call(project_id, call_id, seq=seq, budget_s=budget_s):
                     projected += 1

@@ -1,4 +1,4 @@
-"""A call's cost: its usage, priced (pure; FR-4, M5, M7).
+"""A call's cost: its usage, priced (pure).
 
 **Usage** (``call_usage``) is what a projection keeps (``call_projections.usage_json``)
 so a price change reprices a call without decoding anything: one entry per billed
@@ -24,6 +24,11 @@ Statuses: ``priced`` and ``estimated`` (a price was found), ``no_price`` (usage,
 price row), ``not_reported`` (no usage). The lower bound sums the priced items,
 the estimate the estimated ones, and ``unknown_items`` counts the rest; a call
 with no item at all has neither total (NULL, never 0).
+
+**Bounds.** The catalog stores costs in signed 64-bit columns. An item whose cost
+passes ``2^63 - 1`` has no price (``no_price``); a call whose lower bound or estimate
+passes it has neither total (NULL), so no cost filter matches it and it is never
+complete. Nothing is clamped.
 """
 
 from __future__ import annotations
@@ -241,10 +246,10 @@ def price_usage(
                 "span": entry["span"],
             }
         )
-    has_items = bool(items)
+    within = lower <= _INT64_MAX and estimated <= _INT64_MAX
     return CallCost(
         items=tuple(items),
-        lower_bound_nano_usd=min(lower, _INT64_MAX) if has_items else None,
-        estimated_nano_usd=min(estimated, _INT64_MAX) if any_estimated else None,
+        lower_bound_nano_usd=lower if items and within else None,
+        estimated_nano_usd=estimated if any_estimated and within else None,
         unknown_items=unknown,
     )
