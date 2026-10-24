@@ -18,6 +18,8 @@
 
 <!-- List exact commands and meaningful manual checks. -->
 
+- [ ] I added the light-blue `Merge Ready` label to request comprehensive CI.
+
 ## Compatibility and release
 
 - [ ] Public API, persisted schema, adapter, dependency-range, and migration impacts are documented.

@@ -3797,7 +3797,7 @@ export interface components {
     };
     /**
      * OtlpStatsResponse
-     * @description The OTLP receiver's rare-event counters and gauges for one project (AC5.12).
+     * @description The OTLP receiver's rare-event counters and gauges for one project.
      */
     OtlpStatsResponse: {
       /** Key Disagreements */

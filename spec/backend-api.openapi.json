@@ -7378,7 +7378,7 @@
       },
       "OtlpStatsResponse": {
         "additionalProperties": false,
-        "description": "The OTLP receiver's rare-event counters and gauges for one project (AC5.12).",
+        "description": "The OTLP receiver's rare-event counters and gauges for one project.",
         "properties": {
           "key_disagreements": {
             "title": "Key Disagreements",

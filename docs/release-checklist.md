@@ -32,8 +32,9 @@ One tag publishes four things:
    `packages/browser/package.json`, `packages/viewer-ui/package.json` and
    `packages/node/package.json`, and add the `CHANGELOG.md` entry. The `validate` job rejects a tag that differs from
    `pyproject.toml`, and `build-npm` rejects a package that differs from it.
-2. Wait for CI on `main` to pass. That includes the `coverage` job, which enforces the
-   branch-coverage floor on SQLite and Postgres combined.
+2. Wait for the comprehensive CI run on `main` to pass. Then start the `ci` workflow
+   manually on `main` and wait for its `coverage` job to enforce the combined SQLite
+   and Postgres branch-coverage floor.
 3. Run the release gates CI cannot run, and record their results:
    - the real-provider e2e, one real Pipecat call and one real LiveKit 1.8 call
      (`EARSHOT_LIVEKIT_PYTHON` names a venv with `examples/livekit_otlp/requirements.txt`

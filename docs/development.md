@@ -112,9 +112,12 @@ pytest -m slow apps/ingest/tests/test_recordings_memory.py   # the slow tests yo
 pytest -m slow                                         # every slow test
 ```
 
-Pull-request CI runs bounded feature suites and excludes tests marked `slow`. A
-manually triggered `workflow_dispatch` run executes the full SQLite suite and the
-Postgres/S3 storage suites with branch coverage, then combines their coverage results.
+Manual CI dispatch runs the full SQLite suite, the listed Postgres storage and
+application contracts, and the full S3 blob store contract suite, then combines SQLite
+and Postgres coverage. Quick PR checks run only the isolated `unit` tests; add the
+`Merge Ready` label to run the comprehensive pull request lanes. The standard pull
+request lanes use targeted SQLite/Postgres/S3 checks and exclude `slow` tests where the
+command specifies `-m 'not slow'`.
 The release gate runs plain `pytest`, so no `slow` test is skipped there.
 
 Two tests still skip in CI: the real-provider e2e (`apps/ingest/tests/e2e_real/`,
@@ -141,14 +144,20 @@ workflow and pins their call views' values.
 Tests intentionally mutate valid fixtures. A passing test should prove a property or
 regression, not merely assert that its own valid sample is valid.
 
-The checked-in [CI workflow](../.github/workflows/ci.yml) runs bounded feature gates on
-pushes to `main` and on pull requests. Its Python lanes install both bounded framework
-extras, so the LiveKit and Pipecat real-object integration tests cannot silently skip, and
-its framework matrix exercises the supported minimum and current Pipecat and LiveKit
-versions. Full SQLite and Postgres/S3 suites with combined branch coverage run only from
-`workflow_dispatch`. A separate clean-artifact lane bundles the viewer, builds the wheel
-and sdist together, and installs them in isolated base, `[server]`, and viewer-smoke
-environments. Its TypeScript lane uses the committed pnpm lockfile and the Node version in
+The checked-in [CI workflow](../.github/workflows/ci.yml) runs quick Python and
+TypeScript checks on each pull request update; the TypeScript checks install Earshot
+into `.venv`, because the viewer and Node suites start a real `earshot serve`. The
+light-blue `Merge Ready` label starts the comprehensive lanes, including Postgres and
+S3, the Python and framework compatibility matrices (the supported minimum and current
+Pipecat and LiveKit versions), macOS, package artifacts, and the container. The
+workflow also runs the comprehensive lanes on pushes to `main`; a manual dispatch adds
+the full SQLite suite, the listed Postgres storage/application contracts, and the S3
+blob store suite, then enforces combined SQLite/Postgres coverage. Its Python lanes
+install both bounded framework extras so the LiveKit and Pipecat real-object
+integration tests cannot silently skip. A separate clean-artifact lane bundles the
+viewer, builds the wheel and sdist together, and installs them in isolated base,
+`[server]`, and viewer-smoke environments. TypeScript lanes use the committed pnpm
+lockfile and the Node version in
 `.nvmrc`.
 
 ## Run locally
