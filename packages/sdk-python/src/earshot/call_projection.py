@@ -1,7 +1,8 @@
 """A call's projection: its version, and whether a stored one is fresh.
 
 A projection is what a call's latest revision, that revision's audio analyses and
-the prices say about the call: the summary columns the call list filters on, and
+the prices say about the call (the job reads only that revision's spans and
+recordings): the summary columns the call list filters on, and
 the detail the call view shows (``call_projections``). The projection job writes
 it; the call reads in ``storage_call_reads`` serve it with its freshness.
 
@@ -27,7 +28,9 @@ attributes), and the bundle hashes some of them.
 
 - **Agent:** ``earshot.agent.name``, else ``gen_ai.agent.name``, else
   ``lk.agent_name``, else the resource ``service.name`` (``unknown_service…``, the
-  SDK default, counts as absent): the first span carrying the key wins.
+  SDK default, counts as absent): the first span carrying the key wins. A label
+  (agent, outcome or tag) that is blank, longer than ``LABEL_MAX_LENGTH`` or holds
+  U+0000 (no catalog text column can store it) is absent.
 - **Outcome:** the last ``earshot.call.outcome`` sent, else ``error`` if a span has
   error status, else ``interrupted`` if the call had no end signal, else
   ``completed``.
@@ -38,6 +41,13 @@ attributes), and the bundle hashes some of them.
   framework's reported latency and the audible gap at the agent
   (``call_timeline``). Each turn's spans (its descendants) are listed for the lazy
   span route.
+- **Bounds:** the catalog keeps times and durations in signed 64-bit columns. An
+  anchor time outside ``[0, 2^63 - 1]`` ns, and a reported latency longer than
+  ``MAX_TIME_MS`` (whose nanoseconds would not fit), are unknown: the latency is null
+  and the anchor is not used. Nothing is clamped.
+- **Durations:** a recording's duration is what its stored analysis decoded, else
+  what its header declared. Only the one-timeline rule reads the header's, as the
+  analysis job does before any analysis exists.
 - **Transcript placement:** a line is mapped onto the timeline with its turn's
   offset (the median of the turn's anchor offsets; 0 without anchors). A user line
   snaps to the nearest user run start within ``USER_SNAP_MS``; an agent line to its
@@ -56,7 +66,7 @@ import json
 import math
 from bisect import bisect_left, bisect_right
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from .call_capture import (
@@ -74,19 +84,23 @@ from .call_timeline import (
     Run,
     Signals,
     Timeline,
+    Track,
     TurnAnchorsMs,
     audible_gap,
     not_measurable,
+    one_timeline_pairs,
     signals,
     talk_time,
 )
+from .recordings import verified_channel_speakers
 
 if TYPE_CHECKING:
     from .call_capture import OtlpSpan
+    from .call_span_facts import TurnAnchors
 
 # Bumped when the projection's computation or shape changes: every stored
 # projection then reads as stale until the job recomputes it.
-CALL_PROJECTION_VERSION = 4
+CALL_PROJECTION_VERSION = 6
 PROJECTION_STATES = ("none", "stale", "current")
 
 
@@ -132,6 +146,9 @@ TAGS_KEY = "earshot.call.tags"
 LABEL_MAX_LENGTH = 256
 MAX_TAGS = 64
 _NANOS_PER_MS = 1_000_000
+_INT64_MAX = 2**63 - 1
+# The longest duration whose nanoseconds fit the catalog's signed 64-bit times.
+MAX_TIME_MS = _INT64_MAX // _NANOS_PER_MS
 _ROLES = {
     "stt": "stt",
     "llm": "llm",
@@ -162,7 +179,12 @@ class RecordingSource:
 
     @property
     def speakers(self) -> tuple[str, ...]:
-        return self.channel_speakers or (self.speaker,)
+        """The channels' speakers, where the upload verified a channel map (MP3 and WebM
+        bodies are not read: the recording's own speaker)."""
+
+        return verified_channel_speakers(self.content_type, self.channel_speakers) or (
+            self.speaker,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,7 +345,12 @@ def _attribute(attributes: Any, key: str) -> Any:
 
 
 def _label(value: Any) -> str | None:
-    if isinstance(value, str) and value.strip() and len(value) <= LABEL_MAX_LENGTH:
+    if (
+        isinstance(value, str)
+        and value.strip()
+        and len(value) <= LABEL_MAX_LENGTH
+        and "\x00" not in value
+    ):
         return value
     return None
 
@@ -407,6 +434,16 @@ def _stored(recording: RecordingSource) -> bool:
     return recording.analysis_state == "stored" and recording.result is not None
 
 
+def _duration_ms(recording: RecordingSource) -> int | None:
+    """What the recording's stored analysis decoded, else what its header declared."""
+
+    if _stored(recording):
+        decoded = recording.result.get("source", {}).get("duration_ms")
+        if decoded is not None:
+            return int(decoded)
+    return recording.duration_ms
+
+
 @dataclass(frozen=True, slots=True)
 class _TimelineChoice:
     timeline: Timeline | None
@@ -417,24 +454,13 @@ class _TimelineChoice:
 
 
 def _pairs(recordings: Sequence[RecordingSource]) -> list[tuple[RecordingSource, RecordingSource]]:
-    users = [r for r in recordings if r.speakers == ("user",)]
-    agents = [r for r in recordings if r.speakers == ("agent",)]
-    pairs = []
-    for user in users:
-        partners = [
-            agent
-            for agent in agents
-            if agent.started_at_unix_nano == user.started_at_unix_nano
-            and user.duration_ms is not None
-            and agent.duration_ms is not None
-            and abs(agent.duration_ms - user.duration_ms) <= _ONE_TIMELINE_TOLERANCE_MS
-        ]
-        if len(partners) == 1:
-            pairs.append((user, partners[0]))
-    return pairs
+    """The mono pairs on one timeline (``call_timeline.one_timeline_pairs``)."""
 
-
-_ONE_TIMELINE_TOLERANCE_MS = 20
+    by_id = {recording.recording_id: recording for recording in recordings}
+    tracks = (
+        Track(r.recording_id, r.speakers, r.started_at_unix_nano, r.duration_ms) for r in recordings
+    )
+    return [(by_id[user], by_id[agent]) for user, agent in one_timeline_pairs(tracks)]
 
 
 def choose_timeline(recordings: Sequence[RecordingSource], *, insert_only: bool) -> _TimelineChoice:
@@ -443,22 +469,23 @@ def choose_timeline(recordings: Sequence[RecordingSource], *, insert_only: bool)
     stereo = [r for r in recordings if set(r.speakers) == {"user", "agent"}]
     pairs = _pairs(recordings)
     users = [r for r in recordings if "user" in r.speakers]
-    user_audio_ms = max((r.duration_ms for r in users if r.duration_ms is not None), default=None)
+    user_audio_ms = max(
+        (duration for r in users if (duration := _duration_ms(r)) is not None), default=None
+    )
     for recording in stereo:
         user, agent = _channel(recording.result, "user"), _channel(recording.result, "agent")
         if _stored(recording) and user is not None and agent is not None:
-            duration = recording.result.get("source", {}).get("duration_ms")
             return _TimelineChoice(
                 Timeline(
                     started_at_unix_nano=recording.started_at_unix_nano,
-                    duration_ms=recording.duration_ms if duration is None else int(duration),
+                    duration_ms=_duration_ms(recording),
                     user_runs=_runs(user),
                     agent_runs=_runs(agent),
                     agent_zero_runs=_zero_runs(agent),
                     insert_only=insert_only,
                 ),
                 None,
-                recording.duration_ms if recording.duration_ms is not None else duration,
+                _duration_ms(recording),
             )
     for user_recording, agent_recording in pairs:
         user = _channel(user_recording.result, "user")
@@ -472,14 +499,14 @@ def choose_timeline(recordings: Sequence[RecordingSource], *, insert_only: bool)
             return _TimelineChoice(
                 Timeline(
                     started_at_unix_nano=user_recording.started_at_unix_nano,
-                    duration_ms=user_recording.duration_ms,
+                    duration_ms=_duration_ms(user_recording),
                     user_runs=_runs(user),
                     agent_runs=_runs(agent),
                     agent_zero_runs=_zero_runs(agent),
                     insert_only=insert_only,
                 ),
                 None,
-                user_recording.duration_ms,
+                _duration_ms(user_recording),
             )
     if not recordings:
         reason = "no_recording"
@@ -529,7 +556,7 @@ def _media(recordings: Sequence[RecordingSource], axis_ms: Any) -> list[dict[str
                 "content_type": "audio/flac",
                 "peaks_path": f"{base}/peaks" if user.has_peaks and agent.has_peaks else None,
                 "offset_ms": axis_ms(user.started_at_unix_nano),
-                "duration_ms": user.duration_ms,
+                "duration_ms": _duration_ms(user),
                 "channels": [{"index": 0, "speaker": "user"}, {"index": 1, "speaker": "agent"}],
                 "analysis_state": state,
                 "analysis_error_code": error,
@@ -547,7 +574,7 @@ def _media(recordings: Sequence[RecordingSource], axis_ms: Any) -> list[dict[str
                 "content_type": recording.content_type,
                 "peaks_path": f"{base}/peaks" if recording.has_peaks else None,
                 "offset_ms": axis_ms(recording.started_at_unix_nano),
-                "duration_ms": recording.duration_ms,
+                "duration_ms": _duration_ms(recording),
                 "channels": [
                     {"index": index, "speaker": speaker}
                     for index, speaker in enumerate(recording.speakers)
@@ -586,6 +613,23 @@ def _descendants(
             found.append(child)
             stack.append(span_id)
     return sorted(found, key=lambda span: (span.span.start_time_unix_nano, span.span.span_id))
+
+
+def _within_time_range(anchor: TurnAnchors) -> TurnAnchors:
+    """The anchor with each time outside the catalog's signed 64-bit nanoseconds, and a
+    reported latency longer than ``MAX_TIME_MS``, unknown (module docstring)."""
+
+    def time(unix_nano: int | None) -> int | None:
+        return unix_nano if unix_nano is not None and 0 <= unix_nano <= _INT64_MAX else None
+
+    latency = anchor.reported_latency_ms
+    return replace(
+        anchor,
+        user_on_unix_nano=tuple(t for t in anchor.user_on_unix_nano if time(t) is not None),
+        user_off_unix_nano=time(anchor.user_off_unix_nano),
+        agent_on_unix_nano=time(anchor.agent_on_unix_nano),
+        reported_latency_ms=None if latency is None or latency > MAX_TIME_MS else latency,
+    )
 
 
 def _turn_id(turn: OtlpSpan | None) -> str | None:
@@ -637,7 +681,7 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
 
     by_id = {(span.span.trace_id.hex(), span.span.span_id.hex()): span for span in spans}
     children_by_parent = _children_by_parent(spans)
-    anchors = turn_anchors(spans)
+    anchors = [_within_time_range(anchor) for anchor in turn_anchors(spans)]
     gaps: list[Gap] = []
     turns: list[dict[str, Any]] = []
     for index, anchor in enumerate(anchors):
@@ -726,10 +770,8 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
     evidence_ends = [span.span.end_time_unix_nano for span in evidence]
     for recording in recordings:
         evidence_starts.append(recording.started_at_unix_nano)
-        if recording.duration_ms is not None:
-            evidence_ends.append(
-                recording.started_at_unix_nano + recording.duration_ms * _NANOS_PER_MS
-            )
+        if (recording_ms := _duration_ms(recording)) is not None:
+            evidence_ends.append(recording.started_at_unix_nano + recording_ms * _NANOS_PER_MS)
     started = min(evidence_starts, default=None)
     duration_ms = (
         None

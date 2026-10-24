@@ -216,11 +216,12 @@ def test_the_livekit_quick_start_replay_gives_a_call_view_with_the_pinned_values
     )
 
     # Every LLM request is billed, preemptive ones included; STT is estimated from the
-    # recording's duration as the server read it from the Ogg Opus header.
+    # recording's duration as its analysis decoded it (its Ogg Opus header says 34.010 s).
+    assert recording["duration_ms"] == 34_010
     assert _cost_items(projection) == [
         ("priced", "llm", "groq", "input_token", 119 + 153 + 162 + 205 + 212),
         ("priced", "llm", "groq", "output_token", 38 + 38 + 39 + 38 + 32),
         ("priced", "tts", "cartesia", "character", 84 + 91 + 59),
-        ("estimated", "stt", "deepgram", "audio_second", recording["duration_ms"] / 1000),
+        ("estimated", "stt", "deepgram", "audio_second", 34.004),
     ]
     assert projection["cost"]["complete"] is True

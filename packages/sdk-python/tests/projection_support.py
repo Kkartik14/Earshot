@@ -11,8 +11,8 @@ fixture row alone while the call does not change (its stamps are current).
 
 ``example_detail`` is a projection's detail as ``call_projections.detail_json``
 holds it: the members of the call view's ``projection`` that are not summary
-columns. Its values follow the Pipecat 1.5 fixture's measured turns (research
-§4.5): turn 1 not measurable behind a recorder discontinuity, turns 2 and 3
+columns. Its values follow the Pipecat 1.5 fixture's measured turns:
+turn 1 not measurable behind a recorder discontinuity, turns 2 and 3
 measured. They are illustrative, not the goldens the projection job asserts.
 """
 

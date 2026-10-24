@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from earshot.call_timeline import Run, Timeline, TurnAnchorsMs, audible_gap, signals
+from earshot.call_timeline import (
+    Run,
+    Timeline,
+    Track,
+    TurnAnchorsMs,
+    audible_gap,
+    one_timeline_pairs,
+    signals,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -122,3 +130,38 @@ def test_a_raw_uncertainty_above_100_ms_is_not_measurable_when_it_rounds_to_100(
         None,
         100,
     )
+
+
+# --- one recorder timeline -----------------------------------------------------------------
+
+
+def _track(recording_id: str, *speakers: str, start: int = 1, duration: int | None = 1000):
+    return Track(recording_id, speakers, start, duration)
+
+
+@pytest.mark.parametrize(
+    ("tracks", "pairs"),
+    [
+        ([_track("u", "user"), _track("a", "agent", duration=1020)], [("u", "a")]),
+        ([_track("u", "user"), _track("a", "agent", duration=1021)], []),
+        ([_track("u", "user", duration=None), _track("a", "agent")], []),
+        ([_track("u", "user"), _track("a", "agent", start=2)], []),
+        # Two tracks of one speaker at one start: neither pairs, from either side.
+        ([_track("u1", "user"), _track("u2", "user"), _track("a", "agent")], []),
+        ([_track("u", "user"), _track("a1", "agent"), _track("a2", "agent", duration=5)], []),
+        # A stereo recording is not a mono track; each start is its own timeline.
+        (
+            [
+                _track("s", "user", "agent"),
+                _track("u", "user"),
+                _track("a", "agent"),
+                _track("u2", "user", start=9),
+                _track("a2", "agent", start=9),
+            ],
+            [("u", "a"), ("u2", "a2")],
+        ),
+    ],
+)
+def test_one_timeline_pairs_only_an_unambiguous_mono_pair(tracks, pairs) -> None:
+    assert one_timeline_pairs(tracks) == pairs
+    assert one_timeline_pairs(reversed(tracks)) == pairs

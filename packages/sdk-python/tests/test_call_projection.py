@@ -1,16 +1,16 @@
-"""The call projection on the two real captures (AC3.3-AC3.8, AC4.3; M1, M3, M6, M7, M21,
-M22, M28).
+"""The call projection on the two real captures.
 
 The spans are the real Pipecat 1.5 and LiveKit 1.8 OTLP captures as the receiver
 stores them; the speech runs are the analysis job's own output
 (``earshot.signals.analyze``, the vendored Silero model) on the captures' real
-audio; the prices are the built-in defaults. ``goldens.md`` (WS2) pins the runs; the
-values below are its per-turn tables, asserted as M28 binds: each gap within ±20 ms
+audio; the prices are the built-in defaults. The golden speech runs are pinned below; the
+values are their per-turn tables: each gap within ±20 ms
 of its golden value and each reported ± within ±5 ms of the golden sigma.
 """
 
 from __future__ import annotations
 
+import copy
 import functools
 import multiprocessing
 import tempfile
@@ -26,7 +26,7 @@ pytest.importorskip("soundfile")
 from captured_livekit_otlp import livekit_manifest, livekit_spans
 from captured_otlp import captured_manifest, captured_requests
 from earshot.call_capture import spans_from_request
-from earshot.call_cost import PriceRow
+from earshot.call_cost import PriceRow, price_usage
 from earshot.call_projection import (
     CallSource,
     RecordingSource,
@@ -110,6 +110,11 @@ def _pipecat():
     return compute_projection(_source(_pipecat_spans(), _pipecat_recordings()), PRICES)
 
 
+# What the upload's Ogg Opus header reader gives the LiveKit recording (the last
+# granule less the pre-skip, RFC 7845); its decoder yields 34,004 ms.
+LIVEKIT_HEADER_DURATION_MS = 34_010
+
+
 def _livekit():
     audio = livekit_manifest()["audio"]
     recording = _recording(
@@ -118,7 +123,7 @@ def _livekit():
         LIVEKIT_AUDIO,
         content_type="audio/ogg",
         started_at_unix_nano=int(audio["started_at_unix_nano"]),
-        duration_ms=34_004,
+        duration_ms=LIVEKIT_HEADER_DURATION_MS,
     )
     return compute_projection(_source(livekit_spans(), [recording]), PRICES)
 
@@ -182,7 +187,7 @@ def test_a_cyclic_parent_link_does_not_repeat_turn_descendants(cycle_kind: str) 
     assert len(descendants) == len(set(descendants))
 
 
-# --- the audible gap at the agent (M1, M3, M6, M28) ------------------------------------------
+# --- the audible gap at the agent ------------------------------------------------------------
 
 
 def test_pipecat_turn_1_is_a_discontinuity_bound_and_turns_2_and_3_are_measured() -> None:
@@ -210,6 +215,31 @@ def test_pipecat_turn_1_is_a_discontinuity_bound_and_turns_2_and_3_are_measured(
     assert (columns["reported_latency_p50_ms"], columns["reported_latency_max_ms"]) == (1352, 1800)
 
 
+def test_a_pipecat_turn_without_a_zero_run_edge_at_its_agent_on_is_not_step_checked() -> None:
+    """Without the edge, the agent's audio onset is the nearest run's: comparing it with
+    the user-off anchor would compare the heard gap with the reported latency."""
+
+    recordings = []
+    for recording in _pipecat_recordings():
+        result = copy.deepcopy(recording.result)
+        if recording.speaker == "agent":
+            for channel in result["channels"]:
+                channel["zero_runs"] = []
+        recordings.append(replace(recording, result=result))
+
+    gaps = _gaps(compute_projection(_source(_pipecat_spans(), recordings), PRICES))
+
+    assert (gaps[0]["status"], gaps[0]["reason"]) == ("not_measurable", "no_agent_audio")
+    for gap, value, sigma in ((gaps[1], 1510, 75), (gaps[2], 1490, 48)):
+        assert (gap["status"], gap["reason"], gap["basis"]) == (
+            "measured",
+            None,
+            "continuous_timeline_assumed",
+        )
+        assert _within(gap["value_ms"], value, 20), gap
+        assert _within(gap["uncertainty_ms"], sigma, 5), gap
+
+
 def test_livekit_turns_are_measured_on_the_continuous_timeline_assumed() -> None:
     gaps = _gaps(_livekit())
 
@@ -221,7 +251,22 @@ def test_livekit_turns_are_measured_on_the_continuous_timeline_assumed() -> None
         assert _within(gap["uncertainty_ms"], sigma, 5), gap
 
 
-# --- transcript placement (AC3.6, M3, M6) ----------------------------------------------------
+def test_two_user_tracks_with_one_agent_track_are_not_one_timeline() -> None:
+    user, agent = _pipecat_recordings()
+    other_user = replace(user, recording_id="conv.user2")
+
+    projection = compute_projection(_source(_pipecat_spans(), [user, other_user, agent]), PRICES)
+
+    assert {gap["reason"] for gap in _gaps(projection)} == {"not_one_timeline"}
+    assert [media["recording_ids"] for media in projection.detail["media"]] == [
+        ["conv.agent"],
+        ["conv.user"],
+        ["conv.user2"],
+    ]
+    assert projection.detail["signals"]["one_timeline"] is False
+
+
+# --- transcript placement --------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("project", [_pipecat, _livekit], ids=["pipecat", "livekit"])
@@ -505,7 +550,7 @@ def test_an_unplaced_connector_line_is_not_marked_alignment_uncertain() -> None:
     assert transcript_line_detail["alignment_uncertain"] is False
 
 
-# --- cost (AC4.3, M3, M7) ----------------------------------------------------------------------
+# --- cost --------------------------------------------------------------------------------------
 
 
 def _items(projection) -> list[tuple]:
@@ -535,6 +580,7 @@ def test_pipecat_cost_items_are_exact() -> None:
 def test_livekit_cost_counts_every_llm_request_and_estimates_stt_from_the_recording() -> None:
     projection = _livekit()
 
+    # The STT estimate is the decoded duration the analysis measured, not the header's.
     assert _items(projection) == [
         ("priced", "llm", "groq", "input_token", 119 + 153 + 162 + 205 + 212),
         ("priced", "llm", "groq", "output_token", 38 + 38 + 39 + 38 + 32),
@@ -542,6 +588,26 @@ def test_livekit_cost_counts_every_llm_request_and_estimates_stt_from_the_record
         ("estimated", "stt", "deepgram", "audio_second", 34.004),
     ]
     assert projection.columns["cost_unknown_items"] == 0
+    [media] = projection.detail["media"]
+    assert media["duration_ms"] == 34_004
+
+
+def test_a_cost_total_beyond_the_catalogs_64_bit_range_is_unknown_never_clamped() -> None:
+    price = PriceRow(1, None, "groq", "m", "input_token", 1_000_000_000, 1, 0)
+    entry = {
+        "kind": "reported",
+        "operation": "llm",
+        "provider": "groq",
+        "model": "m",
+        "unit": "input_token",
+        "quantity_milli": 5_000_000_000_000,
+        "span": None,
+    }
+
+    cost = price_usage([entry, entry], [price], project_id="default", at_unix_nano=1)
+
+    assert [item["cost_nano_usd"] for item in cost.items] == [5 * 10**18] * 2
+    assert (cost.lower_bound_nano_usd, cost.estimated_nano_usd) == (None, None)
 
 
 def test_repricing_from_the_stored_usage_equals_a_full_projection_at_the_new_prices() -> None:
@@ -567,7 +633,7 @@ def test_repricing_from_the_stored_usage_equals_a_full_projection_at_the_new_pri
     assert columns["cost_lower_bound_nano_usd"] == 495 + 319 + 4_484_000
 
 
-# --- signals (AC3.5, M22) ------------------------------------------------------------------------
+# --- signals -------------------------------------------------------------------------------------
 
 
 def test_pipecat_signals_follow_the_research_definitions() -> None:
@@ -603,7 +669,40 @@ def test_media_is_the_mono_pairs_rendition() -> None:
     }
 
 
-# --- not measurable, never fabricated (M8) -----------------------------------------------------
+@pytest.mark.parametrize(
+    ("content_type", "channels"),
+    [
+        ("audio/wav", [{"index": 0, "speaker": "user"}, {"index": 1, "speaker": "agent"}]),
+        ("audio/mpeg", [{"index": 0, "speaker": "mixed"}]),
+        ("audio/webm", [{"index": 0, "speaker": "mixed"}]),
+    ],
+)
+def test_a_channel_map_is_reported_only_for_a_format_whose_header_the_upload_read(
+    content_type: str, channels: list[dict]
+) -> None:
+    """The upload reads no MP3 or WebM header, so the recording's own speaker stands
+    for the whole file there, as in the bundle; the channel map is a claim only for
+    WAV, FLAC and Ogg Opus."""
+
+    started = int(captured_manifest()["audio"]["started_at_unix_nano"])
+    recording = _recording(
+        "conv.stereo",
+        ("user", "agent"),
+        PIPECAT_AUDIO / "user.wav",
+        content_type=content_type,
+        started_at_unix_nano=started,
+        duration_ms=32_486,
+        result={"source": {"duration_ms": 32_486}, "channels": []},
+    )
+
+    projection = compute_projection(_source(_pipecat_spans(), [recording]), PRICES)
+
+    [media] = projection.detail["media"]
+    assert media["source"] == "recording"
+    assert media["channels"] == channels
+
+
+# --- not measurable, never fabricated ----------------------------------------------------------
 
 
 def test_without_recordings_no_turn_is_measured_and_cross_channel_signals_are_null() -> None:
@@ -645,7 +744,73 @@ def test_a_pending_analysis_is_analysis_not_stored() -> None:
     assert projection.detail["signals"]["one_timeline"] is None
 
 
-# --- agent, outcome and tags (AC3.3, M21) ------------------------------------------------------
+def _with_turn_latency(seconds: float, *, turn: int) -> list:
+    spans = copy.deepcopy(list(_pipecat_spans()))
+    target = [span for span in spans if span.span.name == "turn"][turn]
+    for item in target.span.attributes:
+        if item.key == "turn.user_bot_latency_seconds":
+            item.value.double_value = seconds
+    return spans
+
+
+@pytest.mark.parametrize("seconds", [1e20, 1e30, 9.3e9])
+def test_a_reported_latency_past_the_catalogs_time_range_is_unknown(seconds: float) -> None:
+    """Its milliseconds would not fit as 64-bit nanoseconds: the turn's latency is
+    null, the anchor it gives is not used, and the other turns keep theirs."""
+
+    spans = _with_turn_latency(seconds, turn=1)
+
+    projection = compute_projection(_source(spans, _pipecat_recordings()), PRICES)
+
+    assert [turn["reported_latency_ms"] for turn in projection.detail["turns"]] == [
+        1800,
+        None,
+        1334,
+    ]
+    columns = projection.columns
+    assert (columns["reported_latency_p50_ms"], columns["reported_latency_max_ms"]) == (
+        1334,
+        1800,
+    )
+    assert _gaps(projection)[1]["basis"] == "continuous_timeline_assumed"
+    times = [
+        value
+        for row in projection.transcript
+        for value in (row.start_ms, row.end_ms)
+        if value is not None
+    ]
+    assert all(abs(value) < 2**63 for value in times)
+
+
+def test_u0000_never_reaches_a_label_a_tag_or_a_transcript_line() -> None:
+    """No catalog text column can hold it: a label holding it is absent, and a
+    transcript line's text loses it."""
+
+    spans = copy.deepcopy(list(_pipecat_spans()))
+    first = spans[0].span
+    first.attributes.add(key="earshot.agent.name").value.string_value = "bad\x00agent"
+    first.attributes.add(key="earshot.call.outcome").value.string_value = "done\x00"
+    tags = first.attributes.add(key="earshot.call.tags").value.array_value
+    tags.values.add(string_value="vip")
+    tags.values.add(string_value="b\x00d")
+    stt = next(span for span in spans if span.span.name == "stt")
+    for item in stt.span.attributes:
+        if item.key == "transcript":
+            spoken = item.value.string_value
+            item.value.string_value = spoken[:3] + "\x00" + spoken[3:]
+
+    projection = compute_projection(_source(spans, _pipecat_recordings()), PRICES)
+    clean = _pipecat()
+
+    assert (projection.columns["agent"], projection.columns["outcome"]) == (
+        clean.columns["agent"],
+        clean.columns["outcome"],
+    )
+    assert projection.tags == ("vip",)
+    assert [row.text for row in projection.transcript] == [row.text for row in clean.transcript]
+
+
+# --- agent, outcome and tags -------------------------------------------------------------------
 
 
 def _spans(*attribute_sets, resource=("service.name", "unknown_service:python"), status=0):

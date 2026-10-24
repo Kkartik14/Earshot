@@ -1,11 +1,16 @@
 """A call's recorder timeline: the audible gap at the agent, signals, and placement (pure).
 
 Everything here reads speech runs on **one recorder timeline**: the two channels of
-one stereo recording that maps user and agent, or a user and an agent mono
-recording with the same ``started_at`` and durations within 20 ms (the analysis
-job's ``ONE_TIMELINE_TOLERANCE_MS``). Times are integer milliseconds from the
-timeline's first sample. Span times reach it by the naive mapping
-``(t - started_at) / 1e6``, corrected per turn where the framework gives anchors.
+one stereo recording that maps user and agent, or a mono pair (``one_timeline_pairs``).
+Times are integer milliseconds from the timeline's first sample. Span times reach it
+by the naive mapping ``(t - started_at) / 1e6``, corrected per turn where the
+framework gives anchors.
+
+**Mono pairs** (``one_timeline_pairs``, the one rule the projection and the analysis
+job's stereo rendition both apply). A user and an agent mono recording are one
+timeline when they are the only mono recordings of their speakers with that
+``started_at``, and both durations are known and within ``ONE_TIMELINE_TOLERANCE_MS``.
+Two mono recordings of one speaker at one start are ambiguous: neither pairs.
 
 **Audible gap at the agent** (one per framework turn, ``audible_gap``):
 
@@ -13,8 +18,9 @@ timeline's first sample. Span times reach it by the naive mapping
    zero while the bot is quiet and only ever inserts time, so the agent's audio
    starts at the right edge of an exact-zero run (``ZERO_RUN_ANCHOR_MS`` or longer): the
    edge nearest the naive-mapped A-on anchor within ``ANCHOR_SEARCH_MS``, else the
-   onset of the nearest agent run. LiveKit's recorder places frames by wall clock,
-   so its A-on maps naively (``continuous_timeline_assumed``).
+   onset of the nearest agent run, which is not an audio anchor. LiveKit's recorder
+   places frames by wall clock, so its A-on maps naively
+   (``continuous_timeline_assumed``).
 2. *Pairing.* ``a`` is the agent run whose start is nearest that point, within
    ``PAIRING_WINDOW_MS``; none: ``no_agent_audio``. If a user run is active when
    ``a`` starts, the turn is ``talk_over``. Otherwise ``u*`` is the last user run
@@ -27,12 +33,14 @@ timeline's first sample. Span times reach it by the naive mapping
    ``DISCONTINUITY_STEP_MS`` means the recorder inserted time inside the gap: the
    turn is ``not_measurable / recorder_timeline_discontinuity`` and its raw gap is
    an upper bound (an insert-only recorder can only lengthen a gap). The step is
-   never subtracted. A Pipecat turn without both anchors is measured on the
-   ``continuous_timeline_assumed`` basis.
+   never subtracted. The check needs both anchors and a zero-run edge at A-on: a
+   Pipecat turn without them is measured on the ``continuous_timeline_assumed``
+   basis, since comparing a run onset with the user-off anchor compares the heard
+   gap with the reported latency, not two offsets.
 
 A value is never fabricated: every other case is ``not_measurable`` with its reason.
 
-**Signals** (the research's §4.3 definitions; cross-channel ones need one timeline):
+**Signals** (cross-channel ones need one timeline):
 talk time per channel; overlap (intervals of both speaking, each at least
 ``MIN_OVERLAP_MS``); barge-in (a user run starting inside an agent run, after its
 first ``EDGE_GUARD_MS``, that is not a backchannel: shorter than
@@ -51,18 +59,20 @@ from __future__ import annotations
 import math
 import statistics
 from bisect import bisect_left, bisect_right
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
 
-# Turn alignment and pairing (M1, M6).
+# One recorder timeline.
+ONE_TIMELINE_TOLERANCE_MS = 20
+# Turn alignment and pairing.
 ZERO_RUN_ANCHOR_MS = 50
 ANCHOR_SEARCH_MS = 1500
 PAIRING_WINDOW_MS = 1000
 DISCONTINUITY_STEP_MS = 150
 MAX_MEASURABLE_GAP_UNCERTAINTY_MS = 100
 USER_SNAP_MS = 500
-# Signals (research §4.3; M22).
+# Signals.
 MIN_OVERLAP_MS = 120
 EDGE_GUARD_MS = 100
 BACKCHANNEL_MAX_MS = 600
@@ -74,6 +84,41 @@ DEAD_AIR_IN_TURN_MS = 3000
 BASIS_ANCHORS_CHECKED = "anchors_checked"
 BASIS_CONTINUOUS = "continuous_timeline_assumed"
 _NANOS_PER_MS = 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class Track:
+    """A stored recording as the one-timeline rule reads it."""
+
+    recording_id: str
+    # Its speaker per channel: one entry for a mono recording.
+    speakers: tuple[str, ...]
+    started_at_unix_nano: int
+    duration_ms: int | None
+
+
+def one_timeline_pairs(tracks: Iterable[Track]) -> list[tuple[str, str]]:
+    """``(user, agent)`` recording IDs of each mono pair on one timeline (module
+    docstring), by start."""
+
+    by_start: dict[int, dict[str, list[Track]]] = {}
+    for track in tracks:
+        if track.speakers in (("user",), ("agent",)):
+            speakers = by_start.setdefault(track.started_at_unix_nano, {})
+            speakers.setdefault(track.speakers[0], []).append(track)
+    pairs = []
+    for start in sorted(by_start):
+        users, agents = by_start[start].get("user", []), by_start[start].get("agent", [])
+        if len(users) != 1 or len(agents) != 1:
+            continue
+        user, agent = users[0], agents[0]
+        if (
+            user.duration_ms is not None
+            and agent.duration_ms is not None
+            and abs(user.duration_ms - agent.duration_ms) <= ONE_TIMELINE_TOLERANCE_MS
+        ):
+            pairs.append((user.recording_id, agent.recording_id))
+    return pairs
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,15 +235,16 @@ def _nearest_run(
     return runs[bisect_left(starts, start)]
 
 
-def _audio_agent_on(timeline: Timeline, naive_agent_on: float) -> int | None:
-    """Where the agent's audio starts near a mapped A-on (step 1)."""
+def _audio_agent_on(timeline: Timeline, naive_agent_on: float) -> tuple[int | None, bool]:
+    """Where the agent's audio starts near a mapped A-on (step 1), and whether a
+    zero-run edge anchors it there."""
 
     if timeline.insert_only:
         edge = _nearest(timeline._agent_zero_edges, naive_agent_on, ANCHOR_SEARCH_MS)
         if edge is not None:
-            return edge
-        return _nearest(timeline._agent_starts, naive_agent_on, ANCHOR_SEARCH_MS)
-    return round(naive_agent_on)
+            return edge, True
+        return _nearest(timeline._agent_starts, naive_agent_on, ANCHOR_SEARCH_MS), False
+    return round(naive_agent_on), False
 
 
 def _user_on_offsets(timeline: Timeline, anchors: TurnAnchorsMs) -> list[float]:
@@ -217,7 +263,7 @@ def audible_gap(timeline: Timeline, anchors: TurnAnchorsMs) -> Gap:
     if anchors.agent_on_unix_nano is None:
         return not_measurable("no_agent_audio")
     naive_on = timeline.naive_ms(anchors.agent_on_unix_nano)
-    audio_on = _audio_agent_on(timeline, naive_on)
+    audio_on, anchored = _audio_agent_on(timeline, naive_on)
     if audio_on is None:
         return not_measurable("no_agent_audio")
     agent = _nearest_run(
@@ -261,7 +307,7 @@ def audible_gap(timeline: Timeline, anchors: TurnAnchorsMs) -> Gap:
     uncertainty = _uncertainty(user, agent)
     uncertainty_ms = round(uncertainty)
     basis = BASIS_CONTINUOUS
-    if timeline.insert_only and anchors.user_off_unix_nano is not None:
+    if anchored and anchors.user_off_unix_nano is not None:
         basis = BASIS_ANCHORS_CHECKED
         o_u = user.end_ms - timeline.naive_ms(anchors.user_off_unix_nano)
         offsets.append(o_u)
