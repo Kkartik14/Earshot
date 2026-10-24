@@ -7,8 +7,11 @@ module reads and writes:
   owner names (for example ``stored``, ``failed``, ``unavailable``);
 - ``attempts``: failed attempts so far;
 - ``lease_until_unix_nano``: when a running job's lease expires;
-- ``lease_token``: bumped by every claim, so a holder whose lease was taken over
-  writes nothing (every write below is conditional on it);
+- ``lease_token``: a new random token at every claim, so a holder whose lease was
+  taken over writes nothing (every write below is conditional on it). It is never
+  a count: a row deleted and inserted again under the same key (a purged
+  recording whose ID comes back) starts at 0 again, and a stale claim must not
+  match the new row's first claim;
 - ``next_attempt_unix_nano``: when a retried job may run again (``NULL``: now);
 - ``error_code``: the last stable error code;
 - ``updated_unix_nano``.
@@ -16,12 +19,13 @@ module reads and writes:
 **Claim** (inside the caller's write transaction): the first due job, that is a
 running job whose lease expired (its holder died) or a pending job whose
 ``next_attempt`` has passed, becomes ``running`` under a new token and a lease the
-caller sizes per job. **Complete** writes a terminal state and the caller's columns
-only while the claim's lease token still holds the row. **Retry** counts a failed
-attempt and puts the job off by the next delay of ``retry_delays_seconds``; past the
-last one it becomes terminal ``failed`` with the last code. **Release** returns
-every running job to pending: at a server's start no holder survives (one server
-owns a catalog).
+caller sizes per job. The lease says whether the job was taken over from an expired
+holder, which its owner may count as a failed attempt. **Complete** writes a
+terminal state and the caller's columns only while the claim's lease token still
+holds the row. **Retry** counts a failed attempt and puts the job off by the next
+delay of ``retry_delays_seconds``; past the last one it becomes terminal ``failed``
+with the last code. **Release** returns every running job to pending: at a server's
+start no holder survives (one server owns a catalog).
 
 The helper holds no SQL dialect beyond what SQLite and Postgres share, and takes the
 caller's connection: the caller owns the transaction, the write lock and the
@@ -30,6 +34,7 @@ mutation budget, as the call closer does.
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -43,16 +48,21 @@ RUNNING = "running"
 FAILED = "failed"
 # A failed attempt waits 1, 4 and 16 minutes; the fourth failure is terminal.
 DEFAULT_RETRY_DELAYS_SECONDS = (60, 240, 960)
+# Lease tokens are drawn from [1, 2^63 - 1], the catalog's non-negative BIGINT range.
+_TOKEN_RANGE = 2**63 - 1
 
 
 @dataclass(frozen=True, slots=True)
 class JobLease:
-    """One claimed job: its key, the claim's token, its lease and its prior failures."""
+    """One claimed job: its key, the claim's token, its lease and its prior failures.
+    ``taken_over``: the job was running under a lease that expired, so its holder
+    never reported an outcome."""
 
     key: tuple[Any, ...]
     token: int
     lease_until_unix_nano: int
     attempts: int
+    taken_over: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,21 +116,30 @@ class LeasedJobs:
         """Lease the first due job for ``lease_nano(key)`` nanoseconds, or ``None``."""
 
         for key in self.due(connection, now):
+            before = connection.execute(
+                f"SELECT state, attempts FROM {self.table} WHERE {self._key_match}", key
+            ).fetchone()
+            if before is None:
+                continue
+            token = 1 + secrets.randbelow(_TOKEN_RANGE)
             lease_until = now + lease_nano(key)
             claimed = connection.execute(
-                f"UPDATE {self.table} SET state = '{RUNNING}', lease_token = lease_token + 1, "
+                f"UPDATE {self.table} SET state = '{RUNNING}', lease_token = ?, "
                 "lease_until_unix_nano = ?, updated_unix_nano = ? "
                 f"WHERE {self._key_match} AND ((state = '{RUNNING}' AND "
                 f"lease_until_unix_nano < ?) OR (state = '{PENDING}' AND "
                 "(next_attempt_unix_nano IS NULL OR next_attempt_unix_nano <= ?)))",
-                (lease_until, now, *key, now, now),
+                (token, lease_until, now, *key, now, now),
             ).rowcount
             if claimed != 1:
                 continue
-            row = connection.execute(
-                f"SELECT lease_token, attempts FROM {self.table} WHERE {self._key_match}", key
-            ).fetchone()
-            return JobLease(key, int(row["lease_token"]), lease_until, int(row["attempts"]))
+            return JobLease(
+                key,
+                token,
+                lease_until,
+                int(before["attempts"]),
+                taken_over=before["state"] == RUNNING,
+            )
         return None
 
     def holds(self, connection: DatabaseConnection, lease: JobLease) -> bool:

@@ -1,4 +1,4 @@
-"""The analysis job end to end in one server's terms (FR-2: AC2.1-AC2.6, M10, M11, M15).
+"""The analysis job end to end in one server's terms.
 
 ``AnalysisRunner`` claims a job, copies the recording out of the blob store into
 its spool directory, runs the real child process (``python -m
@@ -35,16 +35,24 @@ from earshot.maintenance import MaintenanceLoop  # noqa: E402
 from earshot.signals import (  # noqa: E402
     ANALYSIS_CRASHED,
     ANALYSIS_DECODE_FAILED,
+    ANALYSIS_LEASE_EXPIRED,
     ANALYSIS_OUT_OF_MEMORY,
+    ANALYSIS_SPOOL_FAILED,
     ANALYSIS_TIMEOUT,
     ANALYSIS_UNSUPPORTED_CODEC,
     analyze,
 )
 from earshot.signals.runner import AnalysisProcess  # noqa: E402
-from earshot.storage_analysis import AnalysisRunner, AnalysisStore, analysis_job  # noqa: E402
+from earshot.storage_analysis import (  # noqa: E402
+    BUSY_WRITE_PAUSES_SECONDS,
+    AnalysisRunner,
+    AnalysisStore,
+    analysis_job,
+)
 from earshot.storage_call_purge import CallPurger  # noqa: E402
 from earshot.storage_calls import CallStore  # noqa: E402
 from earshot.storage_recordings import RecordingManifest, RecordingStore  # noqa: E402
+from lock_holders import store_write_lock_held_elsewhere  # noqa: E402
 from store_support import catalog_rows, make_store  # noqa: E402
 
 pytestmark = pytest.mark.integration
@@ -354,6 +362,183 @@ def test_the_seams_do_nothing_outside_test_mode(tmp_path, monkeypatch, environme
     outcome = world.runner.run_next()
 
     assert outcome is not None and outcome.result == "stored"
+
+
+# --- failures after the claim, outside the child ------------------------------------------------
+
+
+def _hold_child(monkeypatch, tmp_path: Path) -> Path:
+    """Hold each child once it has written its outputs, until the returned file exists."""
+
+    release = tmp_path / "release"
+    monkeypatch.setenv("EARSHOT_TEST_MODE", "1")
+    monkeypatch.setenv("EARSHOT_TEST_HOLD_AT", "analysis_child_finished")
+    monkeypatch.setenv("EARSHOT_TEST_HOLD_FILE", str(release))
+    return release
+
+
+def _wait_held(release: Path) -> None:
+    deadline = time.monotonic() + 60
+    while not Path(f"{release}.held").exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert Path(f"{release}.held").exists(), "the child never reached its hold point"
+
+
+def _in_thread(run, **kwargs) -> tuple[threading.Thread, list]:
+    """Start ``run(**kwargs)``; the list gets what it returned or raised."""
+
+    results: list = []
+
+    def target() -> None:
+        try:
+            results.append(run(**kwargs))
+        except Exception as error:
+            results.append(error)
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, results
+
+
+def _store_busy_elsewhere(path: Path, free: threading.Event) -> threading.Thread:
+    """Another process takes the store's write lock and holds it until ``free``."""
+
+    held = threading.Event()
+
+    def hold() -> None:
+        with store_write_lock_held_elsewhere(path):
+            held.set()
+            free.wait(60)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(30)
+    return holder
+
+
+def test_a_spool_that_cannot_be_created_is_retried_then_failed(tmp_path) -> None:
+    world = World(tmp_path, _local(tmp_path))
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the spool directory's parent should be")
+    world.runner = AnalysisRunner(
+        world.analyses, blobs=world.recordings.blobs, spool_root=blocker / "analysis-tmp"
+    )
+    world.store_recording("call-1.user", (PIPECAT_AUDIO / "user.wav").read_bytes())
+
+    results = []
+    for delay in (1, 4, 16, 0):
+        outcome = world.runner.run_next()
+        assert outcome is not None
+        results.append((outcome.result, outcome.error_code))
+        assert world.runner.run_next() is None  # put off
+        world.clock.advance(delay * MINUTE)
+
+    assert results == [("pending", ANALYSIS_SPOOL_FAILED)] * 3 + [("failed", ANALYSIS_SPOOL_FAILED)]
+    assert world.job("call-1.user") == ("failed", 4, ANALYSIS_SPOOL_FAILED, None, None)
+
+
+def test_a_child_answer_the_server_cannot_read_is_a_retried_failure(tmp_path, monkeypatch) -> None:
+    world = World(tmp_path, _local(tmp_path))
+    world.store_recording("call-1.user", (PIPECAT_AUDIO / "user.wav").read_bytes())
+    release = _hold_child(monkeypatch, tmp_path)
+    job, results = _in_thread(world.runner.run_next)
+    _wait_held(release)
+    [answer] = world.spool.glob("*/result.json")
+    answer.write_text('{"algorithm_version": 1, "chan')  # cut short, as a full disk does
+
+    release.touch()
+    job.join(60)
+
+    assert [(outcome.result, outcome.error_code) for outcome in results] == [
+        ("pending", ANALYSIS_CRASHED)
+    ]
+    assert world.job("call-1.user") == ("pending", 1, ANALYSIS_CRASHED, None, None)
+    assert [key for key in _blob_keys(tmp_path) if key.startswith("analysis/")] == []
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM pending_blob_deletions") == [(0,)]
+    assert world.spooled() == []
+
+
+def test_a_store_busy_when_the_result_is_ready_delays_its_write_and_loses_nothing(
+    tmp_path, monkeypatch
+) -> None:
+    world = World(tmp_path, _local(tmp_path))
+    world.store_recording("call-1.user", (PIPECAT_AUDIO / "user.wav").read_bytes())
+    release = _hold_child(monkeypatch, tmp_path)
+    job, results = _in_thread(world.runner.run_next, budget_s=0.2)
+    _wait_held(release)
+    free = threading.Event()
+    holder = _store_busy_elsewhere(tmp_path, free)
+
+    release.touch()
+    time.sleep(2.0)  # the result is ready while another process holds the store
+    free.set()
+    holder.join(30)
+    job.join(60)
+
+    assert [outcome.result for outcome in results] == ["stored"]
+    assert world.job("call-1.user")[:3] == ("stored", 0, None)
+
+
+def test_a_store_busy_past_every_retry_leaves_a_lease_whose_expiry_counts(
+    tmp_path, monkeypatch
+) -> None:
+    world = World(tmp_path, _local(tmp_path))
+    world.store_recording("call-1.user", (PIPECAT_AUDIO / "user.wav").read_bytes())
+    release = _hold_child(monkeypatch, tmp_path)
+    job, results = _in_thread(world.runner.run_next, budget_s=0.2)
+    _wait_held(release)
+    free = threading.Event()
+    holder = _store_busy_elsewhere(tmp_path, free)
+    release.touch()
+    job.join(60)  # it gave up while the store stayed busy
+    free.set()
+    holder.join(30)
+    assert [type(error).__name__ for error in results] == ["StorageBusyError"]
+    assert world.job("call-1.user")[:2] == ("running", 0)  # nothing could be written
+    assert world.spooled() == []
+
+    world.clock.advance(20 * MINUTE)  # past its lease
+
+    assert world.runner.run_next() is None  # the expired lease is a failed attempt, put off
+    assert world.job("call-1.user")[:3] == ("pending", 1, ANALYSIS_LEASE_EXPIRED)
+    world.clock.advance(MINUTE)
+    outcome = world.runner.run_next()
+    assert outcome is not None and outcome.result == "stored"
+
+
+def test_a_store_that_frees_just_after_the_writes_gave_up_still_costs_no_attempt(
+    tmp_path, monkeypatch
+) -> None:
+    """The result's writes give up while the store is busy; the store being free a moment
+    later must not turn that into a failed attempt (and a finished analysis thrown
+    away): the job stays leased and only its lease's expiry counts."""
+
+    world = World(tmp_path, _local(tmp_path))
+    world.store_recording("call-1.user", (PIPECAT_AUDIO / "user.wav").read_bytes())
+    release = _hold_child(monkeypatch, tmp_path)
+    job, results = _in_thread(world.runner.run_next, budget_s=0.2)
+    _wait_held(release)
+    free = threading.Event()
+    holder = _store_busy_elsewhere(tmp_path, free)
+    started = time.monotonic()
+    release.touch()
+    # Every pause (3.75 s) and every attempt's own wait (0.2 s each) pass before the
+    # first write gives up; a moment later the store is free.
+    time.sleep(sum(BUSY_WRITE_PAUSES_SECONDS) + 0.2 * (len(BUSY_WRITE_PAUSES_SECONDS) + 1) + 0.8)
+    free.set()
+    holder.join(30)
+    job.join(60)
+
+    assert time.monotonic() - started < 30
+    assert [type(error).__name__ for error in results] == ["StorageBusyError"]
+    assert world.job("call-1.user")[:2] == ("running", 0)  # no attempt was counted
+    assert world.spooled() == []
+    assert [key for key in _blob_keys(tmp_path) if key.startswith("analysis/")] == []
+
+
+def _blob_keys(path: Path) -> list[str]:
+    root = path / "blobs"
+    return sorted(str(item.relative_to(root)) for item in root.rglob("*") if item.is_file())
 
 
 # --- a purge while the child runs ----------------------------------------------------------------

@@ -1,12 +1,11 @@
-"""The recording analysis itself (FR-2, AC2.3-AC2.5 with M2): speech runs, their
+"""The recording analysis itself: speech runs, their
 uncertainty, the noise floor, exact-zero runs and audiowaveform peaks.
 
 Every test runs the real analysis (the vendored Silero ONNX model, libsndfile) on
 the real fixture audio: the Pipecat 1.5 capture's two mono WAVs and the LiveKit 1.8
 capture's stereo Ogg Opus. Expected values come from sources independent of this
-code: the research's energy-VAD scan of the fixture
-(``local/research/month-2/call-view-and-audio-signals.md`` §4.1), the plan review's
-exact-zero scan (``plan-review-linus.md`` M1), and the standard library's ``wave``.
+code: an energy-VAD scan of the fixture, an exact-zero scan, and the standard
+library's ``wave``.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[3]
 PIPECAT_AUDIO = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5" / "audio"
 LIVEKIT_RECORDING = ROOT / "fixtures" / "captured" / "livekit-otlp-1.8" / "audio" / "recording.ogg"
 
-# Research §4.1: a 10 ms RMS energy VAD above -50 dBFS on the fixture, in seconds.
+# An energy-VAD scan: a 10 ms RMS energy above -50 dBFS on the fixture, in seconds.
 ENERGY_RUNS = {
     "user": [(1.29, 3.88), (11.77, 13.01), (13.52, 15.24), (22.5, 23.94), (24.28, 25.43)],
     "agent": [
@@ -39,7 +38,7 @@ ENERGY_RUNS = {
         (28.13, 28.71),
     ],
 }  # fmt: skip
-# M1's scan: exact-zero runs of 200 ms or more, in seconds.
+# The exact-zero scan: runs of 200 ms or more, in seconds.
 ZERO_RUNS = {
     "user": [(0.000, 1.000), (3.879, 11.505), (15.267, 22.267), (25.471, 32.486)],
     "agent": [(0.000, 6.306), (9.881, 16.566), (21.791, 26.726), (28.720, 32.486)],
@@ -94,14 +93,14 @@ def test_exact_zero_runs_and_the_noise_floor_exclude_recorder_padding(pipecat, s
 
     long_runs = [run for run in channel["zero_runs"] if run["end_ms"] - run["start_ms"] >= 200]
 
-    # M1's scan truncated to whole milliseconds; the result rounds to the nearest.
+    # The exact-zero scan truncated to whole milliseconds; the result rounds to the nearest.
     assert len(long_runs) == len(ZERO_RUNS[speaker])
     for (start, end), (scan_start, scan_end) in zip(
         _seconds(long_runs), ZERO_RUNS[speaker], strict=True
     ):
         assert abs(start - scan_start) < 0.0011 and abs(end - scan_end) < 0.0011
     assert all(run["end_ms"] - run["start_ms"] >= 50 for run in channel["zero_runs"])
-    # Cartesia's floor is about -66 dBFS (research §4.2); padding would make it -inf.
+    # Cartesia's floor is about -66 dBFS; padding would make it -inf.
     assert -70 <= channel["noise_floor_dbfs"] <= -60
     assert channel["threshold_dbfs"] == -50
 
@@ -145,7 +144,7 @@ def test_a_stereo_ogg_opus_recording_is_analysed_per_channel(tmp_path) -> None:
     assert (user["speaker"], agent["speaker"]) == ("user", "agent")
     assert result["source"]["sample_rate"] == 48000 and result["source"]["channels"] == 2
     assert abs(result["source"]["duration_ms"] - 34004) <= 1
-    # The caller speaks three lines; the agent answers each (WS0's capture).
+    # The caller speaks three lines; the agent answers each (the real capture).
     assert len(user["runs"]) >= 3 and len(agent["runs"]) >= 3
     assert user["runs"][0]["start_ms"] < agent["runs"][0]["start_ms"]
     header = struct.unpack_from("<iIiiIi", peaks.read_bytes())

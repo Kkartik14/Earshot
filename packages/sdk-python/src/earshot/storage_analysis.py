@@ -7,17 +7,23 @@ every recording stored before it.
 
 **Leases** follow the generic leased-job helper (``leased_jobs``) on the
 ``audio_analysis`` table. A job's timeout is ``30 s + 0.25 x`` the recording's
-duration (15 minutes when the duration is unknown, as for MP3 and WebM), and its
-lease is that timeout plus ``LEASE_MARGIN_SECONDS``, set at the claim, so a job
-cannot be leased twice while its child may still run.
+duration, at most ``MAX_TIMEOUT_SECONDS``; it is 15 minutes when the duration is
+unknown (MP3 and WebM) or more than the recording's bytes can hold (a header that
+declares days in a few bytes). Its lease is that timeout plus
+``LEASE_MARGIN_SECONDS``, set at the claim, so a job cannot be leased twice while
+its child may still run. A job still ``running`` when its lease runs out never had
+its outcome written (its holder could not reach the store, or died): the next claim
+counts that as a failed attempt (``EARSHOT_ANALYSIS_LEASE_EXPIRED``), so even a job
+no holder can finish ends ``failed``.
 
 **States.** A recording the decoder cannot read is terminal ``unavailable`` with
 its code, as is every job while the ``signals`` extra is missing
 (``EARSHOT_SIGNALS_EXTRA_REQUIRED``). A child that crashes, runs out of memory or
 times out is retried after 1, 4 and 16 minutes, then is terminal ``failed`` with its
-last code. A result is ``stored``. Every terminal write stamps the current
-``ALGORITHM_VERSION`` and bumps the recording's call's ``projection_seq`` (what the
-call's projection reads changed).
+last code; so is every other failure after the claim (the spool directory, the
+child's answer, the outputs). A result is ``stored``. Every terminal write stamps
+the current ``ALGORITHM_VERSION`` and bumps the recording's call's
+``projection_seq`` (what the call's projection reads changed).
 
 **Outputs** (peaks, and a rendition) are blobs under server keys,
 ``analysis/<project_id>/<uuid>-…``. Before any byte is written, the claim reserves
@@ -26,12 +32,14 @@ a process that dies mid-write leaves keys the deletion drain removes. The result
 is written only while the claim's lease token still holds the row and the
 reservations are untouched; it then owns its keys (their journal rows go). If the
 lease was lost, for example because the recording's call was purged and the row
-went with it, the same mutation makes the keys due at once, so no derived blob of
-a purged recording survives. A replaced result's old peaks key is queued too.
+went with it, the same mutation journals the keys again, due at once, so no
+derived blob of a purged recording survives, even one written after the drain
+already took its reservation. A replaced result's old peaks key is queued too.
 
-**Mono pairs (one timeline).** Two stored mono recordings of one call, one user and
-one agent, with equal ``started_at`` strings and known durations within
-``ONE_TIMELINE_TOLERANCE_MS`` of each other, are one recorder timeline. A browser
+**Mono pairs (one timeline).** Two stored mono recordings of one call that
+``call_timeline.one_timeline_pairs`` pairs (the rule the projection applies too: the
+only user and agent mono recordings at one ``started_at``, with known durations within
+``ONE_TIMELINE_TOLERANCE_MS``) are one recorder timeline. A browser
 plays them as one stereo FLAC rendition (channel 0 user, channel 1 agent), held by
 the user recording's row (``rendition_blob_key``). Either job of the pair makes it
 while the user row has none; the first stored wins, and the other is discarded.
@@ -50,16 +58,19 @@ import json
 import logging
 import os
 import shutil
+import time
 import uuid
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from . import signals
 from .blobstore import BlobNotFoundError
+from .call_timeline import ONE_TIMELINE_TOLERANCE_MS, Track, one_timeline_pairs
 from .leased_jobs import FAILED, JobLease, LeasedJobs
 from .maintenance import MAINTENANCE_LOCK_BUDGET_SECONDS
+from .recordings import plausible_duration_ms
 from .storage import StorageBusyError
 
 if TYPE_CHECKING:
@@ -70,15 +81,23 @@ if TYPE_CHECKING:
     from .storage_database import DatabaseConnection
 
 _LOGGER = logging.getLogger(__name__)
+_T = TypeVar("_T")
 _SECOND = 1_000_000_000
 TIMEOUT_BASE_SECONDS = 30.0
 TIMEOUT_PER_AUDIO_SECOND = 0.25
 UNKNOWN_DURATION_TIMEOUT_SECONDS = 15 * 60.0
+# No analysis may run longer, whatever duration its header declares. At the measured
+# 10 to 52 s of analysis per hour of audio (docs/production.md), that is room for
+# recordings of over 60 hours.
+MAX_TIMEOUT_SECONDS = 60 * 60.0
 LEASE_MARGIN_SECONDS = 60
+# A result write that finds the store busy is tried again after each of these
+# pauses (seconds), so a moment's contention does not throw a finished analysis
+# away. Past the last, the attempt is given up.
+BUSY_WRITE_PAUSES_SECONDS = (0.25, 0.5, 1.0, 2.0)
 # Reserved output keys become due for deletion this long after their claim's lease.
 OUTPUT_RESERVE_GRACE_SECONDS = 60
 REQUEUE_BATCH_SIZE = 500
-ONE_TIMELINE_TOLERANCE_MS = 20
 BLOB_KEY_PREFIX = "analysis"
 SPOOL_DIRECTORY = "analysis-tmp"
 STORED = "stored"
@@ -94,12 +113,17 @@ _EXTENSIONS = {
 ANALYSIS_JOBS = LeasedJobs("audio_analysis", ("project_id", "recording_id"))
 
 
-def analysis_timeout_seconds(duration_ms: int | None) -> float:
-    """How long one analysis child may run: ``30 s + 0.25 x`` the audio's duration."""
+def analysis_timeout_seconds(duration_ms: int | None, size: int) -> float:
+    """How long one analysis child may run: ``30 s + 0.25 x`` the audio's duration, at
+    most ``MAX_TIMEOUT_SECONDS``; ``UNKNOWN_DURATION_TIMEOUT_SECONDS`` when the
+    duration is unknown or more than ``size`` bytes can hold."""
 
-    if duration_ms is None:
+    plausible = plausible_duration_ms(duration_ms, size)
+    if plausible is None:
         return UNKNOWN_DURATION_TIMEOUT_SECONDS
-    return TIMEOUT_BASE_SECONDS + TIMEOUT_PER_AUDIO_SECOND * duration_ms / 1000
+    return min(
+        MAX_TIMEOUT_SECONDS, TIMEOUT_BASE_SECONDS + TIMEOUT_PER_AUDIO_SECOND * plausible / 1000
+    )
 
 
 def schedule_analysis(
@@ -129,6 +153,10 @@ class SourceRecording:
     @property
     def extension(self) -> str:
         return _EXTENSIONS.get(self.content_type, ".bin")
+
+    @property
+    def timeout_seconds(self) -> float:
+        return analysis_timeout_seconds(self.duration_ms, self.size)
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +239,11 @@ _RECORDING_COLUMNS = (
     "recording_id, call_id, speaker, channel_speakers_json, content_type, blob_key, size, "
     "duration_ms, started_at_unix_nano"
 )
+# What a call's projection reads changed: its ``projection_seq`` moves on.
+_TOUCH_CALL = (
+    "UPDATE calls SET projection_seq = projection_seq + 1 WHERE project_id = ? "
+    "AND call_id = (SELECT call_id FROM recordings WHERE project_id = ? AND recording_id = ?)"
+)
 
 
 class AnalysisStore:
@@ -257,37 +290,28 @@ class AnalysisStore:
     def _pair(connection: DatabaseConnection, project_id: str, recording: Any) -> tuple | None:
         """``(user, agent)``: the mono pair on one timeline ``recording`` is half of."""
 
-        speakers = _speakers(recording)
-        if len(speakers) != 1 or speakers[0] not in ("user", "agent"):
-            return None
-        if recording["duration_ms"] is None:
-            return None
-        other = "agent" if speakers[0] == "user" else "user"
-        candidates = [
-            row
+        rows = {
+            row["recording_id"]: row
             for row in connection.execute(
                 f"SELECT {_RECORDING_COLUMNS} FROM recordings WHERE project_id = ? "
-                "AND call_id = ? AND recording_id <> ? AND state = 'stored' "
-                "AND started_at_unix_nano = ? ORDER BY recording_id",
-                (
-                    project_id,
-                    recording["call_id"],
-                    recording["recording_id"],
-                    recording["started_at_unix_nano"],
-                ),
+                "AND call_id = ? AND state = 'stored' AND started_at_unix_nano = ?",
+                (project_id, recording["call_id"], recording["started_at_unix_nano"]),
             ).fetchall()
-            if _speakers(row) == (other,)
-        ]
-        if len(candidates) != 1:  # none, or not one clear partner
-            return None
-        partner = candidates[0]
-        if (
-            partner["duration_ms"] is None
-            or abs(int(partner["duration_ms"]) - int(recording["duration_ms"]))
-            > ONE_TIMELINE_TOLERANCE_MS
-        ):
-            return None
-        return (recording, partner) if speakers[0] == "user" else (partner, recording)
+        }
+        rows[recording["recording_id"]] = recording
+        tracks = (
+            Track(
+                row["recording_id"],
+                _speakers(row),
+                int(row["started_at_unix_nano"]),
+                None if row["duration_ms"] is None else int(row["duration_ms"]),
+            )
+            for row in rows.values()
+        )
+        for user, agent in one_timeline_pairs(tracks):
+            if recording["recording_id"] in (user, agent):
+                return rows[user], rows[agent]
+        return None
 
     @classmethod
     def _rendition(
@@ -361,14 +385,33 @@ class AnalysisStore:
 
             def lease_nano(key: tuple) -> int:
                 row = self._recording(connection, *key)
-                duration = None if row is None or row["duration_ms"] is None else row["duration_ms"]
-                timeout = analysis_timeout_seconds(duration)
+                timeout = (
+                    UNKNOWN_DURATION_TIMEOUT_SECONDS
+                    if row is None or row["blob_key"] is None
+                    else _source(row).timeout_seconds
+                )
                 return round((timeout + LEASE_MARGIN_SECONDS) * _SECOND)
 
-            lease = ANALYSIS_JOBS.claim(connection, now, lease_nano=lease_nano)
+            stamp = {"algorithm_version": signals.ALGORITHM_VERSION}
             claim = None
-            if lease is not None:
+            while claim is None:
+                lease = ANALYSIS_JOBS.claim(connection, now, lease_nano=lease_nano)
+                if lease is None:
+                    break
                 project_id, recording_id = lease.key
+                if lease.taken_over:
+                    # Its holder never wrote an outcome before its lease ran out: a
+                    # failed attempt, put off like any other.
+                    state = ANALYSIS_JOBS.retry(
+                        connection,
+                        lease,
+                        now,
+                        error_code=signals.ANALYSIS_LEASE_EXPIRED,
+                        columns=stamp,
+                    )
+                    if state == FAILED:
+                        self._touch_call(connection, project_id, recording_id)
+                    continue
                 row = self._recording(connection, project_id, recording_id)
                 if row is None or row["blob_key"] is None:
                     # A row whose recording is not stored cannot happen (the row is
@@ -379,19 +422,19 @@ class AnalysisStore:
                         now,
                         state=UNAVAILABLE,
                         error_code=signals.ANALYSIS_SOURCE_MISSING,
-                        columns={"algorithm_version": signals.ALGORITHM_VERSION},
+                        columns=stamp,
                     )
-                else:
-                    source = _source(row)
-                    claim = AnalysisClaim(
-                        lease=lease,
-                        project_id=project_id,
-                        recording_id=recording_id,
-                        call_id=row["call_id"],
-                        recording=source,
-                        rendition=self._rendition(connection, project_id, row),
-                        timeout_seconds=analysis_timeout_seconds(source.duration_ms),
-                    )
+                    break
+                source = _source(row)
+                claim = AnalysisClaim(
+                    lease=lease,
+                    project_id=project_id,
+                    recording_id=recording_id,
+                    call_id=row["call_id"],
+                    recording=source,
+                    rendition=self._rendition(connection, project_id, row),
+                    timeout_seconds=source.timeout_seconds,
+                )
             connection.commit()
         return claim
 
@@ -450,24 +493,27 @@ class AnalysisStore:
         )
 
     @staticmethod
-    def _make_due(
+    def _journal_due(
         connection: DatabaseConnection, project_id: str, keys: Iterable[str], now: int
     ) -> None:
+        """Journal ``keys`` for deletion, due now: their reservation becomes due, or,
+        when the drain has taken it already (the job outlived its lease), the key is
+        journaled again, since its blob may have been written after that drain. A
+        project already deleted journals nothing."""
+
         connection.executemany(
-            "UPDATE pending_blob_deletions SET queued_at_unix_nano = ? "
-            "WHERE project_id = ? AND blob_key = ? AND attempts = 0",
-            [(now, project_id, key) for key in keys],
+            "INSERT INTO pending_blob_deletions(project_id, blob_key, queued_at_unix_nano, "
+            "attempts) SELECT ?, ?, ?, 0 WHERE EXISTS (SELECT 1 FROM projects "
+            "WHERE project_id = ?) ON CONFLICT (project_id, blob_key) DO UPDATE SET "
+            "queued_at_unix_nano = excluded.queued_at_unix_nano, attempts = 0",
+            [(project_id, key, now, project_id) for key in keys],
         )
 
     @staticmethod
-    def _touch_call(connection: DatabaseConnection, claim: AnalysisClaim) -> None:
-        """What the call's projection reads changed: bump its ``projection_seq``."""
+    def _touch_call(connection: DatabaseConnection, project_id: str, recording_id: str) -> None:
+        """What the recording's call's projection reads changed."""
 
-        connection.execute(
-            "UPDATE calls SET projection_seq = projection_seq + 1 "
-            "WHERE project_id = ? AND call_id = ?",
-            (claim.project_id, claim.call_id),
-        )
+        connection.execute(_TOUCH_CALL, (project_id, project_id, recording_id))
 
     def store_result(
         self,
@@ -507,7 +553,7 @@ class AnalysisStore:
                 },
             )
             if not stored:
-                self._make_due(connection, project_id, keys.all(), now)
+                self._journal_due(connection, project_id, keys.all(), now)
                 connection.commit()
                 return False
             owned = [keys.peaks]
@@ -523,7 +569,7 @@ class AnalysisStore:
                 "DELETE FROM pending_blob_deletions WHERE project_id = ? AND blob_key = ?",
                 [(project_id, key) for key in owned],
             )
-            self._make_due(connection, project_id, set(keys.all()) - set(owned), now)
+            self._journal_due(connection, project_id, set(keys.all()) - set(owned), now)
             replaced = None if previous is None else previous["peaks_blob_key"]
             if replaced is not None and replaced != keys.peaks:
                 connection.execute(
@@ -532,7 +578,7 @@ class AnalysisStore:
                     "ON CONFLICT (project_id, blob_key) DO NOTHING",
                     (project_id, replaced, now),
                 )
-            self._touch_call(connection, claim)
+            self._touch_call(connection, project_id, claim.recording_id)
             connection.commit()
         return True
 
@@ -570,7 +616,7 @@ class AnalysisStore:
                     connection, claim.lease, now, error_code=code, columns=stamp
                 )
             if state in (UNAVAILABLE, FAILED):
-                self._touch_call(connection, claim)
+                self._touch_call(connection, claim.project_id, claim.recording_id)
             connection.commit()
         return state
 
@@ -630,9 +676,7 @@ class AnalysisStore:
                 [(now, project_id, recording_id) for project_id, recording_id in keys],
             )
             connection.executemany(
-                "UPDATE calls SET projection_seq = projection_seq + 1 WHERE project_id = ? "
-                "AND call_id = (SELECT call_id FROM recordings WHERE project_id = ? "
-                "AND recording_id = ?)",
+                _TOUCH_CALL,
                 [(project_id, project_id, recording_id) for project_id, recording_id in keys],
             )
             connection.commit()
@@ -653,6 +697,14 @@ class AnalysisOutcome:
     error_code: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _Failure:
+    """How an attempt failed: its code, and whether the job is over (``unavailable``)."""
+
+    code: str
+    terminal: bool = False
+
+
 class AnalysisRunner:
     """Run analysis jobs one at a time: claim, spool, child, store.
 
@@ -660,6 +712,13 @@ class AnalysisRunner:
     into ``<spool_root>/<uuid>/`` (removed in ``finally``); the child reads and
     writes only there. Nothing here runs under a store lock except the short claim,
     reserve and result mutations.
+
+    Every way an attempt can fail after its claim ends with its outcome written:
+    ``unavailable``, a retry after 1, 4 or 16 minutes, or ``failed``. The writes
+    that record an outcome are tried again while the store is busy
+    (``BUSY_WRITE_PAUSES_SECONDS``); a store busy past all of them raises
+    ``StorageBusyError`` with the job still leased, and the next claim after its
+    lease counts the attempt.
     """
 
     def __init__(
@@ -730,64 +789,108 @@ class AnalysisRunner:
     ) -> AnalysisOutcome | None:
         """Claim and run one analysis; ``None`` when no job is due."""
 
-        from .signals.runner import AnalysisClosedError
-
         claim = self.analyses.claim(now_unix_nano=now_unix_nano, budget_s=budget_s)
         if claim is None:
             return None
-
-        def failed(code: str, *, terminal: bool) -> AnalysisOutcome:
-            state = self.analyses.fail(claim, code, terminal=terminal, budget_s=budget_s)
-            _LOGGER.warning(
-                "EARSHOT_ANALYSIS_FAILED: a recording's analysis failed with %s (%s)",
-                code,
-                state or "lease lost",
-            )
-            return AnalysisOutcome(claim.project_id, claim.recording_id, state or "lost", code)
-
         if not self.extra_available():
-            return failed(signals.SIGNALS_EXTRA_REQUIRED, terminal=True)
+            return self._failed(claim, _Failure(signals.SIGNALS_EXTRA_REQUIRED, True), budget_s)
         job_dir = self.spool_root / uuid.uuid4().hex
+        try:
+            attempt = self._attempt(claim, job_dir, budget_s)
+        finally:
+            shutil.rmtree(job_dir, ignore_errors=True)
+        if isinstance(attempt, _Failure):
+            return self._failed(claim, attempt, budget_s)
+        return attempt
+
+    def _attempt(
+        self, claim: AnalysisClaim, job_dir: Path, budget_s: float | None
+    ) -> AnalysisOutcome | _Failure:
+        """Spool, run the child and store its outputs: the stored or lost outcome, or
+        how the attempt failed."""
+
+        from .signals.runner import AnalysisClosedError
+
+        failure = signals.ANALYSIS_SPOOL_FAILED  # what an error in the step below means
         try:
             # The spool holds copies of call audio: only this server's user reads it.
             self.spool_root.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self.spool_root, 0o700)
             job_dir.mkdir(mode=0o700)
+            failure = signals.ANALYSIS_SOURCE_UNREADABLE  # an unreachable blob store
             try:
                 job = self._spool(claim, job_dir)
             except BlobNotFoundError:
-                return failed(signals.ANALYSIS_SOURCE_MISSING, terminal=True)
-            except Exception as error:  # an unreachable blob store: try again later
-                _LOGGER.warning("analysis spool failed (%s)", type(error).__name__)
-                return failed(signals.ANALYSIS_SOURCE_UNREADABLE, terminal=False)
+                return _Failure(signals.ANALYSIS_SOURCE_MISSING, terminal=True)
+            failure = signals.ANALYSIS_SPOOL_FAILED
             (job_dir / "job.json").write_text(json.dumps(job))
-            try:
-                outcome = self.process.run(job_dir, timeout_s=claim.timeout_seconds)
-            except AnalysisClosedError:
-                raise  # the server is stopping; the next start releases the lease
+            failure = signals.ANALYSIS_CRASHED  # no child ran, or its answer is unreadable
+            outcome = self.process.run(job_dir, timeout_s=claim.timeout_seconds)
             if outcome.error_code is not None:
-                return failed(outcome.error_code, terminal=outcome.terminal)
+                return _Failure(outcome.error_code, terminal=outcome.terminal)
             result = json.loads((job_dir / "result.json").read_text())
+            if not isinstance(result, dict):
+                raise ValueError("the analysis result is not a JSON object")
+            # A failure from here on leaves reserved keys journaled: the drain deletes
+            # them once the lease is over.
+            failure = signals.ANALYSIS_STORE_FAILED
             rendition_file = job_dir / "rendition.flac"
             rendition = claim.rendition is not None and rendition_file.is_file()
             keys = self.analyses.output_keys(claim)
-            if not self.analyses.reserve_outputs(claim, keys, budget_s=budget_s):
+            if not self._write(self.analyses.reserve_outputs, claim, keys, budget_s=budget_s):
                 return AnalysisOutcome(claim.project_id, claim.recording_id, "lost")
-            try:
-                self._put(job_dir / "peaks.dat", keys.peaks)
-                if rendition and keys.rendition is not None:
-                    self._put(rendition_file, keys.rendition)
-            except Exception as error:
-                # The reserved keys stay journaled; the drain deletes them after the lease.
-                _LOGGER.warning("analysis outputs not stored (%s)", type(error).__name__)
-                return failed(signals.ANALYSIS_STORE_FAILED, terminal=False)
-            if not self.analyses.store_result(
-                claim, keys, result, rendition=rendition, budget_s=budget_s
+            self._put(job_dir / "peaks.dat", keys.peaks)
+            if rendition and keys.rendition is not None:
+                self._put(rendition_file, keys.rendition)
+            if self._write(
+                self.analyses.store_result,
+                claim,
+                keys,
+                result,
+                rendition=rendition,
+                budget_s=budget_s,
             ):
-                return AnalysisOutcome(claim.project_id, claim.recording_id, "lost")
-            return AnalysisOutcome(claim.project_id, claim.recording_id, STORED)
-        finally:
-            shutil.rmtree(job_dir, ignore_errors=True)
+                return AnalysisOutcome(claim.project_id, claim.recording_id, STORED)
+            # Its job was lost, or it outlived its lease and the reserved keys with it.
+            return _Failure(signals.ANALYSIS_LEASE_EXPIRED)
+        except (AnalysisClosedError, StorageBusyError):
+            # The server is stopping (the next start releases the lease), or the store
+            # stayed busy past every pause: the job stays leased and only its lease's
+            # expiry counts an attempt, so a store that frees a moment later cannot
+            # turn a finished analysis into a failed one.
+            raise
+        except Exception as error:
+            _LOGGER.warning("an analysis attempt failed: %s (%s)", failure, type(error).__name__)
+            return _Failure(failure)
+
+    def _failed(
+        self, claim: AnalysisClaim, failure: _Failure, budget_s: float | None
+    ) -> AnalysisOutcome:
+        state = self._write(
+            self.analyses.fail,
+            claim,
+            failure.code,
+            terminal=failure.terminal,
+            budget_s=budget_s,
+        )
+        _LOGGER.warning(
+            "EARSHOT_ANALYSIS_FAILED: a recording's analysis failed with %s (%s)",
+            failure.code,
+            state or "lease lost",
+        )
+        return AnalysisOutcome(claim.project_id, claim.recording_id, state or "lost", failure.code)
+
+    @staticmethod
+    def _write(write: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
+        """``write(*args, **kwargs)``, tried again after each pause of
+        ``BUSY_WRITE_PAUSES_SECONDS`` while the store is busy."""
+
+        for pause in BUSY_WRITE_PAUSES_SECONDS:
+            try:
+                return write(*args, **kwargs)
+            except StorageBusyError:
+                time.sleep(pause)
+        return write(*args, **kwargs)
 
     def _put(self, path: Path, key: str) -> None:
         with path.open("rb") as handle, self.blobs.begin_put(key) as writer:

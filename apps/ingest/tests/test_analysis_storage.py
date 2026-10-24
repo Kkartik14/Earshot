@@ -1,4 +1,4 @@
-"""Analysis jobs in the catalog (FR-2: AC2.1, M10, M11, M15).
+"""Analysis jobs in the catalog.
 
 ``AnalysisStore`` is the catalog half of the analysis job: storing a recording
 queues its job in the same transaction, the job is leased, fenced and retried
@@ -22,10 +22,12 @@ from earshot.signals import (
     ALGORITHM_VERSION,
     ANALYSIS_CRASHED,
     ANALYSIS_DECODE_FAILED,
+    ANALYSIS_LEASE_EXPIRED,
     ANALYSIS_TIMEOUT,
     SIGNALS_EXTRA_REQUIRED,
 )
-from earshot.storage_analysis import AnalysisStore
+from earshot.storage_analysis import OUTPUT_RESERVE_GRACE_SECONDS, AnalysisStore
+from earshot.storage_call_purge import CallPurger
 from earshot.storage_calls import CallStore
 from earshot.storage_recordings import RecordingManifest, RecordingStore
 from store_support import catalog, catalog_rows, make_store
@@ -38,10 +40,10 @@ START = 1_800_000_000 * SECOND
 BODY = b"RIFF" * 256
 
 
-def _open(tmp_path: Path) -> tuple[RecordingStore, AnalysisStore, ManualClock]:
+def _open(tmp_path: Path, blobs=None) -> tuple[RecordingStore, AnalysisStore, ManualClock]:
     clock = ManualClock(wall=START, monotonic=START)
     store = make_store(tmp_path, clock=clock)
-    blobs = LocalBlobStore(tmp_path / "blobs")
+    blobs = LocalBlobStore(tmp_path / "blobs") if blobs is None else blobs
     recordings = RecordingStore(store, calls=CallStore(store), blobs=blobs)
     return recordings, AnalysisStore(store), clock
 
@@ -55,6 +57,7 @@ def _stored(
     started_at: int = START,
     channel_speakers: tuple[str, ...] | None = None,
     session_key: str = "call-1",
+    body: bytes = BODY,
 ):
     recordings.create(
         "default",
@@ -69,7 +72,7 @@ def _stored(
     )
     attempt = recordings.begin_upload("default", recording_id)
     try:
-        sha256, size = put_stream(recordings.blobs, attempt.blob_key, [BODY])
+        sha256, size = put_stream(recordings.blobs, attempt.blob_key, [body])
         return recordings.finish_upload(
             "default",
             recording_id,
@@ -164,13 +167,17 @@ def test_a_claim_leases_the_job_for_its_timeout_plus_a_margin(tmp_path) -> None:
     timeout = 30 + 0.25 * 32.486
     assert claim.timeout_seconds == pytest.approx(timeout)
     lease_until = START + round((timeout + 60) * SECOND)
-    assert _job(tmp_path, "call-1.user")[:4] == ("running", 0, lease_until, 1)
+    assert _job(tmp_path, "call-1.user")[:4] == ("running", 0, lease_until, claim.lease.token)
+    assert claim.lease.token > 0
     assert analyses.claim() is None  # leased
 
-    clock.advance(lease_until - START + 1)  # its holder died: the lease expires
+    clock.advance(lease_until - START + 1)  # its holder never answered: the lease expires
+    assert analyses.claim() is None  # a failed attempt, put off like any other
+    clock.advance(MINUTE)
     again = analyses.claim()
 
-    assert again is not None and again.lease.token == 2
+    assert again is not None and again.lease.attempts == 1
+    assert again.lease.token != claim.lease.token
 
 
 def test_a_recording_of_unknown_duration_gets_a_15_minute_timeout(tmp_path) -> None:
@@ -181,6 +188,29 @@ def test_a_recording_of_unknown_duration_gets_a_15_minute_timeout(tmp_path) -> N
 
     assert claim is not None and claim.timeout_seconds == 15 * 60
     assert claim.lease.lease_until_unix_nano == START + 16 * MINUTE
+
+
+def test_a_duration_the_recording_cannot_hold_gets_the_unknown_duration_timeout(
+    tmp_path,
+) -> None:
+    recordings, analyses, _ = _open(tmp_path)
+    # A FLAC STREAMINFO can declare 2^36 - 1 samples at 8 kHz (99 days) in 42 bytes.
+    _stored(recordings, "call-1.user", duration_ms=8_589_934_591)
+
+    claim = analyses.claim()
+
+    assert claim is not None and claim.timeout_seconds == 15 * 60
+    assert claim.lease.lease_until_unix_nano == START + 16 * MINUTE
+
+
+def test_a_long_recording_s_timeout_and_lease_are_capped_at_an_hour(tmp_path) -> None:
+    recordings, analyses, _ = _open(tmp_path)
+    _stored(recordings, "call-1.user", duration_ms=10 * 3600 * 1000, body=bytes(64 * 1024))
+
+    claim = analyses.claim()
+
+    assert claim is not None and claim.timeout_seconds == 3600
+    assert claim.lease.lease_until_unix_nano == START + 61 * MINUTE
 
 
 def test_failed_attempts_back_off_1_4_16_minutes_then_fail_for_good(tmp_path) -> None:
@@ -208,11 +238,44 @@ def test_failed_attempts_back_off_1_4_16_minutes_then_fail_for_good(tmp_path) ->
     assert last is not None and last.lease.attempts == 3
     assert analyses.fail(last, ANALYSIS_TIMEOUT, terminal=False) == "failed"
 
-    assert _job(tmp_path, "call-1.user")[:7] == (
-        "failed", 4, None, 4, None, ANALYSIS_TIMEOUT, ALGORITHM_VERSION
+    state, attempts, lease_until, _, next_attempt, error_code, version, *_ = _job(
+        tmp_path, "call-1.user"
+    )
+    assert (state, attempts, lease_until, next_attempt, error_code, version) == (
+        "failed", 4, None, None, ANALYSIS_TIMEOUT, ALGORITHM_VERSION
     )  # fmt: skip
     assert analyses.claim() is None
     assert _projection_seq(tmp_path) == seq + 1  # the job's outcome is final
+
+
+def test_a_lease_that_runs_out_is_a_failed_attempt_and_the_fourth_ends_the_job(
+    tmp_path,
+) -> None:
+    """A holder that never writes an outcome (a store it cannot reach, a process that
+    died without a restart) still ends its job, within the retry policy."""
+
+    recordings, analyses, clock = _open(tmp_path)
+    _stored(recordings, "call-1.user")
+    seq = _projection_seq(tmp_path)
+
+    for attempt, delay_minutes in enumerate((1, 4, 16)):
+        claim = analyses.claim()
+        assert claim is not None and claim.lease.attempts == attempt
+        clock.advance(claim.lease.lease_until_unix_nano - clock.unix_nano() + 1)
+        assert analyses.claim() is None  # counted and put off, not run again at once
+        state, attempts, _, _, next_attempt, error_code, *_ = _job(tmp_path, "call-1.user")
+        assert (state, attempts, error_code) == ("pending", attempt + 1, ANALYSIS_LEASE_EXPIRED)
+        assert next_attempt == clock.unix_nano() + delay_minutes * MINUTE
+        clock.advance(delay_minutes * MINUTE)
+    assert _projection_seq(tmp_path) == seq
+    last = analyses.claim()
+    assert last is not None
+    clock.advance(last.lease.lease_until_unix_nano - clock.unix_nano() + 1)
+
+    assert analyses.claim() is None
+    assert _job(tmp_path, "call-1.user")[:2] == ("failed", 4)
+    assert _job(tmp_path, "call-1.user")[5:7] == (ANALYSIS_LEASE_EXPIRED, ALGORITHM_VERSION)
+    assert _projection_seq(tmp_path) == seq + 1
 
 
 def test_a_decode_error_is_terminal_unavailable_with_its_code(tmp_path) -> None:
@@ -224,7 +287,7 @@ def test_a_decode_error_is_terminal_unavailable_with_its_code(tmp_path) -> None:
     assert analyses.fail(claim, ANALYSIS_DECODE_FAILED, terminal=True) == "unavailable"
 
     assert _job(tmp_path, "call-1.user")[:7] == (
-        "unavailable", 0, None, 1, None, ANALYSIS_DECODE_FAILED, ALGORITHM_VERSION
+        "unavailable", 0, None, claim.lease.token, None, ANALYSIS_DECODE_FAILED, ALGORITHM_VERSION
     )  # fmt: skip
     assert analyses.claim() is None
 
@@ -239,6 +302,8 @@ def test_a_result_is_written_only_under_its_claims_lease(tmp_path) -> None:
     stale = analyses.claim()
     assert stale is not None
     clock.advance(stale.lease.lease_until_unix_nano - START + 1)
+    assert analyses.claim() is None  # the expired lease is counted and put off
+    clock.advance(MINUTE)
     current = analyses.claim()
     assert current is not None
     stale_keys = analyses.output_keys(stale)
@@ -254,12 +319,35 @@ def test_a_result_is_written_only_under_its_claims_lease(tmp_path) -> None:
     assert analyses.store_result(current, current_keys, result, rendition=False)
 
     assert _job(tmp_path, "call-1.user")[:9] == (
-        "stored", 0, None, 2, None, None, ALGORITHM_VERSION, current_keys.peaks, None
+        "stored", 1, None, current.lease.token, None, None, ALGORITHM_VERSION,
+        current_keys.peaks, None,
     )  # fmt: skip
     [(stored_json,)] = catalog_rows(tmp_path, "SELECT result_json FROM audio_analysis")
     assert json.loads(stored_json) == result
     assert _journal(tmp_path) == {}  # the row owns its peaks now
     assert _projection_seq(tmp_path) == seq + 1
+
+
+def test_a_claim_on_a_purged_job_cannot_write_to_the_job_that_replaces_it(tmp_path) -> None:
+    """A recording ID can come back after a purge (in another call, say): its new job
+    row starts afresh, and the purged job's claim must not match the new one's."""
+
+    recordings, analyses, _ = _open(tmp_path)
+    purged = _stored(recordings, "r1")
+    stale = analyses.claim()
+    assert stale is not None
+    CallPurger(recordings.store, calls=recordings.calls, recordings=recordings).purge_call(
+        "default", purged.call_id
+    )
+    _stored(recordings, "r1", session_key="call-2")
+    fresh = analyses.claim()
+    assert fresh is not None
+
+    assert analyses.fail(stale, ANALYSIS_DECODE_FAILED, terminal=True) is None
+    assert analyses.fail(stale, ANALYSIS_CRASHED, terminal=False) is None
+    assert not analyses.reserve_outputs(stale, analyses.output_keys(stale))
+    lease = fresh.lease
+    assert _job(tmp_path, "r1")[:4] == ("running", 0, lease.lease_until_unix_nano, lease.token)
 
 
 def test_a_result_whose_lease_was_lost_queues_its_blobs_for_deletion(tmp_path) -> None:
@@ -276,6 +364,32 @@ def test_a_result_whose_lease_was_lost_queues_its_blobs_for_deletion(tmp_path) -
 
     assert _journal(tmp_path) == {keys.peaks: (clock.unix_nano(), 0)}  # due at once
     assert catalog_rows(tmp_path, "SELECT count(*) FROM audio_analysis") == [(0,)]
+
+
+def test_outputs_written_after_the_drain_took_their_reservation_are_deleted(
+    tmp_path, blob_backend
+) -> None:
+    """A job that outlives its lease and the reservation's grace (a very slow spool
+    or put) finds its reserved keys drained; what it writes after that is journaled
+    again and deleted."""
+
+    recordings, analyses, clock = _open(tmp_path, blob_backend.store)
+    _stored(recordings, "call-1.user")
+    claim = analyses.claim()
+    assert claim is not None
+    keys = analyses.output_keys(claim)
+    assert analyses.reserve_outputs(claim, keys)
+    clock.advance(claim.lease.lease_until_unix_nano - START + OUTPUT_RESERVE_GRACE_SECONDS * SECOND)
+    recordings.drain_blob_deletions()
+    assert _journal(tmp_path) == {}
+    put_stream(recordings.blobs, keys.peaks, [b"peaks written by a slow put"])
+
+    assert not analyses.store_result(claim, keys, {"channels": []}, rendition=False)
+    assert _journal(tmp_path) == {keys.peaks: (clock.unix_nano(), 0)}
+    recordings.drain_blob_deletions()
+
+    assert [key for key in blob_backend.objects() if key.startswith("analysis/")] == []
+    assert _journal(tmp_path) == {}
 
 
 def test_a_replaced_result_queues_the_blobs_it_replaces(tmp_path) -> None:
