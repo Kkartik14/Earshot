@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "provider": "elevenlabs",
-  "description": "One real ElevenLabs Agents conversation fetched with the conversations API, scrubbed. Both sides are synthetic speech. Consumers: the WS3 import by conversation ID and the `start_only` transcript rule.",
+  "description": "One real ElevenLabs Agents conversation fetched with the conversations API, scrubbed. Both sides are synthetic speech. Used by the conversation import and `start_only` transcript tests.",
   "provenance": {
     "captured_on": "2026-10-19",
     "source_kind": "real_capture_scrubbed",
@@ -26,7 +26,7 @@
       "llm": "account default (`producing_llm` in the transcript)"
     },
     "caller": {
-      "source": "Cartesia TTS lines from the WS0b cache .earshot/pipecat_otlp/caller.wav",
+      "source": "Cartesia TTS audio generated from the shared caller script",
       "script": [
         "Hi, I would like to book a table for two people tomorrow evening.",
         "Seven thirty works for us. Could we sit somewhere quiet near the window?",
@@ -64,7 +64,7 @@
   ],
   "privacy": {
     "t4_audio": "synthetic_both_sides",
-    "agent_name": "kept: `earshot-ws0-capture` was chosen by the capture script"
+    "agent_name": "kept: `earshot-fixture-agent` is the synthetic test agent name"
   },
   "field_table": [
     {
@@ -266,42 +266,15 @@
       }
     ],
     "audio_speech_segments_s": [
-      [
-        0.25,
-        3.1
-      ],
-      [
-        5.15,
-        7.8
-      ],
-      [
-        8.45,
-        10.6
-      ],
-      [
-        12.8,
-        14.05
-      ],
-      [
-        14.55,
-        16.35
-      ],
-      [
-        17.05,
-        19.5
-      ],
-      [
-        21.55,
-        23.0
-      ],
-      [
-        23.35,
-        24.55
-      ],
-      [
-        25.6,
-        28.65
-      ]
+      [0.25, 3.1],
+      [5.15, 7.8],
+      [8.45, 10.6],
+      [12.8, 14.05],
+      [14.55, 16.35],
+      [17.05, 19.5],
+      [21.55, 23.0],
+      [23.35, 24.55],
+      [25.6, 28.65]
     ],
     "audio_speech_segments_method": "afconvert decode + 50 ms RMS>200 VAD (scripts/scrub_provider_capture.py _segments)",
     "observed": "user turns are floor(speech onset) in all 4 cases (5.15->5, 12.8->12, 14.55->14, 21.55->21); agent turns start at or up to 1.05 s before the audible onset (16 vs 17.05). Audio t=0 = start_time [inferred: turn 0 at 0 is audible from 0.25 s]."
@@ -313,10 +286,7 @@
     "container": "MPEG audio elementary stream with an ID3v2.4 tag",
     "codec": "mp3",
     "mpeg": "MPEG-2 Layer III, constant bitrate, no Xing/Info frame",
-    "id3_text": [
-      "TSSE",
-      "Lavf63.1.102"
-    ],
+    "id3_text": ["TSSE", "Lavf63.1.102"],
     "channels": 1,
     "channel_layout": "mixed: agent and caller in one mono channel",
     "sample_rate": 16000,
@@ -330,15 +300,15 @@
       "file": "conversation.json",
       "kind": "json",
       "source": "GET /v1/convai/conversations/{id}",
-      "bytes": 32221,
-      "canonical_sha256": "341a250f053a9cbff66727eac542482b10a52abb2e8c474ceecb80f02b6c7eaa"
+      "bytes": 32223,
+      "canonical_sha256": "b8bc30ebbaf804dfe41eaa781da0fb93ea2fee32e22dabfb494df7d0a7017ccb"
     },
     {
       "file": "conversation.otel.json",
       "kind": "json",
       "source": "?format=opentelemetry",
-      "bytes": 70985,
-      "canonical_sha256": "00e80fe1cbfe5735e2f6c61c64d7aa4b50c5f516a9bccebf157aed5e29619c00"
+      "bytes": 70989,
+      "canonical_sha256": "ce048cf2e5b095f21c3e06a027aeb8c3e73c6341b9fe11b8dc24d325918762fd"
     },
     {
       "file": "audio.mp3",

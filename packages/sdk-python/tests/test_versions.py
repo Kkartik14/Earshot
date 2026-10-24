@@ -49,8 +49,8 @@ def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> 
     """The analyzer identity is a storage cache key, not a decorative version.
 
     A doc naming an older one tells a reader their cached projection is current
-    when the code would recompute it. Research notes are excluded because they
-    record what was true when they were written.
+    when the code would recompute it. This check scans the published guides and
+    leaves historical working notes out of scope.
     """
 
     root = Path(__file__).resolve().parents[3] / "docs"

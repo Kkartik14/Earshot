@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate ``fixtures/upgrade``: catalogs written by historical Earshot releases (AC1.3).
+"""Generate ``fixtures/upgrade``: catalogs written by historical Earshot releases.
 
 Each release's own code is extracted from git with ``git archive`` (read-only) and
 run in a subprocess whose ``PYTHONPATH`` is that extracted tree, on this

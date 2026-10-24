@@ -1,4 +1,4 @@
-"""Crash atomicity of ``POST /v1/traces`` (AC5.10): one request, one transaction.
+"""Crash atomicity of ``POST /v1/traces``: one request, one transaction.
 
 Real server processes (``uvicorn apps.ingest.app:app``), killed for real:
 

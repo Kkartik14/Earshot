@@ -296,7 +296,7 @@ def _raw_deflate(payload: bytes) -> bytes:
 )
 @pytest.mark.parametrize(("media_type", "expected"), [(PROTOBUF, b""), (JSON, b"{}")])
 def test_an_empty_compressed_body_is_200(tmp_path, encoding, compress, media_type, expected):
-    """AC5.5 holds under compression too (tribunal round 1, L-4)."""
+    """The empty compressed body is accepted just like an uncompressed one."""
 
     with serve(create_app(store=make_store(tmp_path))) as port:
         reply = post_otlp(port, compress(b""), media_type=media_type, encoding=encoding)
@@ -304,7 +304,7 @@ def test_an_empty_compressed_body_is_200(tmp_path, encoding, compress, media_typ
     assert (reply.status, reply.media_type, reply.body) == (200, media_type, expected)
 
 
-# --- per-span rejection (AC5.3, AC5.4) --------------------------------------------------------
+# --- Per-span rejection --------------------------------------------------------
 
 
 @pytest.mark.parametrize("media_type", [PROTOBUF, JSON])
@@ -341,7 +341,7 @@ def test_spans_outside_the_time_domain_are_rejected_alone_and_the_rest_stored(
 def test_a_span_with_an_attribute_key_past_its_bound_is_rejected_alone(
     tmp_path, media_type
 ) -> None:
-    # Tribunal round 2, Linus N-2: a sender-chosen key of megabytes is refused, counted.
+    # Sender-chosen attribute keys have a size limit and are counted when refused.
     long_key = "k" * (MAX_ATTRIBUTE_KEY_BYTES + 1)
     spans = [make_span(9, 1), make_span(9, 2, attributes=[string_attribute(long_key, "v")])]
     payload = make_request(spans)
@@ -368,7 +368,7 @@ def test_a_span_name_holding_nul_is_rejected_on_both_dialects(tmp_path) -> None:
     assert _span_count(tmp_path) == 1
 
 
-# --- what one request can store (tribunal round 3b) ----------------------------------------
+# --- Per-request storage limits ----------------------------------------
 
 
 # What a request stores of its spans' own bytes, at most, per decompressed byte: the
@@ -423,7 +423,7 @@ def _one_span_per_scope(
 
 
 def test_a_scope_name_past_its_bound_is_rejected_not_stored_once_per_span(tmp_path) -> None:
-    """Tribunal round 3, N3-1b: a span's row holds its scope name, so one 100 KB name
+    """A span's row holds its scope name, so one 100 KB name
     over 2,000 tiny spans (a 0.26 MB request) stored 405 MB. Those spans are
     rejected; the request's other span is stored."""
 
@@ -488,7 +488,7 @@ def test_a_scope_name_past_its_bound_is_rejected_not_stored_once_per_span(tmp_pa
 def test_a_resource_is_stored_with_at_most_256_distinct_scopes_of_a_request(
     tmp_path, resource, rejected, reason
 ) -> None:
-    """Tribunal round 3, N3-1c: ``otlp_resources`` holds a resource once per distinct
+    """``otlp_resources`` holds a resource once per distinct
     scope under it, so a resource of 10,000 attributes over 2,000 distinct scopes of
     one span each (a 0.32 MB request) stored 562 MB."""
 
@@ -561,7 +561,7 @@ def test_the_smallest_spans_store_at_most_their_bound_per_byte(tmp_path) -> None
     assert stored <= SPAN_BYTES_STORED_PER_BYTE * len(body), (stored, len(body), stored / len(body))
 
 
-# --- idempotency (AC5.6) -------------------------------------------------------------------
+# --- Idempotency -------------------------------------------------------------------
 
 
 CALL_STATE = (
@@ -614,7 +614,7 @@ def test_a_changed_payload_for_a_stored_span_keeps_the_first_write_and_counts_a_
     assert stats["span_conflicts"] == 1
 
 
-# --- stats (AC5.12) and resolve (AC4.6) ---------------------------------------------------------
+# --- Stats and call resolution ---------------------------------------------------------
 
 
 def test_stats_are_scoped_to_the_authenticated_project(tmp_path) -> None:
@@ -656,7 +656,7 @@ def test_resolve_finds_the_call_of_a_session_key_in_the_current_generation_only(
         unknown = _resolve(port, {"session_key": "call-never-seen"})
         invalid = _resolve(port, {"session_key": "x" * 300})
         malformed = _resolve(port, {"key": SYNTHETIC_SESSION_KEY})
-        # A call purge (WS8) bumps the key's generation; resolve follows it.
+        # A call purge bumps the key generation; resolution follows the new generation.
         with catalog(tmp_path) as connection:
             fingerprint = connection.execute("SELECT key_fingerprint FROM calls").fetchone()[0]
             connection.execute(
@@ -683,7 +683,7 @@ def test_resolve_finds_the_call_of_a_session_key_in_the_current_generation_only(
     assert sorted(call_ids) == sorted([first_call, second_call])
 
 
-# --- the capture preset over HTTP (FR-3, AC3.2) ------------------------------------------------
+# --- The capture preset over HTTP ------------------------------------------------
 
 
 @pytest.mark.parametrize("preset", ["full", "metadata_only"])

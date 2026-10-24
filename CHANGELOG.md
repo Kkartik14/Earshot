@@ -48,7 +48,7 @@ matters only to installs from source. See the
   Revision, each analysis result and each price change, from the stored spans, the
   Recordings' analyses and the prices. Agent, outcome and tags come from the new
   `earshot.agent.name`, `earshot.call.outcome` and `earshot.call.tags` attributes, with
-  fallbacks. See [ADR 0008](docs/adr/0008-recording-analysis-and-call-projections.md).
+  fallbacks. See [the call view guide](docs/calls.md).
 - **Calls list filters.** `GET /v1/calls` takes `agent`, `outcome`, `tag` (repeatable,
   all must match), `min_/max_reported_latency_ms`, `min_/max_audible_gap_ms`,
   `min_/max_cost_nano_usd` and `q`, a transcript substring (3 to 256 characters, `%` and
@@ -76,7 +76,7 @@ matters only to installs from source. See the
   regular, dated list prices with their source, never promotional ones, for Deepgram,
   Groq, OpenAI, Cartesia and ElevenLabs models. A Project's own prices win over the
   built-ins, and a price change reprices from stored usage. See
-  [ADR 0009](docs/adr/0009-cost-model.md).
+  [the call view guide](docs/calls.md) for how Earshot reports call costs.
 - **Prices:** `GET /v1/prices` and `POST /v1/prices` (project-scoped, append-only,
   effective-dated; hosted JWTs get 403), and `earshot prices add|list` (`--builtin` for
   operators).
@@ -129,8 +129,8 @@ matters only to installs from source. See the
   `on_session_end`.
 - **`scripts/viewer_smoke.py`**: the bundled viewer and the API its call views use,
   checked on the two replayed calls, against the source tree or an installed artifact.
-- **Docs:** [the call view](docs/calls.md), ADR 0008 (analysis and projections), ADR 0009
-  (cost), and LiveKit, `earshot.client` and Node sections in the
+- **Docs:** [the call view](docs/calls.md), including analysis, projections, and cost,
+  plus LiveKit, `earshot.client` and Node sections in the
   [OTLP quick start](docs/otlp-quickstart.md).
 
 ### Changed
@@ -411,11 +411,10 @@ before upgrading a 0.1.x installation.
   names: the route `{ kind: "capture-status", hostCallId, capture }` and the
   `CaptureStatus` component. Hosts that linked the unpublished source must rename
   `call-status`, `callId` and `CallCaptureStatus`.
-- **Examples and fixtures**: `examples/pipecat_otlp/` runs a real Pipecat 1.5 call over
-  OTLP. Receiver tests build synthetic Pipecat-shaped requests in memory. The raw call
-  fixture has been removed from the current tree, though its earlier commit remains in
-  repository history. The upgrade fixtures in `fixtures/upgrade/` were written by four
-  0.1.x releases. `run_call.py` fails
+- **Examples and fixtures**: `examples/pipecat_otlp/` runs a scripted Pipecat 1.5 call
+  over OTLP. Receiver tests use generated Pipecat-shaped requests; end-to-end tests also
+  replay the checked-in scripted call fixture. Upgrade fixtures in `fixtures/upgrade/`
+  were written by four 0.1.x releases. `run_call.py` fails
   when its call produced no `stt`, `llm` or `tts` span: Pipecat 1.5 only logs and retries
   when a provider refuses its key, so without the check such a call ends as if it had
   succeeded.

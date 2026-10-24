@@ -1,4 +1,4 @@
-"""FR-14: purging a call, purged keys, retention and project deletion for call evidence.
+"""Purging calls, their evidence, and their retention state.
 
 Every test runs on a real catalog (both dialects), synthetic Pipecat-shaped OTLP requests
 recorded through ``CallStore.record_spans`` (the receiver's storage call), the
@@ -36,7 +36,7 @@ END_GRACE = TIMINGS.end_grace_nano
 LONG_QUIET = TIMINGS.long_quiet_nano
 LATE_DEBOUNCE = TIMINGS.late_debounce_nano
 DAY = 24 * 3600 * SECOND
-# The tables FR-14 must empty for a purged call or a deleted project.
+# These call-scoped tables must be empty after a purge or project deletion.
 CALL_TABLES = (
     "calls",
     "call_traces",
@@ -154,8 +154,11 @@ def _incident_ids(world: World) -> list[str]:
 
 
 def _expire(world: World, bundle_id: str) -> None:
-    """Give a revision incident a past retention deadline (Month 1 revisions carry no
-    retention policy, so the catalog column is the only way to reach this state)."""
+    """Give a revision incident a past retention deadline.
+
+    Revision incidents carry no retention policy, so the catalog column is the only
+    way to reach this state.
+    """
 
     with catalog(world.path) as connection:
         connection.execute(
@@ -164,7 +167,7 @@ def _expire(world: World, bundle_id: str) -> None:
         connection.commit()
 
 
-# --- AC14.1: purging a call ------------------------------------------------------------------
+# --- Purging a call --------------------------------------------------------------------------
 
 
 def test_a_call_purge_removes_the_call_its_evidence_and_its_revisions_at_once(tmp_path) -> None:
@@ -290,7 +293,7 @@ def test_the_cli_purges_a_call_of_a_project(tmp_path, monkeypatch, capsys) -> No
     assert world.recordings.blobs.head(blob_key) is None
 
 
-# --- AC14.2: purged keys -----------------------------------------------------------------------
+# --- Purged keys -----------------------------------------------------------------------------
 
 
 def test_a_purged_keys_evidence_is_dropped_until_its_tombstone_expires(tmp_path) -> None:
@@ -334,7 +337,7 @@ def test_a_purged_keys_evidence_is_dropped_until_its_tombstone_expires(tmp_path)
         world.store.get_record(f"{call_id}.r1")
 
 
-# --- AC14.3: a revision is purged only with its call -------------------------------------------
+# --- A revision is purged only with its call -------------------------------------------------
 
 
 def test_purging_a_call_revision_as_an_incident_is_refused_with_its_call_id(
@@ -373,7 +376,7 @@ def test_purging_a_call_revision_as_an_incident_is_refused_with_its_call_id(
     assert _incident_ids(world) == [f"{call_id}.r1"]
 
 
-# --- AC14.4: retention -------------------------------------------------------------------------
+# --- Retention --------------------------------------------------------------------------------
 
 
 def _two_revisions(world: World) -> str:
@@ -447,8 +450,8 @@ def test_a_call_whose_latest_revision_expired_is_purged_whole_in_bounded_batches
 
 
 def test_the_retention_job_collects_expired_call_and_trace_tombstones(tmp_path) -> None:
-    """Tribunal round 1, LAM-4: an expired tombstone protects nothing (the key's
-    generation was bumped at purge), so the retention job deletes it; a live one stays."""
+    """An expired tombstone protects nothing because purge bumped the key generation.
+    The retention job deletes it, while a live tombstone stays."""
 
     from earshot.maintenance import MaintenanceLoop
     from earshot.storage_call_purge import (
@@ -490,7 +493,7 @@ def test_the_retention_job_collects_expired_call_and_trace_tombstones(tmp_path) 
     assert renewed == world.calls.call_id("default", SYNTHETIC_SESSION_KEY, 1) != first
 
 
-# --- AC14.5: project deletion ------------------------------------------------------------------
+# --- Project deletion -------------------------------------------------------------------------
 
 
 def test_project_deletion_removes_every_call_row_and_blob_of_the_project(
@@ -540,7 +543,7 @@ def test_project_deletion_removes_every_call_row_and_blob_of_the_project(
     assert world.store.project_lifecycle("tenant") == "deleted"
 
 
-# --- AC14.6: what a purge leaves behind ----------------------------------------------------------
+# --- What a purge leaves behind ----------------------------------------------------------------
 
 
 def test_after_a_call_purge_no_transcript_text_or_key_is_stored(tmp_path) -> None:

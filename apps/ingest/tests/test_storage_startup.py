@@ -1,4 +1,4 @@
-"""Startup never re-projects; stale projections converge afterwards (AC1.10).
+"""Startup never re-projects; stale projections converge afterwards.
 
 An incident's projections (graph rows, turn facts, and the expiry and export
 columns) carry ``incidents.projection_version``. Opening a store re-projects

@@ -1,15 +1,12 @@
-"""Archive a real Pipecat OTLP capture in the ignored ``.earshot`` directory.
+"""Scrub a real Pipecat OTLP capture into ``fixtures/captured/pipecat-otlp-1.5``.
 
-    python scripts/archive_pipecat_otlp_capture.py \\
+    python scripts/build_pipecat_otlp_fixture.py \\
         --capture .earshot/otlp_capture/run1 --run .earshot/pipecat_otlp/run1
 
 ``--capture`` is the output of ``scripts/otlp_capture_sink.py``; ``--run`` is the
-``--out`` of ``examples/pipecat_otlp/run_call.py``. The archive retains transcript
-and audio content, so its destination stays under the gitignored ``.earshot`` path.
-Every request is decoded, scrubbed and re-serialized deterministically. The command
-refuses to write an archive that still contains a non-model ``--env`` value of
-at least eight characters (it reports key names, never values). The output must
-be a new, direct child of ``.earshot/private-captures``.
+``--out`` of ``examples/pipecat_otlp/run_call.py``. Every request is decoded, scrubbed
+and re-serialized deterministically; the build refuses to write a fixture that still
+contains any value from ``--env`` (it reports key names, never values).
 """
 
 from __future__ import annotations
@@ -32,7 +29,7 @@ from pathlib import Path
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = ROOT / ".earshot" / "private-captures" / "pipecat-otlp-1.5"
+DEFAULT_OUT = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5"
 NON_SECRET_ENV_KEYS = {"GROQ_MODEL", "CARTESIA_MODEL"}
 SCRUB_RULES = [
     "Resource attribute service.instance.id is replaced with 'captured-instance'.",
@@ -42,9 +39,8 @@ SCRUB_RULES = [
     "The local username and hostname are replaced with 'captured-user' / 'captured-host' "
     "wherever they occur inside string values.",
     "Each request is decompressed and re-serialized with SerializeToString(deterministic=True).",
-    "The build aborts if a non-model .env value of at least eight characters (except GROQ_MODEL "
-    "and CARTESIA_MODEL, which Pipecat records as gen_ai.request.model) occurs anywhere in the "
-    "fixture bytes.",
+    "The build aborts if any .env value (except GROQ_MODEL and CARTESIA_MODEL, which Pipecat "
+    "records as gen_ai.request.model) occurs anywhere in the fixture bytes.",
     "Trace/span IDs, timestamps, transcripts and LLM/TTS text are kept as captured: the caller "
     "is a fixed synthetic script and the agent text is model output.",
 ]
@@ -97,20 +93,7 @@ def _wav_info(path: Path) -> dict[str, object]:
         }
 
 
-def _archive_output(path: Path) -> Path:
-    archive_root = (ROOT / ".earshot" / "private-captures").resolve()
-    output = path.expanduser().resolve()
-    if output.parent != archive_root:
-        raise SystemExit(
-            "refusing archive: --out must be a direct child of .earshot/private-captures"
-        )
-    if output.exists():
-        raise SystemExit(f"refusing archive: output already exists: {output}")
-    return output
-
-
 def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str, object]:
-    out = _archive_output(out)
     run_manifest = json.loads((run / "manifest.json").read_text())
     voice = env.get("CARTESIA_VOICE_ID")
     exact = {voice: "captured-cartesia-voice"} if voice else {}
@@ -122,6 +105,8 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
         )
         if len(needle) >= 3
     }
+    if out.exists():
+        shutil.rmtree(out)
     (out / "audio").mkdir(parents=True)
 
     requests, names, scopes = [], Counter(), {}
@@ -160,8 +145,8 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
     for track in ("user", "agent"):
         shutil.copyfile(run / f"{track}.wav", out / "audio" / f"{track}.wav")
     manifest = {
-        "description": "Local archive of OTLP/HTTP requests and recordings from one real "
-        "Pipecat call. This archive can contain transcript and audio content.",
+        "description": "OTLP/HTTP protobuf requests exported by one real Pipecat call, in "
+        "arrival order, plus that call's per-speaker recordings.",
         "provenance": {
             "captured_on": datetime.date.today().isoformat(),
             "source_kind": "real_call",
@@ -182,7 +167,7 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
             "exported_span_count_tee": run_manifest["exported_span_count"],
             "driver": "examples/pipecat_otlp/run_call.py",
             "sink": "scripts/otlp_capture_sink.py",
-            "builder": "scripts/archive_pipecat_otlp_capture.py",
+            "builder": "scripts/build_pipecat_otlp_fixture.py",
         },
         "scrub_rules": SCRUB_RULES,
         "requests": requests,
@@ -204,12 +189,12 @@ def build(capture: Path, run: Path, out: Path, env: dict[str, str]) -> dict[str,
         leaked = [key for key, value in secrets.items() if value.encode() in data]
         if leaked:
             shutil.rmtree(out)
-            raise SystemExit(f"refusing archive: {path.name} contains the value of {leaked}")
+            raise SystemExit(f"refusing fixture: {path.name} contains the value of {leaked}")
     return manifest
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Archive a scrubbed Pipecat OTLP capture locally.")
+    parser = argparse.ArgumentParser(description="Build the scrubbed Pipecat OTLP fixture.")
     parser.add_argument("--capture", type=Path, required=True)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)

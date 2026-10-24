@@ -218,9 +218,9 @@ def make_request(
 def shared_attributes_request(
     spans: int, attributes: int, *, scope_per_span: bool = False
 ) -> ExportTraceServiceRequest:
-    """Many small spans under one resource and one scope that each carry
-    ``attributes`` attributes (tribunal round 3, N3-1). The spans name no session
-    key, so each takes the resource's, which is its last attribute. With
+    """Many small spans under one resource and one scope, each carrying
+    ``attributes`` attributes. The spans name no session key, so each takes the
+    resource's last attribute. With
     ``scope_per_span``, each span is in its own ``ScopeSpans`` of an equal, empty
     scope instead."""
 

@@ -812,7 +812,7 @@ def test_evidence_for_a_tombstoned_key_is_dropped_until_the_tombstone_expires(tm
     calls, clock = _open(tmp_path)
     requests = synthetic_requests()
     fingerprint = calls.key_fingerprint("default", SYNTHETIC_SESSION_KEY)
-    with catalog(tmp_path) as connection:  # what a call purge (WS8) leaves behind
+    with catalog(tmp_path) as connection:  # state left behind by a call purge
         connection.execute(
             "INSERT INTO call_key_generations(project_id, key_fingerprint, generation) "
             "VALUES (?, ?, 1)",

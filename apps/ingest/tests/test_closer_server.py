@@ -1,4 +1,4 @@
-"""The closer in real server processes: both entry points, and crash recovery (AC6.1, AC6.4).
+"""The closer in real server processes: both entry points and crash recovery.
 
 Real ``earshot serve`` and ``uvicorn apps.ingest.app:app`` processes, configured
 only through the environment, receive synthetic Pipecat-shaped OTLP requests
@@ -212,8 +212,8 @@ def test_the_apps_lifespan_starts_its_materializer_and_stops_it_at_shutdown(tmp_
 
 @pytest.mark.parametrize("entry_point", ["serve", "uvicorn"])
 def test_a_server_whose_materializer_cannot_start_refuses_to_start(tmp_path, entry_point) -> None:
-    # Carmack CR2-5: the docs promised this, and the server instead served without a
-    # closer (every call stayed open). The materializer child dies before it is ready
+    # The earlier server served without a closer, so every call stayed open.
+    # The materializer child dies before it is ready
     # (the env-gated crash point ``materializer_starting``).
     make_store(tmp_path).close()
     log = tmp_path / f"no-materializer-{entry_point}.log"
@@ -260,9 +260,8 @@ def test_the_closer_crash_points_are_inert_without_test_mode(tmp_path, crash_at)
 def test_a_server_whose_materializer_stopped_reading_still_stops_when_asked(
     tmp_path, entry_point
 ) -> None:
-    # Lamport LAM2-2: a materializer child that is alive but reads nothing blocked the
-    # closer in a send; the shutdown waited for that build, so SIGTERM never stopped
-    # the server. The env-gated stall point stops the real child mid-snapshot.
+    # A materializer child that is alive but reads nothing must not block shutdown.
+    # The env-gated stall point stops the real child mid-snapshot.
     make_store(tmp_path).close()
     server = _start(
         tmp_path,

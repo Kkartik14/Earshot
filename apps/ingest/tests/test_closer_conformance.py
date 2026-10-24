@@ -1,4 +1,4 @@
-"""AC7.6: the server path and the in-process Pipecat adapter derive the same turn facts.
+"""The server path and the in-process Pipecat adapter derive the same turn facts.
 
 **Server path:** synthetic Pipecat-shaped OTLP requests are sent over HTTP to a real server
 (``POST /v1/traces``); its maintenance loop's closer turns the call into revision 1.

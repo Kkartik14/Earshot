@@ -1,4 +1,4 @@
-"""One configuration parser for both server entry points (AC11.1).
+"""One configuration parser for both server entry points.
 
 ``earshot serve`` and the ASGI module ``apps/ingest/app.py`` build their server
 from the same ``ServerSettings``, read by ``load_server_settings`` and assembled

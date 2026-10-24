@@ -1,4 +1,4 @@
-"""The store write lock as a measured, bounded resource (AC6.10, AC5.7).
+"""The store write lock as a measured, bounded resource.
 
 Every outermost ``_mutation()`` records how long it waited for the store's locks
 and how long it held them, under its operation name, and a hold over one second
