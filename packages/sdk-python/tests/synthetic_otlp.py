@@ -30,7 +30,7 @@ SYNTHETIC_LINES = [
     ("user", "Could we sit somewhere quiet near the window?"),
     (
         "agent",
-        "Sure, we’ve booked a quiet window seat for you at 7:30. "
+        "Sure, we've booked a quiet window seat for you at 7:30. "
         "We look forward to welcoming you tomorrow.",
     ),
     ("user", "Perfect. That is everything I needed."),
@@ -63,9 +63,7 @@ def _span(
     return Span(
         trace_id=0x4BF92F3577B34DA6A3CE929D0E0E4736.to_bytes(16, "big"),
         span_id=span_id.to_bytes(8, "big"),
-        parent_span_id=(
-            b"" if parent_span_id is None else parent_span_id.to_bytes(8, "big")
-        ),
+        parent_span_id=(b"" if parent_span_id is None else parent_span_id.to_bytes(8, "big")),
         name=name,
         start_time_unix_nano=START + second * SECOND,
         end_time_unix_nano=START + (second + duration_s) * SECOND,
@@ -95,9 +93,7 @@ def _request(*spans: tuple[str, Span]) -> ExportTraceServiceRequest:
     )
 
 
-def _stt(
-    span_id: int, second: int, transcript: str, *, parent_span_id: int
-) -> tuple[str, Span]:
+def _stt(span_id: int, second: int, transcript: str, *, parent_span_id: int) -> tuple[str, Span]:
     return "pipecat", _span(
         "stt",
         span_id,
@@ -135,9 +131,7 @@ def _llm(
     )
 
 
-def _tts(
-    span_id: int, second: int, text: str, *, parent_span_id: int
-) -> tuple[str, Span]:
+def _tts(span_id: int, second: int, text: str, *, parent_span_id: int) -> tuple[str, Span]:
     return "pipecat", _span(
         "tts",
         span_id,

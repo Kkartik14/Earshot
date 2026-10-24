@@ -19,7 +19,6 @@ from opentelemetry.sdk.util.instrumentation import InstrumentationScope
 from opentelemetry.trace import SpanContext, SpanKind, Status, StatusCode, TraceFlags
 
 from adapter_conformance import assert_capture_conforms, assert_same_turn_facts
-from synthetic_otlp import synthetic_requests
 from earshot.adapters.pipecat import PipecatAdapter
 from earshot.api import create_app
 from earshot.call_capture import any_value, spans_from_request
@@ -30,6 +29,7 @@ from earshot.recorder import IncidentRecorder, RecorderConfig
 from earshot.storage_calls import CallTimings
 from otlp_support import post_otlp, serve
 from store_support import catalog_rows, make_store
+from synthetic_otlp import synthetic_requests
 
 pytestmark = pytest.mark.integration
 

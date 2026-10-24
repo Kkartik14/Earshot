@@ -22,7 +22,7 @@ does **not** invent a value.
 | **Permissions API** (`microphone`)         | `session.observeMediaDevices(navigator.mediaDevices, { permissions: navigator.permissions })`                                                                      |
 | **`RTCPeerConnection.getStats()`**         | a real peer connection is sampled every 1s (`attachPeerConnection`)                                                                                                |
 | **`AudioContext` render path**             | the received stream is connected to the context's output, so `state`, `outputLatency`, and the `getOutputTimestamp()` render-queue are real (`attachAudioContext`) |
-| **Sink switching** (`setSinkId`)           | a device dropdown calls `AudioContext.setSinkId`; the SDK captures `sinkchange` when supported. See below for feature detection.                                      |
+| **Sink switching** (`setSinkId`)           | a device dropdown calls `AudioContext.setSinkId`; the SDK captures `sinkchange` when supported. See below for feature detection.                                   |
 | **Delivery**                               | drained batches are POSTed to `POST /v1/capture` via the SDK transport, with the recorder wired as the coverage sink                                               |
 
 It uses **`captureVersion: 2`** (continuous capture), the version the SDK

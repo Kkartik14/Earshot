@@ -20,7 +20,6 @@ from opentelemetry.proto.common.v1.common_pb2 import (
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, Span
 
-from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 from earshot.call_capture import (
     SESSION_KEY_ATTRIBUTES,
     OtlpSpan,
@@ -38,6 +37,7 @@ from earshot.call_capture import (
     valid_session_key,
 )
 from earshot.privacy import CaptureClass, classify_attribute
+from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 
 M = CaptureClass.METADATA
 T = CaptureClass.TRANSCRIPT

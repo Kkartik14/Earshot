@@ -28,9 +28,8 @@ before upgrading a 0.1.x installation.
   Project to `metadata_only`, and its Recording uploads are refused with 422 until an
   operator runs `earshot project set-capture --preset full`. See
   [privacy](docs/privacy.md#capture-presets).
-- **Earshot now holds media bytes.** ADR 0004 supersedes the "Custody, not content" rule:
-  Recordings for `full` Projects are stored in Earshot's blob store. `MediaRef`s naming
-  other custodians keep their earlier meaning.
+- **Earshot now holds media bytes.** Recordings for `full` Projects are stored in
+  Earshot's blob store. `MediaRef`s naming other custodians keep their earlier meaning.
 - **Switch variables are strict.** `EARSHOT_BEHIND_TLS_PROXY`,
   `EARSHOT_TRUST_LOCAL_NETWORK` and `EARSHOT_PLATFORM_ADAPTER_ENABLED` accept only `1`,
   `true`, `yes`, `0`, `false`, `no` or an empty value. Any other value refuses to start;
@@ -237,8 +236,7 @@ before upgrading a 0.1.x installation.
   for byte, and every exported span stored.
 - **Docs**: the [OTLP quick start](docs/otlp-quickstart.md),
   [storage and blobs](docs/storage-and-blobs.md), [production notes](docs/production.md),
-  [server configuration](docs/configuration.md), and ADRs 0004 to 0007. ADR 0005
-  supersedes ADR 0003.
+  and [server configuration](docs/configuration.md).
 
 ### Changed
 

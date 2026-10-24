@@ -11,7 +11,7 @@
 # reads `earshot.session.id` only). This reverses the earlier rule that
 # `session.id` was reused rather than duplicated as `earshot.session.id`: a key
 # the host sets explicitly must not depend on a framework's choice of
-# conventions (see ADR 0005). `session.id` is still reused for telemetry
+# conventions. `session.id` is still reused for telemetry
 # correlation; its Development status means adapters must pin the semconv
 # revision they implement. This file vendors the session.id definition from
 # OpenTelemetry semantic-conventions v1.41.1 (git

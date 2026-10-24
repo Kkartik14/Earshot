@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 from earshot.blobstore import LocalBlobStore
 from earshot.call_capture import spans_from_request
 from earshot.clock import ManualClock
@@ -26,6 +25,7 @@ from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_recordings import RecordingStore
 from otlp_support import make_request, make_span, string_attribute
 from store_support import catalog, catalog_rows, make_store
+from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 
 pytestmark = pytest.mark.integration
 

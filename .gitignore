@@ -38,6 +38,10 @@ build/
 
 docs/private/
 
+# Local architecture records and research notes stay out of GitHub.
+/docs/adr/
+/docs/research/
+
 # Real captured provider webhook deliveries contain signing secrets + caller PII.
 apps/ingest/tests/fixtures/connectors/*
 !apps/ingest/tests/fixtures/connectors/README.md

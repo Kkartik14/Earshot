@@ -20,7 +20,6 @@ from opentelemetry.proto.common.v1.common_pb2 import InstrumentationScope, KeyVa
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans, Span
 
-from synthetic_otlp import synthetic_requests
 from earshot.call_capture import spans_from_request
 from earshot.otlp_receiver import (
     JSON_MEDIA_TYPE,
@@ -58,6 +57,7 @@ from otlp_support import (
     with_links,
 )
 from otlp_support import Reply as _Reply
+from synthetic_otlp import synthetic_requests
 
 pytestmark = pytest.mark.unit
 

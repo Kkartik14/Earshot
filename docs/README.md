@@ -48,7 +48,6 @@ flows, then choose a guide below for the task you have.
   inventory and the rules for keeping source captures private.
 - [Conformance](./conformance.md): find the fixtures and release checks that protect
   compatibility.
-- [Architecture decisions](./adr/): read why key design choices were made.
 
 ## Develop and release
 

@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from synthetic_otlp import SYNTHETIC_LINES, SYNTHETIC_SESSION_KEY, synthetic_requests
 from earshot.api import create_app
 from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
@@ -26,6 +25,7 @@ from earshot.storage_closer import Closer
 from earshot.storage_recordings import RecordingManifest, RecordingStore
 from otlp_support import make_request, make_span, request, serve, string_attribute
 from store_support import catalog, make_store
+from synthetic_otlp import SYNTHETIC_LINES, SYNTHETIC_SESSION_KEY, synthetic_requests
 
 pytestmark = pytest.mark.integration
 
@@ -36,6 +36,8 @@ END_GRACE = TIMINGS.end_grace_nano
 LONG_QUIET = TIMINGS.long_quiet_nano
 LATE_DEBOUNCE = TIMINGS.late_debounce_nano
 LEASE = 60 * SECOND
+
+
 @dataclass
 class World:
     clock: ManualClock

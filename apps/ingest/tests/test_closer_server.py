@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from synthetic_otlp import synthetic_requests
 from otlp_support import make_request, make_span, post_otlp, serve, string_attribute
 from server_process import ServerProcess
 from store_support import catalog_rows, make_store
+from synthetic_otlp import synthetic_requests
 
 pytestmark = pytest.mark.e2e
 

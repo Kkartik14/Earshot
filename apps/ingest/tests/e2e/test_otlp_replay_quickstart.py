@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from call_done_when import Earshot, SentCall, assert_done_when
+from server_process import ServerProcess
 from synthetic_otlp import (
     SYNTHETIC_CALL_START,
     SYNTHETIC_LINES,
@@ -21,7 +22,6 @@ from synthetic_otlp import (
     synthetic_recording_bytes,
     synthetic_requests,
 )
-from server_process import ServerProcess
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sqlite_only, pytest.mark.slow]
 
@@ -41,9 +41,7 @@ def test_the_quick_start_turns_synthetic_requests_into_a_closed_call_with_its_au
             for scope_spans in resource_spans.scope_spans
         ),
         started_at_unix_nano=SYNTHETIC_CALL_START,
-        tracks={
-            speaker: synthetic_recording_bytes(speaker) for speaker in ("user", "agent")
-        },
+        tracks={speaker: synthetic_recording_bytes(speaker) for speaker in ("user", "agent")},
     )
     data_dir = tmp_path / "data"
     server = ServerProcess.start(data_dir, tmp_path / "serve.log", entry_point="serve")

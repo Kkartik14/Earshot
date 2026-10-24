@@ -22,12 +22,6 @@ from opentelemetry.proto.common.v1.common_pb2 import AnyValue, InstrumentationSc
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans
 
-from synthetic_otlp import (
-    SYNTHETIC_SESSION_KEY,
-    SYNTHETIC_USER_ID,
-    synthetic_requests,
-    with_identity,
-)
 from earshot.call_capture import (
     SESSION_KEY_ATTRIBUTES,
     apply_capture_preset,
@@ -54,6 +48,12 @@ from store_support import (
     current_dialect,
     make_store,
     stored_needles,
+)
+from synthetic_otlp import (
+    SYNTHETIC_SESSION_KEY,
+    SYNTHETIC_USER_ID,
+    synthetic_requests,
+    with_identity,
 )
 
 pytestmark = pytest.mark.integration

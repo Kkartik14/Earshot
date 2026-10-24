@@ -104,7 +104,7 @@ is a complete, real Pipecat call.
 | LiveKit Agents over OTLP/HTTP               | Partial: Earshot recognizes LiveKit's session key and its end-of-session spans, so Calls form and close. LiveKit spans are not mapped into Revisions yet; full LiveKit support is the next planned step. |
 | Earshot Python SDK                          | Supported: Pipecat 1.6 and LiveKit 1.6 adapters, and Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, recorded as portable Incident bundles.                                                |
 | ElevenLabs, Vapi, Retell, Ringg             | Signed webhook Connectors for finalized deliveries. Synthetic conformance only.                                                                                                                          |
-| Browser (`@earshot/browser`, `/v1/capture`) | Supported for browser telemetry and continuous capture. Validated on Chrome only. See the browser SDK README for tested behavior and limits.                                                       |
+| Browser (`@earshot/browser`, `/v1/capture`) | Supported for browser telemetry and continuous capture. Validated on Chrome only. See the browser SDK README for tested behavior and limits.                                                             |
 
 gRPC, stereo recordings and a call view in the viewer are not in 0.2.0. Each closed
 Call's Revision is an ordinary Incident, so the bundled viewer and the analysis APIs can

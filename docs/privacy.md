@@ -194,8 +194,7 @@ values. Application logging must follow the same rule.
 ## Media
 
 Since 0.2.0, Earshot holds audio for Projects whose preset is `full`. Before 0.2.0 it
-never stored media bytes; that rule is superseded by
-[ADR 0004](./adr/0004-capture-presets-and-media-custody.md).
+never stored media bytes. The current retention and erasure rules are described here.
 
 ### Recordings held by Earshot
 

@@ -25,11 +25,11 @@ from pathlib import Path
 import pytest
 from opentelemetry.proto.trace.v1.trace_pb2 import Span
 
-from synthetic_otlp import synthetic_requests
 from earshot.call_capture import attribute_values
 from otlp_support import make_request, make_span, post_otlp, string_attribute
 from server_process import ServerProcess
 from store_support import catalog_rows, make_store
+from synthetic_otlp import synthetic_requests
 
 pytestmark = pytest.mark.e2e
 

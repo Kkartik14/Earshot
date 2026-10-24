@@ -19,6 +19,12 @@ import sys
 import pytest
 
 from adapter_conformance import assert_capture_conforms
+from earshot.adapters.pipecat import PipecatAdapter
+from earshot.call_capture import spans_from_request
+from earshot.clock import ManualClock
+from earshot.privacy import classify_attribute
+from earshot.recorder import IncidentRecorder, RecorderConfig
+from otlp_support import make_request, make_span, string_attribute, with_links
 from synthetic_otlp import (
     SYNTHETIC_CALL_START,
     SYNTHETIC_LINES,
@@ -26,12 +32,6 @@ from synthetic_otlp import (
     synthetic_recording_bytes,
     synthetic_requests,
 )
-from earshot.adapters.pipecat import PipecatAdapter
-from earshot.call_capture import spans_from_request
-from earshot.clock import ManualClock
-from earshot.privacy import classify_attribute
-from earshot.recorder import IncidentRecorder, RecorderConfig
-from otlp_support import make_request, make_span, string_attribute, with_links
 
 pytestmark = pytest.mark.unit
 
@@ -546,10 +546,7 @@ def test_a_call_with_only_a_recording_still_materializes() -> None:
     bundle = _materialize(_snapshot([], recordings=(_recording("user"),), final=False))
 
     assert len(bundle.profile.media_refs) == 1
-    assert (
-        bundle.profile.session.started_at.source_time_unix_nano
-        == SYNTHETIC_CALL_START
-    )
+    assert bundle.profile.session.started_at.source_time_unix_nano == SYNTHETIC_CALL_START
 
 
 def test_under_metadata_only_the_bundle_captures_no_content_class() -> None:
