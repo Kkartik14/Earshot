@@ -1,4 +1,4 @@
-pipecat-ai[deepgram,cartesia,groq,silero,tracing]>=1.5.0,<1.6
+pipecat-ai[deepgram,cartesia,groq,silero,tracing]>=1.6.0,<1.7
 # Pipecat's `tracing` extra has no exporter; this is the HTTP one run_call.py uses.
 opentelemetry-exporter-otlp-proto-http>=1.33,<2
 # --upload uses earshot.client. From this repo: pip install -e . (at the repo root).
