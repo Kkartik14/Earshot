@@ -1,8 +1,8 @@
 """Recordings in the catalog: create, upload attempts, the hold, the sweep, blob deletions.
 
-A ``RecordingStore`` is the storage half of the recordings API (FR-9). It runs on
+A ``RecordingStore`` is the storage half of the recordings API. It runs on
 an ``IncidentStore``'s database, write locks and clock, uses the ``CallStore`` for
-everything a call is (identity, tombstones, the FR-6 close rules), and the
+everything a call is (identity, tombstones, the close rules), and the
 server's ``BlobStore`` for bytes.
 
 **Create.** ``(project_id, recording_id)`` names a recording. Creating one resolves
@@ -29,7 +29,7 @@ attempt in this process owns it. One server owns a catalog and its blob location
 (``K_server`` on Postgres, ``.server.lock`` on SQLite refuse a second one), so
 "in flight in this process" is "in flight".
 
-**The pending deadline** (FR-6, FR-9) is ``pending_deadline``: the latest of the
+**The pending deadline** is ``pending_deadline``: the latest of the
 recording's creation, its call's last evidence and its call's end signal, plus
 ``UPLOAD_HOLD_CAP``. A call is held (the closer does not claim it) while any of its
 pending recordings is before its deadline or has an upload streaming
@@ -218,7 +218,7 @@ def pending_deadline(
     *,
     hold_nano: int,
 ) -> int:
-    """When a pending recording stops holding its call and may be failed (FR-6).
+    """When a pending recording stops holding its call and may be failed.
 
     ``max(created, call.last_evidence, call.end_signal or 0) + UPLOAD_HOLD_CAP``:
     a recording is posted at a call's first audio and uploaded after the call, so
@@ -455,7 +455,7 @@ class RecordingStore:
         Only a pending recording is stored; ``None`` means this attempt lost (the
         recording was stored by another attempt or failed meanwhile), and the
         caller deletes its own object (``discard_upload``). The call gains the
-        recording as evidence in the same transaction (AC9.2).
+        recording as evidence in the same transaction.
         """
 
         with (
@@ -740,8 +740,11 @@ class RecordingStore:
                 self.store._connect() as connection,
             ):
                 connection.begin_write()
+                # A row journaled again since its claim (``attempts`` back at 0) names
+                # an object written after the delete above: it stays for a later drain.
                 connection.executemany(
-                    "DELETE FROM pending_blob_deletions WHERE project_id = ? AND blob_key = ?",
+                    "DELETE FROM pending_blob_deletions WHERE project_id = ? AND blob_key = ? "
+                    "AND attempts > 0",
                     deleted,
                 )
                 connection.commit()

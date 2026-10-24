@@ -1,4 +1,4 @@
-"""The protocol half of the recordings API (FR-9, FR-1): IDs, media types, headers, ranges.
+"""The protocol half of the recordings API: IDs, media types, headers, ranges.
 
 Pure functions and small state machines with no storage and no HTTP server, so
 the API and its tests share one reading of each rule:
@@ -15,7 +15,9 @@ the API and its tests share one reading of each rule:
   (``WavInspector``, ``FlacInspector``, ``OggInspector``). Each reads its header as
   the body streams in, so an upload with the wrong channel count is refused from
   its header, and gives the duration once the body is complete (or none, never a
-  wrong one). MP3 and WebM bodies are not read.
+  wrong one). A header that declares no audio is refused, and a declared duration
+  the body is too small to hold is none (``plausible_duration_ms``). MP3 and WebM
+  bodies are not read.
 - ``parse_byte_range``: the one ``Range: bytes=…`` reading both blob backends use.
 
 This module imports only the standard library.
@@ -25,6 +27,7 @@ from __future__ import annotations
 
 import re
 import struct
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 RECORDING_CONTENT_TYPES = ("audio/wav", "audio/ogg", "audio/mpeg", "audio/webm", "audio/flac")
@@ -42,7 +45,9 @@ WAV_HEADER_LIMIT = 1024 * 1024
 _RIFF_PREAMBLE = 12
 _CHUNK_HEADER = 8
 _FMT_MINIMUM = 16
-_OPEN_ENDED_SIZES = (0, 0xFFFFFFFF)
+# A live recorder that cannot seek back writes this ``data`` size and lets the body
+# run to its end. A size of 0 is not open-ended: libsndfile reads it as no audio.
+_OPEN_ENDED_SIZE = 0xFFFFFFFF
 # WAVE format tags. Sample formats (PCM, IEEE float, A-law, µ-law) last
 # ``bytes / (sample_rate * block_align)``. Constant-rate block codecs (MS ADPCM, IMA
 # ADPCM, GSM 6.10) last ``bytes / byte_rate``. Any other codec may be variable-rate,
@@ -59,6 +64,11 @@ _START_UNIX_NANO = re.compile(r"[1-9][0-9]{0,18}")
 # A duration in milliseconds whose nanoseconds still fit int64, so a Recording's end
 # (its start, at most 2^63 - 1, plus this) stays inside the contract's uint64 times.
 MAX_DURATION_MS = MAX_UNIX_NANO // 1_000_000
+# No body Earshot reads holds a second of audio at a speech rate (8 kHz or more) in
+# fewer bytes: a FLAC frame of at least about 11 bytes holds at most 65,535 samples,
+# an Ogg Opus packet costs at least a byte per 120 ms, and a WAV's duration is its
+# bytes over a byte rate of at least 1.
+MIN_BYTES_PER_AUDIO_SECOND = 1
 
 
 def valid_recording_id(value: object) -> bool:
@@ -117,6 +127,15 @@ def _bounded_duration_ms(milliseconds: int) -> int | None:
     return milliseconds if milliseconds <= MAX_DURATION_MS else None
 
 
+def plausible_duration_ms(duration_ms: int | None, size: int) -> int | None:
+    """``duration_ms`` when a body of ``size`` bytes can hold that much audio; ``None``
+    when its header declares more than that (a header written wrong, or crafted)."""
+
+    if duration_ms is None or duration_ms * MIN_BYTES_PER_AUDIO_SECOND > size * 1000:
+        return None
+    return duration_ms
+
+
 class WavInspector:
     """Read the ``fmt`` chunk and find the ``data`` chunk of a streamed WAV body.
 
@@ -126,9 +145,12 @@ class WavInspector:
     format is known (``channels``, ``sample_rate``) and later chunks are ignored.
     ``finish(total_size)`` checks the header was complete and fixes the duration
     (``None`` when the format does not give it reliably).
-    Chunks before ``data`` must end within ``WAV_HEADER_LIMIT`` bytes; any other
-    shape (not RIFF/WAVE, ``data`` before ``fmt``, a short ``fmt``) raises
-    ``WavHeaderError``.
+    Chunks before ``data`` must end within ``WAV_HEADER_LIMIT`` bytes, and each
+    ``feed`` reads on from the last whole chunk, so a header costs time linear in
+    its size however it is split. Any other shape (not RIFF/WAVE, ``data`` before
+    ``fmt``, a short ``fmt``) raises ``WavHeaderError``, as does a header that
+    declares no audio: a ``data`` size of 0, or a body that ends before one whole
+    block of samples.
     """
 
     format_name = "wav"
@@ -144,6 +166,7 @@ class WavInspector:
         self.format_tag = 0
         self.byte_rate = 0
         self._fmt_seen = False
+        self._next_chunk = 0  # where the next chunk header starts (0: before RIFF/WAVE)
         self._finished = False
         self._duration_ms: int | None = None
 
@@ -161,9 +184,11 @@ class WavInspector:
         available = max(0, total_size - self.data_offset)
         audio = (
             available
-            if self.data_size in _OPEN_ENDED_SIZES or self.data_size > available
+            if self.data_size == _OPEN_ENDED_SIZE or self.data_size > available
             else self.data_size
         )
+        if audio < self.block_align:
+            raise WavHeaderError("the WAV holds no audio: not one whole block of samples")
         if self.format_tag in _SAMPLE_FORMATS:
             bytes_per_second = self.sample_rate * self.block_align
         elif self.format_tag in _CONSTANT_RATE_CODECS and self.byte_rate > 0:
@@ -186,11 +211,13 @@ class WavInspector:
 
     def _parse(self) -> None:
         buffer = self._buffer
-        if len(buffer) < _RIFF_PREAMBLE:
-            return
-        if buffer[0:4] != b"RIFF" or buffer[8:12] != b"WAVE":
-            raise WavHeaderError("the body is not a RIFF/WAVE file")
-        offset = _RIFF_PREAMBLE
+        if not self._next_chunk:
+            if len(buffer) < _RIFF_PREAMBLE:
+                return
+            if buffer[0:4] != b"RIFF" or buffer[8:12] != b"WAVE":
+                raise WavHeaderError("the body is not a RIFF/WAVE file")
+            self._next_chunk = _RIFF_PREAMBLE
+        offset = self._next_chunk
         while len(buffer) >= offset + _CHUNK_HEADER:
             name = bytes(buffer[offset : offset + 4])
             (size,) = struct.unpack_from("<I", buffer, offset + 4)
@@ -198,6 +225,8 @@ class WavInspector:
             if name == b"data":
                 if not self._fmt_seen:
                     raise WavHeaderError("the WAV data chunk comes before its fmt chunk")
+                if size == 0:
+                    raise WavHeaderError("the WAV data chunk declares no audio")
                 self.data_offset, self.data_size = body, size
                 self.header_complete = True
                 return
@@ -205,10 +234,11 @@ class WavInspector:
             if end > WAV_HEADER_LIMIT:
                 raise WavHeaderError("the WAV header does not end within its bound")
             if len(buffer) < body + size:
-                return
+                break
             if name == b"fmt ":
                 self._read_fmt(bytes(buffer[body : body + size]))
             offset = end
+        self._next_chunk = offset
 
     def _read_fmt(self, fmt: bytes) -> None:
         if len(fmt) < _FMT_MINIMUM:
@@ -228,8 +258,10 @@ class FlacInspector:
 
     A FLAC stream is ``fLaC`` and then its metadata blocks, STREAMINFO first, so the
     first 42 bytes give the channel count, the sample rate and the total sample
-    count. The duration is the total as STREAMINFO declares it, or ``None`` when it
-    declares none (0, "unknown"). Any other start raises ``FlacHeaderError``.
+    count. The duration is the total as STREAMINFO declares it, or ``None`` when the
+    body is too small to hold it. A total of 0 ("unknown", as a stream whose length
+    was never written back) raises ``FlacHeaderError``: the decoder cannot read such
+    a stream. So does any other start.
     """
 
     format_name = "flac"
@@ -241,6 +273,7 @@ class FlacInspector:
         self.channels = 0
         self.sample_rate = 0
         self.total_samples = 0
+        self._size = 0
         self._finished = False
 
     def feed(self, chunk: bytes) -> None:
@@ -261,19 +294,21 @@ class FlacInspector:
         self.total_samples = packed & 0xF_FFFF_FFFF
         if self.sample_rate == 0:
             raise FlacHeaderError("the FLAC STREAMINFO describes no audio")
+        if self.total_samples == 0:
+            raise FlacHeaderError("the FLAC STREAMINFO declares no samples")
         self.header_complete = True
 
     def finish(self, total_size: int) -> None:
         if not self.header_complete:
             raise FlacHeaderError("the body ends before its FLAC header does")
+        self._size = total_size
         self._finished = True
 
     def duration_ms(self) -> int | None:
         if not self._finished:
             raise ValueError("finish() the inspector before reading the duration")
-        if self.total_samples == 0:
-            return None
-        return _bounded_duration_ms(self.total_samples * 1000 // self.sample_rate)
+        declared = _bounded_duration_ms(self.total_samples * 1000 // self.sample_rate)
+        return plausible_duration_ms(declared, self._size)
 
 
 class OggInspector:
@@ -284,8 +319,9 @@ class OggInspector:
     header is read and its body skipped, so the walk costs a few bytes a page. The
     duration is the last granule position less the pre-skip, at 48 kHz (RFC 7845
     §4), or ``None`` when the body does not end on a page boundary, carries a
-    second logical stream, or loses the page sync. Ogg holding another codec (Vorbis,
-    say) raises ``OggHeaderError``: its channel count is not read.
+    second logical stream, loses the page sync, or is too small to hold it. Ogg
+    holding another codec (Vorbis, say) raises ``OggHeaderError``: its channel count
+    is not read.
     """
 
     format_name = "ogg"
@@ -377,7 +413,7 @@ class OggInspector:
         duration = None
         if on_a_boundary and not self._other_stream and samples is not None and samples >= 0:
             duration = _bounded_duration_ms(samples * 1000 // self._OPUS_RATE)
-        self._duration_ms = duration
+        self._duration_ms = plausible_duration_ms(duration, total_size)
         self._finished = True
 
     def duration_ms(self) -> int | None:
@@ -400,6 +436,18 @@ def media_inspector(content_type: str) -> MediaInspector | None:
     if content_type == OGG_CONTENT_TYPE:
         return OggInspector()
     return None
+
+
+def verified_channel_speakers(
+    content_type: str, channel_speakers: Sequence[str] | None
+) -> tuple[str, ...] | None:
+    """The channel map of a recording, only where the upload read the body's header
+    (WAV, FLAC, Ogg Opus) and so checked it against the channel count; ``None``
+    otherwise, where the recording's own speaker stands for the whole file."""
+
+    if channel_speakers is None or media_inspector(content_type) is None:
+        return None
+    return tuple(channel_speakers)
 
 
 @dataclass(frozen=True, slots=True)
