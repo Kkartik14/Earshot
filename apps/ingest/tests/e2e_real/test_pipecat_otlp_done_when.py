@@ -142,9 +142,7 @@ def test_a_real_pipecat_call_becomes_one_closed_call_with_its_recordings(tmp_pat
             **store_environment,
             "PYTHONPATH": str(ROOT / "packages" / "sdk-python" / "src"),
         }
-        _earshot_cli(
-            cli_environment, "project", "create", PROJECT, "--display-name", "Pipecat E2E"
-        )
+        _earshot_cli(cli_environment, "project", "create", PROJECT, "--display-name", "Pipecat E2E")
         credential = _earshot_cli(
             cli_environment, "api-key", "issue", "--project", PROJECT, "--label", "pipecat-e2e"
         )["credential"]
