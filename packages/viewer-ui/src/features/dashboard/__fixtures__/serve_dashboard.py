@@ -2,8 +2,8 @@
 
 Nothing here simulates Earshot. The server is the real app (``create_app``) on a
 real uvicorn server over a real SQLite catalog. Every call's evidence starts within
-the last few hours of the real wall clock, so the dashboard's "last 24 hours" range
-holds it:
+the few hours before this script's "now", which the test uses as the browser's clock,
+so the dashboard's "last 24 hours" range holds it:
 
 - the real Pipecat 1.5 capture, its span times moved to three hours ago, recorded
   through ``CallStore.record_spans``, closed by the real ``Closer`` (which stores
@@ -15,9 +15,11 @@ holds it:
   compare-and-set write (``CallProjector.write``);
 - one open call, received in range and never projected.
 
-The script prints one JSON line (the port) when the server is ready and serves
-until its standard input closes. The clock is frozen once the open call arrives,
-so the server's own closer never closes it.
+The script prints one JSON line (the port and "now") when the server is ready and
+serves until its standard input closes. "Now" is a day after the wall clock: the
+served app's own closer runs on the real clock, so evidence dated before the real
+time would fall due and the open call would be closed and projected while the test
+reads it.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ from store_support import make_store  # noqa: E402
 
 SECOND = 1_000_000_000
 HOUR = 3_600 * SECOND
+DAY = 24 * HOUR
 # (key, agent, hours ago, (reported_ms, audible_gap_ms) per turn, projection columns)
 CHOSEN: list[tuple[str, str | None, int, list[tuple[int | None, int | None]], dict[str, Any]]] = [
     (
@@ -174,7 +177,7 @@ def _write_chosen(projector: CallProjector, call_id: str, turns, columns) -> Non
 
 
 def build(work: Path) -> None:
-    now = time.time_ns()
+    now = time.time_ns() + DAY
     clock = ManualClock(wall=now - HOUR, monotonic=now - HOUR)
     store = make_store(work, clock=clock)
     # Seeded before projecting, so the served app's seeding changes no price version
