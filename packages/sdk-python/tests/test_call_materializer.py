@@ -499,8 +499,8 @@ def test_each_stored_recording_is_a_media_reference_aligned_to_the_call_clock() 
             if item.from_clock_domain_id == ref.clock_domain_id
         ]
         assert relation.to_clock_domain_id == f"otlp-{CALL_ID}"
-        assert relation.offset_nano == recording.started_at_unix_nano
-        assert ref.time_range.start.source_time_unix_nano == recording.started_at_unix_nano
+        assert relation.offset_nano == str(recording.started_at_unix_nano)
+        assert ref.time_range.start.source_time_unix_nano == str(recording.started_at_unix_nano)
     streams = {stream.stream_id: stream for stream in profile.audio_streams}
     participants = {item.participant_id: item.role for item in profile.participants}
     assert participants[streams["stream-user"].participant_id] == "user"
@@ -546,7 +546,7 @@ def test_a_call_with_only_a_recording_still_materializes() -> None:
     bundle = _materialize(_snapshot([], recordings=(_recording("user"),), final=False))
 
     assert len(bundle.profile.media_refs) == 1
-    assert bundle.profile.session.started_at.source_time_unix_nano == SYNTHETIC_CALL_START
+    assert bundle.profile.session.started_at.source_time_unix_nano == str(SYNTHETIC_CALL_START)
 
 
 def test_under_metadata_only_the_bundle_captures_no_content_class() -> None:
