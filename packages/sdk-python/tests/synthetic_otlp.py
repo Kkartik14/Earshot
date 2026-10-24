@@ -65,6 +65,7 @@ def _span(
         span_id=span_id.to_bytes(8, "big"),
         parent_span_id=(b"" if parent_span_id is None else parent_span_id.to_bytes(8, "big")),
         name=name,
+        kind=Span.SPAN_KIND_INTERNAL,
         start_time_unix_nano=START + second * SECOND,
         end_time_unix_nano=START + (second + duration_s) * SECOND,
         attributes=attributes,
