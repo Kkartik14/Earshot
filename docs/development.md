@@ -37,8 +37,8 @@ the collision-free distribution name `earshot-observability`. See
 [release packaging](./release.md); `pip install earshot` installs an unrelated VAD
 project even though this repository also uses `import earshot`.
 
-The compatibility lane is bounded to Pipecat `>=1.6.0,<1.7` and LiveKit Agents
-`>=1.6.5,<1.7`. Unit tests remain duck typed; installing both extras activates the
+The compatibility lane checks Pipecat 1.6.0 and current 1.6.x, plus LiveKit Agents 1.6.5
+and current 1.8.x. Unit tests remain duck typed; installing both extras activates the
 real-package integration tests in `apps/ingest/tests/test_framework_integrations.py`.
 
 ## Generate contract artifacts
@@ -89,7 +89,17 @@ python scripts/check_wheel.py /tmp/earshot-dist/*.whl
 python scripts/check_sdist.py /tmp/earshot-dist/*.tar.gz
 python scripts/smoke_artifact.py /tmp/earshot-dist/*.whl
 python scripts/smoke_artifact.py /tmp/earshot-dist/*.tar.gz
+python scripts/viewer_smoke.py   # after the bundle step: the call views on replayed calls
 ```
+
+`scripts/viewer_smoke.py` starts `earshot serve`, replays the two captured calls
+(`fixtures/captured/pipecat-otlp-1.5`, `fixtures/captured/livekit-otlp-1.8`), waits for
+the server to analyse and project them, and requests everything the viewer's calls pages
+request: the pages and their scripts, the list with each filter, each call view, its
+peaks, its audio by `Range`, and its spans. It needs only the standard library, so it can
+drive an installed artifact: `python scripts/viewer_smoke.py --earshot
+/path/to/venv/bin/earshot`. `--keep-serving` leaves the server up for a look in a
+browser.
 
 Plain `pytest` runs every test, including the ones marked `slow` (about 10 s or more
 each: the 10,000-incident reprojection boot, the random-SIGKILL OTLP property test, the
@@ -108,34 +118,46 @@ and Postgres coverage. Quick PR checks run only the isolated `unit` tests; add t
 `Merge Ready` label to run the comprehensive pull request lanes. The standard pull
 request lanes use targeted SQLite/Postgres/S3 checks and exclude `slow` tests where the
 command specifies `-m 'not slow'`.
+The release gate runs plain `pytest`, so no `slow` test is skipped there.
 
-One test still skips in CI: the real-provider e2e
-(`apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`, marked `real_providers`)
-runs one real Pipecat call into Earshot on Postgres and S3. It needs `DEEPGRAM_API_KEY`,
-`GROQ_API_KEY`, `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID` in the environment, the
-example's `requirements.txt`, and the S3 test server; without any of them it skips. It
-reads keys from the process environment only, never from `.env`, so a plain local
-`pytest` places no paid calls. The release gate runs it with
+Two tests still skip in CI: the real-provider e2e (`apps/ingest/tests/e2e_real/`,
+marked `real_providers`). Each runs one real call, Pipecat 1.5 or LiveKit Agents 1.8,
+into Earshot on Postgres and S3, waits for the server to analyse and project it, and
+checks its call view. They need `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `CARTESIA_API_KEY`
+and `CARTESIA_VOICE_ID` in the environment, the examples' `requirements.txt`, and the S3
+test server. The LiveKit test also needs `EARSHOT_LIVEKIT_PYTHON`: the python of a
+separate venv with `examples/livekit_otlp/requirements.txt` and Earshot installed
+(LiveKit 1.8 needs OpenTelemetry versions Earshot's own lock cannot take). Without any of
+them a test skips. They read keys from the process environment only, never from `.env`,
+so a plain local `pytest` places no paid calls. The release gate runs them with
 `EARSHOT_REQUIRE_REAL_PROVIDERS=1`, which turns a skip into a failure:
 
 ```bash
-(set -a; . ./.env; set +a; EARSHOT_REQUIRE_REAL_PROVIDERS=1 pytest -q -m real_providers)
+(set -a; . ./.env; set +a; EARSHOT_REQUIRE_REAL_PROVIDERS=1 \
+  EARSHOT_LIVEKIT_PYTHON=/path/to/livekit-venv/bin/python pytest -q -m real_providers)
 ```
+
+The provider-free replay of both calls
+(`apps/ingest/tests/e2e/test_otlp_replay_quickstart.py`) runs in the full-coverage CI
+workflow and pins their call views' values.
 
 Tests intentionally mutate valid fixtures. A passing test should prove a property or
 regression, not merely assert that its own valid sample is valid.
 
 The checked-in [CI workflow](../.github/workflows/ci.yml) runs quick Python and
-TypeScript checks on each pull request update. The light-blue `Merge Ready` label starts
-the comprehensive lanes, including Postgres and S3, the Python and framework
-compatibility matrices, macOS, package artifacts, and the container. The workflow also
-runs the comprehensive lanes on pushes to `main`; a manual dispatch adds the full SQLite
-suite, the listed Postgres storage/application contracts, and the S3 blob store suite,
-then enforces combined SQLite/Postgres coverage. Its Python lane installs both
-bounded framework extras so the LiveKit 1.6 and Pipecat 1.6 real-object integration
-tests cannot silently skip. A separate clean-artifact lane bundles the viewer, builds
-the wheel and sdist together, and installs both in isolated base and `[server]`
-environments. TypeScript lanes use the committed pnpm lockfile and the Node version in
+TypeScript checks on each pull request update; the TypeScript checks install Earshot
+into `.venv`, because the viewer and Node suites start a real `earshot serve`. The
+light-blue `Merge Ready` label starts the comprehensive lanes, including Postgres and
+S3, the Python and framework compatibility matrices (the supported minimum and current
+Pipecat and LiveKit versions), macOS, package artifacts, and the container. The
+workflow also runs the comprehensive lanes on pushes to `main`; a manual dispatch adds
+the full SQLite suite, the listed Postgres storage/application contracts, and the S3
+blob store suite, then enforces combined SQLite/Postgres coverage. Its Python lanes
+install both bounded framework extras so the LiveKit and Pipecat real-object
+integration tests cannot silently skip. A separate clean-artifact lane bundles the
+viewer, builds the wheel and sdist together, and installs them in isolated base,
+`[server]`, and viewer-smoke environments. TypeScript lanes use the committed pnpm
+lockfile and the Node version in
 `.nvmrc`.
 
 ## Run locally
@@ -243,8 +265,8 @@ setup and invocation commands before running it.
 
 ## Operational limits
 
-- M1 bundles are final post-session snapshots, not streaming assembly.
-- M1 automatic capture is the normalized profile. Exact raw OTLP chunks are supported
+- Bundles are final post-session snapshots, not streaming assembly.
+- Automatic capture is the normalized profile. Exact raw OTLP chunks are supported
   only through explicit caller-supplied, policy-enabled SDK input.
 - The server is single-node; Project scoping is an authorization boundary, not a
   distributed multi-organization control plane.

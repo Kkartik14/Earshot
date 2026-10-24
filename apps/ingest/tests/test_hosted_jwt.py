@@ -264,17 +264,21 @@ def test_hosted_jwt_uses_signed_project_and_operation_scope(tmp_path, issuer) ->
     assert unprovisioned.json()["error"]["code"] == "EARSHOT_PROJECT_NOT_PROVISIONED"
 
 
-# Operator-only call surfaces (AC5.8): no hosted scope is defined for any method, so
+# Operator-only call surfaces: no hosted scope is defined for any method, so
 # a hosted JWT that grants every scope still gets the existing 403.
 _OPERATOR_ONLY_PATHS = (
     "/v1/traces",
     "/v1/calls",
     "/v1/calls/call_0123456789abcdef0123456789abcdef",
     "/v1/calls:resolve",
+    "/v1/calls/call_0123456789abcdef0123456789abcdef/spans/"
+    "0123456789abcdef0123456789abcdef/0123456789abcdef",
     "/v1/recordings",
     "/v1/recordings/user-1",
     "/v1/recordings/user-1/content",
+    "/v1/prices",
     "/v1/otlp/stats",
+    "/v1/dashboard",
 )
 _METHODS = ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE")
 
@@ -303,7 +307,7 @@ def test_hosted_jwts_get_operation_unavailable_on_every_call_route_and_method(
     # The hosted contract does not list operations it always refuses.
     assert not set(_OPERATOR_ONLY_PATHS) & set(hosted_contract)
     assert "/v1/incidents" in hosted_contract
-    assert len(replies) == 56
+    assert len(replies) == len(_OPERATOR_ONLY_PATHS) * len(_METHODS)
     for (method, path), reply in replies.items():
         assert reply.status == 403, (method, path, reply.status, reply.body)
         if method != "HEAD":

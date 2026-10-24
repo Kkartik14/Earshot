@@ -6,15 +6,17 @@
 A scripted caller WAV (see make_caller_audio.py) streams in at real time through
 Silero VAD, Deepgram STT, Groq LLM and Cartesia TTS; bot audio plays out at real
 time into nothing. Spans go to the HTTP ``OTLPSpanExporter()``, configured only by
-the standard ``OTEL_EXPORTER_OTLP_*`` env vars. At the end the script writes
-per-speaker mono WAVs plus ``manifest.json`` (conversation id, recording
+the standard ``OTEL_EXPORTER_OTLP_*`` env vars. At the end the script writes the
+per-speaker mono WAVs, one stereo ``call.wav`` built from them (channel 0 user,
+channel 1 agent), and ``manifest.json`` (conversation id, recording
 ``started_at_unix_nano``, exported span count, versions, providers) to ``--out``.
 
 ``started_at_unix_nano`` is when the input produced its first audio frame, which is
 sample 0 of both tracks (``call_io.WavCallerInput``). With ``--upload [BASE_URL]``
-(default: the OTLP endpoint, which is Earshot's base URL) both recordings are
-created at that first audio and uploaded after the run and the tracer's flush
-(``earshot_upload.py``).
+(default: the OTLP endpoint, which is Earshot's base URL; the API key from
+``EARSHOT_API_KEY`` or the OTLP headers) the stereo recording is created with
+``earshot.client`` at that first audio, with ``channel_speakers`` ``["user",
+"agent"]``, and uploaded after the run and the tracer's flush (``call_recording.py``).
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from call_io import PacedDiscardOutput, WavCallerInput
-from earshot_upload import EarshotRecordings, authorization_header
+from call_recording import create_call_recording, stereo_wav
 from loguru import logger
 from make_caller_audio import CALLER_SCRIPT, DEFAULT_CARTESIA_MODEL, SAMPLE_RATE, ensure_caller_wav
 from opentelemetry import trace
@@ -55,6 +57,8 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.utils.tracing.setup import setup_tracing
 from pipecat.workers.runner import WorkerRunner
+
+from earshot.client import EarshotClient, authorization_from_environment
 
 DEEPGRAM_MODEL = "nova-3-general"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
@@ -167,20 +171,18 @@ async def run_call(out: Path, conversation_id: str, upload_url: str | None = Non
     uploader = (
         None
         if upload_url is None
-        else EarshotRecordings(upload_url, authorization=authorization_header(os.environ))
+        else EarshotClient(upload_url, authorization=authorization_from_environment())
     )
 
-    async def create_recordings_at_first_audio() -> dict:
-        # Pending recordings hold the call open in Earshot until the tracks arrive.
+    async def create_recording_at_first_audio() -> dict:
+        # A pending recording holds the call open in Earshot until its audio arrives.
         await caller.first_audio.wait()
         assert uploader is not None and caller.started_at_unix_nano is not None
         return await asyncio.to_thread(
-            uploader.create_tracks,
-            conversation_id,
-            started_at_unix_nano=caller.started_at_unix_nano,
+            create_call_recording, uploader, conversation_id, caller.started_at_unix_nano
         )
 
-    created = None if uploader is None else asyncio.create_task(create_recordings_at_first_audio())
+    created = None if uploader is None else asyncio.create_task(create_recording_at_first_audio())
     runner = WorkerRunner(handle_sigint=False)
     await runner.add_workers(worker)
     run_task = asyncio.create_task(runner.run())
@@ -196,7 +198,7 @@ async def run_call(out: Path, conversation_id: str, upload_url: str | None = Non
         await asyncio.wait_for(run_task, timeout=DRAIN_TIMEOUT_S)
     finally:
         if created is not None and not caller.first_audio.is_set():
-            created.cancel()  # no audio, so no recordings to create
+            created.cancel()  # no audio, so no recording to create
     flushed = await asyncio.to_thread(provider.force_flush, 10_000)
     provider.shutdown()
 
@@ -210,11 +212,14 @@ async def run_call(out: Path, conversation_id: str, upload_url: str | None = Non
     out.mkdir(parents=True, exist_ok=True)
     for name, pcm in tracks.items():
         _write_wav(out / f"{name}.wav", pcm, SAMPLE_RATE)
+    (out / "call.wav").write_bytes(stereo_wav(tracks["user"], tracks["agent"], SAMPLE_RATE))
     uploaded = {}
     if created is not None and uploader is not None:
-        await created  # the recordings exist (or this raises the server's refusal)
-        tracks_on_disk = {name: out / f"{name}.wav" for name in ("user", "agent")}
-        uploaded = await asyncio.to_thread(uploader.upload_tracks, conversation_id, tracks_on_disk)
+        with uploader:
+            recording = await created  # it exists (or this raises the server's refusal)
+            uploaded["call"] = await asyncio.to_thread(
+                uploader.upload_recording, recording, out / "call.wav"
+            )
     manifest = {
         "conversation_id": conversation_id,
         "started_at_unix_nano": str(caller.started_at_unix_nano),
@@ -228,7 +233,13 @@ async def run_call(out: Path, conversation_id: str, upload_url: str | None = Non
             "tts": {"provider": "cartesia", "model": cartesia_model},
         },
         "caller_script": list(CALLER_SCRIPT),
-        "tracks": {"user": "user.wav", "agent": "agent.wav", "sample_rate": SAMPLE_RATE},
+        "tracks": {
+            "user": "user.wav",
+            "agent": "agent.wav",
+            "stereo": "call.wav",
+            "channel_speakers": ["user", "agent"],
+            "sample_rate": SAMPLE_RATE,
+        },
         "recordings": {
             name: {key: body[key] for key in ("recording_id", "call_id", "sha256", "size")}
             for name, body in uploaded.items()
@@ -254,7 +265,7 @@ def main() -> int:
         nargs="?",
         const="",
         metavar="BASE_URL",
-        help="upload both tracks to Earshot's recordings API (default: the OTLP endpoint)",
+        help="upload the stereo recording to Earshot (default: the OTLP endpoint)",
     )
     args = parser.parse_args()
     missing = [key for key in REQUIRED_ENV if not os.environ.get(key)]

@@ -1,4 +1,4 @@
-"""Calls in the catalog: OTLP spans grouped by trace into calls keyed by session (FR-4).
+"""Calls in the catalog: OTLP spans grouped by trace into calls keyed by session.
 
 A ``CallStore`` is part of an ``IncidentStore``: it runs on that store's database,
 write locks (``_mutation``), clock and correlation key. The OTLP receiver builds
@@ -24,12 +24,16 @@ framework session span becomes a call keyed by its trace (``key_source =
 'trace_id'``); any other due trace is deleted and counted
 (``parked_traces_discarded``).
 
-**Close rules** (FR-6), recomputed on every evidence write: with an end signal,
+**Close rules**, recomputed on every evidence write: with an end signal,
 ``close_due = now + END_GRACE``; otherwise ``now + LONG_QUIET``; for a closed call
 receiving late evidence, the later of ``now + LATE_DEBOUNCE`` and that rule. A call
 with ``REVISION_CAP`` revisions is revised no more, except for its first end-signal
 close (``UNCAPPED_SQL``); evidence past the cap is stored, keeps the call dirty, and
 sets ``evidence_after_latest_revision`` (counted once as ``revision_cap_reached``).
+A batch whose only spans for a call are tail spans (``call_capture.TAIL_SPANS``:
+LiveKit's job runner after ``session_close``) is not evidence: the spans are stored
+and counted, and the call's dirty flag, due time and last evidence are left alone,
+unless a tail end marker gives the call its first end signal.
 The closer (``storage_closer``) turns due calls into revisions.
 
 **Counters.** Only rare events are persisted (``otlp_counters``); nothing is written
@@ -68,6 +72,7 @@ from .call_capture import (
     apply_capture_preset,
     is_end_marker,
     is_session_span,
+    is_tail_span,
     payload_digest,
     resolve_session_key,
     resource_payload,
@@ -92,7 +97,7 @@ _TRACE_CALL_NAMESPACE = "call-trace-v1"
 _TRACE_KEY_NAMESPACE = "call-trace-key-v1"
 TRACE_KEY_SOURCE = "trace_id"
 RECORDING_KEY_SOURCE = "recording"
-# The persisted rare-event counters (AC5.12); the gauges are derived.
+# The persisted rare-event counters; the gauges are derived.
 OTLP_COUNTERS = (
     "rejected_spans",
     "span_conflicts",
@@ -102,7 +107,7 @@ OTLP_COUNTERS = (
     "purged_call_evidence_dropped",
 )
 PARKED_TRACE_BATCH_SIZE = 100
-# AC6.7: a call is revised at most this many times, plus its first end-signal close.
+# A call is revised at most this many times, plus its first end-signal close.
 REVISION_CAP = 16
 # The cap rule on a ``calls`` row aliased ``c``: true while the call may be revised.
 UNCAPPED_SQL = (
@@ -122,8 +127,8 @@ def call_spans_sql(columns: str, *, condition: str = "", order_by: str = "") -> 
     order (its left table is always the outer loop): the call's traces by
     ``call_traces_call_idx``, then each trace's spans by key, so the cost follows the
     call. A plain join, with no ``sqlite_stat1`` to go on, walked every span of the
-    project and probed the call's traces once per span (tribunal round 2, Bellard N-1:
-    312 ms a read, and as long a hold of the claim's write lock, at 1M spans).
+    project and probed the call's traces once per span (312 ms a read, and as long a hold of the
+    claim's write lock, at 1M spans).
     Postgres reads ``CROSS JOIN … WHERE`` as the same inner join and plans it freely
     (it has no ``CROSS JOIN … ON``).
     """
@@ -200,7 +205,7 @@ def lock_order(*, traces: Iterable[bytes], calls: Iterable[str]) -> tuple[tuple[
     """The order a batch touches rows in: sorted trace rows, then sorted call rows.
 
     Every writer taking row locks in one global order cannot deadlock against
-    another; Month 1 serializes writers anyway (``K_write``, ``.store.lock``).
+    another; writers are serialized anyway (``K_write``, ``.store.lock``).
     """
 
     return (
@@ -222,6 +227,7 @@ class _Prepared:
     end: int
     end_marker: bool
     session_span: bool
+    tail: bool
     key: SessionKey | None
     payload: bytes
     digest: bytes
@@ -239,6 +245,8 @@ class _CallTarget:
     generation: int = 0
     first_evidence: int = 0
     new_spans: int = 0
+    # Of ``new_spans``, the tail spans (``call_capture.TAIL_SPANS``).
+    tail_spans: int = 0
     end_marker: bool = False
 
 
@@ -261,6 +269,8 @@ class _Evidence:
     spans: int = 0
     recordings: int = 0
     end_marker: bool = False
+    # Of ``spans``, the tail spans, which are not evidence on their own.
+    tail_spans: int = 0
 
 
 @dataclass(slots=True)
@@ -276,7 +286,7 @@ class _Counts:
 
 def _prepare(span: OtlpSpan, preset: str, memo: RequestMemo) -> _Prepared:
     """One span as its rows store it. ``memo`` is the request's: the preset's copy of
-    a shared resource and scope, its bytes and their digest are made once (N3-1)."""
+    a shared resource and scope, its bytes and their digest are made once."""
 
     raw = span.span
     if len(raw.trace_id) != 16 or not any(raw.trace_id):
@@ -298,6 +308,7 @@ def _prepare(span: OtlpSpan, preset: str, memo: RequestMemo) -> _Prepared:
         end=raw.end_time_unix_nano,
         end_marker=is_end_marker(span),
         session_span=is_session_span(span),
+        tail=is_tail_span(span),
         key=resolve_session_key(span, memo=memo),
         payload=payload,
         digest=payload_digest(payload),
@@ -305,6 +316,18 @@ def _prepare(span: OtlpSpan, preset: str, memo: RequestMemo) -> _Prepared:
         resource_payload=resource,
         # From the stored (preset-filtered) span: under metadata_only it has no text.
         text_json=transcript_text_json(kept),
+    )
+
+
+def _batch_result(counts: _Counts) -> SpanBatchResult:
+    return SpanBatchResult(
+        stored_spans=counts.stored,
+        duplicate_spans=counts.duplicates,
+        span_conflicts=counts.conflicts,
+        key_disagreements=counts.disagreements,
+        purged_call_evidence_dropped=counts.dropped,
+        parked_spans=counts.parked,
+        call_ids=tuple(sorted(call for call, target in counts.targets.items() if target.new_spans)),
     )
 
 
@@ -444,7 +467,7 @@ class CallStore:
         rejected_spans: int = 0,
         budget_s: float | None = None,
     ) -> SpanBatchResult:
-        """Store one request's accepted spans in one transaction (FR-4, AC5.6).
+        """Store one request's accepted spans in one transaction.
 
         Each span is filtered by the project's capture preset, then stored under
         its trace; traces are bound to calls, parked, or (for a purged key)
@@ -484,17 +507,33 @@ class CallStore:
             )
             crash_point("before_otlp_commit")
             connection.commit()
-        return SpanBatchResult(
-            stored_spans=counts.stored,
-            duplicate_spans=counts.duplicates,
+        return _batch_result(counts)
+
+    def record_spans_in(
+        self,
+        connection: DatabaseConnection,
+        project_id: str,
+        spans: Sequence[OtlpSpan],
+        *,
+        now: int,
+    ) -> SpanBatchResult:
+        """``record_spans`` inside the caller's write transaction, under the preset
+        read there: for a writer whose spans must commit together with its own rows
+        (a connector delivery's recordings and receipt), or not at all."""
+
+        preset = self._read_preset(connection, project_id)
+        memo = RequestMemo()
+        counts = self._record(
+            connection, project_id, [_prepare(span, preset, memo) for span in spans], preset, now
+        )
+        self._bump_counters(
+            connection,
+            project_id,
             span_conflicts=counts.conflicts,
             key_disagreements=counts.disagreements,
             purged_call_evidence_dropped=counts.dropped,
-            parked_spans=counts.parked,
-            call_ids=tuple(
-                sorted(call for call, target in counts.targets.items() if target.new_spans)
-            ),
         )
+        return _batch_result(counts)
 
     def _record(
         self,
@@ -582,7 +621,11 @@ class CallStore:
             connection,
             project_id,
             {
-                call_id: _Evidence(spans=target.new_spans, end_marker=target.end_marker)
+                call_id: _Evidence(
+                    spans=target.new_spans,
+                    end_marker=target.end_marker,
+                    tail_spans=target.tail_spans,
+                )
                 for call_id, target in counts.targets.items()
                 if target.new_spans
             },
@@ -735,8 +778,8 @@ class CallStore:
         """The call a recording's (valid, trimmed) session key names, created if needed.
 
         A new call is keyed by the recording (``key_source = 'recording'``) and,
-        with no spans and no end marker yet, is due ``LONG_QUIET`` from now (FR-6).
-        ``None`` while a live tombstone covers the key (AC14.2): its evidence is
+        with no spans and no end marker yet, is due ``LONG_QUIET`` from now.
+        ``None`` while a live tombstone covers the key: its evidence is
         refused. Runs inside the caller's write transaction.
         """
 
@@ -770,7 +813,7 @@ class CallStore:
         self, connection: DatabaseConnection, project_id: str, call_id: str, now: int
     ) -> None:
         """A recording of ``call_id`` was stored at ``now``: count it and mark the call
-        dirty under the FR-6 rules (AC9.2). Runs inside the caller's write transaction."""
+        dirty under the close rules. Runs inside the caller's write transaction."""
 
         self._add_evidence(connection, project_id, {call_id: _Evidence(recordings=1)}, now)
 
@@ -868,6 +911,7 @@ class CallStore:
                 session_span = session_span or span.session_span
                 if target is None:
                     continue
+                target.tail_spans += span.tail
                 target.end_marker = target.end_marker or span.end_marker
                 if span.key is not None:
                     fingerprint = fingerprints.get(span.key.value)
@@ -932,7 +976,7 @@ class CallStore:
         return stored
 
     def _close_due(self, *, state: str, ended: bool, now: int) -> int:
-        """FR-6: the due time after evidence arrives at ``now``."""
+        """The due time after evidence arrives at ``now``."""
 
         due = now + (self.timings.end_grace_nano if ended else self.timings.long_quiet_nano)
         if state == "closed":
@@ -947,7 +991,7 @@ class CallStore:
         now: int,
     ) -> None:
         """New evidence for calls at ``now``: count it, mark each call dirty and
-        recompute its due time (FR-6), whatever the evidence is. One read and one
+        recompute its due time, whatever the evidence is. One read and one
         ``executemany`` for the batch, in call order."""
 
         if not evidence:
@@ -963,11 +1007,16 @@ class CallStore:
             )
         }
         updates = []
+        counted_only = []
         capped = []
         for call_id in sorted(evidence):
             call, item = calls[call_id], evidence[call_id]
             end_signal = call["end_signal_unix_nano"]
-            if end_signal is None and item.end_marker:
+            gives_end_signal = end_signal is None and item.end_marker
+            if not (item.spans - item.tail_spans or item.recordings or gives_end_signal):
+                counted_only.append((item.spans, project_id, call_id))
+                continue
+            if gives_end_signal:
                 end_signal = now
             updates.append(
                 (
@@ -989,6 +1038,10 @@ class CallStore:
             "end_signal_unix_nano = ?, close_due_unix_nano = ? "
             "WHERE project_id = ? AND call_id = ?",
             updates,
+        )
+        connection.executemany(
+            "UPDATE calls SET span_count = span_count + ? WHERE project_id = ? AND call_id = ?",
+            counted_only,
         )
         for call_id in capped:
             self.note_evidence_past_cap(connection, project_id, call_id)
@@ -1068,7 +1121,7 @@ class CallStore:
     def collect_parked_traces(
         self, *, limit: int = PARKED_TRACE_BATCH_SIZE, budget_s: float | None = None
     ) -> ParkedTraceCollection:
-        """Resolve up to ``limit`` parked traces whose quiet deadline has passed (AC4.4).
+        """Resolve up to ``limit`` parked traces whose quiet deadline has passed.
 
         The deadline is ``last_span_received + LONG_QUIET``, so a trace that keeps
         receiving spans is never collected. Oldest deadlines go first.
@@ -1176,7 +1229,7 @@ class CallStore:
     # --- statistics ---------------------------------------------------------------------
 
     def otlp_stats(self, project_id: str) -> dict[str, int]:
-        """AC5.12's storage half: the persisted counters plus the derived gauges."""
+        """The storage half of the receiver counters: the persisted ones plus the derived gauges."""
 
         with self.store._connect() as connection:
             stats = dict.fromkeys(OTLP_COUNTERS, 0)
@@ -1200,7 +1253,7 @@ class CallStore:
 
 
 def parked_trace_job(calls: CallStore) -> MaintenanceJob:
-    """A maintenance job: resolve parked traces past their deadline (AC4.4).
+    """A maintenance job: resolve parked traces past their deadline.
 
     One bounded ``collect_parked_traces`` batch per run; a full batch asks to run
     again at once.

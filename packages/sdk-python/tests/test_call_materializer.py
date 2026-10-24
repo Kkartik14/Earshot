@@ -1,9 +1,9 @@
-"""FR-7's pure half: a call's stored spans and recordings become a revision bundle.
+"""The pure half: a call's stored spans and recordings become a revision bundle.
 
 The materializer is the hosted connectors' server-side recorder pattern: an
 ``IncidentRecorder`` on a ``ManualClock`` with a fixed clock domain, fed spans in
 ``(start, trace_id, span_id)`` order through the adapter their instrumentation
-scope names (Pipecat in Month 1). Every test drives it with the real Pipecat 1.5
+scope names (Pipecat). Every test drives it with the real Pipecat 1.5
 capture (``fixtures/captured/pipecat-otlp-1.5``) decoded as the receiver decodes
 it, and stored as the receiver stores it.
 """
@@ -41,7 +41,7 @@ def _captured_spans(requests=None):
     ]
 
 
-# --- the recorder takes its manual trace ID (AC6.9) ----------------------------------------
+# --- the recorder takes its manual trace ID ------------------------------------------------
 
 
 def test_a_recorder_uses_an_injected_manual_trace_id_for_its_manual_operations() -> None:
@@ -69,7 +69,7 @@ def test_a_recorder_refuses_a_manual_trace_id_that_is_not_an_otlp_trace_id(value
         IncidentRecorder(session_id="call-1", manual_trace_id=value)
 
 
-# --- the Pipecat adapter takes hex link IDs (AC7.2) ---------------------------------------
+# --- the Pipecat adapter takes hex link IDs -----------------------------------------------
 
 
 def test_the_pipecat_adapter_consumes_spans_whose_links_carry_hex_ids() -> None:
@@ -100,7 +100,7 @@ def test_the_pipecat_adapter_consumes_spans_whose_links_carry_hex_ids() -> None:
     ]
 
 
-# --- transcript lines (AC7.3) ---------------------------------------------------------------
+# --- transcript lines -----------------------------------------------------------------------
 
 USER_LINES = [
     "Hi. I would like to book a table for two people tomorrow evening.",
@@ -187,7 +187,7 @@ def test_only_pipecat_scopes_give_lines() -> None:
     assert _lines(spans) == []
 
 
-# --- a stored span, as the adapters read it (AC7.1, AC7.2) -----------------------------------
+# --- a stored span, as the adapters read it --------------------------------------------------
 
 
 def _stored(spans):
@@ -250,7 +250,7 @@ def test_span_status_codes_become_their_names(code, status) -> None:
     assert adapter_span(span)["status"] == status
 
 
-# --- the revision bundle (AC6.6, AC6.9, AC7.1, AC7.4, AC7.5) -----------------------------------
+# --- the revision bundle -----------------------------------------------------------------------
 
 
 def _recording(speaker: str, **changes):
@@ -514,10 +514,114 @@ def test_each_stored_recording_is_a_media_reference_aligned_to_the_call_clock() 
     assert profile.manifest.completeness == "complete"
 
 
+def _stereo_recording(**changes):
+    """The real LiveKit 1.8 stereo Ogg Opus recording (ch0 user, ch1 agent), stored."""
+
+    from audio_support import LIVEKIT_RECORDING
+    from earshot.storage_recordings import Recording
+
+    body = LIVEKIT_RECORDING.read_bytes()
+    fields = {
+        "project_id": "default",
+        "recording_id": "lk-1.call",
+        "call_id": CALL_ID,
+        "speaker": "mixed",
+        "content_type": "audio/ogg",
+        "label": None,
+        "started_at_unix_nano": "1792407986846424000",
+        "state": "stored",
+        "blob_key": "recordings/default/stereo-attempt",
+        "size": len(body),
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "duration_ms": 34_010,
+        "created_unix_nano": 1,
+        "stored_unix_nano": 2,
+        "channel_speakers": ("user", "agent"),
+        **changes,
+    }
+    return Recording(**fields)
+
+
+def test_a_stereo_recording_is_one_stream_and_media_reference_per_mapped_channel() -> None:
+    from earshot.validation import validate_incident
+
+    stereo = _stereo_recording()
+    bundle = assert_capture_conforms(lambda: _materialize(_snapshot(recordings=(stereo,))))
+    profile = bundle.profile
+    result = validate_incident(bundle)
+
+    assert result.ok, result.issues
+    assert not result.warnings, result.warnings
+    refs = sorted(profile.media_refs, key=lambda ref: ref.media_id)
+    assert [
+        (ref.media_id, ref.stream_id, ref.channel_index, ref.sha256, ref.size_bytes) for ref in refs
+    ] == [
+        ("recording-lk-1.call.ch0", "stream-user", 0, stereo.sha256, stereo.size),
+        ("recording-lk-1.call.ch1", "stream-agent", 1, stereo.sha256, stereo.size),
+    ]
+    # One file, one media timeline: both channels share its clock domain and relation.
+    assert {ref.clock_domain_id for ref in refs} == {"media-lk-1.call"}
+    assert {ref.content_type for ref in refs} == {"audio/ogg"}
+    [relation] = [
+        item for item in profile.clock_relations if item.from_clock_domain_id == "media-lk-1.call"
+    ]
+    assert relation.offset_nano == stereo.started_at_unix_nano
+    streams = {stream.stream_id: stream for stream in profile.audio_streams}
+    participants = {item.participant_id: item.role for item in profile.participants}
+    assert {
+        key: (participants[streams[key].participant_id], streams[key].direction)
+        for key in ("stream-user", "stream-agent")
+    } == {"stream-user": ("user", "inbound"), "stream-agent": ("agent", "outbound")}
+    assert "stream-mixed" not in streams
+    # The channel survives the wire: a reader sees which channel each reference is.
+    from earshot.codec import decode_incident_protobuf, encode_incident_protobuf
+
+    decoded = decode_incident_protobuf(encode_incident_protobuf(bundle))
+    assert sorted(ref.channel_index for ref in decoded.profile.media_refs) == [0, 1]
+
+
+def test_a_one_channel_map_is_that_speakers_stream_on_channel_0() -> None:
+    bundle = _materialize(
+        _snapshot([], recordings=(_stereo_recording(channel_speakers=("agent",)),))
+    )
+
+    [ref] = bundle.profile.media_refs
+    assert (ref.media_id, ref.stream_id, ref.channel_index) == (
+        "recording-lk-1.call.ch0",
+        "stream-agent",
+        0,
+    )
+
+
+@pytest.mark.parametrize("content_type", ["audio/mpeg", "audio/webm"])
+def test_a_channel_map_the_upload_could_not_verify_gives_one_media_reference(
+    content_type: str,
+) -> None:
+    """The upload reads no MP3 or WebM header, so their channel count is unverified:
+    the file is one reference under its own speaker, never one per mapped channel."""
+
+    recording = _stereo_recording(content_type=content_type, duration_ms=None)
+
+    bundle = _materialize(_snapshot([], recordings=(recording,)))
+
+    assert [
+        (ref.media_id, ref.stream_id, ref.channel_index) for ref in bundle.profile.media_refs
+    ] == [("recording-lk-1.call", "stream-mixed", None)]
+
+
+def test_a_mono_recordings_media_reference_carries_no_channel_index() -> None:
+    from earshot.codec import encode_incident_json
+
+    bundle = _materialize(_snapshot(recordings=(_recording("user"), _recording("agent"))))
+
+    assert {ref.channel_index for ref in bundle.profile.media_refs} == {None}
+    assert b"channel_index" not in encode_incident_json(bundle)
+
+
 def test_a_call_holding_more_recordings_than_a_revision_takes_builds_with_its_first_sixteen() -> (
     None
 ):
-    """Tribunal round 3, Lamport LAM3-1: each recording takes one of the recorder's 16
+    """Each recording takes one of the recorder's 16
     media clock domains; a 17th left a clock relation and a media reference naming a
     domain never declared, so every build of the call failed, for good. The API now
     refuses a 17th; a call that has more still builds: its first 16 recordings by

@@ -28,13 +28,15 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY packages/sdk-python ./packages/sdk-python
-# The server image runs on SQLite or Postgres and stores blobs on disk or in S3.
-RUN python -m pip wheel --wheel-dir /wheels '.[server,postgres,s3]'
+# The server image runs on SQLite or Postgres, stores blobs on disk or in S3, and
+# analyses recordings (signals: the audible gap at the agent).
+RUN python -m pip wheel --wheel-dir /wheels '.[server,postgres,s3,signals]'
 
 # 3) Runtime: one process serving the SPA and the API from a single port.
 FROM python:3.11-slim AS runtime
 
 ENV EARSHOT_DATA_DIR=/data \
+    ORT_DISABLE_TELEMETRY=1 \
     EARSHOT_PORT=4319 \
     EARSHOT_WEB_DIR=/app/web \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -42,13 +44,13 @@ ENV EARSHOT_DATA_DIR=/data \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN groupadd --system earshot \
-    && useradd --system --gid earshot --home-dir /nonexistent --shell /usr/sbin/nologin earshot \
+RUN groupadd --system --gid 999 earshot \
+    && useradd --system --uid 999 --gid earshot --home-dir /nonexistent --shell /usr/sbin/nologin earshot \
     && install --directory --owner earshot --group earshot --mode 0700 /data
 # Install from the builder's wheels through a bind mount, so they never become a layer.
 RUN --mount=type=bind,from=builder,source=/wheels,target=/wheels \
     python -m pip install --no-index --find-links=/wheels \
-    'earshot-observability[server,postgres,s3]'
+    'earshot-observability[server,postgres,s3,signals]'
 # The built viewer, baked in and served from EARSHOT_WEB_DIR.
 COPY --from=web /repo/apps/viewer/dist /app/web
 

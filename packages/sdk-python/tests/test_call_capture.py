@@ -1,12 +1,17 @@
-"""AC3.2, AC3.3 and FR-4's pure half: what is kept of a span, and which session it names.
+"""The pure half: what is kept of a span, and which session it names.
 
 Classification runs on the *normalized* key: frameworks put content under keys
 Earshot's classifier reads as metadata (Pipecat's raw ``input``; LiveKit 1.7's
 ``lk.pii.*``). Every row below states the class before normalization (the
 classifier alone) and after it, so a key that silently leaks shows up as a row
-whose "after" is metadata. The keys are the ones the Month 1 research found
-(`local/research/month-1/voice-frameworks-telemetry.md` §1, §4, §5) and the
-ones the real Pipecat capture carries.
+whose "after" is metadata. The keys are the ones the frameworks' telemetry documents and
+the ones the real Pipecat capture carries.
+
+LiveKit keys have their own table (``LIVEKIT_KEYS``): every attribute key of
+LiveKit Agents 1.6.10, 1.7.1 and 1.8.8 (``telemetry/trace_types.py`` of each
+release) and of the real 1.8 capture, with the semantic key the bundle records it
+under and its capture class. An ``lk.*`` key outside the table is never classified
+by its name.
 """
 
 from __future__ import annotations
@@ -24,17 +29,21 @@ from opentelemetry.proto.common.v1.common_pb2 import (
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, Span
 
+from captured_livekit_otlp import livekit_spans
 from captured_otlp import CAPTURED_SESSION_KEY, captured_requests
 from earshot.call_capture import (
+    ATTRIBUTE_KEYS,
     SESSION_KEY_ATTRIBUTES,
     OtlpSpan,
     SessionKey,
     apply_capture_preset,
     attribute_capture_class,
     attribute_values,
+    canonical_attribute_key,
     is_end_marker,
     is_session_span,
     payload_digest,
+    recorder_agrees,
     resolve_session_key,
     resource_payload,
     span_payload,
@@ -53,7 +62,7 @@ DIAG = CaptureClass.DIAGNOSTIC_PAYLOAD
 
 # (raw key, class before normalization, class after normalization)
 CLASSIFICATION = [
-    # Pipecat 1.5 (research §1.4; the real capture carries the first four)
+    # Pipecat 1.5 (the real capture carries the first four)
     ("text", M, T),
     ("input", M, MODEL),
     ("output", M, MODEL),
@@ -68,10 +77,7 @@ CLASSIFICATION = [
     # identity
     ("enduser.id", M, ID),
     ("user.id", M, ID),
-    ("lk.pii.participant_identity", M, ID),
-    ("lk.participant_identity", M, ID),
-    ("lk.pii.sip.phoneNumber", M, ID),
-    # phone and caller identifiers (tribunal round 1, L-6)
+    # phone and caller identifiers
     ("phone", M, ID),
     ("user.phone", M, ID),
     ("customer.phone", M, ID),
@@ -83,41 +89,23 @@ CLASSIFICATION = [
     ("sip.from.uri", M, ID),
     ("enduser.role", M, ID),
     ("enduser.pseudo.id", M, ID),
-    # LiveKit >= 1.7: every lk.pii.* key is content
-    ("lk.pii.user_transcript", T, T),
-    ("lk.pii.response.text", M, MODEL),
-    ("lk.pii.input_text", M, T),
-    ("lk.pii.chat_ctx", M, MODEL),
-    ("lk.pii.user_input", M, T),
-    ("lk.pii.instructions", M, MODEL),
-    ("lk.pii.function_tool.arguments", TOOL, TOOL),
-    ("lk.pii.function_tool.output", M, TOOL),
-    ("lk.pii.response.function_calls", M, TOOL),
-    ("lk.pii.amd.transcript", T, T),
-    ("lk.pii.room_name", M, EXT),
-    ("lk.pii.rpc.payload", M, EXT),
-    ("lk.pii.some_future_key", M, EXT),
-    # LiveKit <= 1.6: the same keys before the lk.pii. rename
-    ("lk.user_transcript", T, T),
-    ("lk.response.text", M, MODEL),
-    ("lk.input_text", M, T),
-    ("lk.chat_ctx", M, MODEL),
-    ("lk.user_input", M, T),
-    ("lk.instructions", M, MODEL),
-    ("lk.function_tool.arguments", TOOL, TOOL),
-    ("lk.function_tool.output", M, TOOL),
-    ("lk.response.function_calls", M, TOOL),
-    ("lk.room_name", M, EXT),
-    ("lk.function_tools", M, MODEL),
-    ("lk.provider_tools", M, MODEL),
-    ("lk.tool_sets", M, MODEL),
+    # any other key with a dot-delimited ``pii`` segment is content, as LiveKit defines it
+    ("vendor.pii.note", M, EXT),
     # OpenTelemetry GenAI content attributes (opt-in, "likely sensitive")
     ("gen_ai.input.messages", MODEL, MODEL),
     ("gen_ai.output.messages", MODEL, MODEL),
     ("gen_ai.tool.definitions", M, MODEL),
+    ("gen_ai.tool.description", M, MODEL),
     ("gen_ai.tool.call.arguments", M, TOOL),
     ("gen_ai.tool.call.result", M, TOOL),
+    ("gen_ai.retrieval.query.text", M, MODEL),
+    ("gen_ai.retrieval.documents", M, MODEL),
+    ("gen_ai.memory.query.text", M, MODEL),
+    ("gen_ai.memory.records", M, MODEL),
+    ("gen_ai.evaluation.explanation", M, MODEL),
     ("gen_ai.prompt.variable.customer_name", MODEL, MODEL),
+    ("gen_ai.tool.name", M, M),
+    ("gen_ai.tool.call.id", M, M),
     # OpenInference
     ("input.value", M, MODEL),
     ("output.value", M, MODEL),
@@ -136,8 +124,6 @@ CLASSIFICATION = [
     ("is_final", M, M),
     ("voice_id", M, M),
     ("settings.model", M, M),
-    ("lk.response.ttft", M, M),
-    ("lk.speech_id", M, M),
     ("exception.type", M, M),
     ("phone.carrier", M, M),
     ("sip.status_code", M, M),
@@ -155,6 +141,286 @@ CLASSIFICATION = [
 def test_keys_are_classified_after_normalization(key, before, after) -> None:
     assert classify_attribute(key) is before
     assert attribute_capture_class(key) is after
+
+
+# LiveKit keys whose value is plain metadata (ids, labels, enums, counts, durations,
+# metric JSON): the union over 1.6.10, 1.7.1 and 1.8.8, recorded under their own name.
+LIVEKIT_METADATA_KEYS = (
+    # identifiers and labels
+    "lk.agent_label",
+    "lk.agent_name",
+    "lk.callback.name",
+    "lk.cloud_agent_id",
+    "lk.deployment_id",
+    "lk.dispatch_id",
+    "lk.fallback.index",
+    "lk.fallback.label",
+    "lk.fallback.recovery",
+    "lk.function_tool.id",
+    "lk.function_tool.is_error",
+    "lk.function_tool.name",
+    "lk.generation_count",
+    "lk.generation_id",
+    "lk.input.base_span_id",
+    "lk.input.delta",
+    "lk.input.dropped_from_base",
+    "lk.job.agent_id",
+    "lk.job.worker_id",
+    "lk.job_id",
+    "lk.parent_generation_id",
+    "lk.participant_id",
+    "lk.participant_kind",
+    "lk.previous_agent_label",
+    "lk.provider_request_ids",
+    "lk.room_sid",
+    "lk.speech_id",
+    "lk.track_sid",
+    "lk.track_source",
+    "lk.tts.label",
+    # states, reasons and flags (enumerations, not free text)
+    "lk.amd.category",
+    "lk.amd.reason",
+    "lk.close.drain",
+    "lk.close_reason",
+    "lk.connection_state",
+    "lk.disconnect_reason",
+    "lk.eou.from_cache",
+    "lk.eou.language",
+    "lk.eou.outcome",
+    "lk.eou.source",
+    "lk.interrupted",
+    "lk.interruption.source",
+    "lk.is_interruption",
+    "lk.new_state",
+    "lk.old_state",
+    "lk.room.auto_subscribe",
+    "lk.room.e2ee",
+    "lk.room_io.participant_filter",
+    "lk.rpc.error_code",
+    "lk.rpc.handler_registered",
+    "lk.rpc.request_id",
+    "lk.shutdown.user_initiated",
+    "lk.tts.streaming",
+    # counts, sizes, times and durations
+    "lk.amd.delay",
+    "lk.amd.speech_duration",
+    "lk.blocking.count",
+    "lk.blocking.cpu_time",
+    "lk.blocking.duration",
+    "lk.blocking.gc_time",
+    "lk.blocking.import",
+    "lk.blocking.max_duration",
+    "lk.blocking.severity",
+    "lk.blocking.suppressed",
+    "lk.blocking.task",
+    "lk.blocking.threshold",
+    "lk.blocking.total_duration",
+    "lk.e2e_latency",
+    "lk.end_of_turn_delay",
+    "lk.end_time",
+    "lk.eou.detection_delay",
+    "lk.eou.endpointing_delay",
+    "lk.eou.not_committed_count",
+    "lk.eou.probability",
+    "lk.eou.rearm_count",
+    "lk.eou.resume_count",
+    "lk.eou.transcription_delay",
+    "lk.eou.unlikely_threshold",
+    "lk.eou.wait_duration",
+    "lk.first_frame_delay",
+    "lk.interruption.detection_delay",
+    "lk.interruption.prediction_duration",
+    "lk.interruption.probability",
+    "lk.interruption.total_duration",
+    "lk.job.accept_latency",
+    "lk.job.assignment_latency",
+    "lk.job.dispatch_latency",
+    "lk.job.entrypoint_latency",
+    "lk.job.launch_latency",
+    "lk.keyterms.added",
+    "lk.keyterms.count",
+    "lk.keyterms.removed",
+    "lk.on_user_turn_completed_delay",
+    "lk.playout.position",
+    "lk.response.ttfb",
+    "lk.response.ttft",
+    "lk.retry_count",
+    "lk.room.remote_participant_count",
+    "lk.rpc.payload_size",
+    "lk.rpc.response_size",
+    "lk.rpc.response_timeout",
+    "lk.speech.queue_wait",
+    "lk.start_time",
+    "lk.transcript_confidence",
+    "lk.transcription_delay",
+    # usage and timing JSON (labels, request ids, counts; never text) and the 1.8.4
+    # transcript event timeline (arrival times and lengths only)
+    "lk.llm_metrics",
+    "lk.realtime_model_metrics",
+    "lk.stt.events",
+    "lk.tts_metrics",
+)
+
+# (raw key, semantic key, capture class). A 1.6 key and its 1.7 ``lk.pii.`` name share
+# one semantic key; one span's content keys share one class, because a bundle record
+# holds at most one sensitive class (``agent_turn`` carries the user input, the
+# instructions and the reply; ``llm_node`` the context, the reply and its tool calls).
+LIVEKIT_KEYS = [
+    ("lk.user_transcript", "speech.text", T),
+    ("lk.pii.user_transcript", "speech.text", T),
+    ("lk.input_text", "speech.text", T),
+    ("lk.pii.input_text", "speech.text", T),
+    ("lk.amd.transcript", "lk.pii.amd.transcript", T),
+    ("lk.pii.amd.transcript", "lk.pii.amd.transcript", T),
+    ("lk.user_input", "gen_ai.input.user_message", MODEL),
+    ("lk.pii.user_input", "gen_ai.input.user_message", MODEL),
+    ("lk.instructions", "gen_ai.input.system_instruction", MODEL),
+    ("lk.pii.instructions", "gen_ai.input.system_instruction", MODEL),
+    ("lk.chat_ctx", "gen_ai.input", MODEL),
+    ("lk.pii.chat_ctx", "gen_ai.input", MODEL),
+    ("lk.response.text", "gen_ai.output.messages", MODEL),
+    ("lk.pii.response.text", "gen_ai.output.messages", MODEL),
+    ("lk.response.function_calls", "gen_ai.output.messages.function_calls", MODEL),
+    ("lk.pii.response.function_calls", "gen_ai.output.messages.function_calls", MODEL),
+    ("lk.function_tools", "gen_ai.input.function_tools", MODEL),
+    ("lk.provider_tools", "gen_ai.input.provider_tools", MODEL),
+    ("lk.tool_sets", "gen_ai.input.tool_sets", MODEL),
+    ("lk.function_tool.arguments", "tool.arguments", TOOL),
+    ("lk.pii.function_tool.arguments", "tool.arguments", TOOL),
+    ("lk.function_tool.output", "tool.result", TOOL),
+    ("lk.pii.function_tool.output", "tool.result", TOOL),
+    ("lk.participant_identity", "participant.name", ID),
+    ("lk.pii.participant_identity", "participant.name", ID),
+    ("lk.pii.sip.phoneNumber", "sip.phone_number", ID),
+    ("lk.rpc.caller_identity", "rpc.caller.participant.name", ID),
+    ("lk.rpc.destination_identity", "rpc.destination.participant.name", ID),
+    ("lk.room_name", "lk.pii.room_name", EXT),
+    ("lk.pii.room_name", "lk.pii.room_name", EXT),
+    ("lk.pii.rpc.payload", "lk.pii.rpc.payload", EXT),
+    ("lk.pii.rpc.response", "lk.pii.rpc.response", EXT),
+    ("lk.session_options", "lk.session_options", EXT),
+    ("lk.shutdown.reason", "lk.shutdown.reason", EXT),  # developer-authored free text
+    ("lk.blocking.stack", "lk.blocking.exception.stacktrace", DIAG),
+    ("lk.pre_connect_audio.duration", "lk.pre_connect.buffer_duration", M),
+    *((key, key, M) for key in LIVEKIT_METADATA_KEYS),
+]
+
+
+@pytest.mark.parametrize(
+    ("raw", "semantic", "capture_class"), LIVEKIT_KEYS, ids=[r[0] for r in LIVEKIT_KEYS]
+)
+def test_every_livekit_key_has_an_explicit_semantic_key_and_class(
+    raw, semantic, capture_class
+) -> None:
+    assert ATTRIBUTE_KEYS[raw].semantic_key == semantic
+    assert ATTRIBUTE_KEYS[raw].capture_class is capture_class
+    assert canonical_attribute_key(raw) == semantic
+    assert attribute_capture_class(raw) is capture_class
+
+
+def test_the_livekit_rows_of_the_table_are_exactly_the_reviewed_keys() -> None:
+    table = {key for key in ATTRIBUTE_KEYS if key.startswith("lk.")}
+
+    assert table == {row[0] for row in LIVEKIT_KEYS}
+
+
+@pytest.mark.parametrize(
+    ("key", "named_as"),
+    [
+        ("lk.future.transcript_text", T),  # the name says transcript; it is not trusted
+        ("lk.pii.some_future_key", M),
+        ("lk.future_metric", M),
+        ("lk.sip.trunkPhoneNumber", M),  # LiveKit copies SIP attributes under lk.sip.
+        ("lk.audio_stream", CaptureClass.AUDIO),
+    ],
+)
+def test_an_unreviewed_livekit_key_is_extension_payload_whatever_its_name_says(
+    key, named_as
+) -> None:
+    assert key not in ATTRIBUTE_KEYS
+    assert classify_attribute(key) is named_as
+    assert attribute_capture_class(key) is EXT
+    assert canonical_attribute_key(key) == key
+
+
+def test_every_livekit_key_of_the_real_1_8_capture_is_in_the_table() -> None:
+    keys = set()
+    for span in livekit_spans():
+        for message in (span.span, span.resource, span.scope, *span.span.events):
+            keys.update(item.key for item in message.attributes)
+
+    livekit = {key for key in keys if key.startswith("lk.")}
+    assert len(livekit) > 40
+    assert livekit <= set(ATTRIBUTE_KEYS)
+    assert {"lk.pii.user_transcript", "lk.pii.response.text", "lk.stt.events"} <= livekit
+
+
+# The keys whose class the OTLP path (this table) and the SDK classifier
+# (``privacy.classify_attribute``, which the recorder, validation and checkpoint
+# governance use) disagree on: the SDK files their semantic name under another
+# class. Making ``classify_attribute`` agree would re-class attributes of bundles
+# that 0.2.x SDKs already produced (their validation would fail) and would make
+# records mixing these with transcript or model content refused, so the table is
+# authoritative for OTLP and these stay listed here (the decision log carries them).
+SDK_CLASSIFIER_DIFFERENCES = {
+    "user_id": (ID, M),
+    "user.id": (ID, M),
+    "gen_ai.tool.definitions": (MODEL, M),
+    "gen_ai.tool.description": (MODEL, M),
+    "gen_ai.tool.call.arguments": (TOOL, M),
+    "gen_ai.tool.call.result": (TOOL, M),
+    "gen_ai.retrieval.query.text": (MODEL, M),
+    "gen_ai.retrieval.documents": (MODEL, M),
+    "gen_ai.memory.query.text": (MODEL, M),
+    "gen_ai.memory.records": (MODEL, M),
+    "gen_ai.evaluation.explanation": (MODEL, M),
+}
+# Keys outside the table that the OTLP path classifies by shape (identity, ``pii``).
+SDK_CLASSIFIER_SHAPE_DIFFERENCES = {
+    "enduser.id": (ID, M),
+    "caller.number": (ID, M),
+    "callee.number": (ID, M),
+    "user.phone": (ID, M),
+    "sip.from": (ID, M),
+    "sip.to": (ID, M),
+    "vendor.pii.note": (EXT, M),
+}
+
+
+def test_the_recorder_files_every_table_key_under_its_class_except_the_listed_ones() -> None:
+    differences = {
+        raw: (rule.capture_class, classify_attribute(rule.semantic_key))
+        for raw, rule in ATTRIBUTE_KEYS.items()
+        if not recorder_agrees(rule.semantic_key, rule.capture_class)
+    }
+
+    assert differences == SDK_CLASSIFIER_DIFFERENCES
+
+
+@pytest.mark.parametrize("key", sorted(SDK_CLASSIFIER_SHAPE_DIFFERENCES))
+def test_the_sdk_classifier_differs_from_the_otlp_one_only_on_the_listed_shapes(key) -> None:
+    otlp, sdk = SDK_CLASSIFIER_SHAPE_DIFFERENCES[key]
+
+    assert key not in ATTRIBUTE_KEYS
+    assert (attribute_capture_class(key), classify_attribute(key)) == (otlp, sdk)
+
+
+@pytest.mark.parametrize(
+    ("key", "capture_class", "agrees"),
+    [
+        ("lk.e2e_latency", M, True),  # safe metadata
+        ("lk.eou.probability", M, True),  # metadata the bundle keeps on the extension grant
+        ("lk.pii.room_name", EXT, True),  # the same gate, for content
+        ("lk.e2e_latency", EXT, False),  # safe metadata would leak extension payload
+        ("speech.text", T, True),
+        ("speech.text", MODEL, False),
+        ("gen_ai.tool.definitions", MODEL, False),
+    ],
+)
+def test_the_recorder_agrees_with_a_class_when_it_files_the_key_under_it(
+    key, capture_class, agrees
+) -> None:
+    assert recorder_agrees(key, capture_class) is agrees
 
 
 def _fixture_spans() -> list[OtlpSpan]:
@@ -317,7 +583,7 @@ def _with_unknown_field(message, secret: bytes):
 
 
 def test_metadata_only_stores_no_unknown_protobuf_fields() -> None:
-    """Tribunal round 1, L-3: fields outside the known schema are not metadata."""
+    """Fields outside the known schema are not metadata."""
 
     span = Span(trace_id=b"\x01" * 16, span_id=b"\x02" * 8, name="llm")
     span.events.add(name="exception", time_unix_nano=5)
@@ -342,7 +608,7 @@ def test_metadata_only_stores_no_unknown_protobuf_fields() -> None:
 
 
 def test_metadata_only_drops_phone_and_caller_identifiers() -> None:
-    """Tribunal round 1, L-6: these keys are identity, so ``metadata_only`` drops them."""
+    """These keys are identity, so ``metadata_only`` drops them."""
 
     identifiers = {
         "phone": "+14155550101",
@@ -373,7 +639,7 @@ def test_metadata_only_drops_phone_and_caller_identifiers() -> None:
 
 
 def test_classifying_sender_chosen_long_keys_retains_none_of_them() -> None:
-    """Tribunal round 2, Linus N-2: the classification memo pinned every distinct key
+    """The classification memo pinned every distinct key
     it saw, so one 4 MiB key per request grew the server by 4 MiB for good."""
 
     def one_long_key(index: int) -> None:

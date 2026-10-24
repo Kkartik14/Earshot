@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import hmac
@@ -41,6 +42,7 @@ from starlette.requests import ClientDisconnect
 
 from . import otlp_receiver
 from . import recordings as recording_media
+from . import transcripts as transcript_upload
 from .analysis import ANALYZER_VERSION
 from .auth import HostedJwksUnavailable, HostedJwtVerifier, InvalidHostedToken, validate_jwks_url
 from .blobstore import (
@@ -52,7 +54,14 @@ from .blobstore import (
     parse_content_digest,
 )
 from .browser_session import BrowserSessionStore
-from .call_capture import spans_from_request, valid_session_key
+from .call_capture import (
+    NOT_GIVEN,
+    any_value,
+    attribute_capture_class,
+    canonical_attribute_key,
+    spans_from_request,
+    valid_session_key,
+)
 from .capture import (
     CAPTURE_CALL_ID_PREFIX,
     CaptureCallCapacityError,
@@ -87,12 +96,7 @@ from .codec import (
     encode_incident_json,
     encode_incident_protobuf,
 )
-from .connectors import (
-    DeliveryError,
-    DeliveryTooLargeError,
-    HostedProviderIngestion,
-    RawProviderDelivery,
-)
+from .connectors import DeliveryError, HostedProviderIngestion
 from .contract import (
     DerivedAnalysis,
     HostedIncidentBundleJson,
@@ -137,12 +141,14 @@ from .maintenance import (
 )
 from .pipeline import pipeline
 from .privacy import (
+    CaptureClass,
     ExportPolicyError,
     HostedCapturePolicyError,
     assert_export_allowed,
     assert_hosted_metadata_only,
 )
 from .query import EvidenceQuery, compare_incidents, detect_contradictions
+from .signals import peaks as signal_peaks
 from .storage import (
     DATABASE_ERRORS,
     DEFAULT_PROJECT_ID,
@@ -161,10 +167,35 @@ from .storage import (
     StorageError,
     StoredAnalysis,
 )
+from .storage_analysis import SPOOL_DIRECTORY as ANALYSIS_SPOOL_DIRECTORY
+from .storage_analysis import AnalysisRunner, AnalysisStore, analysis_job
+from .storage_call_projections import CallProjector, projection_job
 from .storage_call_purge import CallNotFoundError, CallPurger, call_retention_job
-from .storage_call_reads import CallDetail, CallReads, CallRevision, CallSummary
+from .storage_call_reads import (
+    MAX_TAG_FILTERS,
+    SEARCH_MAX_LENGTH,
+    SEARCH_MIN_LENGTH,
+    CallDetail,
+    CallFilters,
+    CallProjectionSummary,
+    CallReads,
+    CallRevision,
+    CallSpan,
+    CallSummary,
+    ContentSearchForbiddenError,
+)
 from .storage_calls import CallStore, CallTimings, parked_trace_job
 from .storage_closer import Closer, MaterializerProcess, call_closer_job
+from .storage_dashboard import DashboardQuery, DashboardRangeError, DashboardReads
+from .storage_fetches import recording_fetch_job
+from .storage_prices import (
+    MODEL_MAX_LENGTH,
+    PROVIDER_MAX_LENGTH,
+    NewPrice,
+    Price,
+    PriceStore,
+    PriceUnit,
+)
 from .storage_recordings import (
     REQUEST_LOCK_BUDGET_SECONDS,
     Recording,
@@ -177,6 +208,7 @@ from .storage_recordings import (
     blob_sweep_job,
     recording_upload_sweep_job,
 )
+from .storage_transcripts import TranscriptStore
 from .summary import FRAMEWORK_NAME_MAX_LENGTH, summarize_project
 from .validation import (
     IncidentValidationError,
@@ -238,7 +270,7 @@ class ReadinessResponse(ApiModel):
 
 
 class OtlpStatsResponse(ApiModel):
-    """The OTLP receiver's rare-event counters and gauges for one project (AC5.12)."""
+    """The OTLP receiver's rare-event counters and gauges for one project."""
 
     rejected_spans: int
     span_conflicts: int
@@ -275,9 +307,196 @@ class CallRevisionResponse(CallRevisionSummary):
     created_unix_nano: str
 
 
+# --- a call's projection -------------------------------------------------------------------
+#
+# Times on a call's axis are integer milliseconds from ``axis_origin_unix_nano``; money
+# is integer nano-USD (1e-9 USD). An unknown value is null, never 0.
+
+CallAnalysisState = Literal["none", "pending", "stored", "partial", "failed", "unavailable"]
+SpanRole = Literal["stt", "llm", "tts", "tool", "other"]
+
+
+class CallCostResponse(ApiModel):
+    """A call's cost. ``lower_bound_nano_usd`` sums the priced items (null: the call
+    has no cost item); ``estimated_nano_usd`` sums the estimated ones (null: none);
+    ``unknown_items`` counts items with no price or no reported usage. ``complete``:
+    the call has cost items and none is unknown."""
+
+    lower_bound_nano_usd: int | None
+    estimated_nano_usd: int | None
+    unknown_items: int
+    complete: bool
+
+
+class CallProjectionResponse(ApiModel):
+    """A call's projection summary: what its revision ``revision``, that revision's
+    audio analyses and the prices say. Latency and gap values are milliseconds over
+    the call's turns (audible gap: its measurable turns only)."""
+
+    revision: int
+    agent: str | None
+    framework: str | None
+    outcome: str | None
+    tags: list[str]
+    duration_ms: int | None
+    turn_count: int
+    measurable_turns: int
+    reported_latency_p50_ms: int | None
+    reported_latency_max_ms: int | None
+    audible_gap_p50_ms: int | None
+    audible_gap_max_ms: int | None
+    cost: CallCostResponse
+    analysis_state: CallAnalysisState
+
+
+class MediaChannelResponse(ApiModel):
+    index: int
+    speaker: Literal["user", "agent", "mixed"]
+
+
+class CallMediaResponse(ApiModel):
+    """One playable audio source on the call's axis. A ``rendition`` (a stereo file
+    made from a mono pair on one timeline) stands for the recordings it names, which
+    are then not listed on their own. Paths are relative to the server's base URL;
+    ``peaks_path`` serves audiowaveform ``.dat`` peaks with one channel per entry of
+    ``channels`` (null until the analysis stores them)."""
+
+    source: Literal["recording", "rendition"]
+    recording_ids: list[str]
+    content_path: str
+    content_type: str
+    peaks_path: str | None
+    offset_ms: int
+    duration_ms: int | None
+    channels: list[MediaChannelResponse]
+    analysis_state: Literal["pending", "running", "stored", "failed", "unavailable"]
+    analysis_error_code: str | None
+
+
+class AudibleGapResponse(ApiModel):
+    """The gap at the agent between the user's speech ending and the agent's starting,
+    measured on one recorder timeline. ``measured``: ``value_ms`` ± ``uncertainty_ms``.
+    ``talk_over``: the agent started while the user spoke (no value).
+    ``not_measurable``: ``reason`` says why; ``bound_ms`` (± ``uncertainty_ms``) is an
+    upper bound only for a recorder timeline discontinuity on a recorder that only
+    inserts time. ``user_end_ms`` and ``agent_start_ms`` are the speech edges paired
+    with the turn, when found."""
+
+    status: Literal["measured", "talk_over", "not_measurable"]
+    value_ms: int | None
+    uncertainty_ms: int | None
+    bound_ms: int | None
+    user_end_ms: int | None
+    agent_start_ms: int | None
+    reason: (
+        Literal[
+            "recorder_timeline_discontinuity",
+            "no_agent_audio",
+            "no_clear_pairing",
+            "not_one_timeline",
+            "no_recording",
+            "analysis_not_stored",
+            "boundary_uncertainty_too_high",
+        ]
+        | None
+    )
+    basis: Literal["anchors_checked", "continuous_timeline_assumed"] | None
+
+
+class TurnSpanResponse(ApiModel):
+    """A span of a turn, for the lazy span route; times are span times on the axis."""
+
+    trace_id: str
+    span_id: str
+    name: str
+    role: SpanRole
+    status: Literal["unset", "ok", "error"]
+    start_ms: int
+    end_ms: int
+
+
+class CallTurnResponse(ApiModel):
+    """One turn: the framework-reported latency beside the audible gap."""
+
+    index: int
+    turn_id: str | None
+    start_ms: int | None
+    end_ms: int | None
+    reported_latency_ms: int | None
+    audible_gap: AudibleGapResponse
+    spans: list[TurnSpanResponse]
+
+
+class CallSignalsResponse(ApiModel):
+    """Conversation signals from the call's speech runs. ``one_timeline`` is null with
+    no analysed recording; when false, every cross-channel signal is null."""
+
+    one_timeline: bool | None
+    talk_time_user_ms: int | None
+    talk_time_agent_ms: int | None
+    overlap_ms: int | None
+    barge_in_count: int | None
+    talk_over_count: int | None
+    long_silence_count: int | None
+    dead_air_ms: int | None
+
+
+class SpanRefResponse(ApiModel):
+    trace_id: str
+    span_id: str
+
+
+class CostItemResponse(ApiModel):
+    """One cost item. ``priced`` and ``estimated`` items cost ``quantity`` units of
+    ``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),
+    rounded half up to a whole nano-USD; ``no_price`` has usage and no price row;
+    ``not_reported`` has no usage. ``span`` is where the usage was read, if one span."""
+
+    status: Literal["priced", "no_price", "not_reported", "estimated"]
+    operation: Literal["llm", "stt", "tts", "realtime"]
+    provider: str | None
+    model: str | None
+    unit: str | None
+    quantity: float | None
+    price_id: int | None
+    price_nano_usd: int | None
+    per_quantity: int | None
+    cost_nano_usd: int | None
+    span: SpanRefResponse | None
+
+
+class PlacedTranscriptLineResponse(ApiModel):
+    """A transcript line on the call's axis. ``timing``: ``measured`` lines have both
+    times, ``start_only`` a start, ``order_only`` neither (listed in order, never
+    placed). ``alignment_uncertain``: the line's turn had a timeline discontinuity."""
+
+    line_no: int
+    speaker: Literal["user", "agent"]
+    text: str
+    timing: Literal["measured", "start_only", "order_only"]
+    start_ms: int | None
+    end_ms: int | None
+    alignment_uncertain: bool
+    span: SpanRefResponse | None
+
+
+class CallProjectionDetailResponse(CallProjectionResponse):
+    """A call's projection as the call view shows it. The axis starts at the earliest
+    recording's start, or at the call's first evidence when it has no recording."""
+
+    axis_origin_unix_nano: str
+    axis_origin: Literal["recording_start", "first_evidence"]
+    media: list[CallMediaResponse]
+    turns: list[CallTurnResponse]
+    signals: CallSignalsResponse
+    cost_items: list[CostItemResponse]
+    transcript: list[PlacedTranscriptLineResponse]
+
+
 class CallSummaryResponse(ApiModel):
     """One call. ``session_key`` is null when it was not stored (``metadata_only``
-    projects and trace-keyed calls)."""
+    projects and trace-keyed calls). ``projection`` is null when ``projection_state``
+    is ``none``; a ``stale`` projection is served until its recomputation lands."""
 
     call_id: str
     key_source: str
@@ -289,32 +508,81 @@ class CallSummaryResponse(ApiModel):
     recording_count: int
     latest_revision: CallRevisionSummary | None
     materialize_error: str | None
+    projection_state: Literal["none", "stale", "current"]
+    projection: CallProjectionResponse | None
 
 
 class CallPageResponse(ApiModel):
+    """A page of calls. ``excluded_incomplete`` (only with ``max_cost_nano_usd``):
+    calls every other filter matches whose cost as known is within the cap, left out
+    because their cost has unknown items."""
+
     items: list[CallSummaryResponse]
     next_cursor: str | None
+    excluded_incomplete: int | None
 
 
 class TranscriptLineResponse(ApiModel):
-    """One transcript line and the span it was read from."""
+    """One transcript line and its timing provenance from the source span."""
 
     speaker: Literal["user", "agent"]
     text: str
-    start_unix_nano: str
-    end_unix_nano: str
+    timing: Literal["measured", "start_only", "order_only"]
+    start_unix_nano: str | None
+    end_unix_nano: str | None
     trace_id: str
     span_id: str
 
 
 class CallDetailResponse(CallSummaryResponse):
-    """One call with its revisions, recordings and transcript (read from its spans)."""
+    """One call with its revisions, recordings, transcript (read from its spans, so an
+    open call's grows) and projection."""
 
+    projection: CallProjectionDetailResponse | None
     revisions: list[CallRevisionResponse]
     recordings: list[RecordingResponse]
     evidence_after_latest_revision: bool
     transcript: list[TranscriptLineResponse]
     transcript_coverage: Literal["available", "not_captured_by_preset", "not_observed"]
+
+
+class SpanStatusResponse(ApiModel):
+    code: Literal["unset", "ok", "error"]
+    message: str | None
+
+
+class SpanAttributeResponse(ApiModel):
+    """One stored attribute: its key as sent, the semantic key Earshot reads it as,
+    its capture class, and its value (JSON; bytes as base64, a non-finite float as
+    its name)."""
+
+    key: str
+    semantic_key: str
+    capture_class: CaptureClass
+    value: Any
+
+
+class SpanEventResponse(ApiModel):
+    name: str
+    time_unix_nano: str
+    attributes: list[SpanAttributeResponse]
+
+
+class CallSpanResponse(ApiModel):
+    """One span of a call as it was stored: what the project's preset kept when the
+    span arrived (under ``metadata_only``, no content and no status message)."""
+
+    call_id: str
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None
+    name: str
+    scope_name: str
+    start_unix_nano: str
+    end_unix_nano: str
+    status: SpanStatusResponse
+    attributes: list[SpanAttributeResponse]
+    events: list[SpanEventResponse]
 
 
 _NO_NUL = r"^[^\x00]*$"
@@ -335,9 +603,14 @@ CallTimeNano = Annotated[
 ]
 
 
+ChannelSpeakers = Annotated[list[Literal["user", "agent"]], Field(min_length=1, max_length=2)]
+
+
 class RecordingCreateRequest(ApiModel):
     """A recording's manifest. Without ``recording_id`` the server mints a UUID, and
-    the request is then not idempotent."""
+    the request is then not idempotent. A ``mixed`` recording may name each
+    channel's speaker in ``channel_speakers`` (``user`` and ``agent`` at most once
+    each); its file then has that many channels."""
 
     recording_id: (
         Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")] | None
@@ -353,6 +626,7 @@ class RecordingCreateRequest(ApiModel):
         ]
         | None
     ) = None
+    channel_speakers: ChannelSpeakers | None = None
 
 
 class RecordingResponse(ApiModel):
@@ -371,6 +645,33 @@ class RecordingResponse(ApiModel):
     duration_ms: int | None
     created_unix_nano: str
     stored_unix_nano: str | None
+    channel_speakers: list[Literal["user", "agent"]] | None
+
+
+class RecordingTranscriptResponse(ApiModel):
+    """The transcript a recording holds: its format, the timing its lines have
+    (``measured`` for WebVTT, ``order_only`` for plain text), how many lines, and the
+    sha256 of the lines as parsed (the same transcript, re-sent, has the same one)."""
+
+    recording_id: str
+    call_id: str
+    format: Literal["vtt", "text"]
+    timing: Literal["measured", "order_only"]
+    line_count: int
+    sha256: str
+
+
+def _transcript_body(
+    recording: Recording, transcript: transcript_upload.Transcript
+) -> dict[str, Any]:
+    return {
+        "recording_id": recording.recording_id,
+        "call_id": recording.call_id,
+        "format": transcript.format,
+        "timing": transcript.timing,
+        "line_count": len(transcript.lines),
+        "sha256": transcript.digest(),
+    }
 
 
 def _recording_body(recording: Recording) -> dict[str, Any]:
@@ -389,6 +690,9 @@ def _recording_body(recording: Recording) -> dict[str, Any]:
         "created_unix_nano": str(recording.created_unix_nano),
         "stored_unix_nano": (
             None if recording.stored_unix_nano is None else str(recording.stored_unix_nano)
+        ),
+        "channel_speakers": (
+            None if recording.channel_speakers is None else list(recording.channel_speakers)
         ),
     }
 
@@ -423,12 +727,113 @@ def _call_summary_body(call: CallSummary) -> dict[str, Any]:
             else _call_revision_body(call.latest_revision, detail=False)
         ),
         "materialize_error": call.materialize_error,
+        "projection_state": call.projection_state,
+        "projection": None if call.projection is None else _projection_body(call.projection),
     }
 
 
-def _call_detail_body(call: CallDetail) -> dict[str, Any]:
+def _projection_body(projection: CallProjectionSummary) -> dict[str, Any]:
+    lower_bound = projection.cost_lower_bound_nano_usd
     return {
-        **_call_summary_body(call.summary),
+        "revision": projection.revision,
+        "agent": projection.agent,
+        "framework": projection.framework,
+        "outcome": projection.outcome,
+        "tags": list(projection.tags),
+        "duration_ms": projection.duration_ms,
+        "turn_count": projection.turn_count,
+        "measurable_turns": projection.measurable_turns,
+        "reported_latency_p50_ms": projection.reported_latency_p50_ms,
+        "reported_latency_max_ms": projection.reported_latency_max_ms,
+        "audible_gap_p50_ms": projection.audible_gap_p50_ms,
+        "audible_gap_max_ms": projection.audible_gap_max_ms,
+        "cost": {
+            "lower_bound_nano_usd": lower_bound,
+            "estimated_nano_usd": projection.cost_estimated_nano_usd,
+            "unknown_items": projection.cost_unknown_items,
+            "complete": lower_bound is not None and projection.cost_unknown_items == 0,
+        },
+        "analysis_state": projection.analysis_state,
+    }
+
+
+def _json_value(value: Any) -> Any:
+    """An attribute value as JSON can carry it: bytes as base64, a non-finite float
+    as its name."""
+
+    if isinstance(value, bytes):
+        return base64.b64encode(value).decode("ascii")
+    if isinstance(value, float) and not math.isfinite(value):
+        return "NaN" if math.isnan(value) else ("Infinity" if value > 0 else "-Infinity")
+    if isinstance(value, list):
+        return [_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    return value
+
+
+def _span_attributes(attributes: Any) -> list[dict[str, Any]]:
+    """Stored attributes in order; an unset or ``NOT_GIVEN`` value is absent, and the
+    first of a repeated key wins (``attribute_values``'s reading)."""
+
+    seen: set[str] = set()
+    body = []
+    for item in attributes:
+        value = any_value(item.value)
+        if value is None or value == NOT_GIVEN or item.key in seen:
+            continue
+        seen.add(item.key)
+        body.append(
+            {
+                "key": item.key,
+                "semantic_key": canonical_attribute_key(item.key),
+                "capture_class": attribute_capture_class(item.key).value,
+                "value": _json_value(value),
+            }
+        )
+    return body
+
+
+_SPAN_STATUS_CODES = {0: "unset", 1: "ok", 2: "error"}
+
+
+def _call_span_body(found: CallSpan) -> dict[str, Any]:
+    span = found.span
+    return {
+        "call_id": found.call_id,
+        "trace_id": span.trace_id.hex(),
+        "span_id": span.span_id.hex(),
+        "parent_span_id": span.parent_span_id.hex() or None,
+        "name": span.name,
+        "scope_name": found.scope_name,
+        "start_unix_nano": str(span.start_time_unix_nano),
+        "end_unix_nano": str(span.end_time_unix_nano),
+        "status": {
+            "code": _SPAN_STATUS_CODES.get(span.status.code, "unset"),
+            "message": span.status.message or None,
+        },
+        "attributes": _span_attributes(span.attributes),
+        "events": [
+            {
+                "name": event.name,
+                "time_unix_nano": str(event.time_unix_nano),
+                "attributes": _span_attributes(event.attributes),
+            }
+            for event in span.events
+        ],
+    }
+
+
+def _price_body(price: Price) -> dict[str, Any]:
+    return price.document()
+
+
+def _call_detail_body(call: CallDetail) -> dict[str, Any]:
+    summary = _call_summary_body(call.summary)
+    if summary["projection"] is not None and call.projection_detail is not None:
+        summary["projection"] = {**summary["projection"], **call.projection_detail}
+    return {
+        **summary,
         "revisions": [_call_revision_body(revision, detail=True) for revision in call.revisions],
         "recordings": [_recording_body(recording) for recording in call.recordings],
         "evidence_after_latest_revision": call.summary.evidence_after_latest_revision,
@@ -436,8 +841,11 @@ def _call_detail_body(call: CallDetail) -> dict[str, Any]:
             {
                 "speaker": line.speaker,
                 "text": line.text,
-                "start_unix_nano": str(line.start_unix_nano),
-                "end_unix_nano": str(line.end_unix_nano),
+                "timing": line.timing,
+                "start_unix_nano": (
+                    None if line.timing == "order_only" else str(line.start_unix_nano)
+                ),
+                "end_unix_nano": (str(line.end_unix_nano) if line.timing == "measured" else None),
                 "trace_id": line.trace_id,
                 "span_id": line.span_id,
             }
@@ -445,6 +853,209 @@ def _call_detail_body(call: CallDetail) -> dict[str, Any]:
         ],
         "transcript_coverage": call.transcript_coverage,
     }
+
+
+def _if_none_match(header: str | None, etag: str) -> bool:
+    """Whether an ``If-None-Match`` header names ``etag`` (weak comparison) or is ``*``."""
+
+    if header is None:
+        return False
+    if header.strip() == "*":
+        return True
+    return any(candidate.strip().removeprefix("W/") == etag for candidate in header.split(","))
+
+
+def _lower_hex(value: str, length: int) -> bool:
+    return len(value) == length and all(char in "0123456789abcdef" for char in value)
+
+
+# One ``tag`` filter value of the call list.
+CallTagFilter = Annotated[str, StringConstraints(min_length=1, max_length=256, pattern=_NO_NUL)]
+_INT64_MAX = 2**63 - 1
+
+
+def _int64_string(value: str) -> str:
+    if int(value) > _INT64_MAX:
+        raise ValueError("the value must be at most 2^63 - 1")
+    return value
+
+
+# A Unix nanosecond time in [0, 2^63 - 1], as a decimal string.
+UnixNanoString = Annotated[
+    str,
+    StringConstraints(pattern=r"^(0|[1-9][0-9]{0,18})$"),
+    AfterValidator(_int64_string),
+]
+# A provider or model name: printable ASCII without spaces (stored lower-cased).
+_PRICE_NAME = r"^[!-~]+$"
+
+
+class PriceCreateRequest(ApiModel):
+    """A price for the caller's project: ``price_nano_usd`` per ``per_quantity`` units
+    of ``unit``, in effect for calls whose first evidence is at or after
+    ``effective_from_unix_nano``. ``provider`` and ``model`` match usage exactly,
+    lower-cased."""
+
+    provider: Annotated[
+        str, StringConstraints(min_length=1, max_length=PROVIDER_MAX_LENGTH, pattern=_PRICE_NAME)
+    ]
+    model: Annotated[
+        str, StringConstraints(min_length=1, max_length=MODEL_MAX_LENGTH, pattern=_PRICE_NAME)
+    ]
+    unit: PriceUnit
+    price_nano_usd: Annotated[int, Field(ge=0, le=_INT64_MAX)]
+    per_quantity: Annotated[int, Field(ge=1, le=_INT64_MAX)] = 1
+    effective_from_unix_nano: UnixNanoString
+    source_url: (
+        Annotated[str, StringConstraints(max_length=2048, pattern=r"^https?://[!-~]+$")] | None
+    ) = None
+    note: Annotated[str, StringConstraints(max_length=1024, pattern=_NO_NUL)] | None = None
+
+
+class PriceResponse(ApiModel):
+    """One price row. ``scope`` ``builtin`` rows ship with Earshot or are added by the
+    operator; ``project`` rows are the caller's and win over built-ins."""
+
+    id: int
+    scope: Literal["builtin", "project"]
+    provider: str
+    model: str
+    unit: str
+    price_nano_usd: int
+    per_quantity: int
+    effective_from_unix_nano: str
+    source_url: str | None
+    note: str | None
+    created_unix_nano: str
+
+
+class PricePageResponse(ApiModel):
+    items: list[PriceResponse]
+    next_cursor: str | None
+
+
+# --- the dashboard --------------------------------------------------------------------------
+#
+# Every tile names the calls it covers: ``calls`` of ``of_calls``. A call whose value
+# is unknown is not covered, and its value is never read as 0.
+
+
+class DashboardLatencyResponse(ApiModel):
+    """Nearest-rank percentiles over **turns** (not over each call's median), from each
+    call's projection: ``turns`` with a value of ``of_turns``, in ``calls`` of
+    ``of_calls``. Null percentiles: no turn has a value."""
+
+    p50_ms: int | None
+    p95_ms: int | None
+    turns: int
+    of_turns: int
+    calls: int
+    of_calls: int
+
+
+class DashboardLlmProviderResponse(ApiModel):
+    """One LLM provider's first-token latency on one measurement basis (values on
+    different bases do not compare): from the turn's end to the LLM's first token
+    (``first_token``), or as the provider timed its own stage
+    (``provider_stage_direct``)."""
+
+    provider: str | None
+    basis: str
+    p50_ms: int
+    p95_ms: int
+    turns: int
+    calls: int
+
+
+class DashboardLlmLatencyResponse(ApiModel):
+    providers: list[DashboardLlmProviderResponse]
+    calls: int
+    of_calls: int
+
+
+class DashboardInterruptionsResponse(ApiModel):
+    """The interruption rate is ``barge_ins / turns``, over the calls whose barge-ins
+    were measured (a recording on one timeline). ``barge_ins``: null with none."""
+
+    barge_ins: int | None
+    turns: int
+    calls: int
+    of_calls: int
+
+
+class DashboardDeadAirResponse(ApiModel):
+    """Dead air over call time (``dead_air_ms / duration_ms``), over the calls with a
+    recording on one timeline. Both null when no call measured it."""
+
+    dead_air_ms: int | None
+    duration_ms: int | None
+    calls: int
+    of_calls: int
+
+
+class DashboardCostRateResponse(ApiModel):
+    """``cost_nano_usd`` over ``duration_ms`` of the covered calls, as integer nano-USD
+    per minute (rounded half up). All three null when no call is covered."""
+
+    nano_usd_per_minute: int | None
+    cost_nano_usd: int | None
+    duration_ms: int | None
+    calls: int
+    of_calls: int
+
+
+class DashboardProviderCostRateResponse(DashboardCostRateResponse):
+    """What hosted providers reported the calls cost; ``bases`` names the fields it
+    was read from."""
+
+    bases: list[str]
+
+
+class DashboardCostResponse(ApiModel):
+    """Earshot's cost (complete costs only: priced items plus the STT estimate) and
+    the provider-reported cost, side by side. They are never added together: a
+    provider's cost already includes the stages Earshot prices."""
+
+    earshot: DashboardCostRateResponse
+    provider: DashboardProviderCostRateResponse
+
+
+class DashboardTilesResponse(ApiModel):
+    calls: int
+    reported_latency: DashboardLatencyResponse
+    audible_gap: DashboardLatencyResponse
+    llm_first_token: DashboardLlmLatencyResponse
+    interruption_rate: DashboardInterruptionsResponse
+    dead_air: DashboardDeadAirResponse
+    cost_per_minute: DashboardCostResponse
+
+
+class DashboardBucketResponse(ApiModel):
+    start_unix_nano: str
+    tiles: DashboardTilesResponse
+
+
+class DashboardGroupResponse(ApiModel):
+    """The calls whose agent or framework is ``value`` (null: unknown)."""
+
+    value: str | None
+    tiles: DashboardTilesResponse
+
+
+class DashboardResponse(ApiModel):
+    """The project's projected calls that started in ``[from, to)``: ``overall``, one
+    entry per UTC ``bucket`` overlapping the range (empty ones included), and one per
+    group, most calls first. ``not_projected_calls``: calls received in the range that
+    have no projection yet, so are not placed."""
+
+    from_unix_nano: str
+    to_unix_nano: str
+    bucket: Literal["hour", "day"]
+    group_by: Literal["framework", "agent"]
+    not_projected_calls: int
+    overall: DashboardTilesResponse
+    buckets: list[DashboardBucketResponse]
+    groups: list[DashboardGroupResponse]
 
 
 class BrowserSessionResponse(ApiModel):
@@ -648,10 +1259,18 @@ class TurnMetricSummaryResponse(ApiModel):
 
 
 class ConnectorDeliveryResponse(ApiModel):
-    receipt_id: str
-    disposition: Literal["applied", "replayed", "ignored"]
-    bundle_id: str | None
-    canonical_sha256: str | None
+    """What a connector hook did with a delivery.
+
+    ``applied``: its evidence went to ``call_id``. ``replayed``: a retry of a delivery
+    already applied (``call_id`` is that call; ``null`` for one applied before 0.4).
+    ``purged``: the call it describes was purged, so nothing was kept (``call_id``
+    ``null``). ``ignored``: an event this connector does not consume; nothing was
+    written and there is no receipt.
+    """
+
+    receipt_id: str | None
+    disposition: Literal["applied", "replayed", "purged", "ignored"]
+    call_id: str | None
 
 
 class ContradictionResponse(ApiModel):
@@ -1157,7 +1776,7 @@ _CONNECTOR_ERROR_RESPONSES = {
             else {}
         ),
     }
-    for status in (400, 401, 404, 409, 413, 415, 429, 500, 503)
+    for status in (400, 401, 404, 409, 413, 415, 422, 429, 500, 503)
 }
 
 _OTLP_BINARY = {"schema": {"type": "string", "format": "binary"}}
@@ -1238,6 +1857,8 @@ _OTLP_TRACES_REQUEST = {
 }
 
 _AUDIO_BINARY = {"schema": {"type": "string", "format": "binary"}}
+# The names the recordings API's error messages give the formats whose headers it reads.
+_MEDIA_FORMAT_NAMES = {"wav": "WAV", "flac": "FLAC", "ogg": "Ogg Opus"}
 # A recording upload reaches the blob store in writes of about this size.
 _RECORDING_WRITE_BYTES = 1024 * 1024
 # A recording upload that receives no body bytes for this long is ended with 408
@@ -1264,6 +1885,15 @@ _RECORDING_UPLOAD_REQUEST = {
         },
     },
 }
+_TRANSCRIPT_UPLOAD_REQUEST = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            media_type: {"schema": {"type": "string"}}
+            for media_type in transcript_upload.MEDIA_TYPES
+        },
+    },
+}
 _RECORDING_CONTENT_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: {
         "description": "The whole recording.",
@@ -1280,6 +1910,31 @@ _RECORDING_CONTENT_RESPONSES: dict[int | str, dict[str, Any]] = {
     416: {"model": ProblemResponse, "description": "The range starts past the end."},
     **_ERROR_RESPONSES,
 }
+
+_RECORDING_PEAKS_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "An audiowaveform .dat file, version 2, 8-bit.",
+        "content": {"application/octet-stream": _AUDIO_BINARY},
+    },
+    304: {"description": "Not modified: the If-None-Match ETag is current."},
+    **_ERROR_RESPONSES,
+}
+_RECORDING_RENDITION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"description": "The whole rendition.", "content": {"audio/flac": _AUDIO_BINARY}},
+    206: {
+        "description": "The one byte range the Range header asked for.",
+        "content": {"audio/flac": _AUDIO_BINARY},
+    },
+    416: {"model": ProblemResponse, "description": "The range starts past the end."},
+    **_ERROR_RESPONSES,
+}
+
+
+def _blob_etag(*keys: str) -> str:
+    """A strong ETag for derived blobs: their keys' last components, unique per write."""
+
+    return '"' + ".".join(key.rsplit("/", 1)[-1] for key in keys) + '"'
+
 
 _INCIDENT_REQUEST_BODY = {
     "parameters": [
@@ -1614,11 +2269,11 @@ _HOSTED_SCOPE_BY_METHOD: dict[str, str] = {
 }
 
 
-# Operator-only call surfaces: OTLP export, calls, recordings and the receiver's
-# stats. No hosted scope is defined for them yet, for any method, so a hosted JWT
-# gets 403 ``EARSHOT_OPERATION_UNAVAILABLE`` (AC5.8).
-_HOSTED_UNAVAILABLE_PATHS = ("/v1/traces", "/v1/otlp/stats")
-_HOSTED_UNAVAILABLE_PREFIXES = ("/v1/calls", "/v1/recordings")
+# Operator-only call surfaces: OTLP export, calls, recordings, prices, the dashboard
+# over calls, and the receiver's stats. No hosted scope is defined for them yet, for
+# any method, so a hosted JWT gets 403 ``EARSHOT_OPERATION_UNAVAILABLE``.
+_HOSTED_UNAVAILABLE_PATHS = ("/v1/traces", "/v1/otlp/stats", "/v1/dashboard")
+_HOSTED_UNAVAILABLE_PREFIXES = ("/v1/calls", "/v1/recordings", "/v1/prices")
 
 
 def _hosted_required_scope(method: str, path: str) -> str | None:
@@ -1834,29 +2489,6 @@ def _inflate(
     if not decompressor.eof or decompressor.unused_data or not (decoded or allow_empty):
         raise malformed
     return bytes(decoded)
-
-
-async def _read_connector_body(request: Request, maximum: int) -> bytes:
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            if int(content_length) > maximum:
-                raise DeliveryTooLargeError
-        except ValueError as error:
-            raise ApiProblem(
-                400,
-                "EARSHOT_INVALID_CONTENT_LENGTH",
-                "invalid Content-Length header",
-            ) from error
-
-    body = bytearray()
-    async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > maximum:
-            raise DeliveryTooLargeError
-    if not body:
-        raise ApiProblem(400, "EARSHOT_EMPTY_BODY", "connector body is empty")
-    return bytes(body)
 
 
 def _strict_json_preflight(payload: bytes, maximum_depth: int, *, subject: str = "incident") -> Any:
@@ -2792,6 +3424,8 @@ def create_app(
 
     calls = CallStore(repository, timings=call_timings)
     call_reads = CallReads(repository)
+    prices = PriceStore(repository)
+    dashboard = DashboardReads(repository)
     if blob_store is None and repository.data_dir is not None:
         blob_store = LocalBlobStore(repository.data_dir / "blobs")
     recordings = RecordingStore(repository, calls=calls, blobs=blob_store)
@@ -2804,14 +3438,31 @@ def create_app(
     if server_lock is not None:
         maintenance.add_job("database-server-lock", database_lock_watchdog(server_lock))
     # Opening the store never re-projects; incidents whose projections predate
-    # this release converge here, after the server is serving (AC1.10).
+    # this release converge here, after the server is serving.
     maintenance.add_job("incident-reprojection", reprojection_job(repository))
     if blob_store is not None:
         # At startup: what crashed uploads left (spool files, multipart uploads).
         maintenance.add_job("blob-spool-sweep", blob_sweep_job(blob_store))
         maintenance.add_job("blob-deletions", blob_deletion_job(recordings))
     maintenance.add_job("recording-upload-sweep", recording_upload_sweep_job(recordings))
-    # Calls (FR-6): close due calls into revisions; resolve parked traces (AC4.4).
+    # Each stored recording is analysed in a child process of its own, never
+    # in this interpreter; the copy it reads is spooled in the data directory.
+    analyses = AnalysisStore(repository)
+    if blob_store is not None:
+        data_root = repository.data_dir or Path(data_dir).expanduser().resolve()
+        analysis_runner = AnalysisRunner(
+            analyses, blobs=blob_store, spool_root=data_root / ANALYSIS_SPOOL_DIRECTORY
+        )
+        maintenance.add_job("recording-analysis", analysis_job(analysis_runner))
+        # Provider recordings a connector delivery named are fetched here, never in
+        # the hook's request, through the SSRF-guarded fetcher.
+        maintenance.add_job(
+            "recording-fetch",
+            recording_fetch_job(
+                repository, recordings=recordings, max_bytes=settings.recording_max_bytes
+            ),
+        )
+    # Calls: close due calls into revisions; resolve parked traces.
     # Revisions are built in a child process the loop starts and stops, never in
     # the interpreter that answers OTLP requests.
     closer = Closer(
@@ -2821,6 +3472,9 @@ def create_app(
     maintenance.add_job("parked-trace-collection", parked_trace_job(calls))
     # A call whose latest revision expired goes whole, never revision by revision.
     maintenance.add_job("call-retention", call_retention_job(call_purger))
+    # Each call's projection (list columns, call view) follows its revisions, its
+    # analyses and the prices; the built-in prices are seeded at start.
+    maintenance.add_job("call-projection", projection_job(CallProjector(repository)))
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -2878,6 +3532,7 @@ def create_app(
     app.state.analyzer = analyzer
     app.state.connector_ingestion = connector_ingestion or HostedProviderIngestion(
         repository,
+        calls=calls,
         max_body_bytes=settings.max_connector_body_bytes,
         max_json_depth=settings.max_json_depth,
         max_deliveries_per_minute=settings.max_connector_deliveries_per_minute,
@@ -3216,7 +3871,10 @@ def create_app(
         # The Host check stops DNS rebinding against a server that answers without
         # a credential: a loopback listener with no token, or a trusted local
         # network. Behind a TLS proxy every request needs a credential and the
-        # proxy forwards the public Host, so the check does not apply there.
+        # proxy forwards the public Host, so the check does not apply there. It
+        # guards ``/v1`` only: a connector hook carries its own provider credential,
+        # which a rebinding page cannot send, and a tunnel to a laptop forwards the
+        # public Host (rewriting it would expose ``/v1`` instead).
         local_only_host_boundary = settings.auth_mode != "hosted_jwt" and (
             settings.trust_local_network
             or (
@@ -3228,16 +3886,16 @@ def create_app(
         principal = None
         if (
             local_only_host_boundary
-            and transport_protected_path
+            and request.url.path.startswith("/v1/")
             and not _host_header_is_loopback(request.headers.get("host", ""))
         ):
             # Under trust_local_network a valid project API key or the operator
             # token is exempt: a rebinding page cannot send a credential it does not
-            # have (AC5.9). This is what lets a bot in another container export to
+            # have. This is what lets a bot in another container export to
             # http://earshot:4319.
             supplied = _bearer_credential(request.headers.get("authorization", ""))
             exempt = False
-            if settings.trust_local_network and supplied and request.url.path.startswith("/v1/"):
+            if settings.trust_local_network and supplied:
                 exempt = _is_operator_token(settings, supplied)
                 if not exempt:
                     principal = await run_in_threadpool(repository.authenticate_api_key, supplied)
@@ -3691,7 +4349,15 @@ def create_app(
         description=(
             "The authenticated project's calls, newest first evidence first. Pages are "
             "keyed on each call's first evidence time and ID, which never change, so "
-            "paging is stable while calls arrive and receive evidence."
+            "paging is stable while calls arrive and receive evidence. Every filter "
+            "given must match, and a filter never matches an unknown (null) value or a "
+            "call without a projection. Latency and audible-gap bounds compare the "
+            "call's p50 in ms; tag repeats (all must match); min_cost_nano_usd compares "
+            "the cost lower bound; max_cost_nano_usd matches complete costs only (lower "
+            "bound plus estimate) and reports excluded_incomplete. q is a substring of "
+            "the transcript (at least 3 characters, % and _ literal, ASCII case folded); "
+            "under the metadata_only preset it is 422 "
+            "EARSHOT_PRESET_FORBIDS_CONTENT_SEARCH."
         ),
     )
     def list_calls_endpoint(
@@ -3699,19 +4365,52 @@ def create_app(
         state: Literal["open", "closed"] | None = None,
         limit: int = Query(default=settings.default_page_size, ge=1, le=100),
         cursor: str | None = None,
+        agent: Annotated[str | None, Query(min_length=1, max_length=256, pattern=_NO_NUL)] = None,
+        outcome: Annotated[str | None, Query(min_length=1, max_length=256, pattern=_NO_NUL)] = None,
+        tag: Annotated[list[CallTagFilter], Query(max_length=MAX_TAG_FILTERS)] = [],  # noqa: B006
+        min_reported_latency_ms: Annotated[int | None, Query(ge=0, le=_INT64_MAX)] = None,
+        max_reported_latency_ms: Annotated[int | None, Query(ge=0, le=_INT64_MAX)] = None,
+        min_audible_gap_ms: Annotated[int | None, Query(ge=0, le=_INT64_MAX)] = None,
+        max_audible_gap_ms: Annotated[int | None, Query(ge=0, le=_INT64_MAX)] = None,
+        min_cost_nano_usd: Annotated[int | None, Query(ge=0, le=_INT64_MAX)] = None,
+        max_cost_nano_usd: Annotated[int | None, Query(ge=0, le=_INT64_MAX)] = None,
+        q: Annotated[
+            str | None,
+            Query(min_length=SEARCH_MIN_LENGTH, max_length=SEARCH_MAX_LENGTH, pattern=_NO_NUL),
+        ] = None,
     ) -> JSONResponse:
+        filters = CallFilters(
+            agent=agent,
+            outcome=outcome,
+            tags=tuple(tag),
+            min_reported_latency_ms=min_reported_latency_ms,
+            max_reported_latency_ms=max_reported_latency_ms,
+            min_audible_gap_ms=min_audible_gap_ms,
+            max_audible_gap_ms=max_audible_gap_ms,
+            min_cost_nano_usd=min_cost_nano_usd,
+            max_cost_nano_usd=max_cost_nano_usd,
+            q=q,
+        )
         try:
             page = call_reads.list_calls(
-                request.state.project_id, state=state, limit=limit, cursor=cursor
+                request.state.project_id, state=state, limit=limit, cursor=cursor, filters=filters
             )
         except InvalidCursorError as error:
             raise ApiProblem(
                 400, "EARSHOT_INVALID_CURSOR", "invalid call pagination cursor"
             ) from error
+        except ContentSearchForbiddenError as error:
+            raise ApiProblem(
+                422,
+                error.code,
+                "the project's capture preset stores no transcript to search",
+                headers={"Cache-Control": "no-store"},
+            ) from error
         return JSONResponse(
             {
                 "items": [_call_summary_body(item) for item in page.items],
                 "next_cursor": page.next_cursor,
+                "excluded_incomplete": page.excluded_incomplete,
             },
             headers={"Cache-Control": "no-store"},
         )
@@ -3719,18 +4418,50 @@ def create_app(
     @app.get(
         "/v1/calls/{call_id}",
         response_model=CallDetailResponse,
-        responses=_ERROR_RESPONSES,
+        responses={
+            304: {"description": "Not modified: the If-None-Match ETag is current."},
+            **_ERROR_RESPONSES,
+        },
         description=(
-            "One call with its revisions, recordings and transcript. The transcript is "
-            "read from the call's spans, so an open call's transcript grows as they "
-            "arrive; under metadata_only it is empty (not_captured_by_preset)."
+            "One call with its revisions, recordings, transcript and projection. The "
+            "transcript is read from the call's spans, so an open call's transcript "
+            "grows as they arrive; under metadata_only it is empty "
+            "(not_captured_by_preset). projection is null until the call is projected. "
+            "The reply carries an ETag; a request whose If-None-Match names it is 304."
         ),
     )
-    def get_call_endpoint(call_id: str, request: Request) -> JSONResponse:
+    def get_call_endpoint(call_id: str, request: Request) -> Response:
         detail = call_reads.get_call(request.state.project_id, call_id)
         if detail is None:
             raise ApiProblem(404, "EARSHOT_CALL_NOT_FOUND", "call not found")
-        return JSONResponse(_call_detail_body(detail), headers={"Cache-Control": "no-store"})
+        response = JSONResponse(_call_detail_body(detail), headers={"Cache-Control": "no-store"})
+        etag = f'"sha256:{hashlib.sha256(response.body).hexdigest()}"'
+        if _if_none_match(request.headers.get("if-none-match"), etag):
+            return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-store"})
+        response.headers["ETag"] = etag
+        return response
+
+    @app.get(
+        "/v1/calls/{call_id}/spans/{trace_id}/{span_id}",
+        response_model=CallSpanResponse,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "One span of the call as it was stored (lowercase hex IDs): its attributes "
+            "with their semantic keys and capture classes, its events and its status. "
+            "404 EARSHOT_SPAN_NOT_FOUND unless the span's trace belongs to this call."
+        ),
+    )
+    def get_call_span_endpoint(
+        call_id: str, trace_id: str, span_id: str, request: Request
+    ) -> JSONResponse:
+        found = None
+        if _lower_hex(trace_id, 32) and _lower_hex(span_id, 16):
+            found = call_reads.get_span(
+                request.state.project_id, call_id, bytes.fromhex(trace_id), bytes.fromhex(span_id)
+            )
+        if found is None:
+            raise ApiProblem(404, "EARSHOT_SPAN_NOT_FOUND", "span not found")
+        return JSONResponse(_call_span_body(found), headers={"Cache-Control": "no-store"})
 
     @app.delete(
         "/v1/calls/{call_id}",
@@ -3749,7 +4480,109 @@ def create_app(
             raise ApiProblem(404, error.code, "call not found") from error
         return Response(status_code=204)
 
-    # --- recordings (FR-9) ---------------------------------------------------------------
+    # --- prices --------------------------------------------------------------------------
+
+    @app.get(
+        "/v1/prices",
+        response_model=PricePageResponse,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "The built-in prices and the authenticated project's own, oldest first. "
+            "Money is integer nano-USD: price_nano_usd per per_quantity units."
+        ),
+    )
+    def list_prices_endpoint(
+        request: Request,
+        limit: int = Query(default=settings.default_page_size, ge=1, le=100),
+        cursor: str | None = None,
+    ) -> JSONResponse:
+        try:
+            page = prices.list_prices(request.state.project_id, limit=limit, cursor=cursor)
+        except InvalidCursorError as error:
+            raise ApiProblem(
+                400, "EARSHOT_INVALID_CURSOR", "invalid price pagination cursor"
+            ) from error
+        return JSONResponse(
+            {"items": [_price_body(item) for item in page.items], "next_cursor": page.next_cursor},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(
+        "/v1/prices",
+        response_model=PriceResponse,
+        status_code=201,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "Add a price for the authenticated project (append-only; it wins over a "
+            "built-in price for the same provider, model and unit). Projections priced "
+            "before it become stale and are recomputed."
+        ),
+    )
+    def create_price_endpoint(body: PriceCreateRequest, request: Request) -> JSONResponse:
+        price = prices.add(
+            request.state.project_id,
+            NewPrice(
+                provider=body.provider,
+                model=body.model,
+                unit=body.unit,
+                price_nano_usd=body.price_nano_usd,
+                per_quantity=body.per_quantity,
+                effective_from_unix_nano=int(body.effective_from_unix_nano),
+                source_url=body.source_url,
+                note=body.note,
+            ),
+            budget_s=REQUEST_LOCK_BUDGET_SECONDS,
+        )
+        return JSONResponse(_price_body(price), status_code=201)
+
+    # --- the dashboard -------------------------------------------------------------------
+
+    @app.get(
+        "/v1/dashboard",
+        response_model=DashboardResponse,
+        responses=_ERROR_RESPONSES,
+        description=(
+            "Call volume, latency, interruptions, dead air and cost per minute for the "
+            "authenticated project's projected calls that started in [from, to) (Unix "
+            "nanoseconds, by each call's own evidence start), overall, per UTC hour or "
+            "day bucket, and per framework or agent. Latency percentiles are "
+            "nearest-rank over turns. Every tile names the calls it covers (calls of "
+            "of_calls); an unknown value is never counted as 0. Earshot's and the "
+            "provider's cost are reported side by side, never summed. At most "
+            "1000 buckets."
+        ),
+    )
+    def dashboard_endpoint(
+        request: Request,
+        from_unix_nano: Annotated[UnixNanoString, Query(alias="from")],
+        to_unix_nano: Annotated[UnixNanoString, Query(alias="to")],
+        bucket: Literal["hour", "day"] = "day",
+        group_by: Literal["framework", "agent"] = "framework",
+    ) -> JSONResponse:
+        try:
+            query = DashboardQuery(
+                int(from_unix_nano), int(to_unix_nano), bucket=bucket, group_by=group_by
+            )
+        except DashboardRangeError as error:
+            raise ApiProblem(
+                422,
+                "EARSHOT_INVALID_REQUEST",
+                "request parameters are invalid",
+                issues=[
+                    {
+                        "code": "EARSHOT_INVALID_REQUEST_FIELD",
+                        "path": ["query", error.parameter],
+                        "message": str(error),
+                        "severity": "error",
+                    }
+                ],
+            ) from error
+        return JSONResponse(
+            dashboard.dashboard(request.state.project_id, query),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    # --- recordings ----------------------------------------------------------------------
 
     def recording_blobs() -> BlobStore:
         if recordings.blobs is None:
@@ -3779,11 +4612,14 @@ def create_app(
             **_ERROR_RESPONSES,
         },
         description=(
-            "Create a mono recording of the call a session key names, creating the call "
-            "if needed. The same recording_id with the same manifest answers 200 with the "
-            "recording; another manifest, or a failed recording, is 409. A call holds at "
-            "most 16 recordings; a 17th is 409. Without recording_id the server mints one "
-            "and the request is not idempotent. Upload the bytes to upload_path."
+            "Create a recording of the call a session key names, creating the call if "
+            "needed: one speaker's mono track, or a mixed recording whose channel_speakers "
+            "names each channel's speaker (user and agent at most once each; WAV, FLAC or "
+            "Ogg Opus only, whose channel count the upload's header must match). The same "
+            "recording_id with the same manifest answers 200 with the recording; another "
+            "manifest, or a failed recording, is 409. A call holds at most 16 recordings; "
+            "a 17th is 409. Without recording_id the server mints one and the request is "
+            "not idempotent. Upload the bytes to upload_path."
         ),
     )
     def create_recording_endpoint(body: RecordingCreateRequest, request: Request) -> JSONResponse:
@@ -3794,6 +4630,28 @@ def create_app(
                 "EARSHOT_INVALID_SESSION_KEY",
                 "session_key must be 1 to 256 bytes of UTF-8 after trimming",
             )
+        channel_speakers = None
+        if body.channel_speakers is not None:
+            channel_speakers = tuple(body.channel_speakers)
+            if body.speaker != "mixed":
+                raise ApiProblem(
+                    422,
+                    "EARSHOT_INVALID_CHANNEL_SPEAKERS",
+                    "channel_speakers needs speaker mixed",
+                )
+            if not recording_media.valid_channel_speakers(channel_speakers):
+                raise ApiProblem(
+                    422,
+                    "EARSHOT_INVALID_CHANNEL_SPEAKERS",
+                    "channel_speakers names user and agent at most once each",
+                )
+            if recording_media.media_inspector(body.content_type) is None:
+                raise ApiProblem(
+                    422,
+                    "EARSHOT_INVALID_CHANNEL_SPEAKERS",
+                    "channel_speakers needs audio/wav, audio/flac or audio/ogg (Opus), "
+                    "whose channel count the server reads from the upload",
+                )
         manifest = RecordingManifest(
             recording_id=body.recording_id or str(uuid.uuid4()),
             session_key=session_key,
@@ -3801,6 +4659,7 @@ def create_app(
             content_type=body.content_type,
             started_at_unix_nano=body.started_at_unix_nano,
             label=body.label,
+            channel_speakers=channel_speakers,
         )
         recording, created = recordings.create(
             request.state.project_id, manifest, budget_s=REQUEST_LOCK_BUDGET_SECONDS
@@ -3817,18 +4676,33 @@ def create_app(
         recording = await project_recording(request.state.project_id, recording_id)
         return JSONResponse(_recording_body(recording))
 
-    def inspect_wav(inspector: recording_media.WavInspector, chunk: bytes) -> None:
+    def unreadable_header(
+        inspector: recording_media.MediaInspector, error: recording_media.RecordingHeaderError
+    ) -> ApiProblem:
+        name = inspector.format_name
+        return ApiProblem(
+            422,
+            f"EARSHOT_RECORDING_INVALID_{name.upper()}",
+            f"the body is not a {_MEDIA_FORMAT_NAMES[name]} file Earshot can read ({error})",
+        )
+
+    def inspect_media(
+        inspector: recording_media.MediaInspector, chunk: bytes, channels: int
+    ) -> None:
+        """Read ``chunk`` into the body's header reader; refuse the body once its
+        header shows another channel count than the recording has."""
+
+        checked = inspector.header_complete
         try:
             inspector.feed(chunk)
-        except recording_media.WavHeaderError as error:
-            raise ApiProblem(
-                422, "EARSHOT_RECORDING_INVALID_WAV", "the body is not a WAV file Earshot can read"
-            ) from error
-        if inspector.header_complete and inspector.channels != 1:
+        except recording_media.RecordingHeaderError as error:
+            raise unreadable_header(inspector, error) from error
+        if not checked and inspector.header_complete and inspector.channels != channels:
             raise ApiProblem(
                 422,
-                "EARSHOT_RECORDING_NOT_MONO",
-                "recordings are mono in this release; upload one track per speaker",
+                "EARSHOT_RECORDING_CHANNEL_MISMATCH",
+                f"the file has {inspector.channels} channel(s); the recording has {channels} "
+                "(one, or one per channel_speakers entry)",
             )
 
     async def recording_chunks(request: Request, deadline: float) -> AsyncIterator[bytes]:
@@ -3887,30 +4761,30 @@ def create_app(
         blob_key: str,
         expected: bytes | None,
         *,
-        wav: bool,
+        recording: Recording,
         deadline: float,
     ) -> tuple[str, int, int | None]:
-        """Stream the body into ``blob_key`` and commit it: ``(sha256, size, duration_ms)``."""
+        """Stream the body into ``blob_key`` and commit it: ``(sha256, size, duration_ms)``.
 
-        inspector = recording_media.WavInspector() if wav else None
+        A WAV, FLAC or Ogg Opus body's header is read as it arrives: one that does
+        not parse, or shows another channel count than the recording has, ends the
+        upload before it commits."""
+
+        inspector = recording_media.media_inspector(recording.content_type)
         writer = await run_in_threadpool(blobs.begin_put, blob_key)
         try:
             size = 0
             async for chunk in recording_chunks(request, deadline):
-                if inspector is not None and not inspector.header_complete:
-                    inspect_wav(inspector, chunk)
+                if inspector is not None:
+                    inspect_media(inspector, chunk, recording.channels)
                 await run_in_threadpool(writer.write, chunk)
                 size += len(chunk)
             duration_ms = None
             if inspector is not None:
                 try:
                     inspector.finish(size)
-                except recording_media.WavHeaderError as error:
-                    raise ApiProblem(
-                        422,
-                        "EARSHOT_RECORDING_INVALID_WAV",
-                        "the body is not a WAV file Earshot can read",
-                    ) from error
+                except recording_media.RecordingHeaderError as error:
+                    raise unreadable_header(inspector, error) from error
                 duration_ms = inspector.duration_ms()
             try:
                 sha256, stored = await run_in_threadpool(writer.commit, expected_sha256=expected)
@@ -3930,7 +4804,7 @@ def create_app(
         A thread cannot be cancelled: a request cancelled while the thread runs
         leaves it to register the attempt anyway, and the handler never reaches the
         ``finally`` that ends it. Such an attempt is ended as soon as the thread
-        returns, so it cannot hold its call for good (tribunal round 3, R3-2).
+        returns, so it cannot hold its call for good.
         """
 
         task = asyncio.ensure_future(
@@ -3972,8 +4846,11 @@ def create_app(
         responses=_UPLOAD_ERROR_RESPONSES,
         openapi_extra=_RECORDING_UPLOAD_REQUEST,
         description=(
-            "Upload a pending recording's bytes (mono; Content-Type is the recording's "
-            "content_type). The body streams to the blob store under a server-chosen key "
+            "Upload a pending recording's bytes (Content-Type is the recording's "
+            "content_type). A WAV, FLAC or Ogg Opus header must show the recording's "
+            "channel count (one, or one per channel_speakers entry), or the upload is 422 "
+            "EARSHOT_RECORDING_CHANNEL_MISMATCH. The body streams to the blob store under "
+            "a server-chosen key "
             "and is stored when it commits; concurrent uploads store exactly one. An "
             "upload to a stored recording is only hashed: the same bytes answer 200, "
             "other bytes 409. A failed recording is 409. While the body streams, the "
@@ -4021,12 +4898,7 @@ def create_app(
         stored: Recording | None = None
         try:
             sha256, size, duration_ms = await stream_recording(
-                request,
-                blobs,
-                blob_key,
-                expected,
-                wav=recording.content_type == recording_media.WAV_CONTENT_TYPE,
-                deadline=deadline,
+                request, blobs, blob_key, expected, recording=recording, deadline=deadline
             )
             stored = await run_in_threadpool(
                 recordings.finish_upload,
@@ -4061,24 +4933,12 @@ def create_app(
                 # flight" would never be swept and would hold its call for good.
                 recordings.end_upload(project_id, blob_key)
 
-    @app.get(
-        "/v1/recordings/{recording_id}/content",
-        response_class=Response,
-        responses=_RECORDING_CONTENT_RESPONSES,
-        description=(
-            "A stored recording's bytes, streamed through the server on every blob "
-            "backend. One Range (bytes=a-b, a-, -n) is answered with 206; several are "
-            "answered whole. A recording that is not stored is 409."
-        ),
-    )
-    async def recording_content_endpoint(recording_id: str, request: Request) -> Response:
-        recording = await project_recording(request.state.project_id, recording_id)
-        if recording.state != "stored" or recording.blob_key is None or recording.size is None:
-            raise ApiProblem(
-                409, "EARSHOT_RECORDING_NOT_STORED", "the recording has no stored content yet"
-            )
+    async def stream_audio(
+        request: Request, *, blob_key: str, size: int, media_type: str, etag: str
+    ) -> Response:
+        """Stream stored audio, whole or one Range (206), never cached by the client."""
+
         blobs = recording_blobs()
-        size = recording.size
         try:
             byte_range = recording_media.parse_byte_range(request.headers.get("range"), size)
         except recording_media.RangeNotSatisfiable as error:
@@ -4095,7 +4955,7 @@ def create_app(
             ) from error
         start, end = (0, size) if byte_range is None else (byte_range.start, byte_range.end)
         try:
-            reader = await run_in_threadpool(blobs.open_range, recording.blob_key, start, end)
+            reader = await run_in_threadpool(blobs.open_range, blob_key, start, end)
         except BlobNotFoundError as error:
             raise ApiProblem(
                 500, "EARSHOT_RECORDING_CONTENT_MISSING", "the stored recording is missing"
@@ -4103,7 +4963,7 @@ def create_app(
         headers = {
             "Accept-Ranges": "bytes",
             "Content-Length": str(end - start),
-            "ETag": f'"{recording.sha256}"',
+            "ETag": etag,
             "Cache-Control": "no-store",
         }
         if byte_range is not None:
@@ -4111,9 +4971,204 @@ def create_app(
         return StreamingResponse(
             reader,
             status_code=206 if byte_range is not None else 200,
-            media_type=recording.content_type,
+            media_type=media_type,
             headers=headers,
             background=BackgroundTask(reader.close),
+        )
+
+    def read_blob(key: str) -> bytes:
+        """A derived blob's bytes (peaks are small: about 1 MB for a 60-minute call)."""
+
+        blobs = recording_blobs()
+        info = blobs.head(key)
+        if info is None:
+            raise ApiProblem(500, "EARSHOT_PEAKS_MISSING", "the stored peaks are missing")
+        with blobs.open_range(key, 0, info.size) as reader:
+            return b"".join(reader)
+
+    async def peaks_response(request: Request, etag: str, body: Callable[[], bytes]) -> Response:
+        # Peaks hold no call content: a browser may keep them, revalidating each use.
+        headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+        if _if_none_match(request.headers.get("if-none-match"), etag):
+            return Response(status_code=304, headers=headers)
+        return Response(
+            await run_in_threadpool(body), media_type=signal_peaks.CONTENT_TYPE, headers=headers
+        )
+
+    @app.get(
+        "/v1/recordings/{recording_id}/content",
+        response_class=Response,
+        responses=_RECORDING_CONTENT_RESPONSES,
+        description=(
+            "A stored recording's bytes, streamed through the server on every blob "
+            "backend. One Range (bytes=a-b, a-, -n) is answered with 206; several are "
+            "answered whole. A recording that is not stored is 409."
+        ),
+    )
+    async def recording_content_endpoint(recording_id: str, request: Request) -> Response:
+        recording = await project_recording(request.state.project_id, recording_id)
+        if recording.state != "stored" or recording.blob_key is None or recording.size is None:
+            raise ApiProblem(
+                409, "EARSHOT_RECORDING_NOT_STORED", "the recording has no stored content yet"
+            )
+        return await stream_audio(
+            request,
+            blob_key=recording.blob_key,
+            size=recording.size,
+            media_type=recording.content_type,
+            etag=f'"{recording.sha256}"',
+        )
+
+    @app.get(
+        "/v1/recordings/{recording_id}/peaks",
+        response_class=Response,
+        responses=_RECORDING_PEAKS_RESPONSES,
+        description=(
+            "The recording's waveform peaks from its analysis: an audiowaveform .dat file "
+            "(version 2, 8-bit, 256 source samples per pixel, one channel per channel of "
+            "the recording). Private, no-cache, with an ETag (If-None-Match gives 304). "
+            "404 EARSHOT_PEAKS_NOT_FOUND until the analysis stores them, and for a "
+            "recording that cannot be analysed."
+        ),
+    )
+    async def recording_peaks_endpoint(recording_id: str, request: Request) -> Response:
+        recording = await project_recording(request.state.project_id, recording_id)
+        analysis = await run_in_threadpool(
+            analyses.get, recording.project_id, recording.recording_id
+        )
+        if analysis is None or analysis.peaks_blob_key is None:
+            raise ApiProblem(404, "EARSHOT_PEAKS_NOT_FOUND", "the recording has no peaks yet")
+        key = analysis.peaks_blob_key
+        return await peaks_response(request, _blob_etag(key), lambda: read_blob(key))
+
+    @app.get(
+        "/v1/recordings/{recording_id}/rendition",
+        response_class=Response,
+        responses=_RECORDING_RENDITION_RESPONSES,
+        description=(
+            "The stereo FLAC rendition of a mono pair on one timeline (channel 0 user, "
+            "channel 1 agent), made by the analysis and held by the pair's user "
+            "recording, so a browser plays both on one clock. Range as for content. 404 "
+            "EARSHOT_RENDITION_NOT_FOUND for any other recording, or before it is made."
+        ),
+    )
+    async def recording_rendition_endpoint(recording_id: str, request: Request) -> Response:
+        recording = await project_recording(request.state.project_id, recording_id)
+        rendition = await run_in_threadpool(
+            analyses.rendition, recording.project_id, recording.recording_id
+        )
+        info = (
+            None
+            if rendition is None
+            else await run_in_threadpool(recording_blobs().head, rendition.blob_key)
+        )
+        if rendition is None or info is None:
+            raise ApiProblem(404, "EARSHOT_RENDITION_NOT_FOUND", "the recording holds no rendition")
+        return await stream_audio(
+            request,
+            blob_key=rendition.blob_key,
+            size=info.size,
+            media_type="audio/flac",
+            etag=_blob_etag(rendition.blob_key),
+        )
+
+    @app.get(
+        "/v1/recordings/{recording_id}/rendition/peaks",
+        response_class=Response,
+        responses=_RECORDING_PEAKS_RESPONSES,
+        description=(
+            "The rendition's peaks: both halves' peaks as one two-channel audiowaveform "
+            ".dat file (channel 0 user, channel 1 agent). Caching as for peaks; 404 "
+            "EARSHOT_PEAKS_NOT_FOUND until both halves' peaks are stored."
+        ),
+    )
+    async def recording_rendition_peaks_endpoint(recording_id: str, request: Request) -> Response:
+        recording = await project_recording(request.state.project_id, recording_id)
+        rendition = await run_in_threadpool(
+            analyses.rendition, recording.project_id, recording.recording_id
+        )
+        if rendition is None:
+            raise ApiProblem(404, "EARSHOT_RENDITION_NOT_FOUND", "the recording holds no rendition")
+        user_key, agent_key = rendition.peaks_blob_keys
+        if user_key is None or agent_key is None:
+            raise ApiProblem(404, "EARSHOT_PEAKS_NOT_FOUND", "the rendition has no peaks yet")
+
+        def paired() -> bytes:
+            return signal_peaks.interleave(read_blob(user_key), read_blob(agent_key))
+
+        return await peaks_response(request, _blob_etag(user_key, agent_key), paired)
+
+    transcript_store = TranscriptStore(repository, calls=calls)
+
+    @app.post(
+        "/v1/recordings/{recording_id}/transcript",
+        response_model=RecordingTranscriptResponse,
+        status_code=201,
+        responses={
+            200: {
+                "model": RecordingTranscriptResponse,
+                "description": "The recording holds this transcript already.",
+            },
+            **_ERROR_RESPONSES,
+        },
+        openapi_extra=_TRANSCRIPT_UPLOAD_REQUEST,
+        description=(
+            "Attach a transcript to a recording, as transcript lines of its call. The body "
+            "is UTF-8: text/vtt (WebVTT; each cue is a line, its times offsets from the "
+            "recording's started_at: measured timing) or text/plain (one line per "
+            f"non-blank line: order_only timing), at most {transcript_upload.MAX_TRANSCRIPT_BYTES} "
+            f"bytes, {transcript_upload.MAX_TRANSCRIPT_LINES} transcript lines and "
+            f"{transcript_upload.MAX_TRANSCRIPT_SOURCE_LINES} source lines. A WebVTT voice "
+            "(<v user>, <v agent>) or a 'user:'/'agent:' prefix names each line's speaker; "
+            "on a one-speaker recording an unnamed line is that speaker's. A malformed "
+            "body is 422 EARSHOT_TRANSCRIPT_INVALID, naming the line. A recording holds "
+            "one transcript: the same transcript again answers 200 and writes nothing; "
+            "another is 409 EARSHOT_TRANSCRIPT_EXISTS and never replaces it. Under the "
+            "metadata_only preset it is 422 EARSHOT_PRESET_FORBIDS_TRANSCRIPT."
+        ),
+    )
+    async def recording_transcript_endpoint(recording_id: str, request: Request) -> JSONResponse:
+        project_id = request.state.project_id
+        recording = await project_recording(project_id, recording_id)
+        transcript_format = transcript_upload.transcript_format(
+            request.headers.get("content-type", "")
+        )
+        if transcript_format is None:
+            raise ApiProblem(
+                415,
+                "EARSHOT_UNSUPPORTED_MEDIA_TYPE",
+                "a transcript is text/vtt or text/plain, in UTF-8",
+            )
+        if request.headers.get("content-encoding", "").strip().lower() not in {"", "identity"}:
+            raise ApiProblem(
+                415,
+                "EARSHOT_UNSUPPORTED_CONTENT_ENCODING",
+                "a transcript is sent without a Content-Encoding",
+            )
+        body = await _read_body(
+            request, transcript_upload.MAX_TRANSCRIPT_BYTES, subject="transcript"
+        )
+        # A one-speaker track's unlabelled lines are its speaker's.
+        speaker = recording.speaker if recording.speaker in {"user", "agent"} else None
+        try:
+            transcript = await run_in_threadpool(
+                transcript_upload.parse_transcript,
+                body,
+                transcript_format,
+                default_speaker=speaker,
+            )
+            attached = await run_in_threadpool(
+                transcript_store.attach,
+                project_id,
+                recording_id,
+                transcript,
+                budget_s=REQUEST_LOCK_BUDGET_SECONDS,
+            )
+        except transcript_upload.TranscriptFormatError as error:
+            raise ApiProblem(422, "EARSHOT_TRANSCRIPT_INVALID", str(error)) from error
+        return JSONResponse(
+            _transcript_body(attached.recording, transcript),
+            status_code=201 if attached.created else 200,
         )
 
     @app.post(
@@ -4122,25 +5177,41 @@ def create_app(
         responses=_CONNECTOR_ERROR_RESPONSES,
     )
     async def connector_delivery_endpoint(endpoint_id: str, request: Request) -> JSONResponse:
+        """Receive one provider delivery, checked in this order: the connector (404),
+        a header credential (401), the body cap (413; an ElevenLabs
+        ``post_call_audio`` streams up to 64 MiB and is ignored), the signature (401),
+        an event the connector does not consume (200 ``ignored``, nothing written), the
+        rate (429), then the payload (400; 422 for a call ID that is not a session
+        key). The Host check does not apply: a hook carries its provider's credential."""
+
+        ingestion = app.state.connector_ingestion
+        endpoint = await run_in_threadpool(ingestion.endpoint, endpoint_id)
+        body = await run_in_threadpool(ingestion.open_body, endpoint, tuple(request.headers.raw))
         if _content_type(request) != "application/json":
             raise ApiProblem(
                 415,
                 "EARSHOT_UNSUPPORTED_MEDIA_TYPE",
                 "connector delivery requires application/json",
             )
-        payload = await _read_connector_body(request, settings.max_connector_body_bytes)
-        raw = RawProviderDelivery(
-            endpoint_id=endpoint_id,
-            headers=tuple(request.headers.raw),
-            body=payload,
-        )
-        outcome = await run_in_threadpool(app.state.connector_ingestion.receive, raw)
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except ValueError as error:
+                raise ApiProblem(
+                    400, "EARSHOT_INVALID_CONTENT_LENGTH", "invalid Content-Length header"
+                ) from error
+            body.declare_length(declared)
+        async for chunk in request.stream():
+            body.feed(chunk)
+        if body.size == 0:
+            raise ApiProblem(400, "EARSHOT_EMPTY_BODY", "connector body is empty")
+        outcome = await run_in_threadpool(ingestion.deliver, endpoint, body)
         return JSONResponse(
             {
                 "receipt_id": outcome.receipt_id,
                 "disposition": outcome.disposition,
-                "bundle_id": outcome.bundle_id,
-                "canonical_sha256": outcome.canonical_sha256,
+                "call_id": outcome.call_id,
             },
             headers={"Cache-Control": "no-store"},
         )

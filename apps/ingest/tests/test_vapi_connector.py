@@ -1,333 +1,295 @@
+"""Vapi ``end-of-call-report`` deliveries become call evidence.
+
+Verified on documented payloads only: the report below follows the
+``ServerMessageEndOfCallReport`` and ``Artifact`` schemas of Vapi's OpenAPI document
+(``https://api.vapi.ai/api-json``); no real Vapi delivery has been captured. Every
+delivery goes through the real kernel, call store and recordings store.
+"""
+
 from __future__ import annotations
 
-import json
+import copy
 
 import pytest
-from fastapi.testclient import TestClient
 
-from earshot.api import ApiConfig, create_app
-from earshot.codec import decode_incident_protobuf
-from earshot.connectors import (
-    ConnectorConfigurationError,
-    DeliveryConflictError,
-    DeliveryPayloadError,
-    DeliveryTrustError,
-    HostedProviderIngestion,
-    MappingSecretResolver,
-    RawProviderDelivery,
-)
-from store_support import make_store
+from connector_support import SECOND, START, ConnectorWorld, body_of, connector_world
+from earshot.call_capture import attribute_values
+from earshot.connectors import DeliveryRateLimitedError, DeliveryTrustError, RawProviderDelivery
 
 pytestmark = pytest.mark.integration
 
-SECRET = "vapi-test-secret"
-PRIVATE_TEXT = "private Vapi transcript must never be canonical"
+CALL_ID = "6f1c2b9e-0d7a-4c55-9a51-3e0f8c2d1a77"
+CANARY = "X-Amz-Signature=CANARY0123456789abcdef"
+EXPIRES = "2026-10-20T11:00:35.000Z"
 
 
-def _payload(*, turn_latency: float = 1.25) -> bytes:
-    return json.dumps(
-        {
-            "message": {
-                "type": "end-of-call-report",
-                "timestamp": "2026-07-18T09:30:06Z",
-                "endedReason": "customer-ended-call",
-                "call": {
-                    "id": "call-sensitive-vapi-123",
-                    "createdAt": "2026-07-18T09:30:00Z",
-                    "endedAt": "2026-07-18T09:30:06Z",
-                    "status": "ended",
-                },
-                "artifact": {
-                    "transcript": PRIVATE_TEXT,
-                    "messages": [
-                        {
-                            "role": "assistant",
-                            "message": PRIVATE_TEXT,
-                            "secondsFromStart": 2.0,
-                        }
-                    ],
-                    "variableValues": {"private": PRIVATE_TEXT},
-                    "performanceMetrics": {
-                        "turnLatencies": [
-                            {
-                                "modelLatency": 0.4,
-                                "voiceLatency": 0.2,
-                                "transcriberLatency": 0.1,
-                                "endpointingLatency": 0.3,
-                                "turnLatency": turn_latency,
-                            }
-                        ],
-                        "numUserInterrupted": 2,
-                        "numAssistantInterrupted": 1,
-                    },
-                },
-            }
+def _report(*, signature: str = CANARY, metrics: bool = True) -> dict:
+    artifact = {
+        "transcript": "AI: Thanks for calling Green Valley Clinic.\nUser: I need to move my visit.",
+        "messages": [
+            {
+                "role": "system",
+                "message": "You are a clinic receptionist.",
+                "time": 1792490400000,
+                "secondsFromStart": 0,
+            },
+            {
+                "role": "bot",
+                "message": "Thanks for calling Green Valley Clinic.",
+                "time": 1792490400500,
+                "endTime": 1792490402300,
+                "secondsFromStart": 0.5,
+                "duration": 1800,
+            },
+            {
+                "role": "user",
+                "message": "I need to move my visit.",
+                "time": 1792490403100,
+                "endTime": 1792490404400,
+                "secondsFromStart": 3.1,
+                "duration": 1300,
+            },
+            {"role": "tool_calls", "message": "", "time": 1792490404600, "secondsFromStart": 4.6},
+            {"role": "bot", "message": "Sure, which day works?", "secondsFromStart": 5.2},
+        ],
+        "recording": {
+            "stereoUrl": "https://storage.vapi.ai/6f1c2b9e-stereo.wav",
+            "mono": {
+                "combinedUrl": "https://storage.vapi.ai/6f1c2b9e-mono.wav",
+                "assistantUrl": "https://storage.vapi.ai/6f1c2b9e-assistant.wav",
+                "customerUrl": "https://storage.vapi.ai/6f1c2b9e-customer.wav",
+            },
         },
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-
-
-def _delivery(endpoint_id: str, body: bytes, *, header: str = "authorization"):
-    headers = (
-        ((b"authorization", f"Bearer {SECRET}".encode()),)
-        if header == "authorization"
-        else ((b"x-vapi-secret", SECRET.encode()),)
-    )
-    return RawProviderDelivery(endpoint_id=endpoint_id, headers=headers, body=body)
+        "presignedCustomerUrl": f"https://storage.vapi.ai/6f1c2b9e-customer.wav?{signature}",
+        "presignedAssistantUrl": f"https://storage.vapi.ai/6f1c2b9e-assistant.wav?{signature}",
+        "presignedUrlsExpiresAt": EXPIRES,
+    }
+    if metrics:
+        artifact["performanceMetrics"] = {
+            "turnLatencies": [
+                {
+                    "modelLatency": 420,
+                    "voiceLatency": 180,
+                    "transcriberLatency": 90,
+                    "endpointingLatency": 300,
+                    "turnLatency": 990,
+                }
+            ],
+            "turnLatencyAverage": 990,
+            "numUserInterrupted": 0,
+            "numAssistantInterrupted": 1,
+        }
+    return {
+        "message": {
+            "type": "end-of-call-report",
+            "timestamp": 1792490436000,
+            "endedReason": "customer-ended-call",
+            "startedAt": "2026-10-20T10:00:00.000Z",
+            "endedAt": "2026-10-20T10:00:35.000Z",
+            "cost": 0.1234,
+            "analysis": {
+                "summary": "The caller moved a clinic visit.",
+                "successEvaluation": "true",
+            },
+            "artifact": artifact,
+            "call": {
+                "id": CALL_ID,
+                "orgId": "org-0001",
+                "type": "webCall",
+                "status": "ended",
+                "assistantId": "asst-0001",
+                "createdAt": "2026-10-20T09:59:58.000Z",
+                "startedAt": "2026-10-20T10:00:00.000Z",
+                "endedAt": "2026-10-20T10:00:35.000Z",
+                "cost": 0.1234,
+            },
+            "customer": {"number": "+15550100001"},
+        }
+    }
 
 
 @pytest.fixture
-def connector(tmp_path):
-    store = make_store(tmp_path)
-    store.create_project("support", display_name="Support")
-    endpoint = store.create_connector(
-        "support",
-        provider="vapi",
-        secret_ref="env:VAPI_SERVER_SECRET",
-    )
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver({"env:VAPI_SERVER_SECRET": SECRET}),
-    )
-    return store, endpoint, ingestion
+def world(tmp_path) -> ConnectorWorld:
+    return connector_world(tmp_path, "vapi")
 
 
-@pytest.mark.parametrize("header", ("authorization", "x-vapi-secret"))
-def test_final_report_accepts_documented_auth_and_keeps_only_metrics(connector, header) -> None:
-    store, endpoint, ingestion = connector
-
-    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, _payload(), header=header))
-
-    _, canonical = store.get_artifact(outcome.bundle_id, project_id="support")
-    bundle = decode_incident_protobuf(canonical)
-    measurements = {
-        measurement.name: measurement
-        for sample in bundle.profile.quality_samples
-        for measurement in sample.measurements
-    }
-    assert measurements["vapi.turn_latency"].value == 1.25
-    assert measurements["vapi.turn_latency"].unit == "provider_unit"
-    assert measurements["vapi.num_user_interrupted"].value == 2
-    assert len(store.list_turn_facts(project_id="support")) == 1
-    assert bundle.profile.operations[0].operation_name == "provider_turn_anchor"
-    assert bundle.profile.operations[0].evidence.method == "provider_ordered_index_join"
-    assert PRIVATE_TEXT.encode() not in canonical
-    assert b"call-sensitive-vapi-123" not in canonical
-
-
-def test_vapi_rejects_ambiguous_or_wrong_auth_before_persistence(connector) -> None:
-    store, endpoint, ingestion = connector
-    body = _payload()
-
-    with pytest.raises(DeliveryTrustError):
-        ingestion.receive(
-            RawProviderDelivery(
-                endpoint_id=endpoint.endpoint_id,
-                headers=(
-                    (b"authorization", f"Bearer {SECRET}".encode()),
-                    (b"x-vapi-secret", SECRET.encode()),
-                ),
-                body=body,
-            )
-        )
-    with pytest.raises(DeliveryTrustError):
-        ingestion.receive(
-            RawProviderDelivery(
-                endpoint_id=endpoint.endpoint_id,
-                headers=((b"x-vapi-secret", b"wrong"),),
-                body=body,
-            )
-        )
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_vapi_call_identity_is_idempotent_and_changed_final_report_conflicts(connector) -> None:
-    store, endpoint, ingestion = connector
-    first = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
-    replay = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
-
-    assert replay.disposition == "replayed"
-    assert replay.bundle_id == first.bundle_id
-    with pytest.raises(DeliveryConflictError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, _payload(turn_latency=1.5)))
-    assert len(store.list_incidents(project_id="support").items) == 1
-
-
-def test_vapi_unknown_units_are_not_capped_as_seconds(connector) -> None:
-    store, endpoint, ingestion = connector
-
-    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, _payload(turn_latency=1200.0)))
-
-    _, canonical = store.get_artifact(outcome.bundle_id, project_id="support")
-    bundle = decode_incident_protobuf(canonical)
-    turn_latency = next(
-        measurement
-        for sample in bundle.profile.quality_samples
-        for measurement in sample.measurements
-        if measurement.name == "vapi.turn_latency"
-    )
-    assert turn_latency.value == 1200.0
-    assert turn_latency.unit == "provider_unit"
-
-
-def test_vapi_metrics_without_message_offset_remain_session_scoped(connector) -> None:
-    store, endpoint, ingestion = connector
-    value = json.loads(_payload())
-    del value["message"]["artifact"]["messages"][0]["secondsFromStart"]
-    body = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
-
-    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, body))
-
-    _, canonical = store.get_artifact(outcome.bundle_id, project_id="support")
-    bundle = decode_incident_protobuf(canonical)
-    latency = next(
-        sample
-        for sample in bundle.profile.quality_samples
-        if any(item.name == "vapi.turn_latency" for item in sample.measurements)
-    )
-    assert latency.attributes["earshot.correlation"] == "provider_order_only"
-    assert "earshot.turn.id" not in latency.attributes
-    assert bundle.profile.operations == ()
-    assert store.list_turn_facts(project_id="support") == ()
-
-
-def test_same_provider_call_isolated_between_connector_projects(tmp_path) -> None:
-    store = make_store(tmp_path)
-    store.create_project("support", display_name="Support")
-    store.create_project("sales", display_name="Sales")
-    support = store.create_connector(
-        "support",
-        provider="vapi",
-        secret_ref="env:VAPI_SERVER_SECRET",
-        endpoint_id="vapi_support_000001",
-    )
-    sales = store.create_connector(
-        "sales",
-        provider="vapi",
-        secret_ref="env:VAPI_SERVER_SECRET",
-        endpoint_id="vapi_sales_00000001",
-    )
-    ingestion = HostedProviderIngestion(
-        store, secrets=MappingSecretResolver({"env:VAPI_SERVER_SECRET": SECRET})
-    )
-    body = _payload()
-
-    support_outcome = ingestion.receive(_delivery(support.endpoint_id, body))
-    sales_outcome = ingestion.receive(_delivery(sales.endpoint_id, body))
-
-    assert support_outcome.bundle_id != sales_outcome.bundle_id
-    assert [record.bundle_id for record in store.list_incidents(project_id="support").items] == [
-        support_outcome.bundle_id
-    ]
-    assert [record.bundle_id for record in store.list_incidents(project_id="sales").items] == [
-        sales_outcome.bundle_id
+def _attributes(world: ConnectorWorld, name: str) -> list[dict]:
+    return [
+        attribute_values(span.span.attributes) for span in world.spans() if span.span.name == name
     ]
 
 
-def test_bearer_rotation_accepts_previous_secret(connector) -> None:
-    store, endpoint, _ = connector
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver(
-            {"env:VAPI_SERVER_SECRET": ("rotated-current-secret", SECRET)}
-        ),
+@pytest.mark.parametrize(
+    "header",
+    [(b"authorization", b"Bearer vapi-test-secret"), (b"x-vapi-secret", b"vapi-test-secret")],
+)
+def test_either_documented_credential_is_accepted(world, header) -> None:
+    raw = body_of(_report())
+    outcome = world.ingestion.receive(
+        RawProviderDelivery(
+            world.endpoint_id, ((b"content-type", b"application/json"), header), raw
+        )
     )
-
-    # A provider still transitioning presents the previous secret.
-    outcome = ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
 
     assert outcome.disposition == "applied"
-    assert len(store.list_incidents(project_id="support").items) == 1
 
 
-def test_missing_connector_secret_is_retryable_configuration_failure(connector) -> None:
-    store, endpoint, _ = connector
-    ingestion = HostedProviderIngestion(store, secrets=MappingSecretResolver({}))
+@pytest.mark.parametrize(
+    "headers",
+    [
+        ((b"authorization", b"Bearer wrong"),),
+        ((b"authorization", b"Bearer vapi-test-secret"), (b"x-vapi-secret", b"vapi-test-secret")),
+        (),
+    ],
+    ids=["wrong", "both", "none"],
+)
+def test_a_wrong_or_ambiguous_credential_is_refused_before_the_body(world, headers) -> None:
+    endpoint = world.ingestion.endpoint(world.endpoint_id)
 
-    with pytest.raises(ConnectorConfigurationError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, _payload()))
-
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_connector_rejects_unavailable_normalizer_version(connector) -> None:
-    store, _, ingestion = connector
-    incompatible = store.create_connector(
-        "support",
-        provider="vapi",
-        secret_ref="env:VAPI_SERVER_SECRET",
-        endpoint_id="vapi_incompatible_0001",
-        normalizer_version="99.0.0",
-    )
-
-    with pytest.raises(ConnectorConfigurationError):
-        ingestion.receive(_delivery(incompatible.endpoint_id, _payload()))
-
-
-def test_authentication_precedes_json_parsing(connector) -> None:
-    store, endpoint, ingestion = connector
-    malformed = b'{"message":"unterminated'
-
-    # Correct auth, malformed body: parsing runs (after auth) and fails cleanly.
-    with pytest.raises(DeliveryPayloadError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, malformed))
-    # Wrong auth, malformed body: rejected at auth; the body is never parsed.
     with pytest.raises(DeliveryTrustError):
-        ingestion.receive(
-            RawProviderDelivery(
-                endpoint_id=endpoint.endpoint_id,
-                headers=((b"authorization", b"Bearer wrong"),),
-                body=malformed,
-            )
+        world.ingestion.open_body(endpoint, headers)
+
+
+def test_a_report_becomes_one_call_with_its_transcript_latency_cost_and_recordings(world) -> None:
+    outcome = world.deliver(_report())
+
+    assert outcome.disposition == "applied"
+    assert outcome.call_id == world.calls.resolve_call("support", f"vapi:{CALL_ID}")
+    assert world.rows("SELECT count(*) FROM incidents") == [(0,)]  # no standalone incident
+    assert sorted(set(world.span_names())) == [
+        "earshot.connector.analysis",
+        "earshot.connector.call",
+        "earshot.connector.cost",
+        "earshot.connector.transcript_line",
+        "earshot.connector.translator",
+        "earshot.connector.turn",
+    ]
+    [call] = _attributes(world, "earshot.connector.call")
+    assert call["earshot.call.ended"] is True
+    assert call["gen_ai.agent.id"] == "asst-0001"
+    assert call["earshot.connector.call.ended_reason"] == "customer-ended-call"
+    assert call["earshot.connector.coverage.turn_latency"] == "available"
+    lines = sorted(
+        _attributes(world, "earshot.connector.transcript_line"),
+        key=lambda line: line["earshot.connector.transcript.index"],
+    )
+    assert [
+        (
+            line["earshot.connector.transcript.index"],
+            line["earshot.connector.transcript.speaker"],
+            line["earshot.connector.transcript.timing"],
         )
-    assert store.list_incidents(project_id="support").items == ()
+        for line in lines
+    ] == [(1, "agent", "measured"), (2, "user", "measured"), (4, "agent", "start_only")]
+    first = next(
+        span
+        for span in world.spans()
+        if attribute_values(span.span.attributes).get("earshot.connector.transcript.index") == 1
+    )
+    assert (first.span.start_time_unix_nano, first.span.end_time_unix_nano) == (
+        START + SECOND // 2,
+        START + 2_300_000_000,
+    )
+    [turn] = _attributes(world, "earshot.connector.turn")
+    assert turn["earshot.connector.latency.turn_ms"] == 990.0
+    assert turn["earshot.connector.latency.llm_ms"] == 420.0
+    [cost] = _attributes(world, "earshot.connector.cost")
+    assert (cost["earshot.connector.cost.amount"], cost["earshot.connector.cost.unit"]) == (
+        0.1234,
+        "usd",
+    )
+    # Two mono tracks on one timeline, fetched from the payload's presigned URLs.
+    assert world.fetches() == [
+        (
+            "agent",
+            "audio/wav",
+            "pending",
+            "payload_url",
+            "assistant",
+            f"https://storage.vapi.ai/6f1c2b9e-assistant.wav?{CANARY}",
+            1792494035000000000,
+            "pending",
+        ),
+        (
+            "user",
+            "audio/wav",
+            "pending",
+            "payload_url",
+            "customer",
+            f"https://storage.vapi.ai/6f1c2b9e-customer.wav?{CANARY}",
+            1792494035000000000,
+            "pending",
+        ),
+    ]
+    assert world.rows("SELECT DISTINCT started_at_unix_nano FROM recordings") == [(str(START),)]
 
 
-def test_turn_latency_field_is_required_per_entry(connector) -> None:
-    store, endpoint, ingestion = connector
-    value = json.loads(_payload())
-    del value["message"]["artifact"]["performanceMetrics"]["turnLatencies"][0]["turnLatency"]
-    body = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+def test_a_report_without_performance_metrics_keeps_its_transcript_and_audio(world) -> None:
+    outcome = world.deliver(_report(metrics=False))
+
+    assert outcome.disposition == "applied"
+    [call] = _attributes(world, "earshot.connector.call")
+    assert call["earshot.connector.coverage.turn_latency"] == "not_exposed"
+    assert _attributes(world, "earshot.connector.turn") == []
+    assert len(_attributes(world, "earshot.connector.transcript_line")) == 3
+    assert len(world.fetches()) == 2
+
+
+def test_a_retry_with_re_signed_urls_replays_and_refreshes_the_unfinished_fetches(world) -> None:
+    first = world.deliver(_report())
+    spans = world.rows("SELECT count(*) FROM spans")
+    retry = world.deliver(_report(signature="X-Amz-Signature=RESIGNED0123456789"))
+
+    assert (retry.disposition, retry.receipt_id, retry.call_id) == (
+        "replayed",
+        first.receipt_id,
+        first.call_id,
+    )
+    assert world.rows("SELECT count(*) FROM spans") == spans
+    assert {row[5] for row in world.fetches()} == {
+        "https://storage.vapi.ai/6f1c2b9e-assistant.wav?X-Amz-Signature=RESIGNED0123456789",
+        "https://storage.vapi.ai/6f1c2b9e-customer.wav?X-Amz-Signature=RESIGNED0123456789",
+    }
+
+
+def test_with_an_api_key_the_recordings_come_from_vapis_api_by_call_id(tmp_path) -> None:
+    world = connector_world(tmp_path, "vapi", config={"api_key_ref": "env:VAPI_PRIVATE_KEY"})
+
+    world.deliver(_report())
+
+    assert [(row[3], row[4], row[5]) for row in world.fetches()] == [
+        ("provider_api", "assistant", None),
+        ("provider_api", "customer", None),
+    ]
+
+
+def test_events_other_than_the_report_are_ignored_without_a_write_or_a_rate_debit(
+    tmp_path,
+) -> None:
+    world = connector_world(tmp_path, "vapi", max_deliveries_per_minute=1)
+    status = {
+        "message": {"type": "status-update", "status": "in-progress", "call": {"id": CALL_ID}}
+    }
+    partial = {"message": {"type": "transcript", "transcriptType": "partial", "transcript": "I"}}
+
+    ignored = [world.deliver(status).disposition, world.deliver(partial).disposition]
+    report = world.deliver(_report())
+
+    assert ignored == ["ignored", "ignored"]
+    assert report.disposition == "applied"
+    assert world.rows("SELECT count(*) FROM delivery_receipts") == [(1,)]
+    with pytest.raises(DeliveryRateLimitedError):
+        report_again = copy.deepcopy(_report())
+        report_again["message"]["call"]["id"] = "another-call"
+        world.deliver(report_again)
+
+
+def test_an_out_of_range_time_is_a_malformed_payload_not_a_server_error(world) -> None:
+    from earshot.connectors import DeliveryPayloadError
+
+    report = _report()
+    report["message"]["artifact"]["messages"][4]["secondsFromStart"] = 1e15
 
     with pytest.raises(DeliveryPayloadError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, body))
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_absent_performance_metrics_is_rejected(connector) -> None:
-    store, endpoint, ingestion = connector
-    value = json.loads(_payload())
-    del value["message"]["artifact"]["performanceMetrics"]
-    body = json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
-
-    with pytest.raises(DeliveryPayloadError):
-        ingestion.receive(_delivery(endpoint.endpoint_id, body))
-    assert store.list_incidents(project_id="support").items == ()
-
-
-def test_http_hook_rejects_media_type_and_oversized_body(connector) -> None:
-    store, endpoint, ingestion = connector
-    client = TestClient(
-        create_app(
-            store=store,
-            connector_ingestion=ingestion,
-            config=ApiConfig(max_connector_body_bytes=16),
-        )
-    )
-
-    wrong_type = client.post(
-        f"/hooks/v1/connectors/{endpoint.endpoint_id}",
-        content=b"{}",
-        headers={"content-type": "text/plain"},
-    )
-    oversized = client.post(
-        f"/hooks/v1/connectors/{endpoint.endpoint_id}",
-        content=b"{" + b"x" * 16 + b"}",
-        headers={"content-type": "application/json"},
-    )
-
-    assert wrong_type.status_code == 415
-    assert wrong_type.json()["error"]["code"] == "EARSHOT_UNSUPPORTED_MEDIA_TYPE"
-    assert oversized.status_code == 413
-    assert oversized.json()["error"]["code"] == "EARSHOT_CONNECTOR_BODY_TOO_LARGE"
+        world.deliver(report)
+    assert world.rows("SELECT count(*) FROM delivery_receipts") == [(0,)]

@@ -1,12 +1,15 @@
-"""Provider-neutral interface types for authenticated hosted deliveries."""
+"""Provider-neutral types for authenticated hosted deliveries, and their errors."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
-from earshot.contract import IncidentBundle
+from .evidence import Evidence
+
+# The buffered body every adapter accepts unless it states its own cap.
+DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,32 +21,16 @@ class RawProviderDelivery:
 
 @dataclass(frozen=True, slots=True)
 class DeliveryOutcome:
-    receipt_id: str
-    disposition: Literal["applied", "replayed", "ignored"]
+    """What a hook answers: ``{receipt_id, disposition, call_id}``.
+
+    ``ignored`` deliveries (events no translator consumes) write nothing and have no
+    receipt; ``purged`` ones were applied to a call a purge removed (no call).
+    """
+
+    receipt_id: str | None
+    disposition: Literal["applied", "replayed", "ignored", "purged"]
     project_id: str
-    bundle_id: str | None
-    canonical_sha256: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class ExternalIdentityInput:
-    key_kind: str
-    value: str = field(repr=False)
-    sensitivity: str = "identity"
-
-
-@dataclass(frozen=True, slots=True)
-class NormalizedProviderDelivery:
-    delivery_key: str = field(repr=False)
-    event_type: str
-    disposition: Literal["incident", "ignore"]
-    external_identities: tuple[ExternalIdentityInput, ...]
-    bundle: IncidentBundle | None
-
-
-@dataclass(frozen=True, slots=True)
-class NormalizationContext:
-    fingerprint: Callable[[str, str], str]
+    call_id: str | None
 
 
 class SecretResolver(Protocol):
@@ -59,6 +46,43 @@ class MappingSecretResolver:
         if value is None:
             return ()
         return (value,) if isinstance(value, str) else value
+
+
+class BodyVerifier(Protocol):
+    """Authenticates a delivery's body as it streams in, without keeping it."""
+
+    def update(self, chunk: bytes) -> None: ...
+
+    def verify(self) -> None:
+        """Raise ``DeliveryTrustError`` unless the body read so far is authentic."""
+
+
+class ConnectorAdapter(Protocol):
+    """One provider: how its deliveries authenticate, which it consumes, and how one
+    becomes evidence. ``translate`` is pure: no I/O, no clock."""
+
+    provider: str
+    translator_version: str
+    # The events this adapter turns into evidence; every other authenticated event
+    # is answered ``ignored`` and written nowhere.
+    consumed_events: frozenset[str]
+    # Events allowed past ``max_body_bytes`` (up to ``max_streamed_bytes``): their
+    # body is authenticated as it streams and never kept, and they are ignored.
+    streamed_events: frozenset[str]
+    max_body_bytes: int
+    max_streamed_bytes: int
+    # Whether the provider's own API serves a recording by call ID (with a key).
+    serves_recordings_by_id: bool
+
+    def verifier(
+        self, headers: tuple[tuple[bytes, bytes], ...], secrets: tuple[str, ...], *, now: int
+    ) -> BodyVerifier: ...
+
+    def event_type(self, payload: Mapping[str, Any]) -> str: ...
+
+    def delivery_key(self, event_type: str, provider_call_id: str) -> str: ...
+
+    def translate(self, event_type: str, payload: Mapping[str, Any]) -> Evidence: ...
 
 
 class DeliveryError(RuntimeError):
@@ -96,6 +120,13 @@ class DeliveryPayloadError(DeliveryError):
     http_status = 400
     retryable = False
     public_message = "authenticated connector payload is malformed"
+
+
+class DeliveryIdentifierError(DeliveryError):
+    code = "EARSHOT_CONNECTOR_ID_INVALID"
+    http_status = 422
+    retryable = False
+    public_message = "the provider call ID is not a valid session key (1 to 256 UTF-8 bytes)"
 
 
 class DeliveryTooLargeError(DeliveryError):
@@ -138,7 +169,7 @@ class DeliveryMappingError(DeliveryError):
     code = "EARSHOT_CONNECTOR_MAPPING_FAILED"
     http_status = 500
     retryable = True
-    public_message = "connector could not normalize the authenticated payload"
+    public_message = "connector could not translate the authenticated payload"
 
 
 class DeliveryPublicationError(DeliveryError):

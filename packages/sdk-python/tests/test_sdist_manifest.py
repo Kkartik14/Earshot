@@ -14,9 +14,15 @@ import pytest
 pytestmark = pytest.mark.unit
 ROOT = Path(__file__).resolve().parents[3]
 PACKAGE_NAMES = (ROOT / "scripts" / "sdist_package_manifest.txt").read_text().splitlines()
+# The vendored Silero VAD model and its licence (``check_sdist.PACKAGE_DATA_FILES``).
+PACKAGE_DATA_NAMES = [
+    "packages/sdk-python/src/earshot/signals/model/LICENSE",
+    "packages/sdk-python/src/earshot/signals/model/silero_vad.onnx",
+]
 REQUIRED_NAMES = [
     "pyproject.toml",
     *PACKAGE_NAMES,
+    *PACKAGE_DATA_NAMES,
     "packages/sdk-python/src/earshot/web/index.html",
     "packages/sdk-python/src/earshot/web/assets/index.js",
 ]

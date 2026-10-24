@@ -22,7 +22,7 @@ never stored, so content dropped by the preset never reaches disk.
 | --------------- | ----------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------- |
 | `full`          | Everything the producer sent, byte for byte, within the size limits     | Stored on the Call and returned by the call API       | Accepted and stored                         |
 | `metadata_only` | Metadata attributes only, on spans, events, links, resources and scopes | Removed from stored spans and resources; never stored | Refused: 422 `EARSHOT_PRESET_FORBIDS_MEDIA` |
-| `redacted`      | Not available in 0.2.0                                                  |                                                       |                                             |
+| `redacted`      | Not available in 0.3.0                                                  |                                                       |                                             |
 
 Under `metadata_only`, the server removes before storage:
 
@@ -39,9 +39,11 @@ Under `metadata_only`, the server removes before storage:
 
 Keys are normalized before they are classified, because frameworks put content under
 neutral names. Pipecat's raw `text`, `input`, `output` and `tools` are classified as
-transcript, model input, model output and tool definitions. LiveKit's older `lk.*` content
-keys map to their `lk.pii.*` names. The string `NOT_GIVEN`, which Pipecat emits for unset
-values, counts as absent.
+transcript, model input, model output and tool definitions. LiveKit's keys are read
+through one table that names the class of every `lk.*` key of LiveKit 1.6 to 1.8 (a 1.6
+key and its 1.7 `lk.pii.*` name share one class); an `lk.*` key the table does not list,
+such as `lk.sip.*` or a key a later release adds, is dropped under `metadata_only`. The
+string `NOT_GIVEN`, which Pipecat emits for unset values, counts as absent.
 
 The raw Session Key is stored nowhere under `metadata_only`: a Call created under it has
 a null `session_key`, and the call API returns `session_key: null` and an empty transcript
@@ -66,8 +68,8 @@ keys. It does not catch:
 
 A producer that sends such attributes must remove them itself, or not send them to a
 `metadata_only` Project. Protobuf fields outside the OTLP schema are discarded. The test
-suite replays a real Pipecat call under `metadata_only` and searches the stored bytes for
-the raw key and identity values.
+suite replays a real Pipecat call and a real LiveKit call under `metadata_only` and
+searches the stored bytes for the raw key, identity and content values.
 
 `redacted` is reserved. Asking for it is refused with `EARSHOT_PRESET_UNAVAILABLE`. There
 is no redaction engine, and a regex masker would give a false sense of safety. A Project
@@ -75,8 +77,8 @@ that needs masking must use `metadata_only` until one exists.
 
 ### Defaults
 
-- **New installs.** Every database created by 0.2.0, SQLite or Postgres, starts with the
-  `default` Project set to `full`. Every Project created later is `full` too.
+- **New installs.** Every database created by 0.2.0 or later, SQLite or Postgres, starts
+  with the `default` Project set to `full`. Every Project created later is `full` too.
 - **Upgrades.** A 0.1.x data directory opened by 0.2.0 sets **every existing Project to
   `metadata_only`**, in the same transaction as the upgrade, and logs
   `EARSHOT_LEGACY_CAPTURE_PRESET` with the count. This includes a data directory with no
@@ -97,15 +99,18 @@ earshot project set-capture --project support --preset metadata_only
 
 A change applies to evidence received afterwards. Stored spans are not rewritten: content
 received under `full` stays until its Calls are purged or its Project is deleted, because
-Calls do not expire in 0.2.0 (see [retention](#calls)). A Call created under `full` keeps
+Calls do not expire in 0.3.0 (see [retention](#calls)). A Call created under `full` keeps
 its stored Session Key, and the call API still shows the transcript lines it received
-before the change.
+before the change, in its span transcript and in its call view. Transcript search is
+the exception: it follows the **current** preset, so after a change to `metadata_only`
+the Project's calls can no longer be searched by text (see
+[call transcripts and search](#call-transcripts-and-search)).
 
 ### Hosted mode
 
-In `hosted_jwt` mode, `/v1/traces`, `/v1/recordings*`, `/v1/calls*` and `/v1/otlp/stats`
-answer 403 `EARSHOT_OPERATION_UNAVAILABLE` for every method, so a hosted deployment
-receives no OTLP spans, call transcripts or Recordings in 0.2.0.
+In `hosted_jwt` mode, `/v1/traces`, `/v1/recordings*`, `/v1/calls*`, `/v1/prices*` and
+`/v1/otlp/stats` answer 403 `EARSHOT_OPERATION_UNAVAILABLE` for every method, so a hosted
+deployment receives no OTLP spans, call transcripts or Recordings in 0.3.0.
 Hosted Incident ingest keeps its closed metadata-only profile, which rejects media and raw
 OTLP; see [the backend API](./backend-api.md).
 
@@ -202,12 +207,30 @@ never stored media bytes; that rule is superseded by
 A Recording's bytes stream through the server into the blob store, local disk or S3,
 under a server-generated key. Earshot computes the sha256 and size while streaming.
 Client strings never appear in blob keys. Playback streams through the server with
-`Range` support; there are no presigned URLs. Recordings are mono in 0.2.0.
+`Range` support; there are no presigned URLs. A Recording is one speaker's mono track, or
+a stereo file whose `channel_speakers` names each channel's speaker.
 
 When a Call closes, each stored Recording becomes a `MediaRef` in the Revision, with
 custodian `earshot.blob_store` and `integrity: content_digest`. For these references the
 digest is Earshot's own measurement, not only a producer's declaration. A `ClockRelation`
 maps the Recording's start time to the Call's clock domain.
+
+### Derived from Recordings
+
+The server analyses each stored Recording itself, in a child process, and keeps three
+things derived from its audio (see [the call view](./calls.md)):
+
+- **the analysis result**, a catalog row: per channel, the start and end times of speech
+  runs with their uncertainty, the noise floor and the times of digital silence. It
+  holds no audio and no words;
+- **waveform peaks**, a blob: the audio's minimum and maximum per 256 samples, coarse
+  enough to draw, not to listen to;
+- for a mono user/agent pair on one timeline, **a stereo FLAC rendition**, a blob: a
+  second, playable copy of the pair's audio.
+
+All three are deleted with their Call (below). The analysis reads a temporary copy of
+the audio in `<data-dir>/analysis-tmp/` (an owner-only directory), removed when the job
+ends and swept at every start.
 
 ### Media held by others
 
@@ -243,6 +266,27 @@ The viewer never emits a media `src` for another custodian's media, which would 
 on render. A declared locator is offered only as a user-initiated link that goes directly
 from the reader's browser to the custodian, with the reader's own credentials and no
 referrer.
+
+## Call transcripts and search
+
+A Call's projection (the [call view](./calls.md)) places its transcript on the audio's
+time axis and writes each line, with its speaker and times, to the `call_transcripts`
+table, so the calls list can search it. The lines come from the stored spans, so they
+follow the preset **in force when the spans arrived**: a Call captured under
+`metadata_only` has no transcript content in its spans, and gets no lines. Each
+recomputation of the projection replaces its lines.
+
+The list's `q` parameter searches those lines as a case-insensitive substring. It
+follows the Project's **current** preset: under `metadata_only` it is refused with 422
+`EARSHOT_PRESET_FORBIDS_CONTENT_SEARCH`, even when older lines exist, so switching a
+Project to `metadata_only` stops text search at once. A list request with `q` is
+answered `Cache-Control: no-store`, like every call detail and span detail. Search is a
+plain `LIKE` or `ILIKE` scan; on Postgres, `earshot db enable-transcript-index` adds an
+optional `pg_trgm` index over the lines, which holds trigrams of their text and is
+erased like any other index (see [erasure limits](#erasure-limits)).
+
+The call view's span details (`GET /v1/calls/<call_id>/spans/…`) show a span as it was
+stored: under `metadata_only`, metadata attributes only, with no status message.
 
 ## Restricted export
 
@@ -308,9 +352,13 @@ The route answers 204, or 404 for an unknown Call; the command exits 0, or 2 wit
 
 - deletes the Call, its spans, its trace bindings, its Recording rows and its Revision
   rows, so no raw Session Key survives and the Call is no longer listed;
+- deletes its projection, its transcript lines (`call_transcripts`), its tags and its
+  Recordings' analysis results;
 - purges each Revision through the Incident purge above, leaving Incident tombstones;
-- queues the Recording blobs for deletion, which runs after the commit and is retried
-  until it succeeds;
+- queues the Recording blobs, their waveform peaks and any rendition for deletion, which
+  runs after the commit and is retried until it succeeds. An analysis still running
+  when the Call is purged leaves nothing behind: its outputs are queued for deletion
+  before they are written, and its result is refused;
 - removes resource rows no other span of the Project uses;
 - increments the Session Key's generation and writes a Call tombstone for the key and one
   for each of the Call's traces.
@@ -332,7 +380,7 @@ answers 409 `EARSHOT_INCIDENT_BELONGS_TO_CALL` with the `call_id`, and
 `earshot purge <bundle_id>` exits 2 and names the `earshot call purge` command to run.
 Purge the Call.
 
-**Retention.** In 0.2.0 no Call expires. Revisions carry no retention policy, so a Call
+**Retention.** In 0.3.0 no Call expires. Revisions carry no retention policy, so a Call
 and all its evidence are kept until it is purged or its Project is deleted. The rules
 below apply once Revisions carry one. The Incident reaper skips Revisions, so earlier
 Revisions never expire on their own, not even when one is read. When a Call's latest
@@ -342,8 +390,10 @@ Call has no Revision, so it never expires.
 **Project deletion** (`DELETE /v1/projects/<project_id>`, hosted JWT mode only; see
 [the backend API](./backend-api.md#project-deletion)) removes every span, parked trace,
 Recording, blob, resource, Revision, Call tombstone, key generation and OTLP counter of
-the Project. Incident tombstones (`SHA-256(bundle_id)`), including those of Revisions,
-stay, so bundle IDs are never reused. Blobs are deleted after the catalog commit; deletion
+the Project, with every projection, transcript line, analysis, peaks and rendition of
+its Calls, and the Project's own prices. Built-in prices are not the Project's and
+stay. Incident tombstones (`SHA-256(bundle_id)`), including those of Revisions, stay, so
+bundle IDs are never reused. Blobs are deleted after the catalog commit; deletion
 answers 202 until they are gone.
 
 ### Erasure limits
@@ -360,8 +410,8 @@ once every 10 minutes.
 **Postgres** deletes the rows, artifact bytes included, in the purge transaction. There is
 no secure delete and no scrub, so physical erasure is delayed:
 
-- dead row versions stay in heap and index pages until autovacuum or page reuse
-  overwrites them;
+- dead row versions stay in heap and index pages, the transcript search index
+  included, until autovacuum or page reuse overwrites them;
 - copies stay in the WAL, including archived WAL used for point-in-time recovery, until it
   is recycled or expires;
 - replicas, base backups and `pg_dump` files keep their copies until they age out.
@@ -389,6 +439,29 @@ admits, so enabling checkpointing never widens what Earshot retains, and it hold
 separate content channel of its own. A journal is removed once its incident reaches a
 durable successor; anything left behind by a crash is a recoverable artifact and is
 subject to the same erasure obligations as the spool.
+
+## Outbound connections
+
+The server makes no outbound connections of its own. It connects only to the catalog
+and the blob store its operator configures (`EARSHOT_DATABASE_URL`, `EARSHOT_BLOB_URL`);
+on SQLite and local disk, to nothing at all. In particular:
+
+- **No telemetry and no update checks.** Nothing reports usage, errors or versions
+  anywhere.
+- **onnxruntime's telemetry is disabled.** Some onnxruntime builds (1.31's Linux wheels)
+  start Microsoft's usage-telemetry client when the library is imported. The analysis
+  sets `ORT_DISABLE_TELEMETRY=1` before it first imports onnxruntime and turns its
+  telemetry events off; the container image sets the variable too. A test checks that
+  the variable is set before the import, and the image was checked to start no
+  telemetry client.
+- **No downloads.** The voice activity model ships inside the package and is checked
+  against its sha256 before use. Prices are a table in the package, never fetched from a
+  provider.
+- **The bundled viewer** loads its scripts, styles, audio and data from the server that
+  serves it.
+
+The SDK and the clients (`earshot.client`, `@earshot/node`, the browser package) connect
+only to the Earshot server they are given.
 
 ## Conformance secret sentinel
 

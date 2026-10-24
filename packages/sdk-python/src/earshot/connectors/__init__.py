@@ -1,12 +1,18 @@
-"""Hosted-provider connector interface."""
+"""Hosted-provider connectors: provider deliveries as evidence of the calls they describe."""
 
-from .kernel import EnvironmentSecretResolver, HostedProviderIngestion
+from .kernel import (
+    ConnectorEndpoint,
+    DeliveryBody,
+    EnvironmentSecretResolver,
+    HostedProviderIngestion,
+)
 from .types import (
     ConnectorConfigurationError,
     ConnectorNotFoundError,
     DeliveryBusyError,
     DeliveryConflictError,
     DeliveryError,
+    DeliveryIdentifierError,
     DeliveryMappingError,
     DeliveryOutcome,
     DeliveryPayloadError,
@@ -20,10 +26,13 @@ from .types import (
 
 __all__ = [
     "ConnectorConfigurationError",
+    "ConnectorEndpoint",
     "ConnectorNotFoundError",
+    "DeliveryBody",
     "DeliveryBusyError",
     "DeliveryConflictError",
     "DeliveryError",
+    "DeliveryIdentifierError",
     "DeliveryMappingError",
     "DeliveryOutcome",
     "DeliveryPayloadError",

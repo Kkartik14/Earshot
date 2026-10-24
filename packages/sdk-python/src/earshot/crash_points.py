@@ -17,6 +17,14 @@ commit, as a failed ``chmod`` or a lost commit answer raises. It is active only 
 both ``EARSHOT_TEST_MODE=1`` and ``EARSHOT_TEST_FAULT_AT=<name>`` are set; otherwise
 ``fault_point`` does nothing.
 
+A hold point stops the process at a named step until the test releases it, so a
+test can act while the process sits between two steps (purge a call while its
+analysis child is about to answer, say). It creates the file
+``EARSHOT_TEST_HOLD_FILE`` + ``.held`` once it holds, and waits until the file
+``EARSHOT_TEST_HOLD_FILE`` exists. It is active only when ``EARSHOT_TEST_MODE=1``,
+``EARSHOT_TEST_HOLD_AT=<name>`` and ``EARSHOT_TEST_HOLD_FILE`` are all set;
+otherwise ``hold_point`` does nothing.
+
 Every name a call site may use is declared here.
 """
 
@@ -45,6 +53,9 @@ CRASH_POINTS = frozenset(
         # The closer's materializer child has started and is not yet ready: it dies,
         # so the materializer cannot start (``MaterializerProcess``).
         "materializer_starting",
+        # An analysis child has applied its limits and decoded nothing: it dies, as a
+        # child that crashes in a decoder does (``signals.child``).
+        "analysis_child_running",
     }
 )
 
@@ -66,6 +77,9 @@ STALL_POINTS = frozenset(
         # of its spans: the parent's sends block once the pipe is full
         # (``MaterializerProcess``).
         "materializer_reading_snapshot",
+        # An analysis child has applied its limits and never decodes: its parent's
+        # timeout kills its process group (``signals.child``).
+        "analysis_child_running",
     }
 )
 
@@ -104,3 +118,31 @@ def fault_point(name: str) -> None:
         os.environ.get("EARSHOT_TEST_FAULT_AT") == name
     ):
         raise InjectedFault(f"injected fault at {name}")
+
+
+HOLD_POINTS = frozenset(
+    {
+        # An analysis child has written its outputs and not exited: its parent has not
+        # stored them yet (``signals.child``).
+        "analysis_child_finished",
+    }
+)
+HOLD_POLL_SECONDS = 0.05
+
+
+def hold_point(name: str) -> None:
+    """Wait until the test releases ``name``, if the test environment selects it."""
+
+    if name not in HOLD_POINTS:
+        raise ValueError(f"undeclared hold point: {name!r}")
+    release = os.environ.get("EARSHOT_TEST_HOLD_FILE")
+    if not (
+        os.environ.get("EARSHOT_TEST_MODE") == "1"
+        and os.environ.get("EARSHOT_TEST_HOLD_AT") == name
+        and release
+    ):
+        return
+    with open(f"{release}.held", "a"):
+        pass
+    while not os.path.exists(release):
+        time.sleep(HOLD_POLL_SECONDS)

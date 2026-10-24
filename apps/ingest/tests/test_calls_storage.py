@@ -1,4 +1,4 @@
-"""FR-4 storage: spans become calls through their trace, keyed by the host's session key.
+"""Call storage: spans become calls through their trace, keyed by the host's session key.
 
 ``CallStore.record_spans`` is the transaction the OTLP receiver runs per request.
 These tests drive it with the real Pipecat 1.5 capture
@@ -415,7 +415,7 @@ def test_a_request_of_thousands_of_spans_is_stored_whole_and_resent_as_duplicate
 def test_a_request_whose_spans_share_a_large_resource_is_stored_in_time_linear_in_its_size(
     tmp_path, scope_per_span
 ) -> None:
-    """Tribunal round 3, Bellard N3-1: every span re-copied, re-filtered and
+    """Every span re-copied, re-filtered and
     re-serialized the resource and scope it shares with the rest of its request.
     Equal scopes in separate ``ScopeSpans`` make one resource row, so they cost
     no more than one scope."""
@@ -423,15 +423,22 @@ def test_a_request_whose_spans_share_a_large_resource_is_stored_in_time_linear_i
     calls, _ = _open(tmp_path)
 
     def record(spans: int, attributes: int) -> float:
-        project = f"shared-{spans}"
-        calls.store.create_project(project, display_name=project)
         request = shared_attributes_request(spans, attributes, scope_per_span=scope_per_span)
         batch = spans_from_request(request)
-        seconds = best_cpu_seconds(lambda: calls.record_spans(project, batch))
-        assert catalog_rows(
-            tmp_path, "SELECT count(*) FROM spans WHERE project_id = ?", (project,)
-        ) == [(spans,)]
-        return seconds
+        samples = []
+        projects = []
+        for run in range(3):
+            project = f"shared-{spans}-{run}"
+            calls.store.create_project(project, display_name=project)
+            projects.append(project)
+            started = time.process_time()
+            calls.record_spans(project, batch)
+            samples.append(time.process_time() - started)
+        for project in projects:
+            assert catalog_rows(
+                tmp_path, "SELECT count(*) FROM spans WHERE project_id = ?", (project,)
+            ) == [(spans,)]
+        return min(samples)
 
     small, large = record(2_000, 10_000), record(4_000, 20_000)
 
@@ -468,9 +475,8 @@ def test_every_span_is_stored_with_its_own_presets_payload_and_resource_row(
     tmp_path, preset
 ) -> None:
     """The rows are what the preset gives span by span, whichever spans share a
-    resource or scope object: that work is done once per resource and scope
-    (tribunal round 3, N3-1), and must still tell apart resources that differ
-    only in their scope or schema URL."""
+    resource or scope object: that work is done once per resource and scope,
+    and must still tell apart resources that differ only in their scope or schema URL."""
 
     calls, _ = _open(tmp_path)
     calls.store.set_capture_preset("default", preset)
@@ -579,7 +585,7 @@ class _Counted:
 def test_a_batch_runs_as_many_statements_for_sixty_four_calls_as_for_one(
     tmp_path, monkeypatch
 ) -> None:
-    # Carmack C1: a voice worker's batch mixes the spans of every call it serves, and
+    # A voice worker's batch mixes the spans of every call it serves, and
     # the write lock is held for the whole batch, so its cost must not grow with the
     # number of traces in it: new calls, and spans added to calls already bound.
     calls, _ = _open(tmp_path)
@@ -751,7 +757,7 @@ def test_close_due_follows_the_end_signal_and_late_data_rules(tmp_path) -> None:
     ended = START + 10 * SECOND
     assert due() == (ended, ended + END_GRACE, 1, "open")
 
-    # The closer (WS7) closes it; a late span reopens nothing but makes it dirty
+    # The closer closes it; a late span reopens nothing but makes it dirty
     # again, due no sooner than the late-data debounce.
     with catalog(tmp_path) as connection:
         connection.execute(
@@ -782,7 +788,7 @@ def test_resolve_uses_the_current_generation_and_never_crosses_projects(tmp_path
     assert calls.resolve_call("default", "") is None
     assert calls.resolve_call("default", "x" * 257) is None
 
-    # A purge (WS8) bumps the key's generation: the old call no longer resolves,
+    # A purge bumps the key's generation: the old call no longer resolves,
     # and new evidence for the key starts generation 1.
     fingerprint = calls.key_fingerprint("default", CAPTURED_SESSION_KEY)
     with catalog(tmp_path) as connection:
@@ -806,7 +812,7 @@ def test_evidence_for_a_tombstoned_key_is_dropped_until_the_tombstone_expires(tm
     calls, clock = _open(tmp_path)
     requests = captured_requests()
     fingerprint = calls.key_fingerprint("default", CAPTURED_SESSION_KEY)
-    with catalog(tmp_path) as connection:  # what a call purge (WS8) leaves behind
+    with catalog(tmp_path) as connection:  # what a call purge leaves behind
         connection.execute(
             "INSERT INTO call_key_generations(project_id, key_fingerprint, generation) "
             "VALUES (?, ?, 1)",
@@ -942,7 +948,7 @@ def test_record_spans_gives_up_within_its_lock_budget(tmp_path) -> None:
 def test_call_timings_outside_one_nanosecond_to_ten_years_are_refused_when_built(
     tmp_path, name, seconds
 ) -> None:
-    """Tribunal rounds 2 and 3, Bellard: ``CallTimings(long_quiet_seconds=1e10)`` was
+    """``CallTimings(long_quiet_seconds=1e10)`` was
     built, then every ``record_spans`` raised ``OverflowError`` (a due time past
     int64). A host that builds its own ``CallStore`` gets the server's bounds."""
 
@@ -975,7 +981,7 @@ def test_lock_order_is_sorted_traces_then_sorted_calls() -> None:
 def test_a_catalog_stamped_0004_before_its_amendment_is_refused_when_it_opens(
     tmp_path, table, column
 ) -> None:
-    # Tribunal round 2, Lamport LAM2-3: ``0004_calls`` was amended in place before
+    # ``0004_calls`` was amended in place before
     # 0.2.0, so a catalog an unreleased build stamped lacks these columns; Alembic
     # sees nothing to do, and every write failed with a missing column instead.
     make_store(tmp_path).close()
@@ -993,7 +999,7 @@ def test_a_catalog_stamped_0004_before_its_amendment_is_refused_when_it_opens(
 
 @pytest.mark.postgres_only
 def test_the_variable_in_list_reads_are_never_server_prepared(tmp_path) -> None:
-    # Tribunal round 2, Carmack CR2-4: psycopg prepares a statement on its fifth run.
+    # Psycopg prepares a statement on its fifth run.
     # A prepared IN-list read keeps the generic plan Postgres made from a fresh
     # table's missing statistics (a project-wide bitmap scan filtering 500 values a
     # row), and a 1024-trace request went from 0.2 to 1.5 s until autoanalyze ran.

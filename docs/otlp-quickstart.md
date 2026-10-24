@@ -5,26 +5,33 @@ A Call is one voice session: every span that shares a Session Key in a Project, 
 Recordings uploaded for it. When a Call closes, Earshot stores a Revision, an ordinary
 Incident built from all of its spans and Recordings.
 
-This page covers Pipecat 1.5, the producer tested end to end in 0.2.0. Any OTLP/HTTP
-producer can send spans; see the [README](../README.md#what-earshot-receives-today) for
-what each source gets.
+This page covers Pipecat 1.5 and LiveKit Agents 1.6 to 1.8, the producers tested end to
+end in 0.3.0, and the two clients that upload a call's recording: Python's
+[`earshot.client`](#the-python-client-earshotclient) and Node's
+[`@earshot/node`](#node-earshotnode). Any OTLP/HTTP producer can send spans; see the
+[README](../README.md#what-earshot-receives-today) for what each source gets. Once a Call
+has closed, its [call view](./calls.md) shows its audio, transcript, latency, audible gap
+and cost.
 
 Everything on this page about `/v1/traces`, `/v1/recordings*`, `/v1/calls*` and
-`/v1/otlp/stats` describes the 0.2.0 receiver, recordings and call APIs.
+`/v1/otlp/stats` describes the 0.3.0 receiver, recordings and call APIs.
 
 ## Start the server
 
 ```bash
-pip install 'earshot-observability[server]'
+pip install 'earshot-observability[server,signals]'
 earshot serve
 ```
 
 The default listener is `http://127.0.0.1:4319`, with SQLite and local disk under
-`./.earshot`. [Storage and blobs](./storage-and-blobs.md) covers Postgres and S3.
+`./.earshot`. [Storage and blobs](./storage-and-blobs.md) covers Postgres and S3. The
+`signals` extra (numpy, onnxruntime, soundfile and a vendored voice activity model)
+analyses each Recording for the call view's audible gap and waveform; without it the
+server runs, and every analysis is `unavailable` with `EARSHOT_SIGNALS_EXTRA_REQUIRED`.
 
 ## Use the HTTP exporter, not gRPC
 
-Earshot implements OTLP over HTTP only. There is no gRPC listener in 0.2.0. Pipecat's own
+Earshot implements OTLP over HTTP only. There is no gRPC listener in 0.3.0. Pipecat's own
 tracing examples use the gRPC exporter (`opentelemetry-exporter-otlp-proto-grpc`); switch
 to the HTTP one:
 
@@ -143,7 +150,7 @@ counted as a `key_disagreements` event.
 
 **Pipecat 1.5: use one value for both keys.** Pass the same ID as `conversation_id` and
 as `earshot.session.id`, as the [snippet](#pipecat-snippet) does. This is a known
-limitation of 0.2.0. Pipecat 1.5 puts `conversation.id` on every `turn` span, but puts
+limitation of 0.3.0. Pipecat 1.5 puts `conversation.id` on every `turn` span, but puts
 `additional_span_attributes` only on the `conversation` span, which it exports when the
 call ends. The `turn` spans arrive first, so the trace is already bound to the
 `conversation.id` key when `earshot.session.id` arrives. If the two values differ:
@@ -184,6 +191,13 @@ End markers are matched by instrumentation scope and span name, never by span st
 The close time is recomputed on every evidence write, a new span or a stored Recording.
 An identical re-sent span is not evidence and moves nothing.
 
+LiveKit 1.8 sends its job's shutdown spans after `session_close`: `agent_session`,
+`on_session_end`, `session_end_upload`, `room_disconnect`, `job_shutdown`,
+`job_entrypoint` and, if the host registers one, `shutdown_callback`. They are stored
+with the Call, but never reopen it, move its close time or count as its latest
+evidence. On LiveKit 1.6 and 1.7, which send no `session_close`, `agent_session` is the
+end marker.
+
 | Variable                                | Default | Rule                                                                                                                                                           |
 | --------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `EARSHOT_CALL_END_GRACE_SECONDS`        | `10`    | After an end marker, the Call closes this long after its latest evidence.                                                                                      |
@@ -214,35 +228,45 @@ never uploaded) closes without a Revision. If a Revision cannot be built, the Ca
 the code in `materialize_error` and is retried after 2 s, then 4 s, 8 s and so on, never
 waiting longer than `EARSHOT_CALL_LONG_QUIET_SECONDS`.
 
-**What a Revision holds.** A Revision is built from the Call's Pipecat spans and its
-stored Recordings. Spans from other instrumentation stay stored and are declared as
-omitted. An `llm` span's input repeats the whole conversation on every turn, so it is
-always left out of the Revision, with a declared omission; the Revision then grows with
-the length of the call, not its square, and the full spans stay stored. Each Revision
+**What a Revision holds.** A Revision is built from the Call's Pipecat or LiveKit spans
+and its stored Recordings. Spans from other instrumentation stay stored and are declared
+as omitted. An LLM request's input (Pipecat's `llm` `input`, LiveKit's `lk.chat_ctx` or
+`gen_ai.input.messages`) repeats the whole conversation on every turn, so it is always
+left out of the Revision, with a declared omission; the Revision then grows with the
+length of the call, not its square, and the full spans stay stored. Each Revision
 covers the whole Call, so `GET /v1/metrics/turns` and Turn Fact queries count only a
 Call's latest Revision. Earlier Revisions stay readable.
 
 ## Recordings
 
-Recordings are mono only in 0.2.0: upload one file per speaker. Earshot reads the header
-of a WAV upload as it streams, and refuses a WAV with more than one channel with 422
-`EARSHOT_RECORDING_NOT_MONO`, or a WAV it cannot read with 422
-`EARSHOT_RECORDING_INVALID_WAV`. It does not inspect the other formats, so send those
-mono too. The Project's Capture Preset must be `full`; under `metadata_only`, creating or
-uploading a Recording gives 422 `EARSHOT_PRESET_FORBIDS_MEDIA`.
+A Recording is one speaker's mono track, or a `mixed` stereo file whose
+`channel_speakers` names each channel's speaker: `["user", "agent"]` puts the user on
+channel 0 and the agent on channel 1. A stereo file keeps both speakers on one clock, so
+prefer it when your framework records both. Earshot reads the header of a WAV, FLAC or
+Ogg Opus upload as it streams, and refuses a file whose channel count is not the
+Recording's (one, or one per `channel_speakers` entry) with 422
+`EARSHOT_RECORDING_CHANNEL_MISMATCH`, and a file it cannot read with 422
+`EARSHOT_RECORDING_INVALID_WAV`, `EARSHOT_RECORDING_INVALID_FLAC` or
+`EARSHOT_RECORDING_INVALID_OGG` (Ogg holding another codec than Opus included). A WAV
+whose `data` size is 0 or that holds no whole sample, and a FLAC whose STREAMINFO
+declares no samples, get the same 422: an empty upload is never stored. It does
+not inspect MP3 or WebM, so send those mono, without `channel_speakers`. The Project's
+Capture Preset must be `full`; under `metadata_only`, creating or uploading a Recording
+gives 422 `EARSHOT_PRESET_FORBIDS_MEDIA`.
 
 An upload has two steps: `POST` creates the Recording, then `PUT` uploads its bytes.
 
 **1. Create it.** `POST /v1/recordings` with a JSON body:
 
-| Field                  | Required | Value                                                                                                                                       |
-| ---------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `session_key`          | yes      | The same key as `earshot.session.id`. It finds the Call, or creates it.                                                                     |
-| `speaker`              | yes      | `user`, `agent` or `mixed`.                                                                                                                 |
-| `content_type`         | yes      | `audio/wav`, `audio/ogg`, `audio/mpeg`, `audio/webm` or `audio/flac`.                                                                       |
-| `started_at_unix_nano` | yes      | Wall-clock time of the first sample, as a decimal string from 1 to 2^63 − 1 (as span times). It aligns the audio with the spans; see below. |
-| `recording_id`         | no       | `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Makes the request idempotent.                                                                         |
-| `label`                | no       | Up to 128 characters.                                                                                                                       |
+| Field                  | Required | Value                                                                                                                                                                              |
+| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_key`          | yes      | The same key as `earshot.session.id`. It finds the Call, or creates it.                                                                                                            |
+| `speaker`              | yes      | `user`, `agent` or `mixed`.                                                                                                                                                        |
+| `content_type`         | yes      | `audio/wav`, `audio/ogg`, `audio/mpeg`, `audio/webm` or `audio/flac`.                                                                                                              |
+| `started_at_unix_nano` | yes      | Wall-clock time of the first sample, as a decimal string from 1 to 2^63 − 1 (as span times). It aligns the audio with the spans; see below.                                        |
+| `recording_id`         | no       | `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. Makes the request idempotent.                                                                                                                |
+| `label`                | no       | Up to 128 characters.                                                                                                                                                              |
+| `channel_speakers`     | no       | With `speaker: "mixed"` only: each channel's speaker in order, `user` and `agent` at most once each. WAV, FLAC or Ogg Opus only; otherwise 422 `EARSHOT_INVALID_CHANNEL_SPEAKERS`. |
 
 The answer is 201 with `recording_id`, `call_id`, `state: "pending"` and a relative
 `upload_path` (`/v1/recordings/<id>/content`). Sending the same `recording_id` again with
@@ -277,7 +301,8 @@ the upload.
 - The body may be up to `EARSHOT_RECORDING_MAX_BYTES` (512 MiB by default), or 413.
 - An optional `Content-Digest: sha-256=:<base64>:` header is checked while streaming. A
   mismatch gives 400 and nothing is stored.
-- On success the Recording is `stored`, with its sha256, size and, for WAV, its duration.
+- On success the Recording is `stored`, with its sha256, size and, for WAV, FLAC and Ogg
+  Opus, its duration.
 - A repeated `PUT` to a `stored` Recording is hashed without being written: the same bytes
   give 200, different bytes give 409. A `PUT` to a `failed` Recording gives 409.
 
@@ -300,17 +325,21 @@ new `PUT` before it passes.
 **Read it back.** `GET /v1/recordings/<id>` returns the metadata, and
 `GET /v1/recordings/<id>/content` streams the bytes through the server, with `Range`
 support (206). A `pending` Recording gives 409 `EARSHOT_RECORDING_NOT_STORED`. There are
-no presigned URLs in 0.2.0.
+no presigned URLs in 0.3.0. Once the server has analysed it,
+`GET /v1/recordings/<id>/peaks` serves its waveform peaks; see
+[the call view](./calls.md#audio-content-peaks-and-renditions).
 
 **The example's upload flow.** `python examples/pipecat_otlp/run_call.py --upload
-[BASE_URL]` runs both steps for a real call. At the first audio frame it creates one
-Recording per speaker, keyed by the conversation ID, with a recording ID derived from the
-conversation ID and the speaker, so a retry is idempotent. After the call and the
-tracer's `force_flush`, it uploads both WAVs with a `Content-Digest`. `BASE_URL` defaults
-to `OTEL_EXPORTER_OTLP_ENDPOINT`; the API key comes from `EARSHOT_API_KEY`, or from the
-`Authorization` entry of `OTEL_EXPORTER_OTLP_HEADERS`. The client,
-[`earshot_upload.py`](../examples/pipecat_otlp/earshot_upload.py), uses only the standard
-library.
+[BASE_URL]` runs both steps for a real call with `earshot.client`. At the first audio
+frame it creates one `mixed` Recording with `channel_speakers: ["user", "agent"]`, keyed
+by the conversation ID, with a recording ID derived from the conversation ID, so a retry
+is idempotent. After the call and the tracer's `force_flush`, it uploads one stereo WAV
+built from `AudioBufferProcessor`'s two tracks, streamed with a `Content-Digest`.
+`BASE_URL` defaults to `OTEL_EXPORTER_OTLP_ENDPOINT`; the API key comes from
+`EARSHOT_API_KEY`, or from the `Authorization` entry of `OTEL_EXPORTER_OTLP_HEADERS`.
+[`earshot.client`](../packages/sdk-python/src/earshot/client.py) needs only the standard
+library (it uses httpx when installed). `examples/livekit_otlp/run_call.py --upload` does
+the same for LiveKit's own stereo Ogg Opus recording.
 
 ## Responses, errors and retries
 
@@ -389,20 +418,19 @@ For production, put an OpenTelemetry Collector with a persistent queue in front;
 
 This follows [`examples/pipecat_otlp/run_call.py`](../examples/pipecat_otlp/run_call.py),
 which runs a real call. Set `OTEL_EXPORTER_OTLP_ENDPOINT` (and `OTEL_EXPORTER_OTLP_HEADERS`
-off loopback) before the process starts.
+off loopback) before the process starts. The bot needs only the base install,
+`pip install earshot-observability`, for `earshot.client`.
 
 ```python
-import json
 import time
-import urllib.request
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from pipecat.pipeline.worker import PipelineWorker
 from pipecat.utils.tracing.setup import setup_tracing
 
-EARSHOT_URL = "http://127.0.0.1:4319"
-API_KEY = None  # an Earshot API key; needed off loopback
+from earshot.client import EarshotClient, recording_id_for
+
 SESSION_KEY = "call-123"  # your own ID for this call
 
 # The exporter reads OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS.
@@ -416,38 +444,157 @@ worker = PipelineWorker(
     additional_span_attributes={"earshot.session.id": SESSION_KEY},
 )
 
-
-def call_earshot(method: str, path: str, body: bytes, content_type: str) -> None:
-    request = urllib.request.Request(EARSHOT_URL + path, data=body, method=method)
-    request.add_header("Content-Type", content_type)
-    if API_KEY:
-        request.add_header("Authorization", f"Bearer {API_KEY}")
-    with urllib.request.urlopen(request, timeout=60):
-        pass
-
+# The same server and API key as the exporter.
+earshot = EarshotClient.from_environment()
 
 # 1. When the input transport produces its first audio frame (time zero): create one
 #    Recording per speaker. They hold the Call open.
-started_at = str(time.time_ns())
-for speaker in ("user", "agent"):
-    manifest = {
-        "recording_id": f"{SESSION_KEY}-{speaker}",
-        "session_key": SESSION_KEY,
-        "speaker": speaker,
-        "content_type": "audio/wav",
-        "started_at_unix_nano": started_at,
-    }
-    call_earshot("POST", "/v1/recordings", json.dumps(manifest).encode(), "application/json")
+started_at = time.time_ns()
+recordings = {
+    speaker: earshot.create_recording(
+        session_key=SESSION_KEY,
+        recording_id=recording_id_for(SESSION_KEY, speaker),  # a retry names the same one
+        speaker=speaker,
+        content_type="audio/wav",
+        started_at_unix_nano=started_at,
+    )
+    for speaker in ("user", "agent")
+}
 
 # 2. Run the call. 3. Flush, so the `conversation` span (the end marker) is sent.
 trace.get_tracer_provider().force_flush()
 
 # 4. Upload each mono WAV, for example the tracks of Pipecat's AudioBufferProcessor.
-for speaker in ("user", "agent"):
-    with open(f"{speaker}.wav", "rb") as wav:
-        path = f"/v1/recordings/{SESSION_KEY}-{speaker}/content"
-        call_earshot("PUT", path, wav.read(), "audio/wav")
+for speaker, recording in recordings.items():
+    earshot.upload_recording(recording, f"{speaker}.wav")
+earshot.close()
 ```
+
+The two tracks share one `started_at`, and `AudioBufferProcessor` writes them at the same
+length, so they are one recorder timeline: the server measures each turn's audible gap
+on them and plays them as one stereo rendition. To upload one stereo file instead,
+create a single `mixed` Recording with `channel_speakers=["user", "agent"]`, as the
+example does.
+
+## LiveKit snippet
+
+This follows [`examples/livekit_otlp/run_call.py`](../examples/livekit_otlp/run_call.py),
+which runs a real LiveKit Agents 1.8 call. LiveKit's own `RecorderIO` records the call
+as one stereo Ogg Opus file (channel 0 the user, channel 1 the agent), and
+`tracer_metadata` stamps the Session Key on every span LiveKit emits.
+
+```python
+import asyncio
+
+from livekit.agents import AgentServer, AgentSession, JobContext, telemetry
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from earshot.client import EarshotClient, recording_id_for, tracer_metadata
+
+SESSION_KEY = "call-123"  # your own ID for this call
+# Record audio only: nothing is sent to LiveKit's own observability service.
+RECORD = {"audio": True, "traces": False, "logs": False, "transcript": False}
+
+provider = TracerProvider()
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+telemetry.set_tracer_provider(provider, metadata=tracer_metadata(SESSION_KEY))
+earshot = EarshotClient.from_environment()
+held = {}
+
+
+async def entrypoint(ctx: JobContext) -> None:
+    session = AgentSession(stt=..., llm=..., tts=..., vad=...)  # your providers
+    await session.start(agent=MyAgent(), room=ctx.room, record=RECORD)
+    # The recording's time zero. LiveKit 1.8 makes it public only in the session
+    # report, after the call; read it now, so the Recording holds the Call open.
+    started_at = session._recorder_io.recording_started_at  # time.time() seconds
+    held["recording"] = await asyncio.to_thread(
+        earshot.create_recording,
+        session_key=SESSION_KEY,
+        recording_id=recording_id_for(SESSION_KEY, "call"),
+        speaker="mixed",
+        channel_speakers=["user", "agent"],
+        content_type="audio/ogg",
+        started_at_unix_nano=round(started_at * 1e6) * 1000,
+    )
+
+
+async def on_session_end(ctx: JobContext) -> None:
+    report = ctx.make_session_report()
+    await asyncio.to_thread(
+        earshot.upload_recording, held["recording"], report.audio_recording_path
+    )
+
+
+server = AgentServer()
+server.rtc_session(entrypoint, on_session_end=on_session_end)
+```
+
+Call `provider.force_flush()` before the process exits, so `session_close` (the end
+marker) is sent. The example runs headless, with no LiveKit server or room (an
+in-process fake job); it proves the path from LiveKit's recorder to the call view, not
+the gap a caller in a real room would hear.
+
+## The Python client: `earshot.client`
+
+[`earshot.client`](../packages/sdk-python/src/earshot/client.py) is in the base install
+and needs only the standard library; it uses httpx when installed.
+
+| Name                                                                                                                       | Does                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `EarshotClient(base_url, api_key=… or authorization=…, timeout=…)`                                                         | One server, as one Project's API key. Use it as a context manager, or `close()` it.                                                                                                                                                                                                                                                                                                                                         |
+| `EarshotClient.from_environment()`                                                                                         | The server from `EARSHOT_URL`, else `OTEL_EXPORTER_OTLP_ENDPOINT`; the key from `EARSHOT_API_KEY`, else the `Authorization` entry of `OTEL_EXPORTER_OTLP_HEADERS`, the one the exporter already sends.                                                                                                                                                                                                                      |
+| `create_recording(session_key=, speaker=, content_type=, started_at_unix_nano=, channel_speakers=, recording_id=, label=)` | `POST /v1/recordings`. Idempotent with a `recording_id`.                                                                                                                                                                                                                                                                                                                                                                    |
+| `upload_recording(recording, path_or_file)`                                                                                | `PUT …/content`, streamed in 1 MiB blocks with its `Content-Digest`, never read whole into memory. `recording` is what `create_recording` returned, or its ID.                                                                                                                                                                                                                                                              |
+| `get_recording(id)`, `resolve_call(session_key)`, `get_call(call_id)`                                                      | The Recording, `{"call_id": …}`, and the call detail with its `projection`.                                                                                                                                                                                                                                                                                                                                                 |
+| `tracer_metadata(session_key)`                                                                                             | `{"earshot.session.id": key}` for LiveKit's `set_tracer_provider(provider, metadata=…)`. Refuses a key the server would not read.                                                                                                                                                                                                                                                                                           |
+| `recording_id_for(session_key, name)`                                                                                      | A stable Recording ID for a Call's named Recording, so a retry names the same one.                                                                                                                                                                                                                                                                                                                                          |
+| `EarshotError`                                                                                                             | A refused request: `status` (0 when there was no answer) and Earshot's stable `code`. A redirect (never followed, so the key never leaves the server you named), an answer that is not JSON and an answer cut short are `EarshotError`s too. Its message never holds the API key; it names the request's path, and a Recording ID from `recording_id_for` shows the Session Key when the key is made only of ID characters. |
+
+## Node: `@earshot/node`
+
+A Node voice server, such as a Twilio Media Streams handler or a LiveKit Agents JS worker,
+uses [`@earshot/node`](../packages/node/README.md) (ESM, Node 22.12 or later, with
+`@opentelemetry/api` as its one peer):
+
+```ts
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
+import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import {
+  EarshotClient,
+  EarshotSpanProcessor,
+  recordingIdFor,
+  withSessionKey,
+} from "@earshot/node";
+
+const provider = new NodeTracerProvider({
+  spanProcessors: [
+    new EarshotSpanProcessor(),
+    new BatchSpanProcessor(new OTLPTraceExporter()),
+  ],
+});
+provider.register(); // installs the async context manager withSessionKey relies on
+const earshot = EarshotClient.fromEnvironment();
+
+await withSessionKey(callSid, async () => {
+  // Every span started in here, in any async continuation, carries callSid.
+  const recording = await earshot.createRecording({
+    session_key: callSid,
+    recording_id: recordingIdFor(callSid, "call"),
+    speaker: "mixed",
+    channel_speakers: ["user", "agent"],
+    content_type: "audio/wav",
+    started_at_unix_nano: BigInt(Date.now()) * 1_000_000n,
+  });
+  // ... the call runs ...
+  await earshot.uploadRecording(recording, "/tmp/call.wav");
+});
+```
+
+`recordingIdFor` names the same Recording as Python's `recording_id_for`. The package
+README covers the processor's key precedence, errors and types.
 
 ## Check the result
 
@@ -469,4 +616,13 @@ adds the Revisions, the Recordings, `evidence_after_latest_revision`, the transc
 The transcript has one line per Pipecat `stt` span with a transcript (the user) and one
 per `llm` span's `output` (the agent). The `output` keeps the partial reply when the user
 interrupts; a cancelled `llm` span gives no line. Pipecat 1.5's `tts.text` holds only the
-last sentence of a reply, so Earshot does not use it for agent lines.
+last sentence of a reply, so Earshot does not use it for agent lines. For LiveKit, a user
+line is each `user_turn`'s transcript and an agent line each `agent_turn`'s played text,
+never an LLM reply LiveKit discarded.
+
+**The call view.** Once the Call has closed and its Recordings are analysed (about half a
+second for a 30-second call), the call detail's `projection` holds the turns with their
+reported latency and audible gap, the signals, the cost and the placed transcript, and
+`projection_state` is `current`. Open `http://127.0.0.1:4319/calls` for the calls list
+and each call's player. [The call view](./calls.md) explains every field and the list's
+filters.

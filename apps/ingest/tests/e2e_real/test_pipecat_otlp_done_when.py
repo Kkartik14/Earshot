@@ -1,4 +1,4 @@
-"""FR-12's done-when e2e: one real Pipecat call into a real Earshot on Postgres and S3.
+"""The done-when e2e: one real Pipecat call into a real Earshot on Postgres and S3.
 
 A real ``earshot serve`` process runs on a fresh Postgres database
 (``EARSHOT_TEST_POSTGRES_URL``, by default ``earshot-dev-postgres``) with a fresh
@@ -7,10 +7,16 @@ correlation key, and keeps recordings in the test S3 server
 ``EARSHOT_BLOB_URL=s3://…``. A project and its API key are made with the
 ``earshot`` CLI while the server runs. ``examples/pipecat_otlp/run_call.py
 --upload`` then runs one real call (Deepgram, Groq, Cartesia), configured only by
-``OTEL_EXPORTER_OTLP_ENDPOINT`` and ``OTEL_EXPORTER_OTLP_HEADERS``. The call must
+``OTEL_EXPORTER_OTLP_ENDPOINT`` and ``OTEL_EXPORTER_OTLP_HEADERS``; it uploads one
+stereo WAV (channel 0 user, channel 1 agent) with ``earshot.client``. The call must
 pass ``call_done_when``'s checks against the example's own manifest (its tee span
-count, its ``started_at``, the WAVs it uploaded), and the caller's words must come
-back in the user transcript.
+count, its ``started_at``, the WAV it uploaded), the recording must keep its channel
+map, and the caller's words must come back in the user transcript. Then the server's
+own analysis and projection jobs run, and the call view must pass
+``assert_call_view``: the recording's analysis stored, at least one turn's audible
+gap at the agent measured within (0, 15 s) with a ± of at most 100 ms and every
+other turn not measurable with its reason, a cost lower bound above 0 with a costed
+item from each provider, and the transcript placed on the recording.
 
 Provider keys come from the environment (``DEEPGRAM_API_KEY``, ``GROQ_API_KEY``,
 ``CARTESIA_API_KEY``, ``CARTESIA_VOICE_ID``). Without them, or without the
@@ -41,7 +47,15 @@ from collections.abc import Mapping
 
 import pytest
 
-from call_done_when import Earshot, SentCall, assert_done_when, read_rows, script_words
+from call_done_when import (
+    Earshot,
+    SentCall,
+    assert_call_view,
+    assert_done_when,
+    read_rows,
+    script_words,
+    wait_until_projected,
+)
 from server_process import ROOT, ServerProcess
 from store_support import postgres_cluster
 
@@ -194,20 +208,25 @@ def test_a_real_pipecat_call_becomes_one_closed_call_with_its_recordings(tmp_pat
             session_key=conversation_id,
             exported_span_count=manifest["exported_span_count"],
             started_at_unix_nano=int(manifest["started_at_unix_nano"]),
-            tracks={
-                speaker: (out / f"{speaker}.wav").read_bytes() for speaker in ("user", "agent")
-            },
+            tracks={"mixed": (out / manifest["tracks"]["stereo"]).read_bytes()},
         )
         settle_began = time.monotonic()
         settled = assert_done_when(earshot, sent)
         settle_s = time.monotonic() - settle_began
+        projected = wait_until_projected(earshot, settled.detail["call_id"])
+        project_s = time.monotonic() - settle_began - settle_s
     finally:
         server.stop()
 
     detail = settled.detail
+    [recording] = detail["recordings"]
+    assert recording["channel_speakers"] == ["user", "agent"]
     user_text = " ".join(line["text"] for line in detail["transcript"] if line["speaker"] == "user")
     heard = script_words(user_text) & script_words(" ".join(manifest["caller_script"]))
     assert len(heard) >= 2, detail["transcript"]
+    # Kept before the checks, so a failing call view can be read afterwards.
+    (tmp_path / "call_view.json").write_text(json.dumps(projected, indent=2) + "\n")
+    view = assert_call_view(projected, manifest["providers"])
 
     summary = {
         "call_id": detail["call_id"],
@@ -216,6 +235,7 @@ def test_a_real_pipecat_call_becomes_one_closed_call_with_its_recordings(tmp_pat
             "server_ready": round(server_ready_s, 2),
             "call_and_upload": round(call_s, 2),
             "settle_after_upload": round(settle_s, 2),
+            "projected_after_settle": round(project_s, 2),
             "total": round(time.monotonic() - began, 2),
         },
         "spans": {
@@ -231,6 +251,7 @@ def test_a_real_pipecat_call_becomes_one_closed_call_with_its_recordings(tmp_pat
         "first_stt_minus_started_at_s": round(settled.first_stt_offset_nano / 1e9, 3),
         "transcript": [(line["speaker"], line["text"]) for line in detail["transcript"]],
         "providers": manifest["providers"],
+        "call_view": view,
     }
     (tmp_path / "done_when_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))

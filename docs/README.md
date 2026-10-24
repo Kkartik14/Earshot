@@ -3,22 +3,28 @@
 These documents are the public, reproducible source of truth. They are sufficient
 to implement another producer or consumer without access to `docs/private`.
 
-The current release is a pre-v1 alpha. What Earshot receives today is listed in the
-repository [README](../README.md#what-earshot-receives-today); mobile capture, OTLP over
-gRPC, a call view in the viewer, and regression-fixture export are planned and are not
-shipped APIs.
+The current release is a pre-v1 alpha, 0.3.0 ([release notes](./release-notes-0.3.0.md)).
+What Earshot receives today is listed in the repository
+[README](../README.md#what-earshot-receives-today); mobile capture, OTLP over gRPC, and
+regression-fixture export are planned and are not shipped APIs.
 
 ## Run Earshot
 
 - [OTLP quick start](./otlp-quickstart.md) — the HTTP exporter, API keys and the host
-  rule, session keys, close timing, recordings, and errors and retries.
+  rule, session keys, close timing, recordings, Pipecat and LiveKit snippets, the Python
+  `earshot.client` and `@earshot/node`, and errors and retries.
+- [The call view](./calls.md) — audio and waveform, the placed transcript, reported
+  latency and the audible gap at the agent, signals, cost, prices, and the calls list's
+  filters and transcript search.
 - [Storage and blobs](./storage-and-blobs.md) — SQLite or Postgres, migrations, upgrading
   from 0.1.x, the correlation key, and local or S3 blob URLs.
 - [Production notes](./production.md) — one server per database, no transaction-pooling
-  proxy, a Collector in front, S3 lifecycle, readiness, and backups.
+  proxy, a Collector in front, S3 lifecycle, recording analysis and the `signals` extra,
+  projections and prices, the transcript search index, readiness, and backups.
 - [Server configuration](./configuration.md) — every variable of `earshot serve` and
   the ASGI app, before and after 0.2.0.
-- [Changelog](../CHANGELOG.md) — what changed in each release, breaking changes first.
+- [Changelog](../CHANGELOG.md) — what changed in each release, breaking changes first;
+  the [0.3.0 release notes](./release-notes-0.3.0.md) add what its tests prove and don't.
 
 ## Start here
 
@@ -44,8 +50,9 @@ shipped APIs.
 - [Development](./development.md) — setup, regeneration, tests, and local operation.
 - [Release packaging](./release.md) — distribution identity, build verification, and
   publication guardrails; the owner's [release checklist](./release-checklist.md).
-- [Architecture decisions](./adr/) — ADRs 0001 to 0007, including capture presets, the
-  OTLP receiver, storage, and the Call.
+- [Architecture decisions](./adr/) — ADRs 0001 to 0009, including capture presets, the
+  OTLP receiver, storage, the Call, recording analysis and call projections, and the cost
+  model.
 - [Pipecat adapter](./adapters/pipecat.md) and
   [LiveKit adapter](./adapters/livekit.md) — adapter contracts and limitations.
 - [TVIC runtime adapter](./adapters/tvic.md) — runtime observation mapping,

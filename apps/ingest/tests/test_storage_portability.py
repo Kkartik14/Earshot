@@ -1,6 +1,6 @@
 """Storage behaviour that must be identical on SQLite and Postgres (``--db``).
 
-AC1.2 (value widths), AC1.9 (the shim's transaction contract) and the "behind"
+Value widths, the shim's transaction contract and the "behind"
 migration path, each through the public store API and the dialect's own catalog.
 """
 
@@ -84,7 +84,9 @@ def test_a_catalog_one_revision_behind_is_upgraded_unless_auto_migrate_is_off(
     store = make_store(tmp_path)
     store.ingest(make_valid_bundle(bundle_id="after-upgrade"))
 
-    assert catalog_rows(tmp_path, "SELECT version_num FROM alembic_version") == [("0004_calls",)]
+    assert catalog_rows(tmp_path, "SELECT version_num FROM alembic_version") == [
+        ("0006_connectors",)
+    ]
     # A catalog Earshot created upgrades with its projects capturing in full.
     assert catalog_rows(tmp_path, "SELECT capture_preset FROM projects") == [("full",)]
     # An incident from before the revision is stale until it is re-projected.
