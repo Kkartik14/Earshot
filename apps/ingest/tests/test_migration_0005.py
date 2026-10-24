@@ -10,6 +10,9 @@ call purge:
   ``audio_analysis`` row per stored recording when it upgrades (a recording that
   is still pending gets none: storing it queues its analysis), and starts every
   version counter at 0;
+- on a catalog that already holds revised calls, the ``first_revision`` mark of each
+  span and stored recording is its call's latest revision, except evidence stored
+  after that revision was built, which stays unmarked so the next revision marks it;
 - purging a call deletes every row derived from it (its recordings' analyses,
   its projection, the projection's transcript lines and tags), through the keys'
   ``ON DELETE CASCADE``.
@@ -29,6 +32,7 @@ from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_closer import Closer
 from earshot.storage_migrations import head_revision
 from earshot.storage_recordings import RecordingManifest, RecordingStore
+from otlp_support import make_request, make_span, string_attribute
 from store_support import catalog, catalog_rows, drop_projection_objects, make_store
 
 pytestmark = pytest.mark.integration
@@ -105,6 +109,90 @@ def test_an_upgrade_queues_one_analysis_per_stored_recording(tmp_path) -> None:
         (None,),
         (None,),
     ]
+
+
+def _close_calls(recordings: RecordingStore, clock: ManualClock) -> None:
+    closer = Closer(recordings.store, calls=recordings.calls, recordings=recordings)
+    clock.advance(TIMINGS.long_quiet_nano + TIMINGS.end_grace_nano)
+    while closer.close_next() is not None:
+        pass
+
+
+def test_an_upgrade_marks_revised_evidence_with_its_revision_and_leaves_later_evidence_unmarked(
+    tmp_path,
+) -> None:
+    clock = ManualClock(wall=START, monotonic=START)
+    recordings = _recordings(tmp_path, clock)
+    calls = recordings.calls
+    for item in captured_requests():
+        calls.record_spans("default", spans_from_request(item))
+        clock.advance(5 * SECOND)
+    _create(recordings, "call-1.user", "user")
+    _store(recordings, "call-1.user")
+    _close_calls(recordings, clock)
+    [(call_id, revision)] = catalog_rows(tmp_path, "SELECT call_id, latest_revision FROM calls")
+    assert revision == 1
+    # After that revision was built: a late span of the call's trace, and the agent's
+    # track. The call is dirty; the revision does not hold either.
+    clock.advance(100 * SECOND)
+    trace = int.from_bytes(spans_from_request(captured_requests()[0])[0].span.trace_id, "big")
+    calls.record_spans(
+        "default",
+        spans_from_request(make_request([make_span(trace, 901, name="llm", start=START)])),
+    )
+    _create(recordings, "call-1.agent", "agent")
+    _store(recordings, "call-1.agent")
+    _create(recordings, "call-1.mixed", "mixed")  # never stored
+    # Another call that never closed: nothing of it is in a revision.
+    attributes = [string_attribute("earshot.session.id", "unrevised")]
+    calls.record_spans(
+        "default", spans_from_request(make_request([make_span(77, 1, attributes=attributes)]))
+    )
+    recordings.store.close()
+    with catalog(tmp_path) as connection:  # back to 0004_calls, rows kept
+        drop_projection_objects(connection)
+        connection.execute("UPDATE alembic_version SET version_num = ?", ("0004_calls",))
+
+    make_store(tmp_path).close()
+
+    [(built,)] = catalog_rows(
+        tmp_path,
+        "SELECT created_unix_nano FROM call_revisions WHERE call_id = ? AND revision = 1",
+        (call_id,),
+    )
+    spans = catalog_rows(
+        tmp_path,
+        "SELECT s.first_revision, s.received_unix_nano > ?, t.call_id FROM spans s "
+        "JOIN call_traces t ON t.project_id = s.project_id AND t.trace_id = s.trace_id",
+        (built,),
+    )
+    assert len(spans) > 2
+    assert {(mark, later) for mark, later, owner in spans if owner == call_id} == {
+        (1, False),  # in the revision
+        (None, True),  # the late span
+    }
+    assert [mark for mark, _, owner in spans if owner != call_id] == [None]  # never revised
+    assert catalog_rows(
+        tmp_path, "SELECT recording_id, state, first_revision FROM recordings ORDER BY 1"
+    ) == [
+        ("call-1.agent", "stored", None),
+        ("call-1.mixed", "pending", None),
+        ("call-1.user", "stored", 1),
+    ]
+    # The next revision marks what was left.
+    clock.advance(TIMINGS.upload_hold_nano + TIMINGS.late_debounce_nano)  # the hold is over
+    recordings = _recordings(tmp_path, clock)
+    assert Closer(recordings.store, calls=recordings.calls, recordings=recordings).close_next()
+    assert catalog_rows(
+        tmp_path,
+        "SELECT recording_id, first_revision FROM recordings WHERE state = 'stored' ORDER BY 1",
+    ) == [("call-1.agent", 2), ("call-1.user", 1)]
+    assert catalog_rows(
+        tmp_path,
+        "SELECT count(*) FROM spans s JOIN call_traces t ON t.project_id = s.project_id "
+        "AND t.trace_id = s.trace_id WHERE t.call_id = ? AND s.first_revision IS NULL",
+        (call_id,),
+    ) == [(0,)]
 
 
 def test_purging_a_call_deletes_every_row_derived_from_it(tmp_path) -> None:

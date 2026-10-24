@@ -951,6 +951,8 @@ PROJECTION_COLUMNS = (
     ("recordings", "channel_speakers_json"),
     ("calls", "projection_seq"),
     ("projects", "price_version"),
+    ("spans", "first_revision"),
+    ("recordings", "first_revision"),
 )
 # A recording's channels in order, as compact JSON: user and agent, each at most once.
 _CHANNEL_SPEAKERS_JSON = ('["user"]', '["agent"]', '["user","agent"]', '["agent","user"]')
@@ -996,6 +998,11 @@ def projection_columns() -> list[tuple[str, Column[object]]]:
         ("calls", _counter("projection_seq")),
         # Bumped by every insert of the project's own prices.
         ("projects", _counter("price_version")),
+        # The first revision built from the span or recording (NULL: none yet), set
+        # once by the claim that snapshots it: revision r holds exactly the evidence
+        # with first_revision <= r.
+        ("spans", _optional("first_revision", Integer, _at_least("first_revision", 1))),
+        ("recordings", _optional("first_revision", Integer, _at_least("first_revision", 1))),
     ]
 
 

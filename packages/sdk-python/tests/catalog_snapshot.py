@@ -1,4 +1,4 @@
-"""One dialect-aware description of a catalog schema (AC1.1), for every schema test.
+"""One dialect-aware description of a catalog schema, for every schema test.
 
 ``sqlite_catalog_snapshot(path)`` and ``postgres_catalog_snapshot(url)`` read a
 live catalog and return a ``CatalogSnapshot`` with two parts:
