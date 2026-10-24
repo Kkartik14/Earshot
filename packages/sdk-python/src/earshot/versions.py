@@ -15,7 +15,7 @@ COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION = "0.2.0"
 API_VERSION = "0.15.0"
 ANALYZER_VERSION = "0.6.0"
 TURN_FACT_PROJECTION_VERSION = "0.1.0"
-# Stored per incident; bump when projection output changes so older rows are rebuilt on server start.
+# Bump when projection output changes so startup rebuilds stale incident rows.
 INCIDENT_PROJECTION_VERSION = 1
 PIPELINE_ADAPTER_VERSION = "0.3.0"
 LIVEKIT_ADAPTER_VERSION = "0.1.0"

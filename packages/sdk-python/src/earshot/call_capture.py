@@ -93,7 +93,7 @@ RECEIVER_ATTRIBUTES = (*SESSION_KEY_ATTRIBUTES, EARSHOT_CALL_ENDED)
 SESSION_KEY_MAX_BYTES = 256
 NOT_GIVEN = "NOT_GIVEN"
 
-# Framework scope/name pairs identify call-ending and session spans across Pipecat 1.5 and LiveKit 1.6–1.8.
+# Framework scope/name pairs identify call-ending and session spans in supported adapters.
 END_MARKER_SPANS = frozenset(
     {
         ("pipecat.turn", "conversation"),
@@ -143,7 +143,7 @@ def _own_names(capture_class: CaptureClass, keys: Iterable[str]) -> dict[str, Ke
 
 
 _MODEL = CaptureClass.MODEL_PAYLOAD
-# Allowlisted LiveKit metadata fields from supported releases; transcript payloads retain only timing and length metadata.
+# Allowlisted LiveKit metadata excludes transcript text, retaining only timing and lengths.
 _LIVEKIT_METADATA_KEYS = (
     *("lk.agent_label", "lk.agent_name", "lk.callback.name", "lk.cloud_agent_id"),
     *("lk.deployment_id", "lk.dispatch_id", "lk.fallback.index", "lk.fallback.label"),
@@ -180,8 +180,8 @@ _LIVEKIT_METADATA_KEYS = (
     *("lk.transcript_confidence", "lk.transcription_delay"),
     *("lk.llm_metrics", "lk.realtime_model_metrics", "lk.stt.events", "lk.tts_metrics"),
 )
-# Raw-to-semantic key and privacy-class mapping shared by OTLP capture and the LiveKit adapter.
-# Keys emitted together on one span use one class because each bundle record accepts only one sensitive class.
+# Shared raw-to-semantic key and privacy-class mapping for OTLP and LiveKit.
+# Keys emitted together use one class because a bundle record accepts only one sensitive class.
 ATTRIBUTE_KEYS: dict[str, KeyRule] = {
     # Pipecat 1.5 (``utils/tracing/service_decorators.py``, ``service_attributes.py``)
     # and its realtime services; Pipecat's adapter records them by operation.

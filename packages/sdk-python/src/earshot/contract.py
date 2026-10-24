@@ -124,7 +124,7 @@ def _portable_schema_url(value: str) -> str:
 
 
 SchemaUrl = Annotated[str, StringConstraints(min_length=1), AfterValidator(_portable_schema_url)]
-# Keep clock-rate correction within ±1,000,000 ppm so the affine mapping stays positive and within the contract's time domain.
+# Bound drift so clock mappings stay positive and within the nanosecond domain.
 MAX_CLOCK_DRIFT_PPM = 1_000_000.0
 
 CaptureClassName = Literal[
@@ -247,7 +247,7 @@ class RecoveryRecord(ContractModel):
     # rather than inventing a journal identity and sequence it never had.
     journal_id: OpaqueId | None = None
     last_sequence: StrictInt | None = Field(default=None, ge=0)
-    # First and last durable evidence coordinates bound the observed extent, not session boundaries, and share one clock domain.
+    # Evidence bounds describe observed extent in one clock domain, not session boundaries.
     first_observation: TimePoint | None = None
     last_observation: TimePoint | None = None
     torn_tail_bytes: StrictInt = Field(default=0, ge=0)
@@ -384,7 +384,7 @@ class ClockRelation(ContractModel):
             # cross-clock alignment it touches; a rate must be a finite number.
             raise ValueError("clock relation drift_ppm must be finite")
         if self.drift_ppm is not None and abs(self.drift_ppm) >= MAX_CLOCK_DRIFT_PPM:
-            # Reject rates that make the mapping non-invertible, reverse time, or leave the nanosecond domain.
+            # Reject drift rates that reverse time or leave the supported nanosecond domain.
             raise ValueError(
                 "clock relation drift_ppm must be within "
                 f"+/-{MAX_CLOCK_DRIFT_PPM:.0f} ppm (exclusive)"

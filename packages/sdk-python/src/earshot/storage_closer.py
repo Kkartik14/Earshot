@@ -259,7 +259,7 @@ class InProcessMaterializer:
         pass
 
 
-# Parent sends a snapshot and span frames, then a build/abort marker; the child replies with readiness and build status.
+# Parent streams a snapshot and spans; child returns readiness and build status.
 _READY = "ready"
 _BUILD = "build"
 _ABORT = "abort"

@@ -1519,7 +1519,7 @@ class IncidentRecorder:
         parent_scope = "internal" if parent_span_id is not None else "unknown"
         started_at = self._time()
         if self._journal.enabled:
-            # Journal the governed operation name before work starts so recovery sees hangs without storing caller attributes.
+            # Journal the operation name before work; caller attributes await capture policy.
             journal_name, journal_name_digest = normalize_operation_name(operation_name)
             self._journal.append_operation_open(
                 operation_id=identity,

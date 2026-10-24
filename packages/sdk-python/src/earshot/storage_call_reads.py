@@ -576,7 +576,7 @@ class CallReads:
         )
 
 
-# Optional ``pg_trgm`` index for transcript search; it stays outside migrations because server roles may lack extension privileges.
+# Optional ``pg_trgm`` index; keep it out of migrations when server roles lack extension privileges.
 TRANSCRIPT_INDEX = "earshot_opt_call_transcripts_text_trgm"
 
 

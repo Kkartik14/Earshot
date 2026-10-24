@@ -143,7 +143,7 @@ PROVIDER_APIS: Mapping[str, ProviderApi] = MappingProxyType(
     }
 )
 
-# Allow documented provider URL hosts; unverified hosts require an operator allowlist via ``EARSHOT_FETCH_ALLOWED_HOSTS``.
+# Unverified provider hosts require an operator allowlist via ``EARSHOT_FETCH_ALLOWED_HOSTS``.
 PAYLOAD_HOSTS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "elevenlabs": (),

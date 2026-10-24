@@ -2874,7 +2874,7 @@ class IncidentStore:
                             )
 
                     if not self._catalog_artifacts:
-                        # Persist provenance before file publication for crash cleanup; Postgres stores both in one transaction.
+                        # Persist provenance first so reconciliation can remove crash orphans.
                         connection.execute(
                             """
                             INSERT INTO pending_ingests(

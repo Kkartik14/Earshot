@@ -355,7 +355,7 @@ def test_every_livekit_key_of_the_real_1_8_capture_is_in_the_table() -> None:
     assert {"lk.pii.user_transcript", "lk.pii.response.text", "lk.stt.events"} <= livekit
 
 
-# These legacy key-class differences remain here so changing the shared classifier does not invalidate 0.2.x bundles.
+# Keep legacy key-class differences separate to preserve existing 0.2.x bundle validation.
 # This table remains authoritative for OTLP and separate from the public key list.
 SDK_CLASSIFIER_DIFFERENCES = {
     "user_id": (ID, M),

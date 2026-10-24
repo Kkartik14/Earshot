@@ -414,7 +414,7 @@ def _turn_metric_rows(
             if value is not None
         ]
         started_at = min(wall_times, key=int) if wall_times else None
-        # Use the response-generating LLM (or unified speech agent) to avoid mislabeling multi-provider turns.
+        # Use the response-generating LLM or unified agent to avoid provider mislabeling.
         dimension_operations = [
             operation for operation in operations if operation.operation_name == "llm"
         ]

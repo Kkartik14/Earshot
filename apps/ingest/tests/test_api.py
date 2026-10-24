@@ -1286,7 +1286,7 @@ def test_comparison_reports_structured_change_against_a_known_good_incident(tmp_
         for item in body["turn_metric_availability_changes"]
     }
     assert ("render_start_response_latency", "not_observed", "available") in changed
-    # The baseline lacks render timing, so its transport estimate is incomparable with end-to-end render latency.
+    # Baseline transport estimates cannot be compared with end-to-end render latency.
     incomparable = {
         (item["metric"], item["comparable"]) for item in body["turn_metric_availability_changes"]
     }

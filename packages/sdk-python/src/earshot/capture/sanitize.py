@@ -154,7 +154,7 @@ _CAPTURE_STAT_MEMBER_KINDS: dict[str, str] = {
 
 _CAPTURE_UNIVERSAL_STAT_MEMBERS = frozenset({"type", "id", "kind", "timestamp"})
 
-# Exact per-type allowlists drop unconsumed stats, including certificates and host-identifying candidate fields.
+# Exact per-type allowlists drop unconsumed stats and host-identifying candidate fields.
 _CAPTURE_STAT_ALLOWLIST: dict[str, frozenset[str]] = {
     "inbound-rtp": frozenset(
         {
@@ -344,8 +344,8 @@ def _capture_event_member(kind: str, value: Any) -> Any | None:
 
 
 #
-# Pure mapping sanitizers keep HTTP and in-process capture on the same allowlist; request-size limits remain in ``earshot.api``.
-# Their outputs match the snapshot and event shapes consumed by the WebRTC and audio-graph engines.
+# Shared mapping sanitizers keep HTTP and in-process capture on the same allowlist.
+# Request-size limits live in ``earshot.api``; outputs match the engine input shapes.
 
 
 def sanitize_snapshot(snapshot: Mapping[str, Any]) -> tuple[dict[str, Any], int, int]:

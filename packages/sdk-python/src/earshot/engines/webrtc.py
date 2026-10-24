@@ -215,7 +215,7 @@ def analyze_webrtc_stats(
         # Empty segments preserve carry unchanged, making fold behavior a no-op.
         return WebRtcFacts((), (), (), carry=carry)
 
-    # Carry preserves the call origin and state-machine history so resumed batches retain single-shot timestamps and boundary deltas.
+    # Carry preserves origin and state so resumed batches retain boundary deltas.
     resuming = carry is not None and carry.prev_stats is not None
     if resuming and carry.origin_ms is not None:
         base_ms = carry.origin_ms
@@ -233,7 +233,7 @@ def analyze_webrtc_stats(
 
     for ts_ms, stats in normalized:
         at_ms = ts_ms - base_ms
-        # Out-of-order readings cannot establish interval deltas or transitions; record a gap and keep the snapshot fact.
+        # Out-of-order readings cannot define intervals; record a gap and keep the snapshot.
         ordered = prev_ts_ms is None or ts_ms >= prev_ts_ms
         if not ordered:
             coverage.note(_COV_SNAPSHOT_ORDER, "not_observed", "non_monotonic_snapshot")

@@ -75,7 +75,7 @@ from .storage import DEFAULT_PROJECT_ID, ProjectInactiveError
 
 _LOGGER = logging.getLogger(__name__)
 
-# Live tail has its own export destination because permission for a one-shot API read does not imply live access.
+# Live tail has a separate permission because one-shot API access does not grant live access.
 LIVE_TAIL_DESTINATION = "live_tail"
 
 SOURCE_JOURNAL = "journal"
@@ -1600,7 +1600,7 @@ class LiveSessionRegistry:
             if created_file:
                 _fsync_directory_strict(durable_path.parent)
             if before_publish is not None:
-                # The durable sidecar commits the append; preserve the journal if a post-rename directory fsync fails.
+                # Preserve the journal if directory fsync fails after the sidecar rename.
                 session.durable_path = durable_path
                 session.durable_fd = descriptor
                 commit_marker_attempted = True

@@ -1516,8 +1516,8 @@ class IncidentExportResponse(ApiModel):
 
 
 #
-# Requests use the browser payload's camelCase keys; responses keep this API's snake_case.
-# ``captureVersion`` versions the body independently of ``/v1`` and rejects unsupported clients explicitly.
+# Capture requests use camelCase; responses keep this API's snake_case.
+# ``captureVersion`` versions the body independently of ``/v1``.
 
 CAPTURE_PROTOCOL_VERSION = 1
 # ``captureVersion: 2`` opts a client into continuous capture: one journal-backed
@@ -1531,7 +1531,7 @@ SUPPORTED_CAPTURE_VERSIONS = (CAPTURE_PROTOCOL_VERSION, CONTINUOUS_CAPTURE_VERSI
 # ClockDomain, never rebased onto the server clock.
 _CAPTURE_CLOCK_KIND = "browser_monotonic"
 
-# A browser batch is provisional because it cannot observe the call close; its recovery metadata names that partial source.
+# Browser batches stay provisional because they do not observe call close.
 _CAPTURE_RECOVERY_METHOD = "browser_capture_batch"
 _CAPTURE_RECOVERY_REASON = "capture_batch_flushed_before_close"
 _CAPTURE_SESSION_STATUS = "in_progress"
@@ -1543,7 +1543,7 @@ _MAX_CAPTURE_TIMESTAMP_MS = 1e10  # ~115 days of monotonic browser uptime
 _MAX_CAPTURE_WALL_ORIGIN_MS = 1e13  # ~year 2286 in Unix milliseconds
 _MAX_CAPTURE_UNCERTAINTY_MS = 1e6
 
-# Payload identifiers and labels are constrained here; stat/event allowlists live in shared capture sanitizers.
+# Payload labels and IDs are bounded here; stat/event allowlists live in shared sanitizers.
 _CAPTURE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
 _CAPTURE_LABEL_PATTERN = r"^[a-z][a-z0-9_.-]{0,63}$"
 _CAPTURE_TRACEPARENT_PATTERN = r"^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
@@ -1847,7 +1847,7 @@ _AUDIO_BINARY = {"schema": {"type": "string", "format": "binary"}}
 _MEDIA_FORMAT_NAMES = {"wav": "WAV", "flac": "FLAC", "ogg": "Ogg Opus"}
 # A recording upload reaches the blob store in writes of about this size.
 _RECORDING_WRITE_BYTES = 1024 * 1024
-# Idle uploads and uploads exceeding the hold cap receive distinct 408 errors so dead clients cannot hold calls open.
+# Idle uploads and hold-cap violations receive distinct 408 errors.
 UPLOAD_IDLE_TIMEOUT_SECONDS = 60.0
 _RECORDING_UPLOAD_REQUEST = {
     "parameters": [
@@ -2688,7 +2688,7 @@ def _hosted_capture_projection(
 
 # -- browser capture: server-side enforcement ----------------------------------
 # Shared sanitizers enforce the same allowlists for HTTP and in-process capture.
-# These iterators apply request limits and report rejected fields as coverage before engine processing.
+# Iterators enforce request limits and report rejected fields as coverage.
 
 
 def _sanitize_capture_snapshots(
@@ -3350,7 +3350,7 @@ def create_app(
         == Path(live.journal_dir).expanduser().resolve()
     ):
         raise ValueError("capture journal directory must differ from the checkpoint directory")
-    # Version 2 calls share the live-session budget; configured journals survive restarts and resume provisionally.
+    # Version 2 calls share the live-session budget; journals enable restart recovery.
     capture_calls = CaptureCallRegistry(
         live,
         journal_dir=capture_journal_dir,
@@ -3832,7 +3832,7 @@ def create_app(
                 },
                 status_code=503,
             )
-        # Protect unauthenticated loopback/local ``/v1`` requests from DNS rebinding; proxy and connector auth have separate boundaries.
+        # Protect unauthenticated local ``/v1`` requests from DNS rebinding.
         local_only_host_boundary = settings.auth_mode != "hosted_jwt" and (
             settings.trust_local_network
             or (

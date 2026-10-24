@@ -703,7 +703,7 @@ _CLASS_PATTERNS: tuple[tuple[CaptureClass, tuple[str, ...]], ...] = (
 )
 
 
-# Memoize only bounded attribute keys so sender-controlled strings cannot grow the cache without limit.
+# Bound memoized keys so sender-controlled strings cannot grow the cache.
 MEMOIZED_KEY_MAX_LENGTH = 256
 _MEMOIZED_KEYS = 4096
 

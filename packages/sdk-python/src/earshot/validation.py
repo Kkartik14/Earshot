@@ -1058,7 +1058,7 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
     if manifest.schema_version in SUPPORTED_CONTRACT_VERSIONS and _version_below(
         manifest.schema_version, COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION
     ):
-        # Check each unsupported member independently so under-declared versions receive complete refusal details.
+        # Check unsupported members separately so under-declared versions report every violation.
         for index, note in enumerate(profile.coverage):
             if note.dropped_count is not None:
                 issues.append(

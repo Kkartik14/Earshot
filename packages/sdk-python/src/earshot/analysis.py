@@ -357,14 +357,14 @@ class _ClockAligner:
         if not candidates:
             return None
 
-        # Choose deterministically by declared uncertainty, aligned value, then relation ID; unknown uncertainty sorts last.
+        # Choose by uncertainty, aligned value, then relation ID; unknown bounds sort last.
         def order(item: tuple[int, int | None, str]) -> tuple[int, int, int, str]:
             value, uncertainty, relation_id = item
             known = uncertainty is not None
             return (0 if known else 1, uncertainty or 0, value, relation_id)
 
         ordered = sorted(candidates, key=order)
-        # Refuse conflicting in-window calibrations unless their separation fits within both declared uncertainty bounds.
+        # Refuse conflicting calibrations unless both uncertainty bounds cover their separation.
         for index_a in range(len(ordered)):
             value_a, uncertainty_a, _ = ordered[index_a]
             for index_b in range(index_a + 1, len(ordered)):
@@ -1104,7 +1104,7 @@ def _provider_stage_latency_fallback(
     }
 
 
-# Ordered barge-in teardown stages and their evidence sources; missing signals remain coverage gaps, not inferred times.
+# Barge-in stages map to observed evidence; missing signals remain coverage gaps.
 _STAGE_OVERLAP = "overlap_observed"
 _STAGE_INTENT = "intent"
 _STAGE_CLASSIFIED = "classified"
@@ -1934,7 +1934,7 @@ def _operation_turn_ids(operations: Sequence[Operation]) -> dict[str, str | None
     return resolved
 
 
-# Rules cite governed evidence deterministically and emit no diagnosis for absent or unmeasured signals.
+# Rules cite observed evidence and skip absent or unmeasured signals.
 # Confidence is ``measured`` for direct facts and ``inferred`` for derived findings.
 _DEVICE_EVENT_PREFIX = "earshot.device."
 _TRANSPORT_EVENT_PREFIX = "earshot.transport."

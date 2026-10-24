@@ -21,7 +21,7 @@ from typing import Any
 from ..contract import IncidentBundle
 from .otlp import _build_document
 
-# Earshot operations map to their closest OpenInference kind; ambiguous ``agent`` operations stay ``AGENT``.
+# Ambiguous ``agent`` operations map to ``AGENT`` rather than an inferred modality.
 _OPENINFERENCE_KIND: dict[str, str] = {
     "llm": "LLM",
     "agent": "AGENT",

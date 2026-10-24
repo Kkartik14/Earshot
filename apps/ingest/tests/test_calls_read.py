@@ -397,7 +397,7 @@ def test_a_calls_transcript_is_read_from_its_spans_lines_never_from_their_payloa
 def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_spans(
     tmp_path,
 ) -> None:
-    # Without statistics SQLite scanned project spans; read one call's spans from its traces to keep work bounded.
+    # Start span reads from the call's traces to avoid project-wide scans.
     from earshot.storage_call_reads import LEGACY_TRANSCRIPT_SQL, TRANSCRIPT_SQL
     from earshot.storage_closer import (
         SNAPSHOT_KEYS_SQL,

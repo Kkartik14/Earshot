@@ -213,7 +213,7 @@ def test_openinference_span_kinds() -> None:
     assert kinds["turn_detection"] == "CHAIN"
 
 
-# The OTLP projection may omit data, but must not invent timestamps, span identities, traces, or service ownership.
+# A lossy export is valid; invented timestamps, IDs, traces, or service ownership are not.
 # Epoch values before 2000-01-01 are monotonic readings, not wall-clock timestamps.
 _YEAR_2000_UNIX_NANO = 946_684_800_000_000_000
 

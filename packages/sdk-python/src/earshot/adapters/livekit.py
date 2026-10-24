@@ -1536,7 +1536,7 @@ class LiveKitAdapter:
             metric = value(event, "metrics", event)
             try:
                 if self._native_spans_enabled:
-                    # Native spans own these metrics; callback copies may later gain speech IDs and cannot be correlated safely.
+                    # Native spans own these metrics; callback copies may gain speech IDs.
                     metric_type = _metric_type(metric)
                     if _is_connection_acquisition_metric(metric):
                         # Connection-only callbacks have no owning operation span;

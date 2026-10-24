@@ -98,7 +98,7 @@ _CAPTURE_CLOCK_KIND = "browser_monotonic"
 RECOVERY_METHOD = "browser_capture_journal"
 RECOVERY_REASON_SEALED = "capture_sealed_before_call_end"
 
-# Only an application-observed ``call_ended`` finalizes a call; lifecycle teardown leaves it provisional.
+# Only an application-observed ``call_ended`` finalizes; lifecycle teardown stays provisional.
 END_CALL_ENDED = "call_ended"
 
 # The browser-domain bounds of the call, and the same-clock-domain durations
@@ -2044,7 +2044,7 @@ class CaptureCallRegistry:
                                     persisted_sidecar = None
                                     discarded_first_drain = True
                                 else:
-                                    # A 413 is unapplied, so the client may replace this body; ambiguous writes require an exact retry.
+                                    # 413 is unapplied; only ambiguous writes need exact retries.
                                     cleared_retry = replace(
                                         recovered,
                                         retry_sequence=None,
@@ -2112,7 +2112,7 @@ class CaptureCallRegistry:
         with self._lock:
             call = self._calls.get(key)
             if call is not None:
-                # Keep finalized calls to refuse late drains; rebuild expired durable ledgers for exact retries.
+                # Refuse late drains to finalized calls; rebuild expired ledgers for retries.
                 if call.finalized or self._live.contains(
                     drain.call_key, project_id=drain.project_id
                 ):
