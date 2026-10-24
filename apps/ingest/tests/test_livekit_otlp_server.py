@@ -1,6 +1,6 @@
-"""AC8.5 and the LiveKit ``metadata_only`` search: the real LiveKit 1.8 call through a real server.
+"""Conformance and the LiveKit ``metadata_only`` search: a real LiveKit 1.8 call, real server.
 
-**Conformance (AC8.5).** The real capture is sent over HTTP to a real server
+**Conformance.** The real capture is sent over HTTP to a real server
 (``POST /v1/traces``); its maintenance loop's closer turns the call into revision 1.
 The same spans, as the OpenTelemetry SDK hands them to a span processor, go straight
 into ``LiveKitAdapter.consume_span`` on a recorder with the revision's capture policy

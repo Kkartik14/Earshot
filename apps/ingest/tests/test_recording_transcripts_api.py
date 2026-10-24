@@ -1,4 +1,4 @@
-"""A recording's transcript over real HTTP: ``POST /v1/recordings/{id}/transcript`` (FR-5).
+"""A recording's transcript over real HTTP: ``POST /v1/recordings/{id}/transcript``.
 
 Every test runs the real app on a real uvicorn server over a real catalog (SQLite,
 or Postgres under ``--db postgresql``) and a local blob store. Transcripts are read

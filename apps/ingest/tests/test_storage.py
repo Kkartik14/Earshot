@@ -849,7 +849,7 @@ def test_ingest_populates_and_reprojection_restores_a_stale_graph_projection(
     store.close()
 
     restarted = make_store(tmp_path)
-    # Opening re-projects nothing (AC1.10); the stale incident converges afterwards.
+    # Opening re-projects nothing; the stale incident converges afterwards.
     assert catalog_rows(tmp_path, "SELECT COUNT(*) FROM operations") == [(0,)]
     assert restarted.converge_projections().pending == 0
     with sqlite3.connect(restarted.database_path) as connection:

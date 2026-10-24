@@ -82,7 +82,7 @@ def _without_correlation_key_environment(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delenv("EARSHOT_CORRELATION_KEY_FILE", raising=False)
 
 
-# --- The shim (AC1.9) -----------------------------------------------------------------
+# --- The shim -------------------------------------------------------------------------
 
 
 def test_connection_context_commits_on_clean_exit_and_rolls_back_on_error(database) -> None:
@@ -207,7 +207,7 @@ def test_database_outage_answers_503_and_recovers(tmp_path, postgres_admin) -> N
     assert client.get("/readyz").status_code == 200
 
 
-# --- The correlation key (AC1.7) ------------------------------------------------------
+# --- The correlation key --------------------------------------------------------------
 
 
 def test_postgres_store_requires_a_configured_correlation_key(postgres_url, monkeypatch) -> None:
@@ -291,7 +291,7 @@ def test_correlated_catalog_without_a_key_id_is_refused(tmp_path) -> None:
         make_store(tmp_path)
 
 
-# --- Artifacts are catalog rows (AC1.8) -----------------------------------------------
+# --- Artifacts are catalog rows -------------------------------------------------------
 
 
 def test_artifacts_are_catalog_rows_and_no_file_is_written(tmp_path) -> None:
@@ -374,7 +374,7 @@ def test_explicit_cleanup_sweeps_unreferenced_artifact_rows(tmp_path) -> None:
     assert catalog_rows(tmp_path, "SELECT digest FROM artifacts") == [(live.digest,)]
 
 
-# --- The write lock K_write (AC1.6) ---------------------------------------------------
+# --- The write lock K_write -----------------------------------------------------------
 
 
 def _cli_environment() -> dict[str, str]:
@@ -549,7 +549,7 @@ def test_postgres_store_creates_nothing_in_its_data_dir(tmp_path) -> None:
     assert not data_dir.exists()
 
 
-# --- K_server and its watchdog (AC1.6) ------------------------------------------------
+# --- K_server and its watchdog --------------------------------------------------------
 
 
 def test_only_one_server_lock_per_database(postgres_url) -> None:

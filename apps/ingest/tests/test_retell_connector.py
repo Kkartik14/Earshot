@@ -1,4 +1,4 @@
-"""Retell ``call_ended`` and ``call_analyzed`` deliveries become call evidence (FR-1, FR-2).
+"""Retell ``call_ended`` and ``call_analyzed`` deliveries become call evidence.
 
 Verified on documented payloads only: the call object below follows Retell's API
 reference (``V2CallBase``) and webhook overview; no real Retell delivery has been

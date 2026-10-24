@@ -1,4 +1,4 @@
-"""Prices over HTTP (FR-4 AC4.4, M5, M7): ``GET /v1/prices`` and ``POST /v1/prices``.
+"""Prices over HTTP: ``GET /v1/prices`` and ``POST /v1/prices``.
 
 Every test runs the real app on a real uvicorn server over a real catalog (both
 dialects). Built-in prices (``project_id`` NULL) are written by the operator, not

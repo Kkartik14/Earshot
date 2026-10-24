@@ -1,4 +1,4 @@
-"""The loopback-Host rule and API keys, on every ``/v1`` route (AC5.9).
+"""The loopback-Host rule and API keys, on every ``/v1`` route.
 
 The ``Host`` check stops DNS rebinding against a server that serves without a
 credential: a page that rebinds its own name to 127.0.0.1 makes the browser send

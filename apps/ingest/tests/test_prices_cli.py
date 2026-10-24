@@ -1,4 +1,4 @@
-"""The operator CLI for prices and the transcript index (AC4.4, M5, M9).
+"""The operator CLI for prices and the transcript index.
 
 ``earshot prices add|list`` and ``earshot db enable-transcript-index`` run through
 ``earshot.cli.main`` against the real catalog of the dialect under test. Only the

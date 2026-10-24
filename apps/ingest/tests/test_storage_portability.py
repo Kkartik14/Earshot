@@ -1,6 +1,6 @@
 """Storage behaviour that must be identical on SQLite and Postgres (``--db``).
 
-AC1.2 (value widths), AC1.9 (the shim's transaction contract) and the "behind"
+Value widths, the shim's transaction contract and the "behind"
 migration path, each through the public store API and the dialect's own catalog.
 """
 

@@ -1,4 +1,4 @@
-"""Vapi ``end-of-call-report`` deliveries become call evidence (FR-1, FR-2).
+"""Vapi ``end-of-call-report`` deliveries become call evidence.
 
 Verified on documented payloads only: the report below follows the
 ``ServerMessageEndOfCallReport`` and ``Artifact`` schemas of Vapi's OpenAPI document

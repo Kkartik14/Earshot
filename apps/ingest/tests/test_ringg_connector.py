@@ -1,4 +1,4 @@
-"""Ringg ``all_processing_completed`` deliveries become call evidence (FR-1, FR-2).
+"""Ringg ``all_processing_completed`` deliveries become call evidence.
 
 Verified on documented payloads only: the delivery below follows Ringg's webhook
 field reference and call-event examples (``docs.ringg.ai``); no real Ringg delivery
