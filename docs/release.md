@@ -195,9 +195,9 @@ create and push the matching tag:
 ```bash
 git switch main
 git pull --ff-only
-python scripts/check_release.py --tag v0.2.0 --repository Kkartik14/Earshot
-git tag -a v0.2.0 -m "Earshot 0.2.0"
-git push origin v0.2.0
+python scripts/check_release.py --tag v0.3.0 --repository Kkartik14/Earshot
+git tag -a v0.3.0 -m "Earshot 0.3.0"
+git push origin v0.3.0
 ```
 
 The first GHCR package may require one visibility check in the package settings. It must
