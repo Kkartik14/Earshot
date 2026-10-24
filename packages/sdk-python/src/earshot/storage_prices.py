@@ -1,4 +1,4 @@
-"""Prices (FR-4): append-only, effective-dated, project-scoped rows in ``prices``.
+"""Prices: append-only, effective-dated, project-scoped rows in ``prices``.
 
 A price is ``price_nano_usd`` per ``per_quantity`` units of one meter (``unit``)
 of one ``(provider, model)``, both lower-cased. Money is an integer number of

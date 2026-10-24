@@ -270,7 +270,7 @@ class ReadinessResponse(ApiModel):
 
 
 class OtlpStatsResponse(ApiModel):
-    """The OTLP receiver's rare-event counters and gauges for one project (AC5.12)."""
+    """The OTLP receiver's rare-event counters and gauges for one project."""
 
     rejected_spans: int
     span_conflicts: int
@@ -307,7 +307,7 @@ class CallRevisionResponse(CallRevisionSummary):
     created_unix_nano: str
 
 
-# --- a call's projection (FR-5, FR-6; M7, M8, M14) -----------------------------------------
+# --- a call's projection -------------------------------------------------------------------
 #
 # Times on a call's axis are integer milliseconds from ``axis_origin_unix_nano``; money
 # is integer nano-USD (1e-9 USD). An unknown value is null, never 0.
@@ -934,7 +934,7 @@ class PricePageResponse(ApiModel):
     next_cursor: str | None
 
 
-# --- the dashboard (FR-6) -------------------------------------------------------------------
+# --- the dashboard --------------------------------------------------------------------------
 #
 # Every tile names the calls it covers: ``calls`` of ``of_calls``. A call whose value
 # is unknown is not covered, and its value is never read as 0.
@@ -2271,7 +2271,7 @@ _HOSTED_SCOPE_BY_METHOD: dict[str, str] = {
 
 # Operator-only call surfaces: OTLP export, calls, recordings, prices, the dashboard
 # over calls, and the receiver's stats. No hosted scope is defined for them yet, for
-# any method, so a hosted JWT gets 403 ``EARSHOT_OPERATION_UNAVAILABLE`` (AC5.8).
+# any method, so a hosted JWT gets 403 ``EARSHOT_OPERATION_UNAVAILABLE``.
 _HOSTED_UNAVAILABLE_PATHS = ("/v1/traces", "/v1/otlp/stats", "/v1/dashboard")
 _HOSTED_UNAVAILABLE_PREFIXES = ("/v1/calls", "/v1/recordings", "/v1/prices")
 
@@ -3438,7 +3438,7 @@ def create_app(
     if server_lock is not None:
         maintenance.add_job("database-server-lock", database_lock_watchdog(server_lock))
     # Opening the store never re-projects; incidents whose projections predate
-    # this release converge here, after the server is serving (AC1.10).
+    # this release converge here, after the server is serving.
     maintenance.add_job("incident-reprojection", reprojection_job(repository))
     if blob_store is not None:
         # At startup: what crashed uploads left (spool files, multipart uploads).
@@ -3462,7 +3462,7 @@ def create_app(
                 repository, recordings=recordings, max_bytes=settings.recording_max_bytes
             ),
         )
-    # Calls (FR-6): close due calls into revisions; resolve parked traces (AC4.4).
+    # Calls: close due calls into revisions; resolve parked traces.
     # Revisions are built in a child process the loop starts and stops, never in
     # the interpreter that answers OTLP requests.
     closer = Closer(
@@ -3891,7 +3891,7 @@ def create_app(
         ):
             # Under trust_local_network a valid project API key or the operator
             # token is exempt: a rebinding page cannot send a credential it does not
-            # have (AC5.9). This is what lets a bot in another container export to
+            # have. This is what lets a bot in another container export to
             # http://earshot:4319.
             supplied = _bearer_credential(request.headers.get("authorization", ""))
             exempt = False
@@ -4480,7 +4480,7 @@ def create_app(
             raise ApiProblem(404, error.code, "call not found") from error
         return Response(status_code=204)
 
-    # --- prices (FR-4) -------------------------------------------------------------------
+    # --- prices --------------------------------------------------------------------------
 
     @app.get(
         "/v1/prices",
@@ -4535,7 +4535,7 @@ def create_app(
         )
         return JSONResponse(_price_body(price), status_code=201)
 
-    # --- the dashboard (FR-6) ------------------------------------------------------------
+    # --- the dashboard -------------------------------------------------------------------
 
     @app.get(
         "/v1/dashboard",
@@ -4582,7 +4582,7 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
-    # --- recordings (FR-9) ---------------------------------------------------------------
+    # --- recordings ----------------------------------------------------------------------
 
     def recording_blobs() -> BlobStore:
         if recordings.blobs is None:

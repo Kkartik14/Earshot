@@ -1,4 +1,4 @@
-"""Reading calls (FR-10, FR-5, FR-6): the call list, one call's detail and one span.
+"""Reading calls: the call list, one call's detail and one span.
 
 Reads take no write lock. Each runs in one read snapshot of the catalog, so a
 call's row, its revisions, recordings and spans agree with one another.
@@ -116,7 +116,7 @@ class ContentSearchForbiddenError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class CallFilters:
-    """The call list's filters; every one given must match (FR-5).
+    """The call list's filters; every one given must match.
 
     Latency and audible-gap bounds compare the call's p50; cost bounds are
     nano-USD. ``min_cost_nano_usd`` compares the lower bound. ``max_cost_nano_usd``

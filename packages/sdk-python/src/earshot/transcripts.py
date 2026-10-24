@@ -1,4 +1,4 @@
-"""Transcripts a client uploads for a recording: WebVTT or plain text, as lines (FR-5).
+"""Transcripts a client uploads for a recording: WebVTT or plain text, as lines.
 
 **Formats.** The request's media type names the format, and the body is UTF-8 (a
 byte order mark is allowed; another ``charset`` is refused, never guessed):

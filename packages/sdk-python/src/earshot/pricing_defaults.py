@@ -1,4 +1,4 @@
-"""Built-in prices: dated, **regular** list prices for the first providers (FR-4, AC4.2).
+"""Built-in prices: dated, **regular** list prices for the first providers.
 
 Each row is the provider's published regular list price on its source page as of
 ``AS_OF``, never a promotional, plan-discounted or trial price, and carries that page
@@ -23,7 +23,7 @@ Choices the source pages leave open, stated in each row's note:
 - **Groq Whisper** bills at least 10 s per request; the row is the hourly rate and
   does not model the minimum.
 
-Source: ``local/research/month-2/livekit-ts-sdk-cost.md`` §6.5 (fetched 2026-10-19).
+Source: the providers' public price pages (fetched 2026-10-19).
 """
 
 from __future__ import annotations

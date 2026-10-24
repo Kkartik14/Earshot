@@ -1,4 +1,4 @@
-"""What Earshot keeps of an OTLP span, and which call it belongs to (FR-3, FR-4).
+"""What Earshot keeps of an OTLP span, and which call it belongs to.
 
 One pure module, shared by the OTLP receiver and the call materializer. It knows
 nothing about storage.
@@ -459,8 +459,8 @@ class RequestMemo:
     ``ScopeSpans`` its scope (``spans_from_request``), so a value computed from those
     alone (an attribute check, the preset's copy, the stored bytes and their digest)
     is computed once, not once per span: a request of thousands of spans under a
-    resource of thousands of attributes costs its size, not their product (tribunal
-    round 3, N3-1). Keys are object identities (``first_equal`` maps equal scopes to
+    resource of thousands of attributes costs its size, not their product.
+    Keys are object identities (``first_equal`` maps equal scopes to
     one); each entry holds its objects, so no identity is reused while the memo
     lives. One memo serves one request.
     """
@@ -657,7 +657,7 @@ def _first_valid(attributes: Iterable[KeyValue], keys: tuple[str, ...]) -> Sessi
 
 
 def resolve_session_key(span: OtlpSpan, *, memo: RequestMemo | None = None) -> SessionKey | None:
-    """The session key a span names, or ``None`` (FR-4 resolution order). With a
+    """The session key a span names, or ``None`` (the resolution order). With a
     ``memo``, the resource is searched once per resource, not once per span."""
 
     own = _first_valid(span.span.attributes, SESSION_KEY_ATTRIBUTES)
@@ -673,7 +673,7 @@ def _resource_session_key(resource: Resource) -> SessionKey | None:
 
 
 def is_end_marker(span: OtlpSpan) -> bool:
-    """Whether the span signals that its call ended (FR-6 end markers)."""
+    """Whether the span signals that its call ended (its end markers)."""
 
     if (span.scope.name, span.span.name) in END_MARKER_SPANS:
         return True

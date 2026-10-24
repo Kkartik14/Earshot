@@ -189,7 +189,7 @@ def _purge_command(arguments: argparse.Namespace) -> int:
     try:
         store.purge(arguments.bundle_id, project_id=_project_id(arguments))
     except _storage().IncidentBelongsToCallError as error:
-        # A call's revisions go with their call (AC14.3).
+        # A call's revisions go with their call.
         print(
             f"earshot: {error.code}: {error}: earshot call purge {error.call_id}",
             file=sys.stderr,
@@ -200,7 +200,7 @@ def _purge_command(arguments: argparse.Namespace) -> int:
 
 
 def _call_purge_command(arguments: argparse.Namespace) -> int:
-    """Purge one call and all its evidence (FR-14), as ``DELETE /v1/calls/{id}`` does.
+    """Purge one call and all its evidence, as ``DELETE /v1/calls/{id}`` does.
 
     The call lifecycle timings and the blob store come from the same settings the
     server reads (``EARSHOT_CALL_*``, ``EARSHOT_BLOB_URL``).

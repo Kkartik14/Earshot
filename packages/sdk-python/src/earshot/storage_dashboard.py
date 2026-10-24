@@ -1,4 +1,4 @@
-"""The dashboard (FR-6): a project's calls over a time range, bucketed and grouped.
+"""The dashboard: a project's calls over a time range, bucketed and grouped.
 
 **Which calls.** A call is on the dashboard when it has a projection whose
 ``started_unix_nano`` is in ``[from, to)``. That is the call's own evidence start

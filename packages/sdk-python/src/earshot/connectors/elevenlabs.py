@@ -1,6 +1,6 @@
 """ElevenLabs Agents: post-call webhooks as call evidence.
 
-Tested on a real conversation (``fixtures/captured/elevenlabs``, WS0) wrapped in the
+Tested on a real conversation (``fixtures/captured/elevenlabs``) wrapped in the
 documented webhook envelope and signed with a test secret; the webhook envelope,
 ``call_initiation_failure`` and the traces-only OTel shape are from the docs.
 

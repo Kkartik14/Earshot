@@ -129,7 +129,7 @@ class IncidentPurgedError(StorageError):
 
 
 class IncidentBelongsToCallError(StorageError):
-    """The incident is a revision of a call: it is purged only with its call (AC14.3)."""
+    """The incident is a revision of a call: it is purged only with its call."""
 
     code = "EARSHOT_INCIDENT_BELONGS_TO_CALL"
 
@@ -627,7 +627,7 @@ def prepare_incident(
     bundle: IncidentBundle, project_id: str, *, canonical_payload: bytes | None = None
 ) -> PreparedIncident:
     """Validate and encode ``bundle`` and derive its projections: the half of
-    ``ingest`` that needs no lock and no database (Fowler, second pass, 6)."""
+    ``ingest`` that needs no lock and no database."""
 
     from .codec import encode_incident_protobuf
     from .validation import assert_valid_incident
@@ -703,7 +703,7 @@ class AuthenticationStats:
 
 
 # The retention loop compacts SQLite (checkpoint plus VACUUM) after a purge drain
-# at most this often; a VACUUM blocks every writer while it runs (AC11.5).
+# at most this often; a VACUUM blocks every writer while it runs.
 COMPACTION_INTERVAL_NANO = 10 * 60 * 1_000_000_000
 
 # ``api_keys.last_used_at_unix_nano`` is advisory: it is written at most this often
@@ -711,8 +711,8 @@ COMPACTION_INTERVAL_NANO = 10 * 60 * 1_000_000_000
 KEY_USE_RECORD_INTERVAL_NANO = 60 * 1_000_000_000
 # How long an authenticated request waits for the write lock to record a key's
 # use. Past it the write is skipped and a later request retries it: the request
-# already passed the revocation check (AC2.2), and it must not queue behind a long
-# writer, a compaction or another process for a timestamp (AC5.7).
+# already passed the revocation check, and it must not queue behind a long
+# writer, a compaction or another process for a timestamp.
 KEY_USE_RECORD_BUDGET_SECONDS = 0.1
 
 
@@ -835,7 +835,7 @@ def _not_expired_sql(column: str) -> str:
 
 
 # What a project owns; project deletion empties each, and only then marks the
-# project deleted (AC14.5). The call tables come last, in deletion order.
+# project deleted. The call tables come last, in deletion order.
 _PROJECT_CALL_KEY_TABLES = (
     "otlp_resources",
     "call_key_generations",
@@ -862,9 +862,9 @@ _PROJECT_OWNED_TABLES = (
 )
 
 
-# Call revisions (FR-6) are incidents. A call's earlier revisions stay readable but
+# Call revisions are incidents. A call's earlier revisions stay readable but
 # are superseded by its latest one, so turn metrics count each call once; and a
-# revision is never reaped on its own, only with its call (AC14.4).
+# revision is never reaped on its own, only with its call.
 _CALL_REVISION_SQL = (
     "EXISTS (SELECT 1 FROM call_revisions WHERE call_revisions.bundle_id = incidents.bundle_id)"
 )
@@ -889,7 +889,7 @@ def _expired_alone(connection: DatabaseConnection, bundle_id: str, expiry: str |
     """Whether an incident's own retention deadline has passed and it expires alone.
 
     A call revision never expires alone, not even when read: it expires with its
-    call, once the call's latest revision has (AC14.4).
+    call, once the call's latest revision has.
     """
 
     return (
@@ -1311,7 +1311,7 @@ class IncidentStore:
         """Open a Postgres catalog. Nothing is written to the local filesystem.
 
         Artifacts are catalog rows, the write lock is ``K_write`` and the
-        correlation key comes from configuration (AC1.7), so ``data_dir`` is only
+        correlation key comes from configuration, so ``data_dir`` is only
         recorded, never created.
         """
 
@@ -1714,7 +1714,7 @@ class IncidentStore:
         Every step here is bounded by recovery or retention work, not by the size
         of the catalog. Incidents whose projections are older than this release
         (``projections_pending``) are re-projected later by ``reproject_stale``,
-        which the server runs in the background once it is serving (AC1.10).
+        which the server runs in the background once it is serving.
         """
 
         if not self._catalog_artifacts:
@@ -2182,7 +2182,7 @@ class IncidentStore:
                     if not incidents_remain:
                         from .storage_call_purge import delete_project_calls
 
-                        # Calls and all their evidence, then parked traces (FR-14);
+                        # Calls and all their evidence, then parked traces;
                         # their blobs are journaled for deletion after commit.
                         calls_remain = not delete_project_calls(
                             connection,
@@ -2600,7 +2600,7 @@ class IncidentStore:
         if not separator or len(key_id) != 16 or not secret or len(secret) > 128:
             return None
         # Every request reads the key's row: an indexed, lock-free SELECT that sees a
-        # revocation or a project deletion from any process at once (FR-2).
+        # revocation or a project deletion from any process at once.
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -2816,7 +2816,7 @@ class IncidentStore:
         ``before_commit`` runs inside the transaction that writes the catalog
         row (or finds it already written), just before it commits; whatever it
         writes commits with the incident, and if it raises nothing commits. The
-        call closer finishes a revision this way (FR-6, AC6.3).
+        call closer finishes a revision this way.
         """
 
         return self.ingest_prepared(
@@ -3378,7 +3378,7 @@ class IncidentStore:
 
         What the join removed is counted and returned, never dropped silently.
 
-        A call's revisions (FR-6) each project the whole call, so only its latest
+        A call's revisions each project the whole call, so only its latest
         revision counts; the earlier ones are superseded, not withheld.
         """
 

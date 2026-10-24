@@ -1,8 +1,8 @@
-"""Uploaded transcripts in the catalog: a recording's transcript as evidence of its call (FR-5).
+"""Uploaded transcripts in the catalog: a recording's transcript as evidence of its call.
 
 A ``TranscriptStore`` is the storage half of ``POST /v1/recordings/{id}/transcript``.
 It runs on an ``IncidentStore``'s database, write locks and clock, and uses the
-``CallStore`` for everything a call is (spans, the FR-6 close rules).
+``CallStore`` for everything a call is (spans, the close rules).
 
 **One mutation.** ``attach`` reads the recording and the project's preset, decides,
 and writes under one write lock, so two uploads for one recording, however they
