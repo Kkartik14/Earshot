@@ -414,13 +414,7 @@ def _turn_metric_rows(
             if value is not None
         ]
         started_at = min(wall_times, key=int) if wall_times else None
-        # Fleet dimensions describe the response-generating model stage. A
-        # transcriber, endpointing model, or synthesizer may use a different
-        # provider, so accepting the first gen_ai.* attribute would silently
-        # mislabel multi-provider turns. Prefer the governed LLM operation;
-        # native speech-to-speech runtimes can identify their unified agent
-        # stage instead. Other stage-specific providers remain available in
-        # the canonical operation graph and provider measurements.
+        # Use the response-generating LLM or unified agent to avoid provider mislabeling.
         dimension_operations = [
             operation for operation in operations if operation.operation_name == "llm"
         ]

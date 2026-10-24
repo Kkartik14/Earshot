@@ -13,11 +13,7 @@ import { ObserveFeature } from "../../ObserveFeature";
 import { fakeClocks } from "./__fixtures__/fakeMediaClock";
 import { MediaClockContext } from "./Player";
 
-// The calls list and the call view against a real Earshot server
-// (`__fixtures__/serve_calls.py`: the real app over real SQLite, with the two real
-// captures, their recordings analysed by the server's own job, and 55 more calls).
-// Every request is real HTTP; no hook or response is stubbed. The media clock is
-// the declared fake, since jsdom cannot play audio.
+// Exercise the calls UI over real HTTP with real server data; jsdom uses a fake media clock.
 
 interface Seed {
   port: number;

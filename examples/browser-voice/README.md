@@ -3,12 +3,12 @@
 A **real, runnable browser voice app** that captures a live
 `getUserMedia` → `RTCPeerConnection` → `AudioContext` session with
 [`@earshot/browser`](../../packages/browser) and POSTs it to the earshot
-backend's `POST /v1/capture`. It is a **private workspace example** — it consumes
-the SDK through the pnpm workspace, not from npm, and is never published.
+backend's `POST /v1/capture`. It is a monorepo example that consumes the SDK
+through the pnpm workspace. The example itself is not published as an npm package.
 
 Its purpose is to make the code paths the SDK's single Chrome loopback run left
 unexercised **exist and be runnable**: the real microphone-permission path, sink
-switching, and `outputLatency` — across whatever browser you point at it.
+switching, and `outputLatency` in any browser you choose to try.
 
 ## What it exercises (real code paths, no fabricated metrics)
 
@@ -22,17 +22,17 @@ does **not** invent a value.
 | **Permissions API** (`microphone`)         | `session.observeMediaDevices(navigator.mediaDevices, { permissions: navigator.permissions })`                                                                      |
 | **`RTCPeerConnection.getStats()`**         | a real peer connection is sampled every 1s (`attachPeerConnection`)                                                                                                |
 | **`AudioContext` render path**             | the received stream is connected to the context's output, so `state`, `outputLatency`, and the `getOutputTimestamp()` render-queue are real (`attachAudioContext`) |
-| **Sink switching** (`setSinkId`)           | a device dropdown calls `AudioContext.setSinkId`, whose `sinkchange` the SDK captures — **feature-detected**, see below                                            |
+| **Sink switching** (`setSinkId`)           | a device dropdown calls `AudioContext.setSinkId`; the SDK captures `sinkchange` when supported. See below for feature detection.                                   |
 | **Delivery**                               | drained batches are POSTed to `POST /v1/capture` via the SDK transport, with the recorder wired as the coverage sink                                               |
 
-It uses **`captureVersion: 2`** (continuous capture) — the version the SDK
-exposes as `CONTINUOUS_CAPTURE_VERSION` — so each drain carries a monotonic
+It uses **`captureVersion: 2`** (continuous capture), the version the SDK
+exposes as `CONTINUOUS_CAPTURE_VERSION`. Each drain carries a monotonic
 `drainSequence` under one stable session and the server accumulates the whole
 call.
 
 ### Two modes
 
-- **Local WebRTC loopback** (`src/loopback.ts`) — needs **no** external service
+- **Local WebRTC loopback** (`src/loopback.ts`) needs **no** external service
   and **no** key. Your real microphone is piped through two real
   `RTCPeerConnection`s (sender → receiver) and rendered through a real
   `AudioContext`. The receiver's `getStats()` carries the `inbound-rtp` audio
@@ -41,7 +41,7 @@ call.
   path is still live, so `outputLatency`/`getOutputTimestamp()` are real. Raise
   the monitor slider (headphones advised) to hear it.
 
-- **Raw OpenAI Realtime** (`src/openai-realtime.ts`) — earshot capture wrapped
+- **Raw OpenAI Realtime** (`src/openai-realtime.ts`) wraps Earshot capture
   around a **raw** OpenAI Realtime **WebRTC** voice connection (no OpenAI SDK):
   it adds the mic track to an `RTCPeerConnection`, opens the `oai-events` data
   channel, POSTs the SDP offer to `https://api.openai.com/v1/realtime?model=…`
@@ -50,7 +50,7 @@ call.
   WebSocket transport is for server-side use (a browser cannot set the
   `Authorization` header on a WebSocket handshake).
 
-## The OpenAI key is read at runtime — never committed, never needed to build
+## The OpenAI key is read at runtime, never committed or needed to build
 
 The Realtime key is read **only** from the runtime UI field. It is not read from
 build-time env, not hardcoded, and not committed, so the example **builds and
@@ -75,7 +75,7 @@ pnpm --filter @earshot/example-browser-voice run selfcheck
 It **builds** `@earshot/browser`, **imports** it (the resolved package
 `exports`, i.e. the built `dist/`), **drives a recorder against the SDK's own
 test fakes**, and **asserts `drain()` returns a `CapturePayload` of the shape the
-server engines expect** — reusing the round-trip idea from
+server engines expect**. This reuses the round-trip idea from
 `packages/browser/src/roundtrip.test.ts`. It asserts, among other things:
 
 - the envelope: `captureVersion === 2`, integer; `sessionId` (`sess_…`); a valid
@@ -83,7 +83,7 @@ server engines expect** — reusing the round-trip idea from
   of 1 and a finite `capturerStartedAtMs`;
 - `snapshots` satisfy `analyze_webrtc_stats`' normaliser (finite `timestamp_ms`,
   object stats, `inbound-rtp` members numeric, `iceState`/`networkType` survive)
-  and **a member absent on the source stat stays absent — never coerced to `0`**;
+  and **a member absent on the source stat stays absent, never coerced to `0`**;
 - `deviceEvents` satisfy `analyze_audio_graph`' normaliser (non-empty lower-case
   `type`, finite `timestamp_ms`) and include `latency`, `audiocontext_state`,
   `permission` (`granted`), `sample_rate_mismatch`;
@@ -93,7 +93,7 @@ server engines expect** — reusing the round-trip idea from
 cannot be built or imported, or if `drain()` ever drifts from the shape the
 server consumes, the command fails.
 
-## What is validated — and what is not
+## What is validated and what is not
 
 **Be precise about this.** This example makes the microphone, sink-switching,
 Safari, Firefox, and output-latency paths _exist and runnable_; it does not
@@ -102,7 +102,7 @@ prove them on real hardware.
 **Validated in this repo (automated):**
 
 - The example **typechecks** (`tsc -b`), **builds** (`vite build`), its unit
-  tests pass, and the **installation self-check passes** — proving
+  tests pass, and the **installation self-check passes**, proving
   `@earshot/browser` is consumable from the workspace and that a driven `drain()`
   yields a server-shaped `CapturePayload` (driven against the SDK fakes; **no
   browser is involved** in the self-check).
@@ -112,13 +112,13 @@ prove them on real hardware.
 - **Real hardware.** This app has **not** been run in any browser in this repo.
   Its browser code (`main.ts`, `loopback.ts`, `openai-realtime.ts`) is
   typechecked and bundled, not executed here.
-- **Safari and Firefox** — no run at all; and Firefox/older Safari lack
+- **Safari and Firefox** have not been run. Firefox and older Safari lack
   `AudioContext.setSinkId`, so sink switching is disabled there (the SDK then
   records no `sink_change`, which is the honest signal).
 - **The real `getUserMedia` microphone + Permissions API** on real devices.
 - **`setSinkId`/`sinkchange` and `outputLatency`/`getOutputTimestamp()`** with
   real audio flowing.
-- **The OpenAI Realtime connection** — no key is used and no OpenAI call is made
+- **The OpenAI Realtime connection** has not been exercised; no key is used and no OpenAI call is made
   in this repo.
 - **A live browser → `POST /v1/capture` round-trip.** The SDK's delivery logic is
   unit-tested inside the SDK; this app wires it, but an end-to-end browser
@@ -127,7 +127,7 @@ prove them on real hardware.
 The only on-device confirmation that exists for `@earshot/browser` is the single
 **Chrome loopback** pass documented in
 [`packages/browser/README.md`](../../packages/browser/README.md), which used a
-**synthesised** audio source (so no microphone permission) — exactly the gap this
+**synthesised** audio source (so no microphone permission). This is the gap this
 app is built to let you close on your own hardware.
 
 ## Run it
@@ -150,7 +150,7 @@ replace it with the host's dynamic, nonsecret `getAuthContextId()` value, which
 changes whenever the effective user/project grant changes. It must not contain a
 raw user id or credential. The browser example has no Earshot project API key
 option; the host BFF supplies Earshot service credentials on the server.
-Loopback still runs and captures without a backend — the SDK records
+Loopback still runs and captures without a backend. The SDK records
 undelivered batches as coverage.
 
 The Stop button closes the voice mode first, then calls `CaptureSession.endCall()`

@@ -6,11 +6,7 @@ import { ViewerQueryScopeProvider } from "../../api/queryScope";
 import { ObserveFeature } from "../../ObserveFeature";
 import { startRealServer, type RealServer } from "../../test/realServer";
 
-// The dashboard against a real Earshot server (`__fixtures__/serve_dashboard.py`:
-// the real app over real SQLite, with the real Pipecat capture projected by the
-// server's own job, three calls whose projections carry chosen values, and one
-// open call, all within the last few hours). Every request is real HTTP; no hook
-// or response is stubbed.
+// Exercise the dashboard over real HTTP with a projected Pipecat capture and seeded call states.
 
 const SCRIPT = join(import.meta.dirname, "__fixtures__", "serve_dashboard.py");
 const WAIT = { timeout: 15_000 };

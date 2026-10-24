@@ -1,8 +1,4 @@
-/**
- * EarshotSpanProcessor in the real OpenTelemetry JS SDK, exporting OTLP/protobuf
- * to a real `earshot serve` (test/server.ts). A call exists on the server only if
- * its spans arrived carrying its session key, so resolving the key proves the stamp.
- */
+/** Verify the real OpenTelemetry processor exports spans with the session key needed to resolve a call. */
 import { context } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";

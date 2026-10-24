@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "provider": "twilio",
-  "description": "One real outbound-API Twilio call with Record=true and RecordingChannels=dual, polled over the REST API (no webhooks, no tunnel). REST responses scrubbed; recordings regenerated. Consumers: the WS3 poll/import and recording fetch.",
+  "description": "One real outbound-API Twilio call with Record=true and RecordingChannels=dual, polled over the REST API (no webhooks, no tunnel). REST responses scrubbed; recordings regenerated. Used by the recording poll/import and fetch tests.",
   "provenance": {
     "captured_on": "2026-10-19",
     "source_kind": "real_capture_scrubbed",

@@ -3,11 +3,7 @@ import { useExport, type ExportFormat } from "../../api/hooks";
 import { EXPORT_FORMATS, exportRefusal } from "./exporters";
 import styles from "./ExportPanel.module.css";
 
-/** Project the current incident through a registered exporter and present the
- * result. The projection is read-only and the document is shown verbatim and
- * offered as a download; a policy refusal (`EARSHOT_EXPORT_DENIED`) or an
- * unregistered name (`EARSHOT_UNKNOWN_EXPORT_FORMAT`) renders as an explicit,
- * honest refusal rather than a crash or an empty document. */
+/** Show and download read-only exports while preserving policy and unsupported-format refusals. */
 export function ExportPanel({ bundleId }: { bundleId: string | undefined }) {
   const [format, setFormat] = useState<ExportFormat>(EXPORT_FORMATS[0]);
   const [requested, setRequested] = useState<ExportFormat | null>(null);

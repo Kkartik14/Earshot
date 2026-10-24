@@ -344,8 +344,8 @@ def build_elevenlabs() -> None:
         "provider": "elevenlabs",
         "description": (
             "One real ElevenLabs Agents conversation fetched with the conversations API, "
-            "scrubbed. Both sides are synthetic speech. Consumers: the WS3 import by "
-            "conversation ID and the `start_only` transcript rule."
+            "scrubbed. Both sides are synthetic speech. Used by the conversation import "
+            "and `start_only` transcript tests."
         ),
         "provenance": {
             "captured_on": CAPTURED_ON,
@@ -379,7 +379,7 @@ def build_elevenlabs() -> None:
                 "llm": "account default (`producing_llm` in the transcript)",
             },
             "caller": {
-                "source": "Cartesia TTS lines from the WS0b cache .earshot/pipecat_otlp/caller.wav",
+                "source": "Cartesia TTS audio generated from the shared caller script",
                 "script": [line["text"] for line in caller["lines"]],
             },
             "websocket_events": {
@@ -414,11 +414,7 @@ def build_elevenlabs() -> None:
         ],
         "privacy": {
             "t4_audio": "synthetic_both_sides",
-            "t4b_note": (
-                "All keys are kept, not only the ones a translator reads: the content is "
-                "synthetic and every identifier is pseudonymised. Owner to confirm."
-            ),
-            "agent_name": "kept: `earshot-ws0-capture` was chosen by the capture script",
+            "agent_name": "kept: `earshot-fixture-agent` is the synthetic test agent name",
         },
         "field_table": [{"path": p, "type": t, "meaning": m} for p, t, m in EL_FIELDS],
         "turn_metric_names": sorted(
@@ -686,7 +682,7 @@ def build_twilio() -> None:
         "description": (
             "One real outbound-API Twilio call with Record=true and RecordingChannels=dual, "
             "polled over the REST API (no webhooks, no tunnel). REST responses scrubbed; "
-            "recordings regenerated. Consumers: the WS3 poll/import and recording fetch."
+            "recordings regenerated. Used by the recording poll/import and fetch tests."
         ),
         "provenance": {
             "captured_on": CAPTURED_ON,

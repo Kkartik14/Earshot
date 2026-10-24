@@ -1,37 +1,4 @@
-/**
- * `EarshotCaptureTransport` — the client half of the capture wire.
- *
- * It POSTs drained `CapturePayload`s to the host application's authenticated BFF,
- * which forwards them to Earshot's `POST /v1/capture`, and is responsible for one
- * thing beyond the HTTP call: never letting a delivery failure look like a clean
- * session. Credentials stay in request options and never enter errors or failure
- * records.
- *
- * Four properties hold by construction:
- *
- * **Versioned.** The payload carries `captureVersion` in its body (see
- * `protocol.ts`), so this client and the server evolve independently of the
- * shared `/v1` route. A server that does not speak the version answers
- * `EARSHOT_UNSUPPORTED_CAPTURE_VERSION`, which is a *permanent* failure here —
- * retrying it would only repeat the same answer.
- *
- * **Cookie/BFF authenticated.** The endpoint and optional CSRF token are host
- * options. This browser transport cannot accept or send project API keys or
- * service JWTs; those credentials stay on the host server.
- *
- * **Bounded.** One delivery is in flight at a time and the pending queue has a
- * hard cap; on overflow the OLDEST payload is dropped. Retries use bounded
- * attempts with exponential backoff. Ambiguous v2 failures retain the exact body
- * until the server resolves that sequence.
- *
- * **Never a silent drop.** A payload this transport gives up on is reported to
- * `onFailure` AND recorded as coverage on the supplied sink (the recorder), so
- * the observations it carried are declared lost in the *next* payload instead of
- * vanishing. The dropped payload's own coverage notes are forwarded too, so the
- * gaps it was already carrying survive the delivery failure. Accepted v2
- * acknowledgements expose only the server call id and finality flag the host
- * needs for its seal flow.
- */
+/** Sends versioned payloads through the host's authenticated BFF; bounded failures become coverage, and credentials stay out of errors. */
 
 import type { CaptureCoverage, CapturePayload } from "./types.js";
 
@@ -131,11 +98,7 @@ export interface CaptureFlushResult {
 }
 
 export interface CaptureTransportOptions {
-  /**
-   * The capture endpoint URL — required, with no default. Point it at the host
-   * application's authenticated BFF route to Earshot's `POST /v1/capture`.
-   * When `csrfToken` is set, this must be a same-origin BFF URL.
-   */
+  /** Required URL for the host's authenticated capture BFF; it must be same-origin when using CSRF. */
   endpoint: string;
   /** The host BFF's cookie CSRF token, sent as `x-earshot-csrf`. */
   csrfToken?: string;
@@ -404,14 +367,7 @@ export class EarshotCaptureTransport {
     return this.queue.length;
   }
 
-  /**
-   * Queue one payload and resolve when it is finally delivered or given up on.
-   *
-   * Deliveries run one at a time and in order, so retries cannot reorder a
-   * session's batches. If the queue is already full the OLDEST waiting payload
-   * is dropped (its `send()` resolves with the failure and its observations are
-   * recorded as coverage) — the newest evidence is the evidence worth keeping.
-   */
+  /** Queue a payload in order; overflow drops the oldest waiting payload and reports its loss as coverage. */
   send(payload: CapturePayload): Promise<CaptureDeliveryResult> {
     if (this.stopped) {
       return Promise.resolve(
@@ -909,11 +865,7 @@ export class EarshotCaptureTransport {
     return payload.drainSequence;
   }
 
-  /**
-   * Give up on a payload — and say so. The lost observations become a coverage
-   * note on the sink, and the notes the payload was already carrying are
-   * forwarded so they are not lost along with it.
-   */
+  /** Report lost observations and preserve the payload's existing coverage notes. */
   private giveUp(
     payload: CapturePayload,
     failure: {

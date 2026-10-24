@@ -86,7 +86,7 @@ class MaintenanceLoop:
         Each job's first run is immediate. Once ``stop`` is set no job starts a new
         run, and the jobs are closed at once, while a run in progress finishes: a
         job's ``aclose`` bounds its own run, so shutdown never waits on a stalled
-        one (tribunal round 2, Lamport LAM2-2).
+        one.
         """
 
         async def close_when_stopped() -> None:

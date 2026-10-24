@@ -97,12 +97,7 @@ def _snap(
     return {"timestamp_ms": timestamp_ms, "stats": stats}
 
 
-# A single continuous call, time-ordered, exercising every stateful path:
-#   s0..s1  connected, counters climb  -> loss/jitter-buffer/concealment/playout
-#   s2      DISCONNECTED               -> reconnecting event; synth samples appear
-#   s3      CONNECTED again            -> reconnect closes (spans a boundary)
-#   s3->s4  every counter falls        -> counter-reset coverage (a stream reset)
-#   s5      new candidate pair/network -> route change; more synth samples
+# One ordered call exercises loss, reconnect, counter reset, and route-change carry across segments.
 _SERIES: list[dict[str, Any]] = [
     _snap(
         1000,

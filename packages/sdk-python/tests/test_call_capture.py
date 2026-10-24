@@ -355,13 +355,8 @@ def test_every_livekit_key_of_the_real_1_8_capture_is_in_the_table() -> None:
     assert {"lk.pii.user_transcript", "lk.pii.response.text", "lk.stt.events"} <= livekit
 
 
-# The keys whose class the OTLP path (this table) and the SDK classifier
-# (``privacy.classify_attribute``, which the recorder, validation and checkpoint
-# governance use) disagree on: the SDK files their semantic name under another
-# class. Making ``classify_attribute`` agree would re-class attributes of bundles
-# that 0.2.x SDKs already produced (their validation would fail) and would make
-# records mixing these with transcript or model content refused, so the table is
-# authoritative for OTLP and these stay listed here (the decision log carries them).
+# Keep legacy key-class differences separate to preserve existing 0.2.x bundle validation.
+# This table remains authoritative for OTLP and separate from the public key list.
 SDK_CLASSIFIER_DIFFERENCES = {
     "user_id": (ID, M),
     "user.id": (ID, M),

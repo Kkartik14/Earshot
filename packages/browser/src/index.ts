@@ -1,15 +1,4 @@
-/**
- * @earshot/browser — the client-side voice capture kernel.
- *
- * Captures `getUserMedia`/`RTCPeerConnection`/`AudioContext` telemetry and a
- * W3C trace-context, emits a versioned `CapturePayload` in the exact shape the
- * server engines (`analyze_webrtc_stats`, `analyze_audio_graph`) consume, and
- * delivers it to the backend's `POST /v1/capture` endpoint.
- *
- * STATUS: the mapping, bounding and delivery logic is unit-tested against mocked
- * W3C APIs and a mocked `fetch`; it has NOT yet been run against a real browser
- * / WebRTC / Web Audio runtime. See README.md for exactly what that leaves open.
- */
+/** Client-side voice capture for WebRTC and Web Audio, delivered as versioned payloads to `POST /v1/capture`. */
 
 export {
   EarshotBrowserRecorder,

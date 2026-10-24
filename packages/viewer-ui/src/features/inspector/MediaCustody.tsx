@@ -37,7 +37,7 @@ const ALIGNMENT_LABEL: Record<MediaCustodyView["alignment"]["state"], string> = 
   undeclared: "no media timeline",
 };
 
-/** The recording Earshot itself holds (ADR 0004): the call materializer names
+/** The recording Earshot itself holds: the call materializer names
  *  this custodian on every recording it stored, with the digest it measured. */
 const EARSHOT_CUSTODIAN = "earshot.blob_store";
 const heldByEarshot = (media: MediaCustodyView) => media.custodian === EARSHOT_CUSTODIAN;
@@ -49,22 +49,7 @@ const headNote = (media: MediaCustodyView[]): string => {
   return "some held by earshot, some elsewhere · this panel loads no media";
 };
 
-/** Custody facts for the media an incident references. The panel reports custody;
- *  it never plays or loads media.
- *
- *  Since ADR 0004 there are two kinds of reference, and the copy keeps them apart:
- *
- *  1. A recording Earshot holds (custodian `earshot.blob_store`). Earshot stored the
- *     bytes and measured their sha256 while storing them, so the integrity is its
- *     own measurement. The call view plays it, streamed through the server with
- *     Range requests; this panel only says so.
- *  2. Media somebody else holds. Earshot never fetches, caches or proxies it, and
- *     integrity is attributed to whoever declared the digest. The locator is a
- *     plain user-initiated link with `rel="noreferrer"`, never an `<audio src>`:
- *     an `src` would fetch the media on render, leaking the reader's network
- *     position and the referrer to the custodian without anyone asking for
- *     playback. Following the link is the reader's own request, with the
- *     reader's own credentials, and nothing about it passes through Earshot. */
+/** Reports media custody without loading media: stored recordings stream through Earshot; external media uses an explicit noreferrer link. */
 export function MediaCustodyPanel({ media }: { media: MediaCustodyView[] }) {
   if (media.length === 0) return null;
   return (

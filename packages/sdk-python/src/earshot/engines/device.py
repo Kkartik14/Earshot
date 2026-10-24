@@ -54,11 +54,7 @@ _RENDER_STALE = "earshot.audio.render.stale"
 # Governed latency measurement names (no T2 rule reads these).
 _BASE_LATENCY = "audio.base_latency"
 _OUTPUT_LATENCY = "audio.output_latency"
-# Audio the graph has already rendered but the output device has not yet played:
-# Web Audio's ``currentTime - getOutputTimestamp().contextTime``. It is the
-# render queue's depth in seconds, and it is an ESTIMATE -- the two readings are
-# taken at slightly different instants, and the W3C treats this difference as the
-# same estimate ``outputLatency`` reports.
+# Render-queue depth is an estimate from Web Audio clock readings, like ``outputLatency``.
 _RENDER_QUEUE = "audio.render_queue_delay"
 
 _MICROPHONE = "device.microphone"

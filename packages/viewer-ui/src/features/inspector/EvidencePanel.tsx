@@ -167,12 +167,7 @@ function SummaryFrame({ summary }: { summary: EvidenceSummary }) {
   );
 }
 
-/** What this incident's evidence explicitly does NOT tell us: coverage gaps,
- * analysis/turn limitations, and policy omissions, each rendered as a first-class
- * unknown with its own reason — never a blank or a zero. A missing analysis
- * (`EARSHOT_ANALYSIS_NOT_AVAILABLE`) or a stale one
- * (`EARSHOT_ANALYSIS_BINDING_MISMATCH`) renders as its own coded state, so the
- * panel never collapses "unknown coverage" into "nothing is missing". */
+/** Shows evidence gaps and policy omissions with their reasons, preserving missing and stale analysis as distinct states. */
 export function EvidencePanel({ bundleId }: { bundleId: string | undefined }) {
   const [open, setOpen] = useState(true);
   const notObserved = useNotObserved(bundleId);

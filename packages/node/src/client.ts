@@ -22,12 +22,7 @@ type Environment = Readonly<Record<string, string | undefined>>;
 const UNSAFE = /[^A-Za-z0-9._-]+/g;
 const RECORDING_ID_MAX = 128;
 
-/**
- * A request Earshot refused, one it redirected (never followed), one whose answer is
- * not JSON, or one that got no whole answer (`status` 0, `code` null). `detail` is
- * Earshot's message (Python's `EarshotError.message`); a JavaScript error's
- * `message` is its summary line.
- */
+/** A request failure, redirect, invalid JSON response, or missing response, with a safe detail message. */
 export class EarshotError extends Error {
   constructor(
     readonly method: string,
@@ -41,12 +36,7 @@ export class EarshotError extends Error {
   }
 }
 
-/**
- * A stable ID for the recording `name` of a session key's call, so a retried create
- * or upload names the same recording; equal to the Python client's `recording_id_for`.
- * Characters an ID cannot hold become `-`; an ID that changed, or is too long, keeps
- * a prefix plus a hash of the whole key, so distinct keys never share one.
- */
+/** Stable recording ID matching Python's helper, with a hash suffix when the sanitized key changes or exceeds the limit. */
 export function recordingIdFor(sessionKey: string, name: string): string {
   const suffix = `.${name}`;
   let base = sessionKey.replace(UNSAFE, "-").replace(/^[._-]+/, "") || "call";
@@ -133,11 +123,7 @@ export class EarshotClient {
     this.#timeoutMs = options.timeoutMs;
   }
 
-  /**
-   * A client for `EARSHOT_URL`, else `OTEL_EXPORTER_OTLP_ENDPOINT`, with the key in
-   * `EARSHOT_API_KEY`, else the `Authorization` entry of `OTEL_EXPORTER_OTLP_HEADERS`
-   * (the one the OTLP exporter already sends); with neither, anonymous (loopback).
-   */
+  /** Use `EARSHOT_URL`/OTLP endpoint and `EARSHOT_API_KEY`/OTLP auth; no key means anonymous loopback access. */
   static fromEnvironment(
     environment: Environment = process.env,
     options: Pick<EarshotClientOptions, "timeoutMs"> = {},
@@ -148,12 +134,7 @@ export class EarshotClient {
     return new EarshotClient({ ...options, baseUrl, authorization });
   }
 
-  /**
-   * Create (or find again) a pending recording of the call `session_key` names; it
-   * holds the call open until uploaded. A `mixed` stereo recording names its
-   * channels' speakers in `channel_speakers`. With a `recording_id` the request is
-   * idempotent; without one the server mints one.
-   */
+  /** Create or find a pending call recording; a supplied ID makes retries idempotent and channel names describe mixed audio. */
   createRecording(manifest: RecordingManifest): Promise<Recording> {
     const started_at_unix_nano = String(manifest.started_at_unix_nano);
     return this.#send(
@@ -167,12 +148,7 @@ export class EarshotClient {
     return this.#send("GET", `/v1/recordings/${encodeURIComponent(recordingId)}`);
   }
 
-  /**
-   * Upload a pending recording's bytes, from a file path (streamed, never held whole
-   * in memory) or from bytes, with their `Content-Digest`; the stored recording.
-   * `recording` is what `createRecording` returned, or its ID. Uploading the same
-   * bytes again answers the stored recording.
-   */
+  /** Upload a path (streamed) or buffer with its digest; repeating the upload returns the stored recording. */
   async uploadRecording(
     recording: Recording | string,
     source: string | URL | Uint8Array,

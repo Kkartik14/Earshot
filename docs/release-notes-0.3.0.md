@@ -14,10 +14,10 @@ and searches transcript text. LiveKit Agents 1.6 to 1.8 now get the same view as
 - **Recording analysis.** Each stored Recording is analysed once, in a child process:
   speech runs with their uncertainty, waveform peaks, and a stereo rendition for a mono
   pair. It needs the new `signals` extra. See
-  [ADR 0008](./adr/0008-recording-analysis-and-call-projections.md).
+  [the call view guide](./calls.md).
 - **Cost.** A lower bound from priced usage, a separate estimate for STT, and a count of
   unknown items, never $0 for "unknown". Built-in regular list prices, and your own per
-  Project. See [ADR 0009](./adr/0009-cost-model.md).
+  Project. See [the call view guide](./calls.md) for cost details.
 - **Stereo recordings**: one file with `channel_speakers: ["user", "agent"]`, as WAV,
   FLAC or Ogg Opus.
 - **LiveKit over OTLP**: LiveKit 1.6 to 1.8 spans become Revisions and call views, with

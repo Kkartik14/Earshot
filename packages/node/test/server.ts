@@ -1,11 +1,4 @@
-/**
- * Vitest global setup: one real `earshot serve` for every test file, on a fresh
- * temporary data directory (SQLite catalog, local-disk blobs) and a free loopback
- * port, with a real project API key issued through the `earshot` CLI.
- *
- * The server binary is `EARSHOT_BIN`, else the repository's `.venv/bin/earshot`,
- * else `earshot` on `PATH` (CI installs `.[server]`).
- */
+/** Start one real `earshot serve` for the test suite with fresh SQLite storage and a temporary project key. */
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";

@@ -703,11 +703,7 @@ _CLASS_PATTERNS: tuple[tuple[CaptureClass, tuple[str, ...]], ...] = (
 )
 
 
-# Key classification is memoized (it runs for every attribute of every span the
-# OTLP receiver stores and every record a recorder builds, over a small working set
-# of keys), but only for keys this short: senders choose the keys, and a memo keyed
-# by any string pins whatever it is given. 4096 keys of at most 256 characters hold
-# a few MiB at most; a longer key is classified again each time.
+# Bound memoized keys so sender-controlled strings cannot grow the cache.
 MEMOIZED_KEY_MAX_LENGTH = 256
 _MEMOIZED_KEYS = 4096
 

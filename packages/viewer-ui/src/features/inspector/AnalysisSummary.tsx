@@ -42,11 +42,7 @@ export function buildAnalysisSummary(data: StoredAnalysis): AnalysisSummaryView 
   };
 }
 
-/** The analyzer's own output for this incident: which analyzer ran, the exact
- * evidence digest it is bound to, when it ran, and how much it produced. This is
- * the provenance the rest of the inspector's readings rest on; surfaced so the
- * inspector reflects the analyzer's actual output rather than an anonymous
- * projection of it. */
+/** Shows analyzer identity, evidence binding, timestamp, and output counts for this incident. */
 export function AnalysisSummaryPanel({
   status,
   reason,

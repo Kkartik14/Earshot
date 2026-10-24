@@ -1,7 +1,7 @@
 """Contract of the dialect-neutral ``Database`` shim that storage SQL runs through.
 
 The SQLite connection behaviour pinned here is today's, unchanged; the paramstyle
-translation and the dialect hooks are what the Postgres runtime (WS2b) builds on.
+translation and the dialect hooks are what the Postgres runtime builds on.
 """
 
 from __future__ import annotations

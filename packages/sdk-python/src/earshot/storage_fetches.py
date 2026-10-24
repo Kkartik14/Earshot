@@ -143,11 +143,7 @@ PROVIDER_APIS: Mapping[str, ProviderApi] = MappingProxyType(
     }
 )
 
-# The hosts each provider's payload URLs may name, on every hop. These come from
-# the providers' documentation (Vapi's ``recordingUrl``, Retell's get-call
-# reference); no real delivery of either has been captured, so each is unverified.
-# Ringg's documentation names none. An operator adds hosts with
-# ``EARSHOT_FETCH_ALLOWED_HOSTS``.
+# Unverified provider hosts require an operator allowlist via ``EARSHOT_FETCH_ALLOWED_HOSTS``.
 PAYLOAD_HOSTS: Mapping[str, tuple[str, ...]] = MappingProxyType(
     {
         "elevenlabs": (),

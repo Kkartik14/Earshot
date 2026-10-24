@@ -77,7 +77,7 @@ def test_a_real_conversation_becomes_a_call_with_start_only_lines(world) -> None
     assert outcome.disposition == "applied"
     assert outcome.call_id == world.calls.resolve_call("support", f"elevenlabs:{CONVERSATION_ID}")
     [call] = _by_name(world, "earshot.connector.call")
-    assert call["gen_ai.agent.name"] == "earshot-ws0-capture"
+    assert call["gen_ai.agent.name"] == "earshot-fixture-agent"
     assert call["earshot.connector.call.ended_reason"] == "Client disconnected: 1000"
     lines = sorted(
         (

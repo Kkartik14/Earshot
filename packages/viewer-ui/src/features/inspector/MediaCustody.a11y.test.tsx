@@ -179,7 +179,7 @@ describe("MediaCustodyPanel", () => {
   });
 });
 
-describe("MediaCustodyPanel for a recording Earshot holds (ADR 0004)", () => {
+describe("MediaCustodyPanel for a recording Earshot holds", () => {
   // A call revision's recording, as the call materializer references it: held in
   // Earshot's blob store, with the digest Earshot measured while storing it.
   const held = view({

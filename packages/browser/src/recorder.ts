@@ -1,10 +1,4 @@
-/** Browser capture adapter for WebRTC stats, audio contexts, and media devices.
- * `drain()` emits the payload consumed by the server's WebRTC and device engines.
- * Unsupported signals, sampling failures, and dropped observations become
- * coverage. Timestamps stay in one raw browser clock domain; device ids are
- * session-salted, and audio samples are never read. Clock, scheduler, and random
- * sources are injectable for deterministic tests.
- */
+/** Captures browser WebRTC and audio metadata; unsupported or dropped observations become coverage. */
 
 import {
   audioContextStateEvent,
@@ -64,12 +58,7 @@ export interface BrowserRecorderOptions {
   scheduler?: Scheduler;
   /** Randomness for trace ids + privacy salt (default Web Crypto). */
   random?: RandomSource;
-  /**
-   * Join the application's existing trace instead of minting a new one. Supply
-   * either a full `TraceContext` or the raw `traceparent` header — the recorder
-   * propagates it and never overwrites it. A new context is minted only when
-   * neither is supplied (or the supplied `traceparent` is not spec-valid).
-   */
+  /** Reuse a valid supplied trace context; otherwise mint a new one. */
   traceContext?: TraceContext;
   traceparent?: string;
   /** Max buffered `getStats` snapshots before the oldest is dropped (default 1024). */
@@ -78,22 +67,9 @@ export interface BrowserRecorderOptions {
   maxDeviceEvents?: number;
   /** The injected clock's reading uncertainty, in ms (default 1). */
   clockUncertaintyMs?: number;
-  /**
-   * Unix-epoch wall time (ms) at the injected clock's origin
-   * (`performance.timeOrigin`). Carried so a declared client<->server calibration
-   * has a wall timestamp to align. Pass `null` to carry only the monotonic
-   * reading (no wall calibration possible). Defaults from the host performance
-   * clock.
-   */
+  /** Wall-clock time at the injected monotonic clock's origin, used for calibration. */
   wallOriginMs?: number | null;
-  /**
-   * The capture wire version to emit (default `1`). Opt into `2` for continuous
-   * capture: every `drain()` then carries a monotonic `drainSequence` under the
-   * same stable `sessionId` and `clockDomain.id`, and the server accumulates the
-   * whole call into one journal-backed provisional artifact instead of a
-   * per-drain incident. It stays opt-in so a client can still target a server
-   * that only governs version 1.
-   */
+  /** Wire version (`1` by default); version `2` accumulates ordered drains into one continuous call. */
   captureVersion?: CaptureVersion;
 }
 
@@ -103,12 +79,7 @@ export interface AttachPeerConnectionOptions {
 }
 
 export interface AttachAudioContextOptions {
-  /**
-   * Period in ms for sampling the render position via `getOutputTimestamp()`
-   * (default 1000). Must be a positive finite number. No interval is scheduled
-   * at all on a context that does not implement `getOutputTimestamp` — the
-   * absence is recorded once as coverage instead.
-   */
+  /** Render-position sample period in ms; unsupported APIs are recorded once as coverage. */
   renderTimingIntervalMs?: number;
 }
 
@@ -118,13 +89,7 @@ export interface ObserveMediaDevicesOptions {
 }
 
 export interface DrainOptions {
-  /**
-   * Declare, on this drain, that the observer stopped — and why. `captureVersion:
-   * 2` only. `call_ended` ENDS the call (the server finalizes it into a `final`
-   * artifact); an abandon reason (`capture_stopped` / `page_hidden` /
-   * `page_unloaded`) leaves the call provisional. Omit it on an ordinary drain.
-   * Prefer `endCall()` over passing `call_ended` here.
-   */
+  /** Version 2 final-drain reason; only `call_ended` finalizes the call, so prefer `endCall()` for that case. */
   end?: CaptureEndReason;
 }
 
@@ -159,14 +124,7 @@ function zeroCounters(): CoverageCounters {
   };
 }
 
-/**
- * What the platform actually exposed in this window.
- *
- * These are not measurements — they are the record of which render-path signals
- * this browser offered, so a signal the platform does not implement becomes an
- * explicit coverage note rather than a silent absence the server would read as
- * "nothing happened".
- */
+/** Render-path APIs exposed by this browser, used to report unsupported signals as coverage. */
 interface SignalAvailability {
   sampledStats: boolean;
   audioInbound: boolean;
@@ -294,14 +252,7 @@ export class EarshotBrowserRecorder {
     return injectTraceHeaders(this.trace, headers);
   }
 
-  /**
-   * Periodically sample `pc.getStats()` and buffer normalised snapshots. Each
-   * sample is timestamped with the injected clock at the moment the report
-   * resolves. A failed `getStats()` is recorded as coverage (never fatal, never
-   * silent), and an overlapping sample — one that would start while the previous
-   * `getStats()` is still in flight — is skipped and recorded, not run
-   * concurrently.
-   */
+  /** Periodically buffer normalized stats; failures and overlapping samples are reported as coverage. */
   attachPeerConnection(
     pc: PeerConnectionLike,
     options: AttachPeerConnectionOptions = {},
@@ -543,24 +494,7 @@ export class EarshotBrowserRecorder {
     return payload;
   }
 
-  /**
-   * End the call: flush a FINAL drain declaring an explicit, application-observed
-   * close (`end.reason === "call_ended"`), then stop sampling. This is the one
-   * signal that finalizes a continuous capture — the server writes the journal's
-   * finalize frame at the observed coordinate and the sealed artifact is `final`,
-   * with a real, same-clock-domain call duration.
-   *
-   * It is deliberately distinct from `stop()`: the application is the best-placed
-   * observer of a browser call's end, so ending the call is an explicit act it
-   * takes, never something inferred from a lifecycle hook. `stop()`, `pagehide`,
-   * and `visibilitychange` tear the observer down without ending the call, and the
-   * server keeps such a call provisional forever.
-   *
-   * Returns the final payload for the caller to POST. Repeated calls, and later
-   * drains, replay that same payload so duplicate close notifications cannot
-   * create a post-finalization sequence. On a `captureVersion: 1` recorder there
-   * is no continuous call to close, so this drains and stops without an end signal.
-   */
+  /** Flush the final v2 drain for an observed close; lifecycle teardown does not end calls, and retries replay it. */
   endCall(): CapturePayload {
     if (this.finalPayload) return copyCapturePayload(this.finalPayload);
     const payload = this.drain({ end: "call_ended" });
@@ -668,13 +602,7 @@ export class EarshotBrowserRecorder {
     return coverage;
   }
 
-  /**
-   * Coverage for render-path signals this platform does not expose.
-   *
-   * Each note below is a statement about the API surface, not a guess about the
-   * session: without them, a browser that simply lacks a counter is
-   * indistinguishable from a session in which nothing went wrong.
-   */
+  /** Report render-path signals this browser does not expose. */
   private platformCoverage(): CaptureCoverage[] {
     const coverage: CaptureCoverage[] = [];
     if (this.availability.renderTimingMissing) {
@@ -762,11 +690,7 @@ export class EarshotBrowserRecorder {
     this.teardowns.push(() => this.scheduler.clearInterval(handle));
   }
 
-  /**
-   * Compare the capture track's settled rate with the graph's and record a
-   * mismatch. Both numbers are platform-reported (`MediaTrackSettings.sampleRate`
-   * and `AudioContext.sampleRate`); when either is absent nothing is claimed.
-   */
+  /** Compare platform-reported capture and graph sample rates when both are available. */
   private checkSampleRate(track: MediaTrackLike): void {
     const contextHz = this.audioContext?.sampleRate;
     const trackHz = track.getSettings?.().sampleRate;

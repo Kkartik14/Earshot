@@ -57,16 +57,8 @@ _SPAN_NAMES = {
     "vad": "vad",
 }
 
-# Governed allowlist of vendor metric attributes lifted into quality samples.
-# This is deliberately NOT a namespace wildcard: an unknown numeric attribute
-# (say a custom ``metrics.customer_phone``) must stay subject to the operation's
-# metadata privacy rules and must never be recreated verbatim as a measurement.
-#
-# Names are stage-scoped because Pipecat reports both LLM and TTS first-byte
-# latency under the same ``metrics.ttfb`` key, and the analyzer keys provider
-# measurements by name -- unscoped, one stage would silently overwrite the other.
-# Units are declared here rather than guessed from the key, so a millisecond
-# field can never be relabelled as seconds.
+# Explicit metric allowlist avoids promoting arbitrary numeric attributes into measurements.
+# Names are stage-scoped and units are declared because providers reuse keys across stages.
 _VENDOR_QUALITY_METRICS: dict[str, tuple[str, str, str, frozenset[str]]] = {
     # source attribute -> (stage-scoped suffix, unit, aggregation, native stages)
     "metrics.ttfb": ("ttfb", "s", "instant", frozenset({"stt", "llm", "tts"})),

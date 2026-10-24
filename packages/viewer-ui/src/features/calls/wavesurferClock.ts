@@ -20,13 +20,7 @@ function translucent(color: string, alpha: number): string {
     : color;
 }
 
-/** The production clock: wavesurfer.js over one HTML media element.
- *
- * The media element streams `source.url` (the browser sends Range requests), and
- * the waveform is drawn from the server's peaks, so the audio is never fetched
- * whole or decoded in the page. One lane per channel (`splitChannels`). Without
- * peaks yet, the lanes are flat and the duration comes from the media metadata.
- * wavesurfer is loaded on first use, so views without a player never load it. */
+/** Production playback adapter; audio streams by range and wavesurfer loads only when a player is used. */
 export async function createWavesurferClock(source: PlayerSource): Promise<MediaClock> {
   const { default: WaveSurfer } = await import("wavesurfer.js");
   const style = getComputedStyle(source.container);

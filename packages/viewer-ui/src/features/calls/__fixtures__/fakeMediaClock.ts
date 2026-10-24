@@ -1,13 +1,7 @@
 import { act } from "@testing-library/react";
 import type { MediaClock, MediaClockFactory, PlayerSource } from "../mediaClock";
 
-/** A declared fake (AGENT_RULES rule 4): the call views' `MediaClock`.
- *
- * jsdom has no media playback and no canvas, so the wavesurfer adapter cannot run
- * in a unit test. This fake stands in for it at the one seam the call views
- * declare. It records what it was asked to play (the source: URL, peaks, lanes)
- * and every seek, and a test moves its playhead as playback would. Everything
- * else in the view (data, rendering, highlight and seek wiring) is real. */
+/** Test fake for the call views' `MediaClock`; tests drive playback while rendering and data flow stay real. */
 export class FakeMediaClock implements MediaClock {
   currentTime = 0;
   playing = false;

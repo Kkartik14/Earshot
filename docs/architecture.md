@@ -15,7 +15,8 @@ voice runtime / application
        -> `earshot recover`: replay -> the same incident bundle, declared provisional
           when no close was observed
   -> immutable incident bundle
-       -> local ingest: validation -> content-addressed storage -> SQLite index
+       -> local ingest: validation -> content-addressed object storage
+       -> SQLite or Postgres catalog
        -> deterministic analysis: graph -> projections -> evidence-linked diagnosis
        -> governed local API/CLI and portable artifact export
 
@@ -28,13 +29,63 @@ hosted voice provider
 The canonical graph is evidence. Turns and waterfalls are replaceable projections.
 Analysis never mutates the immutable input artifact.
 
+## How data moves through Earshot
+
+Earshot accepts evidence through several paths. Each path validates and filters
+data at its boundary, then stores a different kind of record.
+
+```text
+Pipecat or another OpenTelemetry producer
+  -> POST /v1/traces
+  -> validate the OTLP request and apply the Project capture preset
+  -> store accepted spans and indexes
+  -> group spans into a Call using trace and session keys
+
+voice runtime
+  -> POST /v1/recordings, then PUT recording bytes
+  -> keep the Call open while an upload is in flight or a recording is pending
+  -> materialize a Revision after an end signal or quiet period
+
+browser SDK
+  -> POST /v1/capture
+  -> validate and sanitize browser measurements and events
+  -> store a one-shot Incident or accumulate continuous capture until it is sealed
+
+hosted provider webhook
+  -> verify the signed raw request before parsing
+  -> record a receipt and normalize allowed evidence
+  -> store a canonical Incident
+```
+
+The OTLP path stores accepted spans, not the submitted request body. Recordings
+are uploaded separately. An explicit end signal makes the next Revision final;
+without one, a quiet period produces a provisional Revision. A pending recording
+holds the Call until its pending deadline, which is 10 minutes by default from the
+latest of the recording's creation, the Call's latest evidence, and its end signal.
+If no PUT is streaming then, Earshot marks the recording failed. A PUT already in
+flight keeps the Call open until it finishes or reaches its own 10-minute deadline
+from upload start; a 60-second idle timeout ends a stalled upload. The viewer reads
+finalized Incidents through the API and does not change them.
+
+The browser SDK sends a versioned JSON payload to `/v1/capture`. Earshot checks
+its size and shape, discards unknown fields, and derives accepted values from
+server allowlists. A single batch becomes an Incident. Continuous capture
+accumulates bounded drains and becomes an Incident when sealed. The separate
+`/v1/live` API exposes the progress of checkpoint journals while a session is
+open.
+
+The standalone Python SDK also builds Incidents in the application process. Its
+recorder applies capture policy before serialization. Callers can then validate,
+store, or export the bundle without sending it through the Earshot server.
+
 ## Why Python for the M1 backend
 
-The first two framework seams are Python. A single Python 3.11 implementation now
-owns SDK capture, privacy filtering, contract validation, analysis, SQLite storage,
-CLI, and the local API. This avoids two semantic authorities while the contract is
-still alpha. Browser/viewer clients consume generated JSON Schema/protobuf bindings
-and shared conformance fixtures. No TypeScript package is a contract authority.
+The first two framework seams are Python. One Python 3.11 implementation owns SDK
+capture, privacy filtering, contract validation, analysis, SQLite and Postgres
+storage, the CLI, and the local API. This avoids two semantic authorities while the
+contract is still alpha. Browser and viewer clients consume generated JSON Schema
+and protobuf bindings plus shared conformance fixtures. No TypeScript package is a
+contract authority.
 
 ## Artifact versus telemetry export
 
@@ -42,12 +93,13 @@ These are different operations:
 
 1. A standard OTLP exporter sends traces/logs/metrics to an existing observability
    backend. This remains the application's parallel telemetry path.
-2. Earshot packages a final, portable evidence snapshot for one voice session.
+2. Earshot receives evidence through its own APIs and can package a final,
+   portable Incident for one voice session.
 
-The incident endpoint is not a fake OTLP receiver. Streaming OTLP assembly requires
-cross-request finalization and is outside M1. M1 adapters normalize ended spans and
-callbacks into the profile; exact raw OTLP is retained only when a caller explicitly
-supplies filtered bytes through the SDK.
+The `/v1/traces` endpoint is an OTLP/HTTP receiver. It accepts protobuf or JSON
+exports, validates each request, and stores accepted spans for Call assembly. It
+does not retain the submitted request body as raw OTLP. The standalone SDK has a
+separate opt-in for filtered raw OTLP chunks in an Incident.
 
 ## The two pluggable seams
 
@@ -55,15 +107,15 @@ Everything that produces evidence meets earshot at one boundary, and everything 
 consumes an incident leaves through another. Both are named so an integration is a
 registration rather than a change inside earshot.
 
-**`ObservationSink` (`observation.py`) is where evidence enters.** A capture source --
-the server pipeline, a provider stream adapter, a WebRTC/audio-graph engine, and in
-future a browser, native, or backend collector -- authors governed facts through five
-verbs and nothing else: `record_measurement`, `record_event`, `record_coverage`,
-`record_omission`, `register_clock_domain`. Stage/operation authoring is deliberately
-outside the protocol: minting an operation id and advancing a turn cursor is pipeline
-bookkeeping that a fact-only collector has no way to model. `TurnRecorder` satisfies
-the protocol structurally, so a capture source never depends on the pipeline session,
-its turn ids, or its clock.
+**`ObservationSink` (`observation.py`) is where evidence enters.** A capture source can
+be the server pipeline, a provider stream adapter, the browser source used by
+`/v1/capture`, or a future native or backend collector. It authors governed facts through
+five verbs and nothing else: `record_measurement`, `record_event`, `record_coverage`,
+`record_omission`, and `register_clock_domain`. Stage and operation authoring stays
+outside the protocol. Minting an operation ID and advancing a turn cursor are pipeline
+bookkeeping that a fact-only collector cannot model. `TurnRecorder` satisfies the
+protocol structurally, so a capture source never depends on the pipeline session, its
+turn IDs, or its clock.
 
 **A named exporter (`exporters/registry.py`) is where an incident leaves.** An
 exporter takes a finished `IncidentBundle` and returns the document a backend
@@ -96,17 +148,18 @@ fills a dict and nothing else -- no network, no environment, no import-order eff
   those credentials as provider proof; each Connector authenticates the provider's
   documented raw delivery before JSON parsing.
 - Tokenless loopback requests require a loopback `Host` header, closing the local
-  DNS-rebinding boundary. Decode/canonicalization and fsync/SQLite ingest run in a
+  DNS-rebinding boundary. Decode, canonicalization, and catalog ingest run in a
   worker thread so storage contention cannot stall ASGI liveness.
 
 ### Storage
 
-- Exact canonical protobuf bytes live in a content-addressed object store and own
+- Exact canonical protobuf bytes live in content-addressed object storage and own
   evidence/graph content truth.
-- SQLite is the durable publication/catalog/tombstone authority and contains
+- SQLite or Postgres is the durable publication/catalog/tombstone authority and contains
   project-scoped credentials, Connector/Delivery Receipts, privacy-safe indexes,
-  rebuildable Turn Facts, and versioned derived analysis. CAS and SQLite are one backup
-  unit together with `instance-correlation.key`; none is independently reconstructable.
+  rebuildable Turn Facts, and versioned derived analysis. Back up the catalog,
+  object store, and `instance-correlation.key` together; none is independently
+  reconstructable.
 - Operations, typed links, and events are transactionally projected into relational
   graph indexes; the canonical protobuf remains the source of truth.
 - Evidence is immutable; legal/privacy deletion physically purges it and leaves a

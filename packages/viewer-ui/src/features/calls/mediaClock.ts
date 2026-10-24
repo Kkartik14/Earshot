@@ -1,10 +1,4 @@
-/** The call view's one playback clock, in milliseconds on the call axis.
- *
- * The transcript highlight, click-to-seek and the turns' seek buttons talk only to
- * this interface, never to the audio element or to wavesurfer. Production uses the
- * wavesurfer adapter; tests drive the same components through a fake clock,
- * because jsdom has no media playback and no canvas. It is the only test seam in
- * the call views. */
+/** Shared playback clock for transcript highlighting and seeking; production and tests use different adapters. */
 export interface MediaClock {
   play(): void;
   pause(): void;

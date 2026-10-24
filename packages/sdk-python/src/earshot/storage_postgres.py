@@ -228,7 +228,7 @@ class PostgresConnection:
         text's fifth run). A prepared ``IN``-list read keeps the generic plan Postgres
         made while the table had no statistics, a scan of the project filtering every
         listed value per row, until a new connection: a 1024-trace request took 0.2 s,
-        then 1.5 s, until autoanalyze (tribunal round 2, Carmack CR2-4)."""
+        then 1.5 s, until autoanalyze."""
 
         cursor = self._connection().cursor(row_factory=_row_factory)
         try:

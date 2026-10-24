@@ -4,12 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parsePeaksDat, PeaksFormatError } from "./peaks";
 
-// Both files were written by a real Earshot server's analysis job and read back
-// from its peaks routes (`__fixtures__/serve_calls.py --write-peaks`): the LiveKit
-// 1.8 capture's stereo Ogg recording, and the Pipecat 1.5 capture's mono pair as
-// its two-channel rendition peaks. The expected values below were read from the
-// same bytes with the server's own reader (`earshot.signals.peaks.read_header`)
-// and Python's `struct`, not with this parser.
+// Expected peaks come from real server-generated LiveKit and Pipecat recordings, checked with the server reader.
 function fixture(name: string): ArrayBuffer {
   const bytes = readFileSync(join(import.meta.dirname, "__fixtures__", name));
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);

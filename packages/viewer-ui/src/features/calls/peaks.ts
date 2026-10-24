@@ -1,12 +1,4 @@
-/** audiowaveform `.dat` peaks, as the server's peaks routes serve them.
- *
- * The format (https://github.com/bbc/audiowaveform/blob/master/doc/DataFormat.md)
- * is a little-endian header — version (int32), flags (uint32; bit 0 set means
- * 8-bit values), sample rate (int32), samples per pixel (int32), length in pixels
- * (uint32) and, from version 2, the channel count (int32) — then, pixel by pixel,
- * each channel's minimum and maximum. Earshot writes version 2, 8-bit, one
- * channel per entry of the media's `channels`, in order; versions 1 and 16-bit
- * values are read too, since they are the same format. */
+/** Parses the server's audiowaveform `.dat` peaks, including version 1 and 16-bit variants. */
 
 export class PeaksFormatError extends Error {
   constructor(message: string) {

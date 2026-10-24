@@ -1,9 +1,9 @@
 """The done-when checks for one call, shared by the end-to-end tests.
 
 The tests drive a real ``earshot serve`` process with one call's evidence: a real
-Pipecat or LiveKit call (``apps/ingest/tests/e2e_real``) or a real capture replayed
-(``apps/ingest/tests/e2e``). They then ask the same questions of the server's
-HTTP API, its catalog and its blob store.
+Pipecat or LiveKit call (``apps/ingest/tests/e2e_real``) or a captured scripted
+call replayed in ``apps/ingest/tests/e2e``. They then ask the same questions of
+the server's HTTP API, catalog, and blob store.
 
 ``assert_done_when`` (a call with WAV recordings):
 

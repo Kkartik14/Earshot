@@ -1,6 +1,6 @@
-"""FR-14: purging a call, purged keys, retention and project deletion for call evidence.
+"""Purging calls, their evidence, and their retention state.
 
-Every test runs on a real catalog (both dialects), the real Pipecat 1.5 capture
+Every test runs on a real catalog (both dialects), synthetic Pipecat-shaped OTLP requests
 recorded through ``CallStore.record_spans`` (the receiver's storage call), the
 real closer, and a real blob store (local disk; MinIO where the backend matters),
 with the store's injected clock (§7 seam 1). The clock is set after the wall
@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from captured_otlp import CAPTURED_SESSION_KEY, captured_requests
 from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
 from earshot.clock import ManualClock
@@ -26,6 +25,7 @@ from earshot.storage_closer import Closer
 from earshot.storage_recordings import CallPurgedError, RecordingManifest, RecordingStore
 from otlp_support import make_request, make_span, request, serve, string_attribute
 from store_support import catalog, catalog_rows, current_dialect, make_store, stored_needles
+from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 
 pytestmark = pytest.mark.integration
 
@@ -36,7 +36,7 @@ END_GRACE = TIMINGS.end_grace_nano
 LONG_QUIET = TIMINGS.long_quiet_nano
 LATE_DEBOUNCE = TIMINGS.late_debounce_nano
 DAY = 24 * 3600 * SECOND
-# The tables FR-14 must empty for a purged call or a deleted project.
+# These call-scoped tables must be empty after a purge or project deletion.
 CALL_TABLES = (
     "calls",
     "call_traces",
@@ -81,10 +81,10 @@ def _world(tmp_path: Path, blobs=None) -> World:
 
 
 def _replay(world: World, requests=None, *, project_id: str = "default") -> str:
-    """Record the requests 5 s apart, as the real exporter sent them; the call's ID."""
+    """Record synthetic requests 5 s apart and return the call's ID."""
 
     call_ids: set[str] = set()
-    for item in captured_requests() if requests is None else requests:
+    for item in synthetic_requests() if requests is None else requests:
         call_ids.update(world.calls.record_spans(project_id, spans_from_request(item)).call_ids)
         world.clock.advance(5 * SECOND)
     [call_id] = call_ids
@@ -101,12 +101,12 @@ def _keyed_call(world: World, key: str, trace: int, *, project_id: str = "defaul
     return call_id
 
 
-def _captured_trace() -> int:
-    return int.from_bytes(spans_from_request(captured_requests()[0])[0].span.trace_id, "big")
+def _synthetic_trace() -> int:
+    return int.from_bytes(spans_from_request(synthetic_requests()[0])[0].span.trace_id, "big")
 
 
 def _store_recording(
-    world: World, speaker: str = "user", *, key: str = CAPTURED_SESSION_KEY, project_id="default"
+    world: World, speaker: str = "user", *, key: str = SYNTHETIC_SESSION_KEY, project_id="default"
 ) -> str:
     """Create and upload one recording of ``key``'s call; its blob key."""
 
@@ -154,8 +154,11 @@ def _incident_ids(world: World) -> list[str]:
 
 
 def _expire(world: World, bundle_id: str) -> None:
-    """Give a revision incident a past retention deadline (Month 1 revisions carry no
-    retention policy, so the catalog column is the only way to reach this state)."""
+    """Give a revision incident a past retention deadline.
+
+    Revision incidents carry no retention policy, so the catalog column is the only
+    way to reach this state.
+    """
 
     with catalog(world.path) as connection:
         connection.execute(
@@ -164,7 +167,7 @@ def _expire(world: World, bundle_id: str) -> None:
         connection.commit()
 
 
-# --- AC14.1: purging a call ------------------------------------------------------------------
+# --- Purging a call --------------------------------------------------------------------------
 
 
 def test_a_call_purge_removes_the_call_its_evidence_and_its_revisions_at_once(tmp_path) -> None:
@@ -177,7 +180,7 @@ def test_a_call_purge_removes_the_call_its_evidence_and_its_revisions_at_once(tm
     _close_all(world)
     world.calls.record_spans(
         "default",
-        spans_from_request(make_request([make_span(_captured_trace(), 950, start=START)])),
+        spans_from_request(make_request([make_span(_synthetic_trace(), 950, start=START)])),
     )
     world.clock.advance(LATE_DEBOUNCE)
     world.closer.close_next()
@@ -222,7 +225,7 @@ def test_a_call_purge_removes_the_call_its_evidence_and_its_revisions_at_once(tm
         "SELECT generation, expires_at_unix_nano FROM call_tombstones WHERE key_fingerprint = ?",
         (fingerprint,),
     ) == [(0, purged_at + LONG_QUIET + DAY)]
-    assert world.calls.resolve_call("default", CAPTURED_SESSION_KEY) is None
+    assert world.calls.resolve_call("default", SYNTHETIC_SESSION_KEY) is None
     if scrubs is not None:  # SQLite: the purge recorded a scrub and ran it
         [(recorded, scrubbed)] = catalog_rows(
             tmp_path, "SELECT purge_generation, scrubbed_generation FROM storage_maintenance"
@@ -290,7 +293,7 @@ def test_the_cli_purges_a_call_of_a_project(tmp_path, monkeypatch, capsys) -> No
     assert world.recordings.blobs.head(blob_key) is None
 
 
-# --- AC14.2: purged keys -----------------------------------------------------------------------
+# --- Purged keys -----------------------------------------------------------------------------
 
 
 def test_a_purged_keys_evidence_is_dropped_until_its_tombstone_expires(tmp_path) -> None:
@@ -302,14 +305,14 @@ def test_a_purged_keys_evidence_is_dropped_until_its_tombstone_expires(tmp_path)
 
     # Late evidence: the key in a new trace; an unkeyed span of the purged call's
     # trace; a recording of the key. Each is dropped and counted.
-    keyed = world.calls.record_spans("default", _keyed_spans(CAPTURED_SESSION_KEY, 4242))
+    keyed = world.calls.record_spans("default", _keyed_spans(SYNTHETIC_SESSION_KEY, 4242))
     unkeyed = world.calls.record_spans(
-        "default", spans_from_request(make_request([make_span(_captured_trace(), 951)]))
+        "default", spans_from_request(make_request([make_span(_synthetic_trace(), 951)]))
     )
     with pytest.raises(CallPurgedError):
         _store_recording(world)
     world.clock.wall = expires - 1
-    last_moment = world.calls.record_spans("default", _keyed_spans(CAPTURED_SESSION_KEY, 4243))
+    last_moment = world.calls.record_spans("default", _keyed_spans(SYNTHETIC_SESSION_KEY, 4243))
 
     assert (keyed.stored_spans, keyed.purged_call_evidence_dropped) == (0, 1)
     assert (unkeyed.stored_spans, unkeyed.purged_call_evidence_dropped) == (0, 1)
@@ -327,14 +330,14 @@ def test_a_purged_keys_evidence_is_dropped_until_its_tombstone_expires(tmp_path)
     renewed = _replay(world)
     _close_all(world)
 
-    assert renewed == world.calls.call_id("default", CAPTURED_SESSION_KEY, 1) != call_id
+    assert renewed == world.calls.call_id("default", SYNTHETIC_SESSION_KEY, 1) != call_id
     assert _incident_ids(world) == [f"{renewed}.r1"]
-    assert world.calls.resolve_call("default", CAPTURED_SESSION_KEY) == renewed
+    assert world.calls.resolve_call("default", SYNTHETIC_SESSION_KEY) == renewed
     with pytest.raises(IncidentPurgedError):
         world.store.get_record(f"{call_id}.r1")
 
 
-# --- AC14.3: a revision is purged only with its call -------------------------------------------
+# --- A revision is purged only with its call -------------------------------------------------
 
 
 def test_purging_a_call_revision_as_an_incident_is_refused_with_its_call_id(
@@ -373,7 +376,7 @@ def test_purging_a_call_revision_as_an_incident_is_refused_with_its_call_id(
     assert _incident_ids(world) == [f"{call_id}.r1"]
 
 
-# --- AC14.4: retention -------------------------------------------------------------------------
+# --- Retention --------------------------------------------------------------------------------
 
 
 def _two_revisions(world: World) -> str:
@@ -381,7 +384,7 @@ def _two_revisions(world: World) -> str:
     _close_all(world)
     world.calls.record_spans(
         "default",
-        spans_from_request(make_request([make_span(_captured_trace(), 950, start=START)])),
+        spans_from_request(make_request([make_span(_synthetic_trace(), 950, start=START)])),
     )
     world.clock.advance(LATE_DEBOUNCE)
     world.closer.close_next()
@@ -447,8 +450,8 @@ def test_a_call_whose_latest_revision_expired_is_purged_whole_in_bounded_batches
 
 
 def test_the_retention_job_collects_expired_call_and_trace_tombstones(tmp_path) -> None:
-    """Tribunal round 1, LAM-4: an expired tombstone protects nothing (the key's
-    generation was bumped at purge), so the retention job deletes it; a live one stays."""
+    """An expired tombstone protects nothing because purge bumped the key generation.
+    The retention job deletes it, while a live tombstone stays."""
 
     from earshot.maintenance import MaintenanceLoop
     from earshot.storage_call_purge import (
@@ -487,10 +490,10 @@ def test_the_retention_job_collects_expired_call_and_trace_tombstones(tmp_path) 
     assert at_expiry == 1
     assert [int(row[0]) > first_expires for row in remaining] == [True, True]
     assert _counts(world)["call_key_generations"] == 2  # generations are never collected
-    assert renewed == world.calls.call_id("default", CAPTURED_SESSION_KEY, 1) != first
+    assert renewed == world.calls.call_id("default", SYNTHETIC_SESSION_KEY, 1) != first
 
 
-# --- AC14.5: project deletion ------------------------------------------------------------------
+# --- Project deletion -------------------------------------------------------------------------
 
 
 def test_project_deletion_removes_every_call_row_and_blob_of_the_project(
@@ -540,14 +543,14 @@ def test_project_deletion_removes_every_call_row_and_blob_of_the_project(
     assert world.store.project_lifecycle("tenant") == "deleted"
 
 
-# --- AC14.6: what a purge leaves behind ----------------------------------------------------------
+# --- What a purge leaves behind ----------------------------------------------------------------
 
 
 def test_after_a_call_purge_no_transcript_text_or_key_is_stored(tmp_path) -> None:
     world = _world(tmp_path)
     call_id = _replay(world)
     _close_all(world)
-    needles = [*TRANSCRIPT_NEEDLES, CAPTURED_SESSION_KEY.encode()]
+    needles = [*TRANSCRIPT_NEEDLES, SYNTHETIC_SESSION_KEY.encode()]
     assert stored_needles(tmp_path, needles) == set(needles)  # the control: stored
 
     world.purger.purge_call("default", call_id)

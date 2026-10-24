@@ -1,7 +1,7 @@
 {
   "format_version": 1,
   "provider": "elevenlabs",
-  "description": "One real ElevenLabs Agents conversation fetched with the conversations API, scrubbed. Both sides are synthetic speech. Consumers: the WS3 import by conversation ID and the `start_only` transcript rule.",
+  "description": "One real ElevenLabs Agents conversation fetched with the conversations API, scrubbed. Both sides are synthetic speech. Used by the conversation import and `start_only` transcript tests.",
   "provenance": {
     "captured_on": "2026-10-19",
     "source_kind": "real_capture_scrubbed",
@@ -26,7 +26,7 @@
       "llm": "account default (`producing_llm` in the transcript)"
     },
     "caller": {
-      "source": "Cartesia TTS lines from the WS0b cache .earshot/pipecat_otlp/caller.wav",
+      "source": "Cartesia TTS audio generated from the shared caller script",
       "script": [
         "Hi, I would like to book a table for two people tomorrow evening.",
         "Seven thirty works for us. Could we sit somewhere quiet near the window?",
@@ -64,8 +64,7 @@
   ],
   "privacy": {
     "t4_audio": "synthetic_both_sides",
-    "t4b_note": "All keys are kept, not only the ones a translator reads: the content is synthetic and every identifier is pseudonymised. Owner to confirm.",
-    "agent_name": "kept: `earshot-ws0-capture` was chosen by the capture script"
+    "agent_name": "kept: `earshot-fixture-agent` is the synthetic test agent name"
   },
   "field_table": [
     {
@@ -301,15 +300,15 @@
       "file": "conversation.json",
       "kind": "json",
       "source": "GET /v1/convai/conversations/{id}",
-      "bytes": 32221,
-      "canonical_sha256": "341a250f053a9cbff66727eac542482b10a52abb2e8c474ceecb80f02b6c7eaa"
+      "bytes": 32223,
+      "canonical_sha256": "b8bc30ebbaf804dfe41eaa781da0fb93ea2fee32e22dabfb494df7d0a7017ccb"
     },
     {
       "file": "conversation.otel.json",
       "kind": "json",
       "source": "?format=opentelemetry",
-      "bytes": 70985,
-      "canonical_sha256": "00e80fe1cbfe5735e2f6c61c64d7aa4b50c5f516a9bccebf157aed5e29619c00"
+      "bytes": 70989,
+      "canonical_sha256": "ce048cf2e5b095f21c3e06a027aeb8c3e73c6341b9fe11b8dc24d325918762fd"
     },
     {
       "file": "audio.mp3",

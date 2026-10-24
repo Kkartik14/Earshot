@@ -76,11 +76,7 @@ MAX_TIME_UNIX_NANO = 2**63 - 1
 # The longest attribute key a span may carry, in UTF-8 bytes (span, events, links,
 # resource, scope).
 MAX_ATTRIBUTE_KEY_BYTES = 1024
-# What a request's spans share is stored more than once: a span's row holds its scope
-# name, and ``otlp_resources`` holds a resource and scope once per distinct pair
-# (``otlp_resources``). These bound each resource and scope, and
-# ``MAX_REQUEST_SHARED_BYTES`` what one request stores more than once
-# (docs/production.md).
+# Bound resource/scope size and the shared request metadata repeated across stored span rows.
 MAX_SCOPE_NAME_BYTES = 256
 # The scope's attributes as serialized (its ``attributes`` field).
 MAX_SCOPE_ATTRIBUTES_BYTES = 16 * 1024
