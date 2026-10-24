@@ -124,15 +124,7 @@ def _portable_schema_url(value: str) -> str:
 
 
 SchemaUrl = Annotated[str, StringConstraints(min_length=1), AfterValidator(_portable_schema_url)]
-# A clock relation is a calibration between two clocks, so its rate correction has
-# a domain. The map's slope is ``1 + drift_ppm / 1e6``: at ``drift_ppm == -1e6``
-# the slope is 0 (the map collapses every instant onto one and has no inverse),
-# below that it is negative (a later instant is mapped to an earlier one -- a
-# calibration that reverses time is not a calibration), and beyond +1e6 the second
-# clock runs at more than double the first, which is a different time base rather
-# than drift. Real oscillators drift by hundreds of ppm, so this bound is orders of
-# magnitude looser than any true calibration while keeping the affine arithmetic
-# inside the nanosecond domain the contract can represent.
+# Keep clock-rate correction within ±1,000,000 ppm so the affine mapping stays positive and within the contract's time domain.
 MAX_CLOCK_DRIFT_PPM = 1_000_000.0
 
 CaptureClassName = Literal[
@@ -255,14 +247,7 @@ class RecoveryRecord(ContractModel):
     # rather than inventing a journal identity and sequence it never had.
     journal_id: OpaqueId | None = None
     last_sequence: StrictInt | None = Field(default=None, ge=0)
-    # The span of coordinates the evidence durably observed. ``last_observation``
-    # is the last such coordinate and ``first_observation`` the first, symmetric so
-    # a provisional or recovered artifact states the extent it actually saw without
-    # a consumer scanning every fact. Neither is a session boundary: the session may
-    # have begun before the first observation and run on long after the last. Both
-    # live in whatever clock domain the evidence was observed in (a browser capture
-    # journal's are browser coordinates), so a coherence check between them only
-    # holds within one domain.
+    # First and last durable evidence coordinates bound the observed extent, not session boundaries, and share one clock domain.
     first_observation: TimePoint | None = None
     last_observation: TimePoint | None = None
     torn_tail_bytes: StrictInt = Field(default=0, ge=0)
@@ -399,11 +384,7 @@ class ClockRelation(ContractModel):
             # cross-clock alignment it touches; a rate must be a finite number.
             raise ValueError("clock relation drift_ppm must be finite")
         if self.drift_ppm is not None and abs(self.drift_ppm) >= MAX_CLOCK_DRIFT_PPM:
-            # Outside this domain the relation is not a calibration: the slope
-            # ``1 + drift_ppm/1e6`` is zero (non-invertible), negative (time runs
-            # backwards through it), or so large that the mapped instant leaves the
-            # nanosecond domain entirely. Refusing the absurd here is what lets the
-            # analyzer's affine arithmetic stay total for everything it accepts.
+            # Reject rates that make the mapping non-invertible, reverse time, or leave the nanosecond domain.
             raise ValueError(
                 "clock relation drift_ppm must be within "
                 f"+/-{MAX_CLOCK_DRIFT_PPM:.0f} ppm (exclusive)"

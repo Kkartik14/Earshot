@@ -7,13 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startRealServer, type RealServer } from "../../test/realServer";
 import { UploadCall } from "./UploadCall";
 
-// The "Upload a call" form against a real Earshot server (`__fixtures__/serve_upload.py`:
-// the real app over real SQLite and a local blob store). Every request is real HTTP,
-// and what the form says is checked against what the server then serves.
-//
-// The audio is real: the Pipecat 1.5 capture's mono user track (WAV) and the LiveKit
-// 1.8 capture's stereo Ogg Opus. Files are Node's platform `File` (a real Blob that
-// fetch streams, as a browser's is); jsdom's own `File` is not one fetch can send.
+// Exercise uploads against a real server using Pipecat and LiveKit audio fixtures.
+// Node's `File` is required because jsdom's implementation cannot be streamed by fetch.
 
 interface Seed {
   port: number;

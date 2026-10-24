@@ -21,15 +21,7 @@ from typing import Any
 from ..contract import IncidentBundle
 from .otlp import _build_document
 
-# earshot operation name -> OpenInference span kind.
-#
-# * ``llm`` / ``agent`` are the reasoning/model kinds.
-# * ``tool`` is a tool invocation.
-# * ``stt`` / ``tts`` are audio-content operations. A native speech-to-speech agent
-#   can also be an audio operation, but earshot cannot reliably distinguish a
-#   text-reasoning ``agent`` from a native-audio one without inventing a signal, so
-#   ``agent`` maps to ``AGENT`` and the audio kinds are reserved for the operations
-#   that are unambiguously audio work.
+# Earshot operations map to their closest OpenInference kind; ambiguous ``agent`` operations stay ``AGENT``.
 _OPENINFERENCE_KIND: dict[str, str] = {
     "llm": "LLM",
     "agent": "AGENT",

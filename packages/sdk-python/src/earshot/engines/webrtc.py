@@ -212,21 +212,10 @@ def analyze_webrtc_stats(
     events: list[EngineEvent] = []
     coverage = _CoverageLedger()
     if not normalized:
-        # An empty (or fully malformed) segment derives nothing and leaves the
-        # delta state untouched: hand the inbound carry straight back so folding
-        # an empty piece is a genuine no-op. With no inbound carry this is the
-        # historical empty result (``carry`` stays ``None``), so single-shot
-        # behaviour is unchanged.
+        # Empty segments preserve carry unchanged, making fold behavior a no-op.
         return WebRtcFacts((), (), (), carry=carry)
 
-    # Resume from a prior segment's carry when one was supplied. ``origin_ms`` is
-    # the call's FIXED origin (the first batch's earliest reading), carried so a
-    # resumed batch stamps facts at the same coordinates the single-shot run
-    # would; ``prev_*`` / ``seen_down`` / ``last_buffer_avg_ms`` seed the delta and
-    # the reconnect/route state machines so the boundary interval is differenced
-    # rather than dropped. Absent a carry the batch's own origin is its EARLIEST
-    # reading, so ``base_ms + at_ms`` stays the raw browser timestamp of every
-    # observation even when the batch arrived out of order.
+    # Carry preserves the call origin and state-machine history so resumed batches retain single-shot timestamps and boundary deltas.
     resuming = carry is not None and carry.prev_stats is not None
     if resuming and carry.origin_ms is not None:
         base_ms = carry.origin_ms
@@ -244,12 +233,7 @@ def analyze_webrtc_stats(
 
     for ts_ms, stats in normalized:
         at_ms = ts_ms - base_ms
-        # A reading that precedes its predecessor makes the STEP unobserved: a
-        # delta across it would be differenced backwards, and a transition across
-        # it would assert an order the batch does not establish. Same discipline
-        # as a counter that moved backwards -- drop the interval, record the gap,
-        # and carry on from this snapshot. Per-snapshot instants are unaffected:
-        # an instantaneous reading needs no predecessor.
+        # Out-of-order readings cannot establish interval deltas or transitions; record a gap and keep the snapshot fact.
         ordered = prev_ts_ms is None or ts_ms >= prev_ts_ms
         if not ordered:
             coverage.note(_COV_SNAPSHOT_ORDER, "not_observed", "non_monotonic_snapshot")

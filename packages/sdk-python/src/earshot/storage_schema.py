@@ -610,15 +610,8 @@ V19_SEED_STATEMENTS = (
 
 
 # --- Revision 0004_calls (frozen) ------------------------------------------------------
-#
-# What ``0004_calls`` adds: ``projects.capture_preset`` and the call tables. Like the
-# baseline, these definitions are frozen history: a later revision changes the
-# schema with its own operations and never edits them, so a catalog created
-# today and one upgraded later end up identical.
-#
-# Boolean columns are ``INTEGER`` with ``CHECK (x IN (0, 1))``, as the baseline's
-# are (``export_allowed_local_api``, ``connectors.enabled``): the hand-written SQL
-# binds 0 and 1 on both dialects.
+# Adds capture presets and call tables; keep this revision immutable for upgrade parity.
+# Boolean columns use checked INTEGER values on both dialects.
 
 CALLS_TABLES = (
     "calls",
@@ -924,20 +917,8 @@ def add_calls_tables(metadata: MetaData) -> list[Table]:
 
 
 # --- Revision 0005_projections (frozen) ------------------------------------------------
-#
-# What ``0005_projections`` adds, frozen like 0004's definitions:
-#
-# - three columns, each by ``ALTER TABLE … ADD COLUMN`` (a SQLite batch rebuild would
-#   drop the table's unnamed CHECKs): a recording's channel map, a call's projection
-#   counter and a project's price version (``PROJECTION_COLUMNS``);
-# - the tables a call's analyses and projection live in, and the price tables
-#   (``PROJECTION_TABLES``).
-#
-# A projection's unknowns are NULL, never 0: only values that are always known are
-# NOT NULL (the stamps, turn counts, the unknown-cost count, the analysis state).
-# Open vocabularies (a call's agent, framework and outcome, a price's unit, a
-# provider's cost basis) have no CHECK: the code that writes them validates them,
-# and SQLite cannot change a CHECK without rebuilding its table.
+# Adds projection and price tables plus columns via ALTER TABLE to preserve SQLite checks.
+# Unknown projection values stay NULL; open vocabularies are validated by writers, not SQL checks.
 
 PROJECTION_TABLES = (
     "builtin_price_version",
@@ -1206,12 +1187,7 @@ def add_projection_tables(metadata: MetaData) -> list[Table]:
 
 
 # --- Revision 0006_connectors (frozen) -------------------------------------------------
-#
-# What ``0006_connectors`` adds, frozen like 0005's definitions:
-#
-# - three columns, each by ``ALTER TABLE … ADD COLUMN`` (``CONNECTOR_COLUMNS``): a
-#   connector's configuration, and a delivery receipt's call and digest kind;
-# - the table a provider recording's fetch job lives in (``CONNECTOR_TABLES``).
+# Adds connector configuration and recording-fetch tables; keep this revision immutable.
 
 CONNECTOR_TABLES = ("recording_fetches",)
 CONNECTOR_COLUMNS = (

@@ -1,14 +1,4 @@
-/**
- * Installation self-check, as a release gate.
- *
- * `pnpm run selfcheck` builds `@earshot/browser` and then runs this file with
- * Vitest, which exits non-zero on any failed assertion. It imports the BUILT
- * package (via the workspace `exports`) and drives it against the SDK's own test
- * fakes to prove `drain()` yields a server-shaped `CapturePayload`.
- *
- * The substance lives in `assertConsumable()` so the same check can gate a
- * release from any runner, not only Vitest.
- */
+/** Release check that the built browser package emits a server-consumable payload. */
 
 import { describe, expect, it } from "vitest";
 

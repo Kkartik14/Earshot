@@ -12,14 +12,7 @@ export function formatDuration(milliseconds: number | null | undefined): string 
   return `${(milliseconds / 1000).toFixed(1)}s`;
 }
 
-/** Render a governed measurement compactly, honouring its real unit.
- *
- * The backend permits provider-specific scalars in several numeric domains
- * (see `measurement_semantics.py`): durations in `ms`/`s`, dimensionless
- * ratios/probabilities as OpenTelemetry unit `"1"`, counters as `count`, plus
- * arbitrary provider units (`dbfs`, `{character}`, …). Formatting every scalar
- * as milliseconds silently mislabels the non-duration domains, so this
- * dispatches on the unit instead of assuming latency. */
+/** Format governed measurements by unit so provider-specific values are not mislabeled as durations. */
 export function formatMeasurement(
   value: boolean | number | null | undefined,
   unit: string | null | undefined,

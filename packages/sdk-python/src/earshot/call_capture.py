@@ -93,11 +93,7 @@ RECEIVER_ATTRIBUTES = (*SESSION_KEY_ATTRIBUTES, EARSHOT_CALL_ENDED)
 SESSION_KEY_MAX_BYTES = 256
 NOT_GIVEN = "NOT_GIVEN"
 
-# (instrumentation scope, span name) of the spans that end a call, and of the spans
-# that show a trace is one framework session. Scopes as the frameworks emit them:
-# Pipecat ``trace.get_tracer("pipecat.turn")`` (the real 1.5 capture), LiveKit
-# ``_DynamicTracer("livekit-agents")`` (1.6 and 1.8). LiveKit's ``agent_session``
-# ends at session close (<= 1.7); 1.8 adds a ``session_close`` span.
+# Framework scope/name pairs identify call-ending and session spans across Pipecat 1.5 and LiveKit 1.6–1.8.
 END_MARKER_SPANS = frozenset(
     {
         ("pipecat.turn", "conversation"),
@@ -114,13 +110,8 @@ SESSION_SPANS = frozenset(
 
 LIVEKIT_SCOPE = "livekit-agents"
 LIVEKIT_KEY_PREFIX = "lk."
-# Spans that only follow a call's end, identified by name: what LiveKit's job runner
-# ends after ``session_close`` (1.8.2+; ``shutdown_callback`` only for a callback the
-# host registers), and the session span, which ends just after it. A call stores
-# them, but on their own they never count as its evidence: they make no call dirty
-# and never move its close, so a job tail exported after the call closed makes no
-# new revision. ``agent_session`` is also an end marker, and still ends a call that
-# has no end signal yet (1.6 and 1.7 have no ``session_close``).
+# Post-call LiveKit job/session spans are stored but cannot dirty or extend a closed call.
+# ``agent_session`` remains an end marker for versions without ``session_close``.
 TAIL_SPANS = frozenset(
     (LIVEKIT_SCOPE, name)
     for name in (
@@ -152,11 +143,7 @@ def _own_names(capture_class: CaptureClass, keys: Iterable[str]) -> dict[str, Ke
 
 
 _MODEL = CaptureClass.MODEL_PAYLOAD
-# LiveKit Agents keys whose value is plain metadata, recorded under their own name:
-# identifiers, labels, enumerated states and reasons, counts, sizes and durations,
-# the usage and timing JSON (labels, request IDs and counts, never text), and the
-# 1.8.4 transcript event timeline (arrival times and lengths only). The union of
-# ``telemetry/trace_types.py`` in 1.6.10, 1.7.1 and 1.8.8.
+# Allowlisted LiveKit metadata fields from supported releases; transcript payloads retain only timing and length metadata.
 _LIVEKIT_METADATA_KEYS = (
     *("lk.agent_label", "lk.agent_name", "lk.callback.name", "lk.cloud_agent_id"),
     *("lk.deployment_id", "lk.dispatch_id", "lk.fallback.index", "lk.fallback.label"),
@@ -193,15 +180,8 @@ _LIVEKIT_METADATA_KEYS = (
     *("lk.transcript_confidence", "lk.transcription_delay"),
     *("lk.llm_metrics", "lk.realtime_model_metrics", "lk.stt.events", "lk.tts_metrics"),
 )
-# raw key -> (semantic key, capture class). The one table both OTLP capture and the
-# LiveKit adapter read. A LiveKit 1.6 key and its 1.7 ``lk.pii.`` name share one
-# semantic key. The semantic keys are names ``classify_attribute`` files under the
-# row's class (the recorder classifies by name), except for the keys
-# ``tests/test_call_capture.py`` lists as ``SDK_CLASSIFIER_DIFFERENCES``. The content
-# keys one LiveKit span carries share one class, because a bundle record holds at
-# most one sensitive class: ``agent_turn`` carries the user input, the instructions
-# and the reply, and ``llm_node`` the context, the reply and its tool calls, so all
-# of those are model payload.
+# Raw-to-semantic key and privacy-class mapping shared by OTLP capture and the LiveKit adapter.
+# Keys emitted together on one span use one class because each bundle record accepts only one sensitive class.
 ATTRIBUTE_KEYS: dict[str, KeyRule] = {
     # Pipecat 1.5 (``utils/tracing/service_decorators.py``, ``service_attributes.py``)
     # and its realtime services; Pipecat's adapter records them by operation.

@@ -1058,11 +1058,7 @@ def validate_incident(bundle: IncidentBundle) -> ValidationReport:
     if manifest.schema_version in SUPPORTED_CONTRACT_VERSIONS and _version_below(
         manifest.schema_version, COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION
     ):
-        # Checked independently of the chain above: an artifact can under-declare
-        # its version while using more than one member the version lacks, and
-        # each of those claims deserves its own refusal. Coverage without a count
-        # is exactly what 0.1.0 could express, so the existing corpus is
-        # untouched by the member being added.
+        # Check each unsupported member independently so under-declared versions receive complete refusal details.
         for index, note in enumerate(profile.coverage):
             if note.dropped_count is not None:
                 issues.append(

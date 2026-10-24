@@ -21,11 +21,7 @@ export function setSessionKey(parent: Context, sessionKey: string): Context {
   return parent.setValue(SESSION_KEY, checkedSessionKey(sessionKey));
 }
 
-/**
- * Run `fn` in the active context plus `sessionKey`: every span started within it,
- * in any async continuation, is stamped with it by `EarshotSpanProcessor`. The key
- * stays in-process; it is not baggage, so it is never sent to other services.
- */
+/** Run work with an in-process session key that the processor adds to its spans, never to outgoing baggage. */
 export function withSessionKey<T>(sessionKey: string, fn: () => T): T {
   return context.with(setSessionKey(context.active(), sessionKey), fn);
 }
@@ -36,13 +32,7 @@ interface StampableSpan {
   setAttribute(key: string, value: string): unknown;
 }
 
-/**
- * An OpenTelemetry `SpanProcessor` that stamps `earshot.session.id` on each span
- * as it starts: the key from `withSessionKey`/`setSessionKey` in the span's
- * context, else the fixed `sessionKey` given here (one process, one call). A span
- * started with its own `earshot.session.id` keeps it. Add it to the tracer
- * provider's `spanProcessors`, beside the OTLP exporter's processor.
- */
+/** Adds `earshot.session.id` from span context or a fixed key, while preserving a span's existing value. */
 export class EarshotSpanProcessor {
   readonly #sessionKey: string | undefined;
 

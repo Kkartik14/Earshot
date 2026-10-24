@@ -39,11 +39,7 @@ function assert(condition: boolean, message: string): void {
   if (!condition) throw new Error(`selfcheck: ${message}`);
 }
 
-/**
- * Drive a recorder from the built package against the SDK fakes and return the
- * drained payload. Uses `captureVersion: 2` (continuous capture), which is what
- * the example app uses, so the drainSequence path is exercised too.
- */
+/** Return a version 2 payload from the built recorder using SDK test fakes. */
 async function drivePayload(): Promise<CapturePayload> {
   const scheduler = new FakeScheduler();
   const driven = createBrowserRecorder({

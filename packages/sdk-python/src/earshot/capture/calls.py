@@ -98,12 +98,7 @@ _CAPTURE_CLOCK_KIND = "browser_monotonic"
 RECOVERY_METHOD = "browser_capture_journal"
 RECOVERY_REASON_SEALED = "capture_sealed_before_call_end"
 
-# The one end reason that finalizes a call. Everything else -- a stopped capture,
-# a hidden or unloaded page -- abandons the call: the observer stopped watching,
-# which is not the same as the call ending, so the artifact stays provisional
-# forever. Only the application, the best-placed observer of a browser call's end,
-# can declare ``call_ended``; the browser kernel never emits it from a lifecycle
-# hook (``stop()`` / ``pagehide``).
+# Only an application-observed ``call_ended`` finalizes a call; lifecycle teardown leaves it provisional.
 END_CALL_ENDED = "call_ended"
 
 # The browser-domain bounds of the call, and the same-clock-domain durations
@@ -2049,11 +2044,7 @@ class CaptureCallRegistry:
                                     persisted_sidecar = None
                                     discarded_first_drain = True
                                 else:
-                                    # A 413 proves this append never reached the
-                                    # live session. Keep the accepted prefix and
-                                    # let the client replace this unapplied body;
-                                    # only ambiguous interrupted writes require an
-                                    # exact digest retry.
+                                    # A 413 is unapplied, so the client may replace this body; ambiguous writes require an exact retry.
                                     cleared_retry = replace(
                                         recovered,
                                         retry_sequence=None,
@@ -2121,11 +2112,7 @@ class CaptureCallRegistry:
         with self._lock:
             call = self._calls.get(key)
             if call is not None:
-                # A finalized call is kept so a drain arriving after its explicit
-                # end is refused rather than silently starting a second call under
-                # the same key. A still-live call appends. Its expired durable
-                # ledger is rebuilt below for an exact retry; a missing ledger
-                # (memory-only or superseded) starts afresh.
+                # Keep finalized calls to refuse late drains; rebuild expired durable ledgers for exact retries.
                 if call.finalized or self._live.contains(
                     drain.call_key, project_id=drain.project_id
                 ):

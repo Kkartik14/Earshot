@@ -1,8 +1,4 @@
-// Pure view-model helpers for the incident comparison surface. The browser never
-// decides what changed between two incidents — the backend's `compare_incidents`
-// does. These helpers only classify the backend's answer for honest rendering:
-// which side failed, whether the diff is genuinely empty, and why a metric pair
-// could not be subtracted.
+// View-model helpers render backend comparisons without deciding what changed.
 
 import { ApiError } from "../../api/client";
 import type { components } from "../../api/schema";
@@ -88,11 +84,7 @@ export function comparisonIsEmpty(result: ComparisonResult): boolean {
   );
 }
 
-/** Plain-language reason a metric pair is reported as a change rather than a
- * number. When the backend marked the pair `comparable: false`, the two metrics
- * are not the same quantity (different unit or measurement basis) and
- * subtracting them would fabricate a regression; when `comparable` is true, the
- * availability itself changed. Either way the two availabilities are stated. */
+/** Explain incomparable metrics or availability changes without subtracting unlike measurements. */
 export function availabilityChangeReason(change: AvailabilityChange): string {
   const from = humanize(change.known_good_availability);
   const to = humanize(change.incident_availability);

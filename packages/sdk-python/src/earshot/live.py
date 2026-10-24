@@ -75,11 +75,7 @@ from .storage import DEFAULT_PROJECT_ID, ProjectInactiveError
 
 _LOGGER = logging.getLogger(__name__)
 
-# The export destination this stream declares, and the name a capture policy's
-# ``ExportConfig.destinations`` must permit for a class's content to be tailed.
-# It is its own destination rather than a reuse of ``local_api`` because a policy
-# that admitted the reviewed, one-shot artifact reads never consented to an open
-# subscription following the same content live.
+# Live tail has its own export destination because permission for a one-shot API read does not imply live access.
 LIVE_TAIL_DESTINATION = "live_tail"
 
 SOURCE_JOURNAL = "journal"
@@ -778,11 +774,7 @@ class _LiveSession:
         self.journal_complete = True
         self.last_append_unix_nano = 0
         self.subscribers: set[Subscription] = set()
-        # How a seal of this session should name its reconstruction when the close
-        # was not observed. ``None`` keeps the assembler's checkpoint-journal
-        # default; a continuous browser-capture session sets these so a mid-call
-        # seal declares itself ``browser_capture_journal`` rather than a generic
-        # crash replay.
+        # Override recovery metadata for browser capture; ``None`` uses checkpoint-journal defaults.
         self.recovery_method: str | None = None
         self.recovery_reason: str | None = None
         # Only remotely uploaded frames are retained for sealing. A locally
@@ -790,18 +782,10 @@ class _LiveSession:
         # double the storage for no gain.
         self.frames: bytearray | None = bytearray() if retain_frames else None
         self.frames_complete = retain_frames
-        # An append-only on-disk copy of the retained frames, when a continuous
-        # capture call asked for one. It is what survives a backend restart: the
-        # in-memory ``frames`` above are lost with the process, but this file
-        # replays back into an identical live session. ``None`` for every session
-        # that did not request durability (a tailed journal, an uploaded batch).
+        # Optional durable journal for replaying retained frames after a backend restart.
         self.durable_fd: int | None = None
         self.durable_path: Path | None = None
-        # Four bytes per accepted frame — the CRC-32 the frame already carries
-        # over its own body — indexed by sequence from 1. It is what makes a
-        # retry that *rewrites* history distinguishable from one that merely
-        # repeats it, at 400 KiB for a journal at the writer's record cap. Only
-        # the upload path fills it, because only an upload can rewrite.
+        # Per-sequence CRCs distinguish exact retries from attempts to rewrite accepted history.
         self.frame_checksums = bytearray()
 
     def checksum(self, sequence: int) -> int | None:
@@ -1616,11 +1600,7 @@ class LiveSessionRegistry:
             if created_file:
                 _fsync_directory_strict(durable_path.parent)
             if before_publish is not None:
-                # Capture's sidecar is the commit marker for this append. Publish
-                # list/SSE state only after it is durable. Once the callback starts,
-                # its atomic rename may have succeeded even if directory fsync
-                # reports an error; preserve the fully fsynced journal so recovery
-                # can trust whichever whole sidecar survived a crash.
+                # The durable sidecar commits the append; preserve the journal if a post-rename directory fsync fails.
                 session.durable_path = durable_path
                 session.durable_fd = descriptor
                 commit_marker_attempted = True

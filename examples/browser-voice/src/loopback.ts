@@ -47,11 +47,7 @@ async function connectLoopback(
   return { sender, receiver, remote };
 }
 
-/**
- * Start loopback mode against an already-constructed {@link CaptureSession}. The
- * caller is responsible for `session.start()`/`session.stop()`; this returns a
- * handle that tears down only the mode-specific media resources.
- */
+/** Start loopback mode; the caller owns the session lifecycle, and the returned handle stops loopback resources. */
 export async function startLoopback(
   session: CaptureSession,
   log: (message: string) => void,

@@ -5,15 +5,7 @@ const humanize = (value: string) => value.replace(/_/g, " ");
 
 type Recovery = NonNullable<NonNullable<IncidentLike["profile"]["manifest"]>["recovery"]>;
 
-/** Persistent notice that this artifact is not a clean, complete close.
- *
- *  It is rendered from `manifest.recovery` — the typed declaration validation
- *  already forces a non-final bundle to carry — so it cannot be forgotten by a
- *  producer or dropped by a viewer that renders the incident at all. Two sources
- *  reach this state: a checkpoint-journal replay after the process died, and a
- *  browser capture batch, which is a partial observation of a session still in
- *  progress. Both never saw the close; the copy states which, and never claims a
- *  journal a journal-less reconstruction (a capture batch) never had. */
+/** Persistent notice for recovered or partial artifacts, rendered from the validated `manifest.recovery` declaration. */
 export function RecoveryStrip({ incident }: { incident: IncidentLike }) {
   const manifest = incident.profile.manifest;
   const recovery = manifest?.recovery as Recovery | null | undefined;

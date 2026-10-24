@@ -1519,11 +1519,7 @@ class IncidentRecorder:
         parent_scope = "internal" if parent_span_id is not None else "unknown"
         started_at = self._time()
         if self._journal.enabled:
-            # The completed ``Operation`` is only recorded in the ``finally``
-            # block below, so without this frame an operation that hung and took
-            # the process down would be invisible to recovery. Only the governed
-            # name is journaled; caller attributes have not been through the
-            # capture policy at this point and never enter the journal.
+            # Journal the governed operation name before work starts so recovery sees hangs without storing caller attributes.
             journal_name, journal_name_digest = normalize_operation_name(operation_name)
             self._journal.append_operation_open(
                 operation_id=identity,

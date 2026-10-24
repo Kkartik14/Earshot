@@ -154,11 +154,7 @@ _CAPTURE_STAT_MEMBER_KINDS: dict[str, str] = {
 
 _CAPTURE_UNIVERSAL_STAT_MEMBERS = frozenset({"type", "id", "kind", "timestamp"})
 
-# The exact members each governed stat type may carry. A stat whose ``type`` is
-# absent here is dropped whole: certificates (``base64Certificate``), codecs,
-# candidates (``address``/``ip``/``port``/``url``/``usernameFragment``),
-# peer-connection, media-source and outbound-rtp are all unconsumed and can never
-# reach storage by omission.
+# Exact per-type allowlists drop unconsumed stats, including certificates and host-identifying candidate fields.
 _CAPTURE_STAT_ALLOWLIST: dict[str, frozenset[str]] = {
     "inbound-rtp": frozenset(
         {
@@ -348,15 +344,8 @@ def _capture_event_member(kind: str, value: Any) -> Any | None:
 
 
 #
-# These operate on plain mappings (a parsed browser batch), never on FastAPI
-# request models, so the HTTP endpoint and an in-process capture source enforce
-# the SAME allowlist by calling the SAME primitives. The per-request size limits
-# (a snapshot's stat-count ceiling, the Pydantic body shape) stay in
-# ``earshot.api``; only the governed-member allowlist lives here. An
-# already-engine-ready snapshot ``{"timestamp_ms": float, "stats": {...}}`` and
-# device event ``{"type": str, "timestamp_ms": float, ...members}`` come out --
-# exactly what :func:`earshot.engines.webrtc.apply_webrtc_stats` and
-# :func:`earshot.engines.device.apply_audio_graph` consume.
+# Pure mapping sanitizers keep HTTP and in-process capture on the same allowlist; request-size limits remain in ``earshot.api``.
+# Their outputs match the snapshot and event shapes consumed by the WebRTC and audio-graph engines.
 
 
 def sanitize_snapshot(snapshot: Mapping[str, Any]) -> tuple[dict[str, Any], int, int]:

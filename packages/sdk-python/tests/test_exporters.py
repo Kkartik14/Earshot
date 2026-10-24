@@ -213,14 +213,8 @@ def test_openinference_span_kinds() -> None:
     assert kinds["turn_detection"] == "CHAIN"
 
 
-# The projection must not manufacture trace topology
-#
-# A lossy OTLP projection is expected; an *authoritative-looking* one is a defect.
-# These tests pin the four ways the projection could invent structure the incident
-# never contained: epoch timestamps, duplicate span identity, one incident split
-# across synthetic traces, and spans reassigned to a service they never declared.
-# 2000-01-01T00:00:00Z. Any emitted OTLP unix-nano below this is not a wall clock:
-# it is a monotonic reading written into an epoch field.
+# The OTLP projection may omit data, but must not invent timestamps, span identities, traces, or service ownership.
+# Epoch values before 2000-01-01 are monotonic readings, not wall-clock timestamps.
 _YEAR_2000_UNIX_NANO = 946_684_800_000_000_000
 
 _BROWSER_CLOCK = ClockDomain(

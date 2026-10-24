@@ -1536,11 +1536,7 @@ class LiveKitAdapter:
             metric = value(event, "metrics", event)
             try:
                 if self._native_spans_enabled:
-                    # LLM/TTS/realtime metrics are also serialized on native spans.
-                    # The callback objects are mutated later with speech_id while
-                    # the serialized copy is not, so recording both is neither
-                    # byte-identical nor safely correlatable. Native spans own these
-                    # types and attach an operation identity to their quality sample.
+                    # Native spans own these metrics; callback copies may later gain speech IDs and cannot be correlated safely.
                     metric_type = _metric_type(metric)
                     if _is_connection_acquisition_metric(metric):
                         # Connection-only callbacks have no owning operation span;

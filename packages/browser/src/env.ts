@@ -1,11 +1,4 @@
-/**
- * Default host bindings for the injectable seams (clock, scheduler, randomness).
- *
- * We reach these through a single typed view of `globalThis` rather than
- * ambient DOM/Node globals, so the package needs no `lib.dom`/`@types/node` and
- * every seam stays overridable from options — which is exactly how the tests
- * drive it deterministically.
- */
+/** Default injectable clock, scheduler, and randomness bindings without DOM or Node type dependencies. */
 
 import type { Clock, RandomSource, Scheduler } from "./types.js";
 
@@ -24,12 +17,7 @@ export const defaultClock: Clock = () => {
   return typeof now === "function" ? now.call(host.performance) : Date.now();
 };
 
-/**
- * The Unix-epoch wall time (ms) the monotonic clock's origin corresponds to
- * (`performance.timeOrigin`). Falls back to reconstructing it from
- * `Date.now() - performance.now()`, or `null` when no monotonic clock exists (so
- * only the raw reading is carried and no wall calibration is possible).
- */
+/** Wall-clock time at the monotonic clock's origin, or `null` when unavailable. */
 export function defaultWallOriginMs(): number | null {
   const origin = host.performance?.timeOrigin;
   if (typeof origin === "number" && Number.isFinite(origin)) return origin;
@@ -48,11 +36,7 @@ export const defaultScheduler: Scheduler = {
   },
 };
 
-/**
- * Web-Crypto randomness when available, else a `Math.random` fallback. The
- * fallback is fine here: trace/span ids and the privacy salt are correlation
- * ids, not cryptographic secrets, and carry no user data.
- */
+/** Web Crypto when available; fallback values are correlation ids, not secrets. */
 export const defaultRandomSource: RandomSource = (bytes) => {
   const getRandomValues = host.crypto?.getRandomValues;
   if (typeof getRandomValues === "function") {

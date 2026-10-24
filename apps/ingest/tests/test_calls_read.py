@@ -397,11 +397,7 @@ def test_a_calls_transcript_is_read_from_its_spans_lines_never_from_their_payloa
 def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_spans(
     tmp_path,
 ) -> None:
-    # With no ``sqlite_stat1``, SQLite
-    # drove ``call_traces JOIN spans`` from every span of the project, probing the
-    # call's traces once per span: 312 ms a detail read (and a claim's write-lock hold)
-    # at 1M spans, whatever the call's own size. Each statement that reads one call's
-    # spans must start from the call's traces and reach its spans by trace.
+    # Without statistics SQLite scanned project spans; read one call's spans from its traces to keep work bounded.
     from earshot.storage_call_reads import LEGACY_TRANSCRIPT_SQL, TRANSCRIPT_SQL
     from earshot.storage_closer import (
         SNAPSHOT_KEYS_SQL,

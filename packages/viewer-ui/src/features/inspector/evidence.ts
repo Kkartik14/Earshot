@@ -1,9 +1,4 @@
-// Pure view-model helpers for the "what the evidence does not tell us" surface.
-// The browser never decides what is missing — the backend's `EvidenceQuery`
-// does, through `/v1/incidents/{id}/evidence/not_observed`. These helpers only
-// classify the backend's answer for honest rendering: whether the projection
-// could be produced, and whether it examined the incident and found no gaps
-// (which is a real finding, never a blank).
+// View-model helpers render the backend's evidence-gap response without deriving new findings.
 
 import { ApiError } from "../../api/client";
 import type { components } from "../../api/schema";
@@ -16,11 +11,7 @@ export type TurnMetricLimitation = components["schemas"]["TurnMetricLimitationRe
 export type EvidenceLimitation = AnalysisLimitation | TurnMetricLimitation;
 export type EvidenceOmission = components["schemas"]["EvidenceOmissionResponse"];
 
-/** An explicit, honest rendering of a not-observed projection that could not be
- * produced. A missing analysis and a stale (foreign) one each keep their own
- * stable backend code, so the reader is told the projection was withheld and
- * why — never shown an empty "nothing is missing" that would read as a clean
- * bill of health. */
+/** Preserve the backend code and reason when a not-observed projection is unavailable. */
 export interface NotObservedUnavailable {
   code: string;
   title: string;
