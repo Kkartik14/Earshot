@@ -1,9 +1,9 @@
-"""FR-7's pure half: a call's stored spans and recordings become a revision bundle.
+"""The pure half: a call's stored spans and recordings become a revision bundle.
 
 The materializer is the hosted connectors' server-side recorder pattern: an
 ``IncidentRecorder`` on a ``ManualClock`` with a fixed clock domain, fed spans in
 ``(start, trace_id, span_id)`` order through the adapter their instrumentation
-scope names (Pipecat in Month 1). Every test drives it with the real Pipecat 1.5
+scope names (Pipecat). Every test drives it with the real Pipecat 1.5
 capture (``fixtures/captured/pipecat-otlp-1.5``) decoded as the receiver decodes
 it, and stored as the receiver stores it.
 """
@@ -41,7 +41,7 @@ def _captured_spans(requests=None):
     ]
 
 
-# --- the recorder takes its manual trace ID (AC6.9) ----------------------------------------
+# --- the recorder takes its manual trace ID ------------------------------------------------
 
 
 def test_a_recorder_uses_an_injected_manual_trace_id_for_its_manual_operations() -> None:
@@ -69,7 +69,7 @@ def test_a_recorder_refuses_a_manual_trace_id_that_is_not_an_otlp_trace_id(value
         IncidentRecorder(session_id="call-1", manual_trace_id=value)
 
 
-# --- the Pipecat adapter takes hex link IDs (AC7.2) ---------------------------------------
+# --- the Pipecat adapter takes hex link IDs -----------------------------------------------
 
 
 def test_the_pipecat_adapter_consumes_spans_whose_links_carry_hex_ids() -> None:
@@ -100,7 +100,7 @@ def test_the_pipecat_adapter_consumes_spans_whose_links_carry_hex_ids() -> None:
     ]
 
 
-# --- transcript lines (AC7.3) ---------------------------------------------------------------
+# --- transcript lines -----------------------------------------------------------------------
 
 USER_LINES = [
     "Hi. I would like to book a table for two people tomorrow evening.",
@@ -187,7 +187,7 @@ def test_only_pipecat_scopes_give_lines() -> None:
     assert _lines(spans) == []
 
 
-# --- a stored span, as the adapters read it (AC7.1, AC7.2) -----------------------------------
+# --- a stored span, as the adapters read it --------------------------------------------------
 
 
 def _stored(spans):
@@ -250,7 +250,7 @@ def test_span_status_codes_become_their_names(code, status) -> None:
     assert adapter_span(span)["status"] == status
 
 
-# --- the revision bundle (AC6.6, AC6.9, AC7.1, AC7.4, AC7.5) -----------------------------------
+# --- the revision bundle -----------------------------------------------------------------------
 
 
 def _recording(speaker: str, **changes):
@@ -593,6 +593,22 @@ def test_a_one_channel_map_is_that_speakers_stream_on_channel_0() -> None:
     )
 
 
+@pytest.mark.parametrize("content_type", ["audio/mpeg", "audio/webm"])
+def test_a_channel_map_the_upload_could_not_verify_gives_one_media_reference(
+    content_type: str,
+) -> None:
+    """The upload reads no MP3 or WebM header, so their channel count is unverified:
+    the file is one reference under its own speaker, never one per mapped channel."""
+
+    recording = _stereo_recording(content_type=content_type, duration_ms=None)
+
+    bundle = _materialize(_snapshot([], recordings=(recording,)))
+
+    assert [
+        (ref.media_id, ref.stream_id, ref.channel_index) for ref in bundle.profile.media_refs
+    ] == [("recording-lk-1.call", "stream-mixed", None)]
+
+
 def test_a_mono_recordings_media_reference_carries_no_channel_index() -> None:
     from earshot.codec import encode_incident_json
 
@@ -605,7 +621,7 @@ def test_a_mono_recordings_media_reference_carries_no_channel_index() -> None:
 def test_a_call_holding_more_recordings_than_a_revision_takes_builds_with_its_first_sixteen() -> (
     None
 ):
-    """Tribunal round 3, Lamport LAM3-1: each recording takes one of the recorder's 16
+    """Each recording takes one of the recorder's 16
     media clock domains; a 17th left a clock relation and a media reference naming a
     domain never declared, so every build of the call failed, for good. The API now
     refuses a 17th; a call that has more still builds: its first 16 recordings by

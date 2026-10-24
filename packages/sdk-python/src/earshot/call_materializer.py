@@ -1,4 +1,4 @@
-"""A call's stored evidence as a revision bundle (FR-7), and as transcript lines (AC7.3).
+"""A call's stored evidence as a revision bundle, and as transcript lines.
 
 Pure: it reads nothing and writes nothing. The closer (``storage_closer``) takes a
 snapshot of a call's spans and stored recordings and hands it here; the receiver
@@ -15,8 +15,9 @@ an agent line an ``agent_turn``'s reply text, the text actually played (cut wher
 an interruption stopped it), under either spelling (``lk.pii.*`` from 1.7,
 ``lk.*`` before): parsed by attribute, never by version. A LiveKit ``llm_request``
 output never gives a line, because a preemptive generation LiveKit discarded
-still carries one that was never spoken. ``"NOT_GIVEN"`` is an absent value. The
-receiver stores each
+still carries one that was never spoken. ``"NOT_GIVEN"`` is an absent value, and
+U+0000 is removed from a line's text: it shows nothing, and no catalog text column
+can hold it (Postgres refuses it). The receiver stores each
 span's line when it stores the span (``spans.text_json``), so the read API reads
 a call's transcript without its spans' payloads; a revision reads it from the
 spans it is built from (``transcript_lines``).
@@ -45,8 +46,11 @@ linearly with the call. Full fidelity stays in ``spans``.
 Each stored recording becomes a ``MediaRef`` held by ``earshot.blob_store``
 (its sha256 and size, its speaker's stream), on its own media clock domain with a
 ``ClockRelation`` from ``started_at_unix_nano`` to the call's clock. A recording
-with a channel map becomes one ``AudioStream`` and one ``MediaRef`` per channel
-(``channel_index``), all on the file's one media clock domain. An
+with a channel map, in a format whose channel count the upload reads from its
+header (WAV, FLAC, Ogg Opus: ``recordings.media_inspector``), becomes one
+``AudioStream`` and one ``MediaRef`` per channel (``channel_index``), all on the
+file's one media clock domain. On MP3 or WebM nothing verified the map, so the file
+stays one reference under its own speaker. An
 end-signal close is ``final``; any other close is a partial observation
 (``close_partial``, ``otlp_quiet_period``/``no_end_signal``, ``interrupted``).
 """
@@ -86,6 +90,7 @@ from .contract import (
 )
 from .privacy import CaptureClass, CapturePolicy, classify_attribute
 from .recorder import IncidentRecorder, RecorderConfig
+from .recordings import verified_channel_speakers
 from .versions import PACKAGE_VERSION
 
 if TYPE_CHECKING:
@@ -185,7 +190,7 @@ def _attribute_value(attributes: Iterable[Any], keys: tuple[str, ...]) -> Any:
 def transcript_text(span: OtlpSpan) -> tuple[str, str] | None:
     """``(speaker, text)`` of the transcript line a span carries, or ``None``.
 
-    The one rule for what a line is: the transcript keeps these lines (FR-10), and
+    The one rule for what a line is: the transcript keeps these lines, and
     so does a revision's transcript coverage. The receiver extracts it when it
     stores a span (``transcript_text_json``), so reading a transcript never
     parses a stored span.
@@ -196,7 +201,10 @@ def transcript_text(span: OtlpSpan) -> tuple[str, str] | None:
         return None
     speaker, attributes = source
     text = _attribute_value(span.span.attributes, attributes)
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str):
+        return None
+    text = text.replace("\x00", "")
+    if not text.strip():
         return None
     if speaker is None:
         uploaded_speaker = _attribute_value(
@@ -587,13 +595,15 @@ _ADAPTERS_BY_SCOPE: dict[str, tuple[type, Callable[[IncidentRecorder, OtlpSpan],
 
 def _recording_channels(recording: Recording) -> list[tuple[int | None, str, str]]:
     """``(channel_index, speaker, media_id)`` of each reference a recording becomes: the
-    whole file under its speaker, or one per channel of its channel map."""
+    whole file under its speaker, or one per channel of a channel map the upload
+    verified (module docstring)."""
 
-    if recording.channel_speakers is None:
+    mapped = verified_channel_speakers(recording.content_type, recording.channel_speakers)
+    if mapped is None:
         return [(None, recording.speaker, f"recording-{recording.recording_id}")]
     return [
         (index, speaker, f"recording-{recording.recording_id}.ch{index}")
-        for index, speaker in enumerate(recording.channel_speakers)
+        for index, speaker in enumerate(mapped)
     ]
 
 
