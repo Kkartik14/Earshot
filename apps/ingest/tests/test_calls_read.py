@@ -1,9 +1,9 @@
-"""FR-10: reading calls over HTTP (``GET /v1/calls``, ``GET /v1/calls/{call_id}``).
+"""Reading calls over HTTP (``GET /v1/calls``, ``GET /v1/calls/{call_id}``).
 
 Every test runs the real app on a real uvicorn server over a real catalog (both
 dialects), fed by ``CallStore.record_spans`` (the receiver's storage call) with
 the real Pipecat 1.5 capture, and closed by the real closer. The store's injected
-clock (§7 seam 1) is set after the wall clock, so the app's own closer and
+clock is set after the wall clock, so the app's own closer and
 reapers never act on these calls behind the test's back.
 """
 
@@ -130,7 +130,7 @@ def _json(port: int, path: str):
     return reply.json()
 
 
-# --- the list (FR-10, AC10.1) ----------------------------------------------------------------
+# --- the list --------------------------------------------------------------------------------
 
 
 def test_the_call_list_is_newest_first_and_stable_while_calls_arrive_and_receive_spans(
@@ -216,7 +216,7 @@ def test_a_listed_call_carries_its_key_counts_evidence_times_and_latest_revision
     assert bad_limit.status == 422
 
 
-# --- the detail (FR-10, AC10.2) --------------------------------------------------------------
+# --- the detail ------------------------------------------------------------------------------
 
 
 def _late_llm_span(world: World, span: int, text: str) -> None:
@@ -392,7 +392,7 @@ def test_an_open_calls_transcript_grows_as_its_spans_arrive(tmp_path) -> None:
 def test_a_calls_transcript_is_read_from_its_spans_lines_never_from_their_payloads(
     tmp_path,
 ) -> None:
-    # Carmack C3: every llm span's payload repeats the conversation so far, so a read
+    # Every llm span's payload repeats the conversation so far, so a read
     # that parses payloads costs the square of the call's length. Each span's line is
     # stored with it; with every payload unreadable the transcript is still whole.
     world = _world(tmp_path)
@@ -412,7 +412,7 @@ def test_a_calls_transcript_is_read_from_its_spans_lines_never_from_their_payloa
 def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_spans(
     tmp_path,
 ) -> None:
-    # Tribunal round 2, Bellard N-1 / Carmack CR2-1: with no ``sqlite_stat1``, SQLite
+    # With no ``sqlite_stat1``, SQLite
     # drove ``call_traces JOIN spans`` from every span of the project, probing the
     # call's traces once per span: 312 ms a detail read (and a claim's write-lock hold)
     # at 1M spans, whatever the call's own size. Each statement that reads one call's

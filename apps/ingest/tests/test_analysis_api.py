@@ -1,4 +1,4 @@
-"""Peaks and renditions over HTTP (AC2.7, M15, M18), from real servers whose maintenance
+"""Peaks and renditions over HTTP, from real servers whose maintenance
 loop runs the analysis job.
 
 Both entry points (``earshot serve`` and ``uvicorn apps.ingest.app:app``) analyse

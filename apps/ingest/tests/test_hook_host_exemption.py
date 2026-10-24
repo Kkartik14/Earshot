@@ -1,4 +1,4 @@
-"""Connector hooks are exempt from the loopback-Host check; ``/v1`` is not (AC1.8).
+"""Connector hooks are exempt from the loopback-Host check; ``/v1`` is not.
 
 A tunnel to a laptop (cloudflared, ngrok) forwards the public ``Host``. The Host
 check stops DNS rebinding against routes that answer without a credential; a hook

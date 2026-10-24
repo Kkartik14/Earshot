@@ -1,4 +1,4 @@
-"""AC1.1: one catalog schema on every dialect.
+"""One catalog schema on every dialect.
 
 Two kinds of evidence:
 

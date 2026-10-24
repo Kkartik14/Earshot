@@ -1,4 +1,4 @@
-"""FR-12's done-when e2e: one real Pipecat call into a real Earshot on Postgres and S3.
+"""The done-when e2e: one real Pipecat call into a real Earshot on Postgres and S3.
 
 A real ``earshot serve`` process runs on a fresh Postgres database
 (``EARSHOT_TEST_POSTGRES_URL``, by default ``earshot-dev-postgres``) with a fresh

@@ -1,5 +1,5 @@
 """The call list's projection fields and filters, the call view's projection, and
-the lazy span route (FR-5, FR-6; M7, M8, M14, M18, M23, M24, M26).
+the lazy span route.
 
 Every test runs the real app on a real uvicorn server over a real catalog (both
 dialects). Calls come from ``CallStore.record_spans`` (the receiver's storage
@@ -117,7 +117,7 @@ def test_a_call_without_a_projection_lists_as_none_and_no_projection_filter_matc
 
     assert (item["projection_state"], item["projection"]) == ("none", None)
     assert (detail["projection_state"], detail["projection"]) == ("none", None)
-    # Unknown is NULL, and a filter never matches NULL (M8).
+    # Unknown is NULL, and a filter never matches NULL.
     assert matched == {name: [] for name in MATCHING_FILTERS}
     assert (capped["items"], capped["excluded_incomplete"]) == ([], 0)
 
@@ -221,7 +221,7 @@ def test_list_filters_match_projection_columns_and_never_null(tmp_path) -> None:
         latency_band = listed(min_reported_latency_ms=800, max_reported_latency_ms=1000)
         gap_floor = listed(min_audible_gap_ms=1001)
         every_filter = listed(**MATCHING_FILTERS, state="closed")
-        # max_cost: complete calls only, on lower bound + estimate (M7).
+        # max_cost: complete calls only, on lower bound + estimate.
         within = _get(port, "/v1/calls", max_cost_nano_usd=700).json()
         below = _get(port, "/v1/calls", max_cost_nano_usd=699).json()
         generous = _get(port, "/v1/calls", max_cost_nano_usd=10**12).json()
@@ -273,13 +273,13 @@ def test_q_is_an_escaped_ascii_case_insensitive_substring_of_the_current_presets
     assert literal == {"00%": [projected], "e_n": [projected], "1_0": [], "%%%": []}
     for reply in (short, long, nul):
         assert (reply.status, reply.problem_code()) == (422, "EARSHOT_INVALID_REQUEST")
-    # ``q`` follows the project's current preset (M26).
+    # ``q`` follows the project's current preset.
     assert (forbidden.status, forbidden.problem_code()) == (
         422,
         "EARSHOT_PRESET_FORBIDS_CONTENT_SEARCH",
     )
     assert unsearched.status == 200
-    # A list that searched content is never stored by a cache (M18).
+    # A list that searched content is never stored by a cache.
     for reply in (searched, forbidden):
         assert reply.headers["cache-control"] == "no-store"
 

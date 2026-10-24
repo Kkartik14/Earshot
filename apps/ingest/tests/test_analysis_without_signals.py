@@ -1,4 +1,4 @@
-"""A server without the ``signals`` extra runs, and analyses once the extra is there (AC2.6, M10).
+"""A server without the ``signals`` extra runs, and analyses once the extra is there.
 
 A real ``earshot serve`` from a fresh virtual environment holding only the
 ``server`` extra (no numpy, onnxruntime or soundfile) stores an uploaded recording

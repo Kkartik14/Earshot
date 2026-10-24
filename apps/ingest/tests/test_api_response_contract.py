@@ -43,7 +43,7 @@ pytestmark = pytest.mark.integration
 
 SECOND = 1_000_000_000
 START = 1_800_000_000 * SECOND
-# The route families this contract test must cover completely (F-4).
+# The route families this contract test must cover completely.
 COVERED_PREFIXES = ("/v1/calls", "/v1/recordings", "/v1/prices", "/v1/dashboard")
 DAY = 86_400 * SECOND
 JSON = "application/json"

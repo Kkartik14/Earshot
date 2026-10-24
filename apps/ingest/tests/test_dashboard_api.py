@@ -1,4 +1,4 @@
-"""``GET /v1/dashboard`` (FR-6) on a real server over a real catalog (both dialects).
+"""``GET /v1/dashboard`` on a real server over a real catalog (both dialects).
 
 Calls are built the way a server builds them: spans recorded through
 ``CallStore.record_spans``, closed by the real ``Closer`` (which stores each
@@ -145,7 +145,7 @@ def _range(start: int, end: int, **params: Any) -> dict[str, Any]:
     return {"from": str(start), "to": str(end), **params}
 
 
-# --- latency: percentiles over turns (T12) -----------------------------------------------------
+# --- latency: percentiles over turns --------------------------------------------------------------
 
 
 def test_latency_percentiles_are_over_the_turns_of_each_calls_projection(tmp_path) -> None:

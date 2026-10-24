@@ -1,6 +1,6 @@
-"""ElevenLabs post-call webhooks become call evidence (FR-1, FR-2).
+"""ElevenLabs post-call webhooks become call evidence.
 
-The conversation is the real one WS0 captured (``fixtures/captured/elevenlabs``:
+The conversation is the real one captured (``fixtures/captured/elevenlabs``:
 scrubbed, both sides synthetic), wrapped in the documented webhook envelope and
 signed with a test secret. The traces-only OTel event, ``call_initiation_failure``
 and ``post_call_audio`` follow the documented shapes.

@@ -264,7 +264,7 @@ def test_hosted_jwt_uses_signed_project_and_operation_scope(tmp_path, issuer) ->
     assert unprovisioned.json()["error"]["code"] == "EARSHOT_PROJECT_NOT_PROVISIONED"
 
 
-# Operator-only call surfaces (AC5.8): no hosted scope is defined for any method, so
+# Operator-only call surfaces: no hosted scope is defined for any method, so
 # a hosted JWT that grants every scope still gets the existing 403.
 _OPERATOR_ONLY_PATHS = (
     "/v1/traces",

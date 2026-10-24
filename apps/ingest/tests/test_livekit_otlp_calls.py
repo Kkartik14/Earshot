@@ -1,4 +1,4 @@
-"""AC8.2 and the job tail: a real LiveKit 1.8 call through the call catalog and the closer.
+"""Dispatch and the job tail: a real LiveKit 1.8 call through the call catalog and the closer.
 
 LiveKit 1.8.2+ runs a call as a job, and the job runner ends more spans after
 ``session_close`` (the call's end marker): ``agent_session``, ``on_session_end``,
