@@ -31,6 +31,8 @@ from earshot.storage import (
     InvalidCursorError,
     StorageError,
 )
+from earshot.storage_calls import CallStore
+from earshot.storage_deliveries import DeliveryDigests, DeliveryStore
 from incident_factory import make_valid_bundle
 from store_support import catalog, catalog_rows, drop_post_v19_objects, make_store
 
@@ -847,7 +849,7 @@ def test_ingest_populates_and_reprojection_restores_a_stale_graph_projection(
     store.close()
 
     restarted = make_store(tmp_path)
-    # Opening re-projects nothing (AC1.10); the stale incident converges afterwards.
+    # Opening re-projects nothing; the stale incident converges afterwards.
     assert catalog_rows(tmp_path, "SELECT COUNT(*) FROM operations") == [(0,)]
     assert restarted.converge_projections().pending == 0
     with sqlite3.connect(restarted.database_path) as connection:
@@ -2258,19 +2260,17 @@ def test_complete_persistence_unit_backup_restores_identity_authority_and_eviden
     )
     identity_before = store.fingerprint("vapi.call", "provider-call-123")
     delivery_identity = store.fingerprint("vapi.delivery", "delivery-123")
-    claim = store.claim_delivery(
+    digests = DeliveryDigests(evidence="a" * 64, body="b" * 64)
+    claim = DeliveryStore(store, calls=CallStore(store)).claim(
         connector,
         delivery_key_hmac=delivery_identity,
-        body_sha256="a" * 64,
+        digests=digests,
         event_type="end-of-call-report",
         now_unix_nano=100,
     )
     assert claim.lease_token is not None
-    store.complete_delivery(
-        claim.receipt_id,
-        state="ignored",
-        completed_at_unix_nano=200,
-        lease_token=claim.lease_token,
+    DeliveryStore(store, calls=CallStore(store)).fail(
+        claim.receipt_id, lease_token=claim.lease_token, failure_code="INTERRUPTED"
     )
     store.close()
 
@@ -2285,15 +2285,15 @@ def test_complete_persistence_unit_backup_restores_identity_authority_and_eviden
     assert principal.project_id == "sales"
     assert restored.get_connector(connector.endpoint_id) == connector
     assert restored.fingerprint("vapi.call", "provider-call-123") == identity_before
-    replay = restored.claim_delivery(
+    retry = DeliveryStore(restored, calls=CallStore(restored)).claim(
         connector,
         delivery_key_hmac=restored.fingerprint("vapi.delivery", "delivery-123"),
-        body_sha256="a" * 64,
+        digests=digests,
         event_type="end-of-call-report",
         now_unix_nano=300,
     )
-    assert replay.disposition == "replayed"
-    assert replay.receipt_id == claim.receipt_id
+    # The restored store recognises the delivery: its retry takes over the receipt.
+    assert (retry.receipt_id, retry.lease_token) == (claim.receipt_id, 2)
     assert (restored_path / "instance-correlation.key").read_bytes() == (
         backup / "instance-correlation.key"
     ).read_bytes()

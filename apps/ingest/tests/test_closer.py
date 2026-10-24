@@ -1,4 +1,4 @@
-"""FR-6: the closer claims a due call, materializes its next revision, and finishes it.
+"""The closer claims a due call, materializes its next revision, and finishes it.
 
 ``Closer.claim()``, ``materialize()`` and ``finish()`` are the three steps the
 server's maintenance loop composes (``close_next``); tests call them one by one,
@@ -130,7 +130,7 @@ def _late_span(world: World, span: int, *, name: str = "llm") -> None:
     )
 
 
-# --- claim (AC6.2) -------------------------------------------------------------------------
+# --- claim ---------------------------------------------------------------------------------
 
 
 def test_a_call_is_claimed_once_it_is_due_and_the_claim_snapshots_it(tmp_path) -> None:
@@ -187,7 +187,7 @@ def test_a_call_of_a_project_being_deleted_does_not_stall_the_closer(tmp_path) -
     assert world.closer.close_next() is None
 
 
-# --- finish (AC6.3) ------------------------------------------------------------------------
+# --- finish --------------------------------------------------------------------------------
 
 
 def test_finishing_stores_the_revision_and_closes_the_call_in_one_transaction(tmp_path) -> None:
@@ -231,7 +231,7 @@ def test_a_finish_whose_lease_was_taken_over_commits_nothing(tmp_path) -> None:
 
 
 def test_a_span_arriving_between_claim_and_finish_makes_the_next_revision(tmp_path) -> None:
-    # AC6.8: claim, a real span for the call, then materialize + finish.
+    # Claim, a real span for the call, then materialize + finish.
     world = _world(tmp_path)
     call_id = _replay(world)
     _at(world, DUE)
@@ -256,7 +256,7 @@ def test_a_span_arriving_between_claim_and_finish_makes_the_next_revision(tmp_pa
     assert _call(world, call_id)["dirty"] == 0
 
 
-# --- late data, the hold and recordings (FR-6 close rules, AC9.2) ----------------------------
+# --- late data, the hold and recordings ----------------------------------------------------
 
 
 def test_late_data_after_close_waits_out_the_debounce_then_makes_the_next_revision(
@@ -315,7 +315,7 @@ def _store_recording(world: World, speaker: str, body: bytes = b"RIFF" + b"\x00"
 def test_a_recording_stored_after_close_is_in_the_next_revision_after_the_debounce(
     tmp_path,
 ) -> None:
-    # AC9.2's after-close half.
+    # The after-close half of the late-data rule.
     world = _world(tmp_path)
     call_id = _replay(world)
     _at(world, DUE)
@@ -336,7 +336,7 @@ def test_a_recording_stored_after_close_is_in_the_next_revision_after_the_deboun
 
 
 def test_a_pending_recording_holds_a_call_that_runs_far_longer_than_the_hold(tmp_path) -> None:
-    # The hold runs from the call's latest evidence (WS6's pending_deadline), not from
+    # The hold runs from the call's latest evidence (``pending_deadline``), not from
     # the recording's POST: a 20-minute call still gets its recordings in revision 1.
     world = _world(tmp_path)
     world.recordings.create("default", _manifest("user"))
@@ -368,7 +368,7 @@ def test_a_pending_recording_holds_a_call_that_runs_far_longer_than_the_hold(tmp
 def test_an_upload_still_streaming_holds_its_call_past_the_deadline_into_revision_one(
     tmp_path,
 ) -> None:
-    # Tribunal round 2, Linus N-1 / Lamport LAM2-5: the docs promise that a streaming
+    # The docs promise that a streaming
     # PUT holds its call, but the claim ignored uploads in flight, so the call closed
     # as revision 1 without its audio while the audio was still arriving.
     from earshot.blobstore import put_stream
@@ -417,7 +417,7 @@ def test_a_call_whose_only_recording_failed_closes_without_a_revision(tmp_path) 
     assert world.closer.close_next() is None
 
 
-# --- failure and integrity (AC6.4, AC6.5) --------------------------------------------------
+# --- failure and integrity -----------------------------------------------------------------
 
 
 def _with_mixed_classes(requests):
@@ -479,7 +479,7 @@ def test_a_revision_row_for_a_still_pending_revision_is_an_integrity_error_set_a
     call_id = _replay(world)
     _at(world, DUE)
     world.closer.close_next()
-    # A state AC6.3 makes unreachable: revision 1 is stored and still pending.
+    # A state finish makes unreachable: revision 1 is stored and still pending.
     with catalog(tmp_path) as connection:
         connection.execute("UPDATE calls SET pending_revision = 1 WHERE call_id = ?", (call_id,))
         connection.commit()
@@ -595,7 +595,7 @@ def test_a_materializer_process_that_dies_is_a_failed_attempt_and_is_replaced(
 def test_an_error_after_a_revision_is_stored_reports_the_revision_not_a_failure(
     tmp_path, monkeypatch, caplog, test_mode
 ) -> None:
-    """Tribunal round 3, Linus R3-4: when a step after the finish's commit raised (a
+    """When a step after the finish's commit raised (a
     failed ``chmod``, a lost commit answer), ``fail`` rightly recorded nothing, but
     ``close_next`` still logged ``EARSHOT_MATERIALIZE_FAILED`` and returned
     ``failed`` for a stored revision. The declared fault point ``after_catalog_commit``
@@ -648,7 +648,7 @@ except MaterializerWorkerError as error:
 
 
 def test_a_materializer_that_cannot_be_started_logs_why(tmp_path) -> None:
-    """Tribunal round 3, Linus R3-3: when ``Process.start()`` itself failed (no file
+    """When ``Process.start()`` itself failed (no file
     descriptors or processes left), the start was refused with no cause, and a hint
     about ``__main__`` guards that sends an operator the wrong way. Its type and errno
     are logged; its message is not, since an OSError's can quote paths."""
@@ -756,7 +756,7 @@ def test_the_stall_point_is_inert_without_test_mode_even_in_the_real_child(
 def test_a_materializer_child_that_stops_reading_is_killed_at_the_deadline_and_replaced(
     tmp_path, monkeypatch, caplog
 ) -> None:
-    # Lamport LAM2-2: the build's deadline bounded only the wait for an answer, not the
+    # The build's deadline bounded only the wait for an answer, not the
     # sends before it. A child that is alive but not reading (stopped, frozen,
     # swapping) blocked the closer in ``send_bytes`` for good once the pipe was full.
     from earshot.storage_closer import MaterializerProcess
@@ -793,7 +793,7 @@ def test_a_materializer_child_that_stops_reading_is_killed_at_the_deadline_and_r
 def test_closing_the_materializer_never_waits_on_a_child_that_stopped_reading(
     monkeypatch,
 ) -> None:
-    # Lamport LAM2-2: ``close`` (the server's shutdown) waited for the build lock, so
+    # ``close`` (the server's shutdown) waited for the build lock, so
     # one stalled child made a graceful stop need SIGKILL.
     from earshot.storage_closer import (
         MaterializerClosedError,
@@ -872,7 +872,7 @@ class _DeletingTheProjectMidBuild:
 
 
 def test_whatever_else_a_finish_raises_is_a_failed_attempt_with_a_code(tmp_path) -> None:
-    # Linus R-4, Lamport R1: an exception from finish other than a lost lease or a
+    # An exception from finish other than a lost lease or a
     # taken revision ID backs off with a stable code, never an endless silent retry.
     world = _world(tmp_path)
     world.store.create_project("leaving", display_name="Leaving")
@@ -891,7 +891,7 @@ def test_whatever_else_a_finish_raises_is_a_failed_attempt_with_a_code(tmp_path)
 
 
 def test_a_failure_reported_after_its_finish_committed_changes_nothing(tmp_path) -> None:
-    # Lamport LAM2-1: ``close_next`` reports any exception from ``finish`` as a failed
+    # ``close_next`` reports any exception from ``finish`` as a failed
     # attempt. When the finish had committed (a post-commit step raised, or a commit
     # whose answer was lost), the call's revision is stored and its claim is over:
     # ``fail`` must not make it dirty again, which built a duplicate revision.
@@ -933,7 +933,7 @@ def test_a_pending_recording_holds_its_call_until_its_deadline_and_not_a_nanosec
 
 @pytest.mark.sqlite_only
 def test_the_claims_candidate_reads_are_index_ranges_of_calls_never_a_scan(tmp_path) -> None:
-    # Tribunal round 2 (found re-measuring Bellard N-1): the claim's one candidate
+    # The claim's one candidate
     # query OR-ed "dirty and due" with "pending revision", so SQLite walked every call
     # of the catalog, once a tick and again inside the claim's write lock. Each
     # candidate read must be a range of a ``calls`` index.
@@ -964,7 +964,83 @@ def test_the_claims_candidate_reads_are_index_ranges_of_calls_never_a_scan(tmp_p
         assert not any("recordings_state_idx" in step for step in plan), plan
 
 
-# --- the revision cap (AC6.7) --------------------------------------------------------------
+def _other_calls_with_recordings(world: World, count: int) -> None:
+    """Stored recordings of calls other than the captured one."""
+
+    from earshot.blobstore import put_stream
+    from earshot.storage_recordings import RecordingManifest
+
+    for index in range(count):
+        recording_id = f"other-{index}.user"
+        world.recordings.create(
+            "default",
+            RecordingManifest(
+                recording_id=recording_id,
+                session_key=f"other-{index}",
+                speaker="user",
+                content_type="audio/wav",
+                started_at_unix_nano=str(START),
+            ),
+        )
+        attempt = world.recordings.begin_upload("default", recording_id)
+        try:
+            sha256, size = put_stream(
+                world.recordings.blobs, attempt.blob_key, [b"RIFF" + bytes(60)]
+            )
+            world.recordings.finish_upload(
+                "default",
+                recording_id,
+                attempt.blob_key,
+                sha256=sha256,
+                size=size,
+                duration_ms=None,
+            )
+        finally:
+            world.recordings.end_upload("default", attempt.blob_key)
+
+
+def test_the_claims_marks_start_from_the_call_never_from_every_stored_row(tmp_path) -> None:
+    """The marks run inside the claim's write lock, so each statement must reach its
+    rows through the call's index, not walk the project's stored spans or recordings
+    (``EXPLAIN QUERY PLAN`` on SQLite, ``EXPLAIN`` on Postgres)."""
+
+    from earshot.storage_closer import MARK_RECORDINGS_SQL, MARK_SPANS_SQL
+    from store_support import current_dialect
+
+    world = _world(tmp_path)
+    call_id = _replay(world)
+    world.recordings.create("default", _manifest("user"))
+    _store_recording(world, "user")
+    _other_calls_with_recordings(world, 8)
+    for other in range(10):
+        attributes = [string_attribute("earshot.session.id", f"unrelated-{other}")]
+        request = make_request([make_span(500 + other, 1, attributes=attributes)])
+        world.calls.record_spans("default", spans_from_request(request))
+    statements = {
+        "spans": (MARK_SPANS_SQL, (1, "default", "default", call_id)),
+        "recordings": (MARK_RECORDINGS_SQL, (1, "default", call_id)),
+    }
+
+    plans: dict[str, str] = {}
+    with catalog(tmp_path) as connection:
+        if current_dialect() == "postgresql":
+            # A table this small is cheapest to scan whatever the indexes; the plan
+            # that matters is the one the planner takes when a scan is not an option.
+            connection.execute("SET LOCAL enable_seqscan = off")
+            explain = "EXPLAIN"
+        else:
+            explain = "EXPLAIN QUERY PLAN"
+        for name, (sql, parameters) in statements.items():
+            plans[name] = "\n".join(
+                str(tuple(row)[-1]) for row in connection.execute(f"{explain} {sql}", parameters)
+            )
+
+    assert "recordings_call_idx" in plans["recordings"], plans["recordings"]
+    assert "recordings_state_idx" not in plans["recordings"], plans["recordings"]
+    assert "call_traces_call_idx" in plans["spans"], plans["spans"]
+
+
+# --- the revision cap ----------------------------------------------------------------------
 
 
 def _keyed_spans(span: int, *, ended: bool = False):
@@ -1004,7 +1080,7 @@ def test_a_call_gets_at_most_sixteen_revisions_plus_its_first_end_signal_close(t
     assert world.closer.close_next() is None
     assert len(_revisions(world, call_id)) == 17
     assert _call(world, call_id)["evidence_after_latest_revision"] == 1
-    # Flagged again after revision 17, but a call is counted once (Bellard R-4).
+    # Flagged again after revision 17, but a call is counted once.
     assert world.calls.otlp_stats("default")["revision_cap_reached"] == 1
 
 
@@ -1039,7 +1115,7 @@ def test_the_retention_reaper_never_purges_a_call_revision_on_its_own(tmp_path) 
 
     world.store.purge_expired(limit=100)
 
-    # A revision goes only with its call (AC14.4); call_revisions never dangles.
+    # A revision goes only with its call; call_revisions never dangles.
     assert [row[0] for row in _incidents(world)] == [f"{call_id}.r1"]
 
 
@@ -1076,7 +1152,7 @@ def test_the_metrics_route_and_the_project_summary_show_a_call_once(tmp_path) ->
     assert [item["session_id"] for item in summary["items"]] == [call_id]
 
 
-# --- the maintenance loop (AC6.1, AC4.4 scheduling) -----------------------------------------
+# --- the maintenance loop (scheduling) ------------------------------------------------------
 
 
 def _loop(world: World):

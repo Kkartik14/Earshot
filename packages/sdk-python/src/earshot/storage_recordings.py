@@ -1,8 +1,8 @@
 """Recordings in the catalog: create, upload attempts, the hold, the sweep, blob deletions.
 
-A ``RecordingStore`` is the storage half of the recordings API (FR-9). It runs on
+A ``RecordingStore`` is the storage half of the recordings API. It runs on
 an ``IncidentStore``'s database, write locks and clock, uses the ``CallStore`` for
-everything a call is (identity, tombstones, the FR-6 close rules), and the
+everything a call is (identity, tombstones, the close rules), and the
 server's ``BlobStore`` for bytes.
 
 **Create.** ``(project_id, recording_id)`` names a recording. Creating one resolves
@@ -10,7 +10,9 @@ its session key to the key's current call, creating that call when needed
 (``key_source = 'recording'``). The same ``recording_id`` with the same manifest
 is the existing recording; a different manifest, or a recording that already
 ``failed``, is ``RecordingConflictError``. A ``metadata_only`` project stores no
-media (``PresetForbidsMediaError``).
+media (``PresetForbidsMediaError``). A ``mixed`` recording may name each channel's
+speaker (``channel_speakers``, stored as compact JSON); its file then has one
+channel per entry, which the API checks against the uploaded header.
 
 **Upload attempts.** Each upload streams into its own blob key,
 ``recordings/<project_id>/<attempt uuid>``, minted here; no client string is ever
@@ -27,7 +29,7 @@ attempt in this process owns it. One server owns a catalog and its blob location
 (``K_server`` on Postgres, ``.server.lock`` on SQLite refuse a second one), so
 "in flight in this process" is "in flight".
 
-**The pending deadline** (FR-6, FR-9) is ``pending_deadline``: the latest of the
+**The pending deadline** is ``pending_deadline``: the latest of the
 recording's creation, its call's last evidence and its call's end signal, plus
 ``UPLOAD_HOLD_CAP``. A call is held (the closer does not claim it) while any of its
 pending recordings is before its deadline or has an upload streaming
@@ -50,6 +52,7 @@ A failed delete is retried with exponential backoff (``retry_delay_seconds``).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import uuid
@@ -60,14 +63,14 @@ from typing import TYPE_CHECKING, Any
 from .call_capture import CAPTURE_PRESET_FULL
 from .call_materializer import MAX_REVISION_RECORDINGS
 from .maintenance import MAINTENANCE_LOCK_BUDGET_SECONDS
-from .recordings import valid_start_unix_nano
+from .recordings import valid_channel_speakers, valid_start_unix_nano
 from .storage import StorageBusyError
 
 if TYPE_CHECKING:
     from .blobstore import BlobStore
     from .maintenance import MaintenanceJob
     from .storage import IncidentStore
-    from .storage_calls import CallStore, CallTimings
+    from .storage_calls import CallStore
     from .storage_database import DatabaseConnection
 
 _LOGGER = logging.getLogger(__name__)
@@ -84,7 +87,8 @@ BLOB_SWEEP_INTERVAL_SECONDS = 3600.0
 BLOB_SWEEP_RETRY_SECONDS = 60.0
 _COLUMNS = (
     "project_id, recording_id, call_id, speaker, content_type, label, started_at_unix_nano, "
-    "state, blob_key, size, sha256, duration_ms, created_unix_nano, stored_unix_nano"
+    "state, blob_key, size, sha256, duration_ms, created_unix_nano, stored_unix_nano, "
+    "channel_speakers_json"
 )
 
 
@@ -139,6 +143,9 @@ class RecordingManifest:
     content_type: str
     started_at_unix_nano: str
     label: str | None = None
+    # A ``mixed`` recording's speaker per channel, in channel order (``None``: one
+    # channel, the recording's ``speaker``).
+    channel_speakers: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +166,13 @@ class Recording:
     duration_ms: int | None
     created_unix_nano: int
     stored_unix_nano: int | None
+    channel_speakers: tuple[str, ...] | None = None
+
+    @property
+    def channels(self) -> int:
+        """How many channels its file has: one per mapped speaker, else one."""
+
+        return 1 if self.channel_speakers is None else len(self.channel_speakers)
 
     def declares(self, manifest: RecordingManifest, call_id: str) -> bool:
         """Whether this recording is the one ``manifest`` (naming ``call_id``) creates."""
@@ -169,12 +183,14 @@ class Recording:
             self.content_type,
             self.started_at_unix_nano,
             self.label,
+            self.channel_speakers,
         ) == (
             call_id,
             manifest.speaker,
             manifest.content_type,
             manifest.started_at_unix_nano,
             manifest.label,
+            manifest.channel_speakers,
         )
 
 
@@ -202,7 +218,7 @@ def pending_deadline(
     *,
     hold_nano: int,
 ) -> int:
-    """When a pending recording stops holding its call and may be failed (FR-6).
+    """When a pending recording stops holding its call and may be failed.
 
     ``max(created, call.last_evidence, call.end_signal or 0) + UPLOAD_HOLD_CAP``:
     a recording is posted at a call's first audio and uploaded after the call, so
@@ -237,24 +253,29 @@ def _recording(row: Any) -> Recording:
         duration_ms=None if row["duration_ms"] is None else int(row["duration_ms"]),
         created_unix_nano=int(row["created_unix_nano"]),
         stored_unix_nano=None if row["stored_unix_nano"] is None else int(row["stored_unix_nano"]),
+        channel_speakers=(
+            None
+            if row["channel_speakers_json"] is None
+            else tuple(json.loads(row["channel_speakers_json"]))
+        ),
     )
+
+
+def channel_speakers_json(channel_speakers: tuple[str, ...] | None) -> str | None:
+    """A channel map as ``recordings.channel_speakers_json`` stores it: compact JSON."""
+
+    if channel_speakers is None:
+        return None
+    return json.dumps(list(channel_speakers), separators=(",", ":"))
 
 
 class RecordingStore:
     """Recording storage operations on one ``IncidentStore`` and one ``BlobStore``."""
 
-    def __init__(
-        self,
-        store: IncidentStore,
-        *,
-        calls: CallStore,
-        blobs: BlobStore | None,
-        timings: CallTimings | None = None,
-    ) -> None:
+    def __init__(self, store: IncidentStore, *, calls: CallStore, blobs: BlobStore | None) -> None:
         self.store = store
         self.calls = calls
         self.blobs = blobs
-        self.timings = timings or calls.timings
         self._uploads_lock = threading.Lock()
         # ``(project_id, blob_key)`` of each attempt in flight -> its recording and call.
         self._uploads_in_flight: dict[tuple[str, str], tuple[str, str]] = {}
@@ -317,6 +338,10 @@ class RecordingStore:
         if not valid_start_unix_nano(manifest.started_at_unix_nano):
             # The API refuses it first (422); this is where the invariant lives.
             raise ValueError("a recording's start must be a Unix nanosecond time in [1, 2^63 - 1]")
+        if manifest.channel_speakers is not None and (
+            manifest.speaker != "mixed" or not valid_channel_speakers(manifest.channel_speakers)
+        ):
+            raise ValueError("a channel map names user and agent once at most, on a mixed one")
         with (
             self.store._mutation("create_recording", budget_s=budget_s),
             self.store._connect() as connection,
@@ -348,8 +373,8 @@ class RecordingStore:
                 raise RecordingLimitError
             connection.execute(
                 "INSERT INTO recordings(project_id, recording_id, call_id, speaker, "
-                "content_type, label, started_at_unix_nano, state, created_unix_nano) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+                "content_type, label, started_at_unix_nano, state, created_unix_nano, "
+                "channel_speakers_json) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
                 (
                     project_id,
                     manifest.recording_id,
@@ -359,6 +384,7 @@ class RecordingStore:
                     manifest.label,
                     manifest.started_at_unix_nano,
                     now,
+                    channel_speakers_json(manifest.channel_speakers),
                 ),
             )
             created = self._row(connection, project_id, manifest.recording_id)
@@ -429,7 +455,7 @@ class RecordingStore:
         Only a pending recording is stored; ``None`` means this attempt lost (the
         recording was stored by another attempt or failed meanwhile), and the
         caller deletes its own object (``discard_upload``). The call gains the
-        recording as evidence in the same transaction (AC9.2).
+        recording as evidence in the same transaction.
         """
 
         with (
@@ -452,6 +478,10 @@ class RecordingStore:
                 "DELETE FROM pending_blob_deletions WHERE project_id = ? AND blob_key = ?",
                 (project_id, blob_key),
             )
+            # A stored recording's analysis job is queued with it, never after it.
+            from .storage_analysis import schedule_analysis
+
+            schedule_analysis(connection, project_id, recording_id, now)
             stored = self._row(connection, project_id, recording_id)
             assert stored is not None
             self.calls.add_recording_evidence(connection, project_id, stored.call_id, now)
@@ -564,8 +594,17 @@ class RecordingStore:
             int(row["created_unix_nano"]),
             int(row["last_evidence_unix_nano"]),
             None if end_signal is None else int(end_signal),
-            hold_nano=self.timings.upload_hold_nano,
+            hold_nano=self.calls.timings.upload_hold_nano,
         )
+
+    # A pending recording the sweep may fail: created before the horizon, and not one
+    # a live fetch job owns (that job retries past the deadline, and ends the
+    # recording itself when it gives up).
+    _SWEEPABLE = (
+        " AND r.created_unix_nano < ? AND NOT EXISTS (SELECT 1 FROM recording_fetches f "
+        "WHERE f.project_id = r.project_id AND f.recording_id = r.recording_id "
+        "AND f.state IN ('pending', 'running'))"
+    )
 
     def _expired(self, row: Any, now: int, uploading: frozenset[tuple[str, str]]) -> bool:
         """Whether the sweep fails the pending recording ``row`` at ``now``."""
@@ -579,6 +618,8 @@ class RecordingStore:
     ) -> int:
         """Fail every pending recording whose pending deadline has passed.
 
+        A recording a live fetch job owns (a provider recording) is never failed
+        here: its fetch retries past the deadline and fails it when it gives up.
         A recording with an upload still streaming is never failed, however late
         (its deadline cannot expire under a live attempt); it is judged again once
         the attempt ends. Uploads in flight are this process's, which is every
@@ -588,9 +629,9 @@ class RecordingStore:
         """
 
         now = self._now(now_unix_nano)
-        horizon = now - self.timings.upload_hold_nano
+        horizon = now - self.calls.timings.upload_hold_nano
         with self.store._connect() as connection:
-            candidates = self._pending(connection, " AND r.created_unix_nano < ?", (horizon,))
+            candidates = self._pending(connection, self._SWEEPABLE, (horizon,))
         if not any(self._expired(row, now, self._uploading()) for row in candidates):
             return 0
         with (
@@ -603,7 +644,7 @@ class RecordingStore:
             uploading = self._uploading()
             expired = [
                 (row["project_id"], row["recording_id"])
-                for row in self._pending(connection, " AND r.created_unix_nano < ?", (horizon,))
+                for row in self._pending(connection, self._SWEEPABLE, (horizon,))
                 if self._expired(row, now, uploading)
             ]
             connection.executemany(
@@ -699,8 +740,11 @@ class RecordingStore:
                 self.store._connect() as connection,
             ):
                 connection.begin_write()
+                # A row journaled again since its claim (``attempts`` back at 0) names
+                # an object written after the delete above: it stays for a later drain.
                 connection.executemany(
-                    "DELETE FROM pending_blob_deletions WHERE project_id = ? AND blob_key = ?",
+                    "DELETE FROM pending_blob_deletions WHERE project_id = ? AND blob_key = ? "
+                    "AND attempts > 0",
                     deleted,
                 )
                 connection.commit()

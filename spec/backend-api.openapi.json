@@ -297,6 +297,123 @@
         "title": "ApiIssue",
         "type": "object"
       },
+      "AudibleGapResponse": {
+        "additionalProperties": false,
+        "description": "The gap at the agent between the user's speech ending and the agent's starting,\nmeasured on one recorder timeline. ``measured``: ``value_ms`` \u00b1 ``uncertainty_ms``.\n``talk_over``: the agent started while the user spoke (no value).\n``not_measurable``: ``reason`` says why; ``bound_ms`` (\u00b1 ``uncertainty_ms``) is an\nupper bound only for a recorder timeline discontinuity on a recorder that only\ninserts time. ``user_end_ms`` and ``agent_start_ms`` are the speech edges paired\nwith the turn, when found.",
+        "properties": {
+          "agent_start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Start Ms"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "enum": [
+                  "anchors_checked",
+                  "continuous_timeline_assumed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basis"
+          },
+          "bound_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bound Ms"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "recorder_timeline_discontinuity",
+                  "no_agent_audio",
+                  "no_clear_pairing",
+                  "not_one_timeline",
+                  "no_recording",
+                  "analysis_not_stored",
+                  "boundary_uncertainty_too_high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "enum": [
+              "measured",
+              "talk_over",
+              "not_measurable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "uncertainty_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uncertainty Ms"
+          },
+          "user_end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User End Ms"
+          },
+          "value_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value Ms"
+          }
+        },
+        "required": [
+          "status",
+          "value_ms",
+          "uncertainty_ms",
+          "bound_ms",
+          "user_end_ms",
+          "agent_start_ms",
+          "reason",
+          "basis"
+        ],
+        "title": "AudibleGapResponse",
+        "type": "object"
+      },
       "AudioFormat": {
         "additionalProperties": true,
         "properties": {
@@ -608,9 +725,53 @@
         "title": "ByteRange",
         "type": "object"
       },
+      "CallCostResponse": {
+        "additionalProperties": false,
+        "description": "A call's cost. ``lower_bound_nano_usd`` sums the priced items (null: the call\nhas no cost item); ``estimated_nano_usd`` sums the estimated ones (null: none);\n``unknown_items`` counts items with no price or no reported usage. ``complete``:\nthe call has cost items and none is unknown.",
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "estimated_nano_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Nano Usd"
+          },
+          "lower_bound_nano_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lower Bound Nano Usd"
+          },
+          "unknown_items": {
+            "title": "Unknown Items",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lower_bound_nano_usd",
+          "estimated_nano_usd",
+          "unknown_items",
+          "complete"
+        ],
+        "title": "CallCostResponse",
+        "type": "object"
+      },
       "CallDetailResponse": {
         "additionalProperties": false,
-        "description": "One call with its revisions, recordings and transcript (read from its spans).",
+        "description": "One call with its revisions, recordings, transcript (read from its spans, so an\nopen call's grows) and projection.",
         "properties": {
           "call_id": {
             "title": "Call Id",
@@ -652,6 +813,25 @@
               }
             ],
             "title": "Materialize Error"
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CallProjectionDetailResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projection_state": {
+            "enum": [
+              "none",
+              "stale",
+              "current"
+            ],
+            "title": "Projection State",
+            "type": "string"
           },
           "recording_count": {
             "title": "Recording Count",
@@ -722,6 +902,8 @@
           "recording_count",
           "latest_revision",
           "materialize_error",
+          "projection_state",
+          "projection",
           "revisions",
           "recordings",
           "evidence_after_latest_revision",
@@ -731,9 +913,119 @@
         "title": "CallDetailResponse",
         "type": "object"
       },
+      "CallMediaResponse": {
+        "additionalProperties": false,
+        "description": "One playable audio source on the call's axis. A ``rendition`` (a stereo file\nmade from a mono pair on one timeline) stands for the recordings it names, which\nare then not listed on their own. Paths are relative to the server's base URL;\n``peaks_path`` serves audiowaveform ``.dat`` peaks with one channel per entry of\n``channels`` (null until the analysis stores them).",
+        "properties": {
+          "analysis_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Error Code"
+          },
+          "analysis_state": {
+            "enum": [
+              "pending",
+              "running",
+              "stored",
+              "failed",
+              "unavailable"
+            ],
+            "title": "Analysis State",
+            "type": "string"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/MediaChannelResponse"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "content_path": {
+            "title": "Content Path",
+            "type": "string"
+          },
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "offset_ms": {
+            "title": "Offset Ms",
+            "type": "integer"
+          },
+          "peaks_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Peaks Path"
+          },
+          "recording_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recording Ids",
+            "type": "array"
+          },
+          "source": {
+            "enum": [
+              "recording",
+              "rendition"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "recording_ids",
+          "content_path",
+          "content_type",
+          "peaks_path",
+          "offset_ms",
+          "duration_ms",
+          "channels",
+          "analysis_state",
+          "analysis_error_code"
+        ],
+        "title": "CallMediaResponse",
+        "type": "object"
+      },
       "CallPageResponse": {
         "additionalProperties": false,
+        "description": "A page of calls. ``excluded_incomplete`` (only with ``max_cost_nano_usd``):\ncalls every other filter matches whose cost as known is within the cap, left out\nbecause their cost has unknown items.",
         "properties": {
+          "excluded_incomplete": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded Incomplete"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/CallSummaryResponse"
@@ -755,9 +1047,352 @@
         },
         "required": [
           "items",
-          "next_cursor"
+          "next_cursor",
+          "excluded_incomplete"
         ],
         "title": "CallPageResponse",
+        "type": "object"
+      },
+      "CallProjectionDetailResponse": {
+        "additionalProperties": false,
+        "description": "A call's projection as the call view shows it. The axis starts at the earliest\nrecording's start, or at the call's first evidence when it has no recording.",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "analysis_state": {
+            "enum": [
+              "none",
+              "pending",
+              "stored",
+              "partial",
+              "failed",
+              "unavailable"
+            ],
+            "title": "Analysis State",
+            "type": "string"
+          },
+          "audible_gap_max_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audible Gap Max Ms"
+          },
+          "audible_gap_p50_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audible Gap P50 Ms"
+          },
+          "axis_origin": {
+            "enum": [
+              "recording_start",
+              "first_evidence"
+            ],
+            "title": "Axis Origin",
+            "type": "string"
+          },
+          "axis_origin_unix_nano": {
+            "title": "Axis Origin Unix Nano",
+            "type": "string"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/CallCostResponse"
+          },
+          "cost_items": {
+            "items": {
+              "$ref": "#/components/schemas/CostItemResponse"
+            },
+            "title": "Cost Items",
+            "type": "array"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "measurable_turns": {
+            "title": "Measurable Turns",
+            "type": "integer"
+          },
+          "media": {
+            "items": {
+              "$ref": "#/components/schemas/CallMediaResponse"
+            },
+            "title": "Media",
+            "type": "array"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "reported_latency_max_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Latency Max Ms"
+          },
+          "reported_latency_p50_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Latency P50 Ms"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "signals": {
+            "$ref": "#/components/schemas/CallSignalsResponse"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "transcript": {
+            "items": {
+              "$ref": "#/components/schemas/PlacedTranscriptLineResponse"
+            },
+            "title": "Transcript",
+            "type": "array"
+          },
+          "turn_count": {
+            "title": "Turn Count",
+            "type": "integer"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/CallTurnResponse"
+            },
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "agent",
+          "framework",
+          "outcome",
+          "tags",
+          "duration_ms",
+          "turn_count",
+          "measurable_turns",
+          "reported_latency_p50_ms",
+          "reported_latency_max_ms",
+          "audible_gap_p50_ms",
+          "audible_gap_max_ms",
+          "cost",
+          "analysis_state",
+          "axis_origin_unix_nano",
+          "axis_origin",
+          "media",
+          "turns",
+          "signals",
+          "cost_items",
+          "transcript"
+        ],
+        "title": "CallProjectionDetailResponse",
+        "type": "object"
+      },
+      "CallProjectionResponse": {
+        "additionalProperties": false,
+        "description": "A call's projection summary: what its revision ``revision``, that revision's\naudio analyses and the prices say. Latency and gap values are milliseconds over\nthe call's turns (audible gap: its measurable turns only).",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "analysis_state": {
+            "enum": [
+              "none",
+              "pending",
+              "stored",
+              "partial",
+              "failed",
+              "unavailable"
+            ],
+            "title": "Analysis State",
+            "type": "string"
+          },
+          "audible_gap_max_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audible Gap Max Ms"
+          },
+          "audible_gap_p50_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audible Gap P50 Ms"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/CallCostResponse"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "measurable_turns": {
+            "title": "Measurable Turns",
+            "type": "integer"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "reported_latency_max_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Latency Max Ms"
+          },
+          "reported_latency_p50_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Latency P50 Ms"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "turn_count": {
+            "title": "Turn Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "agent",
+          "framework",
+          "outcome",
+          "tags",
+          "duration_ms",
+          "turn_count",
+          "measurable_turns",
+          "reported_latency_p50_ms",
+          "reported_latency_max_ms",
+          "audible_gap_p50_ms",
+          "audible_gap_max_ms",
+          "cost",
+          "analysis_state"
+        ],
+        "title": "CallProjectionResponse",
         "type": "object"
       },
       "CallResolveRequest": {
@@ -882,9 +1517,192 @@
         "title": "CallRevisionSummary",
         "type": "object"
       },
+      "CallSignalsResponse": {
+        "additionalProperties": false,
+        "description": "Conversation signals from the call's speech runs. ``one_timeline`` is null with\nno analysed recording; when false, every cross-channel signal is null.",
+        "properties": {
+          "barge_in_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Barge In Count"
+          },
+          "dead_air_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dead Air Ms"
+          },
+          "long_silence_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Long Silence Count"
+          },
+          "one_timeline": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "One Timeline"
+          },
+          "overlap_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overlap Ms"
+          },
+          "talk_over_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Talk Over Count"
+          },
+          "talk_time_agent_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Talk Time Agent Ms"
+          },
+          "talk_time_user_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Talk Time User Ms"
+          }
+        },
+        "required": [
+          "one_timeline",
+          "talk_time_user_ms",
+          "talk_time_agent_ms",
+          "overlap_ms",
+          "barge_in_count",
+          "talk_over_count",
+          "long_silence_count",
+          "dead_air_ms"
+        ],
+        "title": "CallSignalsResponse",
+        "type": "object"
+      },
+      "CallSpanResponse": {
+        "additionalProperties": false,
+        "description": "One span of a call as it was stored: what the project's preset kept when the\nspan arrived (under ``metadata_only``, no content and no status message).",
+        "properties": {
+          "attributes": {
+            "items": {
+              "$ref": "#/components/schemas/SpanAttributeResponse"
+            },
+            "title": "Attributes",
+            "type": "array"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "end_unix_nano": {
+            "title": "End Unix Nano",
+            "type": "string"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/SpanEventResponse"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id"
+          },
+          "scope_name": {
+            "title": "Scope Name",
+            "type": "string"
+          },
+          "span_id": {
+            "title": "Span Id",
+            "type": "string"
+          },
+          "start_unix_nano": {
+            "title": "Start Unix Nano",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SpanStatusResponse"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "call_id",
+          "trace_id",
+          "span_id",
+          "parent_span_id",
+          "name",
+          "scope_name",
+          "start_unix_nano",
+          "end_unix_nano",
+          "status",
+          "attributes",
+          "events"
+        ],
+        "title": "CallSpanResponse",
+        "type": "object"
+      },
       "CallSummaryResponse": {
         "additionalProperties": false,
-        "description": "One call. ``session_key`` is null when it was not stored (``metadata_only``\nprojects and trace-keyed calls).",
+        "description": "One call. ``session_key`` is null when it was not stored (``metadata_only``\nprojects and trace-keyed calls). ``projection`` is null when ``projection_state``\nis ``none``; a ``stale`` projection is served until its recomputation lands.",
         "properties": {
           "call_id": {
             "title": "Call Id",
@@ -922,6 +1740,25 @@
               }
             ],
             "title": "Materialize Error"
+          },
+          "projection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CallProjectionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projection_state": {
+            "enum": [
+              "none",
+              "stale",
+              "current"
+            ],
+            "title": "Projection State",
+            "type": "string"
           },
           "recording_count": {
             "title": "Recording Count",
@@ -961,9 +1798,86 @@
           "span_count",
           "recording_count",
           "latest_revision",
-          "materialize_error"
+          "materialize_error",
+          "projection_state",
+          "projection"
         ],
         "title": "CallSummaryResponse",
+        "type": "object"
+      },
+      "CallTurnResponse": {
+        "additionalProperties": false,
+        "description": "One turn: the framework-reported latency beside the audible gap.",
+        "properties": {
+          "audible_gap": {
+            "$ref": "#/components/schemas/AudibleGapResponse"
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "reported_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported Latency Ms"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/TurnSpanResponse"
+            },
+            "title": "Spans",
+            "type": "array"
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          }
+        },
+        "required": [
+          "index",
+          "turn_id",
+          "start_ms",
+          "end_ms",
+          "reported_latency_ms",
+          "audible_gap",
+          "spans"
+        ],
+        "title": "CallTurnResponse",
         "type": "object"
       },
       "CaptureAcceptedResponse": {
@@ -1099,6 +2013,21 @@
         ],
         "title": "CaptureAcceptedResponse",
         "type": "object"
+      },
+      "CaptureClass": {
+        "enum": [
+          "metadata",
+          "extension_payload",
+          "transcript",
+          "audio",
+          "tool_payload",
+          "model_payload",
+          "diagnostic_payload",
+          "identity",
+          "raw_otlp"
+        ],
+        "title": "CaptureClass",
+        "type": "string"
       },
       "CaptureClassPolicy": {
         "additionalProperties": true,
@@ -2011,8 +2940,9 @@
       },
       "ConnectorDeliveryResponse": {
         "additionalProperties": false,
+        "description": "What a connector hook did with a delivery.\n\n``applied``: its evidence went to ``call_id``. ``replayed``: a retry of a delivery\nalready applied (``call_id`` is that call; ``null`` for one applied before 0.4).\n``purged``: the call it describes was purged, so nothing was kept (``call_id``\n``null``). ``ignored``: an event this connector does not consume; nothing was\nwritten and there is no receipt.",
         "properties": {
-          "bundle_id": {
+          "call_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -2021,38 +2951,34 @@
                 "type": "null"
               }
             ],
-            "title": "Bundle Id"
-          },
-          "canonical_sha256": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Canonical Sha256"
+            "title": "Call Id"
           },
           "disposition": {
             "enum": [
               "applied",
               "replayed",
+              "purged",
               "ignored"
             ],
             "title": "Disposition",
             "type": "string"
           },
           "receipt_id": {
-            "title": "Receipt Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Id"
           }
         },
         "required": [
           "receipt_id",
           "disposition",
-          "bundle_id",
-          "canonical_sha256"
+          "call_id"
         ],
         "title": "ConnectorDeliveryResponse",
         "type": "object"
@@ -2224,6 +3150,145 @@
         "title": "ContradictionResponse",
         "type": "object"
       },
+      "CostItemResponse": {
+        "additionalProperties": false,
+        "description": "One cost item. ``priced`` and ``estimated`` items cost ``quantity`` units of\n``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),\nrounded half up to a whole nano-USD; ``no_price`` has usage and no price row;\n``not_reported`` has no usage. ``span`` is where the usage was read, if one span.",
+        "properties": {
+          "cost_nano_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Nano Usd"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "operation": {
+            "enum": [
+              "llm",
+              "stt",
+              "tts",
+              "realtime"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "per_quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Per Quantity"
+          },
+          "price_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Id"
+          },
+          "price_nano_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Nano Usd"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "span": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpanRefResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "priced",
+              "no_price",
+              "not_reported",
+              "estimated"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "status",
+          "operation",
+          "provider",
+          "model",
+          "unit",
+          "quantity",
+          "price_id",
+          "price_nano_usd",
+          "per_quantity",
+          "cost_nano_usd",
+          "span"
+        ],
+        "title": "CostItemResponse",
+        "type": "object"
+      },
       "Coverage": {
         "additionalProperties": true,
         "description": "What a fact source could or could not observe for one signal.\n\n``dropped_count`` is how many observations the source counted itself losing\nin this window, when it could count them \u2014 a browser capture kernel whose\nbounded buffer overflowed knows exactly how many samples it discarded. The\nnumber is evidence about the gap, so it belongs on the gap: without it a\nreader can see *that* something was lost but never *how much*, and a count\nthat survives only in a transport acknowledgement is not part of the\nartifact at all. ``None`` means the loss was not countable, which is not the\nsame claim as ``0`` \u2014 nothing lost.",
@@ -2316,6 +3381,498 @@
           "availability"
         ],
         "title": "CoverageGapResponse",
+        "type": "object"
+      },
+      "DashboardBucketResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "start_unix_nano": {
+            "title": "Start Unix Nano",
+            "type": "string"
+          },
+          "tiles": {
+            "$ref": "#/components/schemas/DashboardTilesResponse"
+          }
+        },
+        "required": [
+          "start_unix_nano",
+          "tiles"
+        ],
+        "title": "DashboardBucketResponse",
+        "type": "object"
+      },
+      "DashboardCostRateResponse": {
+        "additionalProperties": false,
+        "description": "``cost_nano_usd`` over ``duration_ms`` of the covered calls, as integer nano-USD\nper minute (rounded half up). All three null when no call is covered.",
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_nano_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Nano Usd"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "nano_usd_per_minute": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nano Usd Per Minute"
+          },
+          "of_calls": {
+            "title": "Of Calls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nano_usd_per_minute",
+          "cost_nano_usd",
+          "duration_ms",
+          "calls",
+          "of_calls"
+        ],
+        "title": "DashboardCostRateResponse",
+        "type": "object"
+      },
+      "DashboardCostResponse": {
+        "additionalProperties": false,
+        "description": "Earshot's cost (complete costs only: priced items plus the STT estimate) and\nthe provider-reported cost, side by side. They are never added together: a\nprovider's cost already includes the stages Earshot prices.",
+        "properties": {
+          "earshot": {
+            "$ref": "#/components/schemas/DashboardCostRateResponse"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/DashboardProviderCostRateResponse"
+          }
+        },
+        "required": [
+          "earshot",
+          "provider"
+        ],
+        "title": "DashboardCostResponse",
+        "type": "object"
+      },
+      "DashboardDeadAirResponse": {
+        "additionalProperties": false,
+        "description": "Dead air over call time (``dead_air_ms / duration_ms``), over the calls with a\nrecording on one timeline. Both null when no call measured it.",
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "dead_air_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dead Air Ms"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "of_calls": {
+            "title": "Of Calls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dead_air_ms",
+          "duration_ms",
+          "calls",
+          "of_calls"
+        ],
+        "title": "DashboardDeadAirResponse",
+        "type": "object"
+      },
+      "DashboardGroupResponse": {
+        "additionalProperties": false,
+        "description": "The calls whose agent or framework is ``value`` (null: unknown).",
+        "properties": {
+          "tiles": {
+            "$ref": "#/components/schemas/DashboardTilesResponse"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value",
+          "tiles"
+        ],
+        "title": "DashboardGroupResponse",
+        "type": "object"
+      },
+      "DashboardInterruptionsResponse": {
+        "additionalProperties": false,
+        "description": "The interruption rate is ``barge_ins / turns``, over the calls whose barge-ins\nwere measured (a recording on one timeline). ``barge_ins``: null with none.",
+        "properties": {
+          "barge_ins": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Barge Ins"
+          },
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "of_calls": {
+            "title": "Of Calls",
+            "type": "integer"
+          },
+          "turns": {
+            "title": "Turns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "barge_ins",
+          "turns",
+          "calls",
+          "of_calls"
+        ],
+        "title": "DashboardInterruptionsResponse",
+        "type": "object"
+      },
+      "DashboardLatencyResponse": {
+        "additionalProperties": false,
+        "description": "Nearest-rank percentiles over **turns** (not over each call's median), from each\ncall's projection: ``turns`` with a value of ``of_turns``, in ``calls`` of\n``of_calls``. Null percentiles: no turn has a value.",
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "of_calls": {
+            "title": "Of Calls",
+            "type": "integer"
+          },
+          "of_turns": {
+            "title": "Of Turns",
+            "type": "integer"
+          },
+          "p50_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50 Ms"
+          },
+          "p95_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Ms"
+          },
+          "turns": {
+            "title": "Turns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "p50_ms",
+          "p95_ms",
+          "turns",
+          "of_turns",
+          "calls",
+          "of_calls"
+        ],
+        "title": "DashboardLatencyResponse",
+        "type": "object"
+      },
+      "DashboardLlmLatencyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "of_calls": {
+            "title": "Of Calls",
+            "type": "integer"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardLlmProviderResponse"
+            },
+            "title": "Providers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "providers",
+          "calls",
+          "of_calls"
+        ],
+        "title": "DashboardLlmLatencyResponse",
+        "type": "object"
+      },
+      "DashboardLlmProviderResponse": {
+        "additionalProperties": false,
+        "description": "One LLM provider's first-token latency on one measurement basis (values on\ndifferent bases do not compare): from the turn's end to the LLM's first token\n(``first_token``), or as the provider timed its own stage\n(``provider_stage_direct``).",
+        "properties": {
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "p50_ms": {
+            "title": "P50 Ms",
+            "type": "integer"
+          },
+          "p95_ms": {
+            "title": "P95 Ms",
+            "type": "integer"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "turns": {
+            "title": "Turns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "provider",
+          "basis",
+          "p50_ms",
+          "p95_ms",
+          "turns",
+          "calls"
+        ],
+        "title": "DashboardLlmProviderResponse",
+        "type": "object"
+      },
+      "DashboardProviderCostRateResponse": {
+        "additionalProperties": false,
+        "description": "What hosted providers reported the calls cost; ``bases`` names the fields it\nwas read from.",
+        "properties": {
+          "bases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bases",
+            "type": "array"
+          },
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_nano_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Nano Usd"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "nano_usd_per_minute": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nano Usd Per Minute"
+          },
+          "of_calls": {
+            "title": "Of Calls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nano_usd_per_minute",
+          "cost_nano_usd",
+          "duration_ms",
+          "calls",
+          "of_calls",
+          "bases"
+        ],
+        "title": "DashboardProviderCostRateResponse",
+        "type": "object"
+      },
+      "DashboardResponse": {
+        "additionalProperties": false,
+        "description": "The project's projected calls that started in ``[from, to)``: ``overall``, one\nentry per UTC ``bucket`` overlapping the range (empty ones included), and one per\ngroup, most calls first. ``not_projected_calls``: calls received in the range that\nhave no projection yet, so are not placed.",
+        "properties": {
+          "bucket": {
+            "enum": [
+              "hour",
+              "day"
+            ],
+            "title": "Bucket",
+            "type": "string"
+          },
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardBucketResponse"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "from_unix_nano": {
+            "title": "From Unix Nano",
+            "type": "string"
+          },
+          "group_by": {
+            "enum": [
+              "framework",
+              "agent"
+            ],
+            "title": "Group By",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/DashboardGroupResponse"
+            },
+            "title": "Groups",
+            "type": "array"
+          },
+          "not_projected_calls": {
+            "title": "Not Projected Calls",
+            "type": "integer"
+          },
+          "overall": {
+            "$ref": "#/components/schemas/DashboardTilesResponse"
+          },
+          "to_unix_nano": {
+            "title": "To Unix Nano",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_unix_nano",
+          "to_unix_nano",
+          "bucket",
+          "group_by",
+          "not_projected_calls",
+          "overall",
+          "buckets",
+          "groups"
+        ],
+        "title": "DashboardResponse",
+        "type": "object"
+      },
+      "DashboardTilesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "audible_gap": {
+            "$ref": "#/components/schemas/DashboardLatencyResponse"
+          },
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "cost_per_minute": {
+            "$ref": "#/components/schemas/DashboardCostResponse"
+          },
+          "dead_air": {
+            "$ref": "#/components/schemas/DashboardDeadAirResponse"
+          },
+          "interruption_rate": {
+            "$ref": "#/components/schemas/DashboardInterruptionsResponse"
+          },
+          "llm_first_token": {
+            "$ref": "#/components/schemas/DashboardLlmLatencyResponse"
+          },
+          "reported_latency": {
+            "$ref": "#/components/schemas/DashboardLatencyResponse"
+          }
+        },
+        "required": [
+          "calls",
+          "reported_latency",
+          "audible_gap",
+          "llm_first_token",
+          "interruption_rate",
+          "dead_air",
+          "cost_per_minute"
+        ],
+        "title": "DashboardTilesResponse",
         "type": "object"
       },
       "DerivedAnalysis": {
@@ -3930,19 +5487,6 @@
         "title": "FirstAbnormalBoundaryUnknownResponse",
         "type": "object"
       },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "title": "Detail",
-            "type": "array"
-          }
-        },
-        "title": "HTTPValidationError",
-        "type": "object"
-      },
       "HealthResponse": {
         "additionalProperties": false,
         "properties": {
@@ -5207,6 +6751,30 @@
         "title": "LiveSessionResponse",
         "type": "object"
       },
+      "MediaChannelResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "speaker": {
+            "enum": [
+              "user",
+              "agent",
+              "mixed"
+            ],
+            "title": "Speaker",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "speaker"
+        ],
+        "title": "MediaChannelResponse",
+        "type": "object"
+      },
       "MediaLocator": {
         "additionalProperties": true,
         "properties": {
@@ -5244,7 +6812,7 @@
       },
       "MediaRef": {
         "additionalProperties": true,
-        "description": "A reference to media somebody else holds \u2014 never the media itself.\n\nEarshot stores custody, not content: who holds the bytes, what they are,\nwhich window of the session they cover, under what consent and retention,\nand which clock domain their own timeline runs on. It never ingests,\nfetches, caches, or proxies them.\n\n``integrity`` is the honesty discriminator that makes that distinction\nlegible instead of overloading a null:\n\n``content_digest``\n    Somebody measured these bytes and declared a ``sha256`` and\n    ``size_bytes`` for them. The digest is a *declaration carried by the\n    artifact*, not an earshot verification \u2014 earshot still never read the\n    bytes \u2014 but it is a checkable commitment a holder can be held to.\n``opaque_handle``\n    Nobody measured the bytes on this path, so the reference carries no\n    digest and no size and names the ``custodian`` who does hold them.\n    ``byte_range`` is meaningless here: you cannot range into bytes whose\n    length was never observed.\n\nMaking ``sha256``/``size_bytes`` optional is what the real custody case\nrequires. The alternative \u2014 keeping them required and letting a producer\nfill them with something it did not compute \u2014 is exactly the dishonesty\nthis contract exists to prevent. The coherence rule is enforced by\n:func:`media_custody_incoherence` at every boundary, not by convention.",
+        "description": "A reference to media somebody else holds \u2014 never the media itself.\n\nEarshot stores custody, not content: who holds the bytes, what they are,\nwhich window of the session they cover, under what consent and retention,\nand which clock domain their own timeline runs on. It never ingests,\nfetches, caches, or proxies them.\n\n``integrity`` is the honesty discriminator that makes that distinction\nlegible instead of overloading a null:\n\n``content_digest``\n    Somebody measured these bytes and declared a ``sha256`` and\n    ``size_bytes`` for them. The digest is a *declaration carried by the\n    artifact*, not an earshot verification \u2014 earshot still never read the\n    bytes \u2014 but it is a checkable commitment a holder can be held to.\n``opaque_handle``\n    Nobody measured the bytes on this path, so the reference carries no\n    digest and no size and names the ``custodian`` who does hold them.\n    ``byte_range`` is meaningless here: you cannot range into bytes whose\n    length was never observed.\n\nMaking ``sha256``/``size_bytes`` optional is what the real custody case\nrequires. The alternative \u2014 keeping them required and letting a producer\nfill them with something it did not compute \u2014 is exactly the dishonesty\nthis contract exists to prevent. The coherence rule is enforced by\n:func:`media_custody_incoherence` at every boundary, not by convention.\n\n``channel_index`` names one channel (from 0) of a multi-channel file: the\nreference covers that channel only, and ``stream_id`` is that channel's\nstream, so a stereo recording of a caller and an agent is two references to\nthe same bytes. Absent, the reference covers every channel of the file.",
         "properties": {
           "attributes": {
             "additionalProperties": true,
@@ -5276,6 +6844,19 @@
             ],
             "title": "Capture Class",
             "type": "string"
+          },
+          "channel_index": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Channel Index"
           },
           "clock_domain_id": {
             "anyOf": [
@@ -5797,7 +7378,7 @@
       },
       "OtlpStatsResponse": {
         "additionalProperties": false,
-        "description": "The OTLP receiver's rare-event counters and gauges for one project (AC5.12).",
+        "description": "The OTLP receiver's rare-event counters and gauges for one project.",
         "properties": {
           "key_disagreements": {
             "title": "Key Disagreements",
@@ -5918,6 +7499,281 @@
           "role"
         ],
         "title": "Participant",
+        "type": "object"
+      },
+      "PlacedTranscriptLineResponse": {
+        "additionalProperties": false,
+        "description": "A transcript line on the call's axis. ``timing``: ``measured`` lines have both\ntimes, ``start_only`` a start, ``order_only`` neither (listed in order, never\nplaced). ``alignment_uncertain``: the line's turn had a timeline discontinuity.",
+        "properties": {
+          "alignment_uncertain": {
+            "title": "Alignment Uncertain",
+            "type": "boolean"
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
+          "line_no": {
+            "title": "Line No",
+            "type": "integer"
+          },
+          "span": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpanRefResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "speaker": {
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "title": "Speaker",
+            "type": "string"
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "timing": {
+            "enum": [
+              "measured",
+              "start_only",
+              "order_only"
+            ],
+            "title": "Timing",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_no",
+          "speaker",
+          "text",
+          "timing",
+          "start_ms",
+          "end_ms",
+          "alignment_uncertain",
+          "span"
+        ],
+        "title": "PlacedTranscriptLineResponse",
+        "type": "object"
+      },
+      "PriceCreateRequest": {
+        "additionalProperties": false,
+        "description": "A price for the caller's project: ``price_nano_usd`` per ``per_quantity`` units\nof ``unit``, in effect for calls whose first evidence is at or after\n``effective_from_unix_nano``. ``provider`` and ``model`` match usage exactly,\nlower-cased.",
+        "properties": {
+          "effective_from_unix_nano": {
+            "pattern": "^(0|[1-9][0-9]{0,18})$",
+            "title": "Effective From Unix Nano",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 1,
+            "pattern": "^[!-~]+$",
+            "title": "Model",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1024,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "per_quantity": {
+            "default": 1,
+            "maximum": 9.223372036854776e+18,
+            "minimum": 1.0,
+            "title": "Per Quantity",
+            "type": "integer"
+          },
+          "price_nano_usd": {
+            "maximum": 9.223372036854776e+18,
+            "minimum": 0.0,
+            "title": "Price Nano Usd",
+            "type": "integer"
+          },
+          "provider": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[!-~]+$",
+            "title": "Provider",
+            "type": "string"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "pattern": "^https?://[!-~]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "unit": {
+            "enum": [
+              "input_token",
+              "output_token",
+              "cached_input_token",
+              "character",
+              "audio_second"
+            ],
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "model",
+          "unit",
+          "price_nano_usd",
+          "effective_from_unix_nano"
+        ],
+        "title": "PriceCreateRequest",
+        "type": "object"
+      },
+      "PricePageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PriceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "PricePageResponse",
+        "type": "object"
+      },
+      "PriceResponse": {
+        "additionalProperties": false,
+        "description": "One price row. ``scope`` ``builtin`` rows ship with Earshot or are added by the\noperator; ``project`` rows are the caller's and win over built-ins.",
+        "properties": {
+          "created_unix_nano": {
+            "title": "Created Unix Nano",
+            "type": "string"
+          },
+          "effective_from_unix_nano": {
+            "title": "Effective From Unix Nano",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "per_quantity": {
+            "title": "Per Quantity",
+            "type": "integer"
+          },
+          "price_nano_usd": {
+            "title": "Price Nano Usd",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "builtin",
+              "project"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "provider",
+          "model",
+          "unit",
+          "price_nano_usd",
+          "per_quantity",
+          "effective_from_unix_nano",
+          "source_url",
+          "note",
+          "created_unix_nano"
+        ],
+        "title": "PriceResponse",
         "type": "object"
       },
       "PrivacyManifest": {
@@ -6412,8 +8268,28 @@
       },
       "RecordingCreateRequest": {
         "additionalProperties": false,
-        "description": "A recording's manifest. Without ``recording_id`` the server mints a UUID, and\nthe request is then not idempotent.",
+        "description": "A recording's manifest. Without ``recording_id`` the server mints a UUID, and\nthe request is then not idempotent. A ``mixed`` recording may name each\nchannel's speaker in ``channel_speakers`` (``user`` and ``agent`` at most once\neach); its file then has that many channels.",
         "properties": {
+          "channel_speakers": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "user",
+                    "agent"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 2,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Speakers"
+          },
           "content_type": {
             "enum": [
               "audio/wav",
@@ -6487,6 +8363,24 @@
           "call_id": {
             "title": "Call Id",
             "type": "string"
+          },
+          "channel_speakers": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "user",
+                    "agent"
+                  ],
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel Speakers"
           },
           "content_type": {
             "title": "Content Type",
@@ -6595,9 +8489,58 @@
           "sha256",
           "duration_ms",
           "created_unix_nano",
-          "stored_unix_nano"
+          "stored_unix_nano",
+          "channel_speakers"
         ],
         "title": "RecordingResponse",
+        "type": "object"
+      },
+      "RecordingTranscriptResponse": {
+        "additionalProperties": false,
+        "description": "The transcript a recording holds: its format, the timing its lines have\n(``measured`` for WebVTT, ``order_only`` for plain text), how many lines, and the\nsha256 of the lines as parsed (the same transcript, re-sent, has the same one).",
+        "properties": {
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "format": {
+            "enum": [
+              "vtt",
+              "text"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "line_count": {
+            "title": "Line Count",
+            "type": "integer"
+          },
+          "recording_id": {
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "timing": {
+            "enum": [
+              "measured",
+              "order_only"
+            ],
+            "title": "Timing",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recording_id",
+          "call_id",
+          "format",
+          "timing",
+          "line_count",
+          "sha256"
+        ],
+        "title": "RecordingTranscriptResponse",
         "type": "object"
       },
       "RecoveryRecord": {
@@ -6859,6 +8802,111 @@
         "title": "Session",
         "type": "object"
       },
+      "SpanAttributeResponse": {
+        "additionalProperties": false,
+        "description": "One stored attribute: its key as sent, the semantic key Earshot reads it as,\nits capture class, and its value (JSON; bytes as base64, a non-finite float as\nits name).",
+        "properties": {
+          "capture_class": {
+            "$ref": "#/components/schemas/CaptureClass"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "semantic_key": {
+            "title": "Semantic Key",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "semantic_key",
+          "capture_class",
+          "value"
+        ],
+        "title": "SpanAttributeResponse",
+        "type": "object"
+      },
+      "SpanEventResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "items": {
+              "$ref": "#/components/schemas/SpanAttributeResponse"
+            },
+            "title": "Attributes",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "time_unix_nano": {
+            "title": "Time Unix Nano",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "time_unix_nano",
+          "attributes"
+        ],
+        "title": "SpanEventResponse",
+        "type": "object"
+      },
+      "SpanRefResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "span_id": {
+            "title": "Span Id",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "span_id"
+        ],
+        "title": "SpanRefResponse",
+        "type": "object"
+      },
+      "SpanStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "unset",
+              "ok",
+              "error"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "SpanStatusResponse",
+        "type": "object"
+      },
       "StoredAnalysisResponse": {
         "additionalProperties": false,
         "properties": {
@@ -7076,11 +9124,18 @@
       },
       "TranscriptLineResponse": {
         "additionalProperties": false,
-        "description": "One transcript line and the span it was read from.",
+        "description": "One transcript line and its timing provenance from the source span.",
         "properties": {
           "end_unix_nano": {
-            "title": "End Unix Nano",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Unix Nano"
           },
           "span_id": {
             "title": "Span Id",
@@ -7095,11 +9150,27 @@
             "type": "string"
           },
           "start_unix_nano": {
-            "title": "Start Unix Nano",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Unix Nano"
           },
           "text": {
             "title": "Text",
+            "type": "string"
+          },
+          "timing": {
+            "enum": [
+              "measured",
+              "start_only",
+              "order_only"
+            ],
+            "title": "Timing",
             "type": "string"
           },
           "trace_id": {
@@ -7110,6 +9181,7 @@
         "required": [
           "speaker",
           "text",
+          "timing",
           "start_unix_nano",
           "end_unix_nano",
           "trace_id",
@@ -7519,6 +9591,63 @@
         "title": "TurnProjection",
         "type": "object"
       },
+      "TurnSpanResponse": {
+        "additionalProperties": false,
+        "description": "A span of a turn, for the lazy span route; times are span times on the axis.",
+        "properties": {
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "stt",
+              "llm",
+              "tts",
+              "tool",
+              "other"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "span_id": {
+            "title": "Span Id",
+            "type": "string"
+          },
+          "start_ms": {
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "unset",
+              "ok",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "span_id",
+          "name",
+          "role",
+          "status",
+          "start_ms",
+          "end_ms"
+        ],
+        "title": "TurnSpanResponse",
+        "type": "object"
+      },
       "UnmatchedTurnsResponse": {
         "additionalProperties": false,
         "properties": {
@@ -7580,46 +9709,6 @@
         ],
         "title": "ValidateResponse",
         "type": "object"
-      },
-      "ValidationError": {
-        "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "title": "Location",
-            "type": "array"
-          },
-          "msg": {
-            "title": "Message",
-            "type": "string"
-          },
-          "type": {
-            "title": "Error Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError",
-        "type": "object"
       }
     },
     "securitySchemes": {
@@ -7642,7 +9731,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.14.0"
+    "version": "0.15.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7666,6 +9755,7 @@
     },
     "/hooks/v1/connectors/{endpoint_id}": {
       "post": {
+        "description": "Receive one provider delivery, checked in this order: the connector (404),\na header credential (401), the body cap (413; an ElevenLabs\n``post_call_audio`` streams up to 64 MiB and is ignored), the signature (401),\nan event the connector does not consume (200 ``ignored``, nothing written), the\nrate (429), then the payload (400; 422 for a call ID that is not a session\nkey). The Host check does not apply: a hook carries its provider's credential.",
         "operationId": "connector_delivery_endpoint_hooks_v1_connectors__endpoint_id__post",
         "parameters": [
           {
@@ -7801,11 +9891,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ProblemResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ConnectorProblemResponse"
+                    }
+                  ],
+                  "title": "Response 422 Connector Delivery Endpoint Hooks V1 Connectors  Endpoint Id  Post"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "Unprocessable Content"
           },
           "429": {
             "content": {
@@ -8334,7 +10432,7 @@
     },
     "/v1/calls": {
       "get": {
-        "description": "The authenticated project's calls, newest first evidence first. Pages are keyed on each call's first evidence time and ID, which never change, so paging is stable while calls arrive and receive evidence.",
+        "description": "The authenticated project's calls, newest first evidence first. Pages are keyed on each call's first evidence time and ID, which never change, so paging is stable while calls arrive and receive evidence. Every filter given must match, and a filter never matches an unknown (null) value or a call without a projection. Latency and audible-gap bounds compare the call's p50 in ms; tag repeats (all must match); min_cost_nano_usd compares the cost lower bound; max_cost_nano_usd matches complete costs only (lower bound plus estimate) and reports excluded_incomplete. q is a substring of the transcript (at least 3 characters, % and _ literal, ASCII case folded); under the metadata_only preset it is 422 EARSHOT_PRESET_FORBIDS_CONTENT_SEARCH.",
         "operationId": "list_calls_endpoint_v1_calls_get",
         "parameters": [
           {
@@ -8383,6 +10481,188 @@
                 }
               ],
               "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "default": [],
+              "items": {
+                "maxLength": 256,
+                "minLength": 1,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              },
+              "maxItems": 10,
+              "title": "Tag",
+              "type": "array"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_reported_latency_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Reported Latency Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_reported_latency_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Reported Latency Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_audible_gap_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Audible Gap Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_audible_gap_ms",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Audible Gap Ms"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_cost_nano_usd",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Cost Nano Usd"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_cost_nano_usd",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 9223372036854775807,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Cost Nano Usd"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "minLength": 3,
+                  "pattern": "^[^\\x00]*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
             }
           }
         ],
@@ -8682,7 +10962,7 @@
         "summary": "Purge Call Endpoint"
       },
       "get": {
-        "description": "One call with its revisions, recordings and transcript. The transcript is read from the call's spans, so an open call's transcript grows as they arrive; under metadata_only it is empty (not_captured_by_preset).",
+        "description": "One call with its revisions, recordings, transcript and projection. The transcript is read from the call's spans, so an open call's transcript grows as they arrive; under metadata_only it is empty (not_captured_by_preset). projection is null until the call is projected. The reply carries an ETag; a request whose If-None-Match names it is 304.",
         "operationId": "get_call_endpoint_v1_calls__call_id__get",
         "parameters": [
           {
@@ -8701,6 +10981,186 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CallDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "304": {
+            "description": "Not modified: the If-None-Match ETag is current."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Get Call Endpoint"
+      }
+    },
+    "/v1/calls/{call_id}/spans/{trace_id}/{span_id}": {
+      "get": {
+        "description": "One span of the call as it was stored (lowercase hex IDs): its attributes with their semantic keys and capture classes, its events and its status. 404 EARSHOT_SPAN_NOT_FOUND unless the span's trace belongs to this call.",
+        "operationId": "get_call_span_endpoint_v1_calls__call_id__spans__trace_id___span_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "trace_id",
+            "required": true,
+            "schema": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "span_id",
+            "required": true,
+            "schema": {
+              "title": "Span Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallSpanResponse"
                 }
               }
             },
@@ -8836,7 +11296,7 @@
           },
           {}
         ],
-        "summary": "Get Call Endpoint"
+        "summary": "Get Call Span Endpoint"
       }
     },
     "/v1/calls:resolve": {
@@ -9194,6 +11654,204 @@
           {}
         ],
         "summary": "Capture Endpoint"
+      }
+    },
+    "/v1/dashboard": {
+      "get": {
+        "description": "Call volume, latency, interruptions, dead air and cost per minute for the authenticated project's projected calls that started in [from, to) (Unix nanoseconds, by each call's own evidence start), overall, per UTC hour or day bucket, and per framework or agent. Latency percentiles are nearest-rank over turns. Every tile names the calls it covers (calls of of_calls); an unknown value is never counted as 0. Earshot's and the provider's cost are reported side by side, never summed. At most 1000 buckets.",
+        "operationId": "dashboard_endpoint_v1_dashboard_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "pattern": "^(0|[1-9][0-9]{0,18})$",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "pattern": "^(0|[1-9][0-9]{0,18})$",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "bucket",
+            "required": false,
+            "schema": {
+              "default": "day",
+              "enum": [
+                "hour",
+                "day"
+              ],
+              "title": "Bucket",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "default": "framework",
+              "enum": [
+                "framework",
+                "agent"
+              ],
+              "title": "Group By",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Dashboard Endpoint"
       }
     },
     "/v1/incidents": {
@@ -12838,6 +15496,340 @@
         "summary": "Otlp Stats Endpoint"
       }
     },
+    "/v1/prices": {
+      "get": {
+        "description": "The built-in prices and the authenticated project's own, oldest first. Money is integer nano-USD: price_nano_usd per per_quantity units.",
+        "operationId": "list_prices_endpoint_v1_prices_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PricePageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "List Prices Endpoint"
+      },
+      "post": {
+        "description": "Add a price for the authenticated project (append-only; it wins over a built-in price for the same provider, model and unit). Projections priced before it become stale and are recomputed.",
+        "operationId": "create_price_endpoint_v1_prices_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Create Price Endpoint"
+      }
+    },
     "/v1/projects/{project_id}": {
       "delete": {
         "description": "Requires the earshot:project:delete scope. Deletion is idempotent. A 202 response means writes are fenced and cleanup is still pending; repeat the same request until state is deleted.",
@@ -13168,7 +16160,7 @@
     },
     "/v1/recordings": {
       "post": {
-        "description": "Create a mono recording of the call a session key names, creating the call if needed. The same recording_id with the same manifest answers 200 with the recording; another manifest, or a failed recording, is 409. A call holds at most 16 recordings; a 17th is 409. Without recording_id the server mints one and the request is not idempotent. Upload the bytes to upload_path.",
+        "description": "Create a recording of the call a session key names, creating the call if needed: one speaker's mono track, or a mixed recording whose channel_speakers names each channel's speaker (user and agent at most once each; WAV, FLAC or Ogg Opus only, whose channel count the upload's header must match). The same recording_id with the same manifest answers 200 with the recording; another manifest, or a failed recording, is 409. A call holds at most 16 recordings; a 17th is 409. Without recording_id the server mints one and the request is not idempotent. Upload the bytes to upload_path.",
         "operationId": "create_recording_endpoint_v1_recordings_post",
         "requestBody": {
           "content": {
@@ -13722,7 +16714,7 @@
         "summary": "Recording Content Endpoint"
       },
       "put": {
-        "description": "Upload a pending recording's bytes (mono; Content-Type is the recording's content_type). The body streams to the blob store under a server-chosen key and is stored when it commits; concurrent uploads store exactly one. An upload to a stored recording is only hashed: the same bytes answer 200, other bytes 409. A failed recording is 409. While the body streams, the recording's Call is not closed; a body that sends nothing for 60 s, or is still arriving at the upload hold cap (600 s by default) after the request started, is 408.",
+        "description": "Upload a pending recording's bytes (Content-Type is the recording's content_type). A WAV, FLAC or Ogg Opus header must show the recording's channel count (one, or one per channel_speakers entry), or the upload is 422 EARSHOT_RECORDING_CHANNEL_MISMATCH. The body streams to the blob store under a server-chosen key and is stored when it commits; concurrent uploads store exactly one. An upload to a stored recording is only hashed: the same bytes answer 200, other bytes 409. A failed recording is 409. While the body streams, the recording's Call is not closed; a body that sends nothing for 60 s, or is still arriving at the upload hold cap (600 s by default) after the request started, is 408.",
         "operationId": "upload_recording_endpoint_v1_recordings__recording_id__content_put",
         "parameters": [
           {
@@ -13931,6 +16923,697 @@
           {}
         ],
         "summary": "Upload Recording Endpoint"
+      }
+    },
+    "/v1/recordings/{recording_id}/peaks": {
+      "get": {
+        "description": "The recording's waveform peaks from its analysis: an audiowaveform .dat file (version 2, 8-bit, 256 source samples per pixel, one channel per channel of the recording). Private, no-cache, with an ETag (If-None-Match gives 304). 404 EARSHOT_PEAKS_NOT_FOUND until the analysis stores them, and for a recording that cannot be analysed.",
+        "operationId": "recording_peaks_endpoint_v1_recordings__recording_id__peaks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "An audiowaveform .dat file, version 2, 8-bit."
+          },
+          "304": {
+            "description": "Not modified: the If-None-Match ETag is current."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Recording Peaks Endpoint"
+      }
+    },
+    "/v1/recordings/{recording_id}/rendition": {
+      "get": {
+        "description": "The stereo FLAC rendition of a mono pair on one timeline (channel 0 user, channel 1 agent), made by the analysis and held by the pair's user recording, so a browser plays both on one clock. Range as for content. 404 EARSHOT_RENDITION_NOT_FOUND for any other recording, or before it is made.",
+        "operationId": "recording_rendition_endpoint_v1_recordings__recording_id__rendition_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "audio/flac": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The whole rendition."
+          },
+          "206": {
+            "content": {
+              "audio/flac": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The one byte range the Range header asked for."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "416": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "The range starts past the end."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Recording Rendition Endpoint"
+      }
+    },
+    "/v1/recordings/{recording_id}/rendition/peaks": {
+      "get": {
+        "description": "The rendition's peaks: both halves' peaks as one two-channel audiowaveform .dat file (channel 0 user, channel 1 agent). Caching as for peaks; 404 EARSHOT_PEAKS_NOT_FOUND until both halves' peaks are stored.",
+        "operationId": "recording_rendition_peaks_endpoint_v1_recordings__recording_id__rendition_peaks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "An audiowaveform .dat file, version 2, 8-bit."
+          },
+          "304": {
+            "description": "Not modified: the If-None-Match ETag is current."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Recording Rendition Peaks Endpoint"
+      }
+    },
+    "/v1/recordings/{recording_id}/transcript": {
+      "post": {
+        "description": "Attach a transcript to a recording, as transcript lines of its call. The body is UTF-8: text/vtt (WebVTT; each cue is a line, its times offsets from the recording's started_at: measured timing) or text/plain (one line per non-blank line: order_only timing), at most 1048576 bytes, 10000 transcript lines and 80000 source lines. A WebVTT voice (<v user>, <v agent>) or a 'user:'/'agent:' prefix names each line's speaker; on a one-speaker recording an unnamed line is that speaker's. A malformed body is 422 EARSHOT_TRANSCRIPT_INVALID, naming the line. A recording holds one transcript: the same transcript again answers 200 and writes nothing; another is 409 EARSHOT_TRANSCRIPT_EXISTS and never replaces it. Under the metadata_only preset it is 422 EARSHOT_PRESET_FORBIDS_TRANSCRIPT.",
+        "operationId": "recording_transcript_endpoint_v1_recordings__recording_id__transcript_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            },
+            "text/vtt": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingTranscriptResponse"
+                }
+              }
+            },
+            "description": "The recording holds this transcript already."
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordingTranscriptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Recording Transcript Endpoint"
       }
     },
     "/v1/traces": {

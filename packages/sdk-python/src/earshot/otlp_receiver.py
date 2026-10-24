@@ -1,4 +1,4 @@
-"""The OTLP/HTTP trace receiver's protocol half (FR-5): no HTTP server, no storage.
+"""The OTLP/HTTP trace receiver's protocol half: no HTTP server, no storage.
 
 ``api.py`` mounts ``POST /v1/traces`` and calls into this module; the spans it
 accepts go to ``storage_calls.CallStore.record_spans``.
@@ -78,7 +78,7 @@ MAX_TIME_UNIX_NANO = 2**63 - 1
 MAX_ATTRIBUTE_KEY_BYTES = 1024
 # What a request's spans share is stored more than once: a span's row holds its scope
 # name, and ``otlp_resources`` holds a resource and scope once per distinct pair
-# (tribunal round 3, N3-1b and N3-1c). These bound each resource and scope, and
+# (``otlp_resources``). These bound each resource and scope, and
 # ``MAX_REQUEST_SHARED_BYTES`` what one request stores more than once
 # (docs/production.md).
 MAX_SCOPE_NAME_BYTES = 256

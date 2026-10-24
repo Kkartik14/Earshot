@@ -1,8 +1,11 @@
-"""The pure half of the recordings API (FR-9): IDs, media types, WAV headers, ranges.
+"""The pure half of the recordings API: IDs, media types, headers, ranges.
 
 WAV bodies are real files written by the standard ``wave`` module (and, for the
-extensible format, by hand from the RIFF layout); every header is fed to the
-inspector in pieces, as an upload streams in.
+extensible format, by hand from the RIFF layout); FLAC and Ogg Opus bodies are
+real encoder output (PyAV's FLAC and libopus encoders) and the real LiveKit 1.8
+stereo recording (``fixtures/captured/livekit-otlp-1.8/audio/recording.ogg``); a
+few malformed headers are written by hand from their specifications. Every
+header is fed to its inspector in pieces, as an upload streams in.
 """
 
 from __future__ import annotations
@@ -14,14 +17,22 @@ import wave
 
 import pytest
 
+from audio_support import LIVEKIT_RECORDING, encoded
 from earshot.recordings import (
     MAX_RANGE_HEADER_LENGTH,
     RECORDING_CONTENT_TYPES,
     ByteRange,
+    FlacHeaderError,
+    FlacInspector,
+    OggHeaderError,
+    OggInspector,
     RangeNotSatisfiable,
+    RecordingHeaderError,
     WavHeaderError,
     WavInspector,
+    media_inspector,
     parse_byte_range,
+    valid_channel_speakers,
     valid_recording_id,
 )
 
@@ -66,12 +77,32 @@ def extensible_wav(*, channels: int, frames: int = 800) -> bytes:
     return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks
 
 
-def inspect(body: bytes, piece: int = 7) -> WavInspector:
-    inspector = WavInspector()
+def inspect(body: bytes, piece: int = 7, inspector=None):
+    inspector = WavInspector() if inspector is None else inspector
     for start in range(0, len(body), piece):
         inspector.feed(body[start : start + piece])
     inspector.finish(len(body))
     return inspector
+
+
+def ogg_page(packet: bytes, *, flags: int = 0x02, granule: int = 0, serial: int = 7) -> bytes:
+    """One Ogg page (RFC 3533) holding one packet; the checksum is not read."""
+
+    lacing = [255] * (len(packet) // 255) + [len(packet) % 255]
+    header = struct.pack("<4sBBqIIIB", b"OggS", 0, flags, granule, serial, 0, 0, len(lacing))
+    return header + bytes(lacing) + packet
+
+
+def opus_head(channels: int, pre_skip: int = 312) -> bytes:
+    return struct.pack("<8sBBHIhB", b"OpusHead", 1, channels, pre_skip, 48_000, 0, 0)
+
+
+def flac_header(*, sample_rate: int, channels: int, total_samples: int, kind: int = 0) -> bytes:
+    """``fLaC`` and a last STREAMINFO block (RFC 9639 §8.2), as the first 42 bytes."""
+
+    packed = (sample_rate << 44) | ((channels - 1) << 41) | (15 << 36) | total_samples
+    info = struct.pack(">HH3s3sQ16s", 4096, 4096, b"\0\0\0", b"\0\0\0", packed, b"\0" * 16)
+    return b"fLaC" + bytes([0x80 | kind]) + len(info).to_bytes(3, "big") + info
 
 
 # --- recording IDs and media types ------------------------------------------------------
@@ -168,7 +199,7 @@ GSM_NO_BYTE_RATE = struct.pack("<HHIIHHHH", 0x0031, 1, 8_000, 0, 65, 0, 2, 320)
     ids=["ms-gsm", "ima-adpcm", "mu-law", "mp3-unreliable", "no-byte-rate"],
 )
 def test_a_coded_wav_has_its_true_duration_or_none(fmt, data_bytes, expected) -> None:
-    """Tribunal round 1, B-5: block-coded telephony WAVs use the byte rate; a format
+    """Block-coded telephony WAVs use the byte rate; a format
     whose byte rate is not reliable has no duration rather than a wrong one."""
 
     assert inspect(coded_wav(fmt, data_bytes, fact_samples=8_000)).duration_ms() == expected
@@ -189,6 +220,47 @@ def test_trailing_chunks_after_the_data_chunk_do_not_count_as_audio() -> None:
     body = wav_bytes(rate=8_000, frames=8_000) + b"LIST" + struct.pack("<I", 1000) + b"\0" * 1000
 
     assert inspect(body).duration_ms() == 1000
+
+
+def test_a_long_wav_header_sent_in_small_pieces_is_read_in_linear_time() -> None:
+    fmt = struct.pack("<HHIIHH", 1, 1, 16_000, 32_000, 2, 16)
+    junk = (b"JUNK" + struct.pack("<I", 0)) * 130_000  # about 1 MB of empty chunks
+    body = (
+        b"RIFF" + struct.pack("<I", 0) + b"WAVE" + junk
+        + b"fmt " + struct.pack("<I", len(fmt)) + fmt
+        + b"data" + struct.pack("<I", 32_000) + bytes(32_000)
+    )  # fmt: skip
+
+    started = time.perf_counter()
+    inspector = inspect(body, 1024)
+    elapsed = time.perf_counter() - started
+
+    assert (inspector.channels, inspector.duration_ms()) == (1, 1000)
+    assert elapsed < 1.0  # re-reading the header from its start at every piece took 12 s
+
+
+def test_a_wav_whose_data_chunk_declares_no_audio_is_refused() -> None:
+    """A ``data`` size of 0 is not open-ended (0xFFFFFFFF is): libsndfile reads it as
+    no frames, so the recording could be stored and never analysed."""
+
+    body = bytearray(wav_bytes(rate=16_000, frames=16_000))
+    struct.pack_into("<I", body, 40, 0)
+
+    with pytest.raises(WavHeaderError, match="declares no audio"):
+        inspect(bytes(body))
+
+
+@pytest.mark.parametrize("audio_bytes", [0, 1])
+def test_a_wav_whose_body_ends_before_one_whole_sample_is_refused(audio_bytes) -> None:
+    fmt = struct.pack("<HHIIHH", 1, 1, 16_000, 32_000, 2, 16)  # 16-bit mono: 2-byte frames
+    body = (
+        b"RIFF" + struct.pack("<I", 0) + b"WAVE"
+        + b"fmt " + struct.pack("<I", len(fmt)) + fmt
+        + b"data" + struct.pack("<I", 32_000) + bytes(audio_bytes)
+    )  # fmt: skip
+
+    with pytest.raises(WavHeaderError, match="holds no audio"):
+        inspect(body)
 
 
 @pytest.mark.parametrize(
@@ -217,6 +289,175 @@ def test_a_header_that_cannot_end_within_its_bound_is_refused(junk) -> None:
             inspector.feed(b"\0" * (1024 * 1024))
 
 
+# --- FLAC headers --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("piece", [1, 7, 4096])
+@pytest.mark.parametrize(("rate", "channels"), [(16_000, 1), (48_000, 2)])
+def test_a_real_flac_reports_its_channels_and_duration(piece, rate, channels) -> None:
+    body = encoded("flac", "flac", rate=rate, channels=channels, seconds=1.5)
+
+    inspector = inspect(body, piece, FlacInspector())
+
+    assert (inspector.channels, inspector.sample_rate) == (channels, rate)
+    assert inspector.duration_ms() == 1500
+
+
+def test_a_flac_knows_its_channels_from_its_first_42_bytes() -> None:
+    inspector = FlacInspector()
+
+    inspector.feed(flac_header(sample_rate=44_100, channels=2, total_samples=441_000))
+
+    assert (inspector.header_complete, inspector.channels) == (True, 2)
+
+
+def test_a_flac_that_declares_no_samples_is_refused() -> None:
+    """A total of 0 means "unknown" (a stream whose length was never written back);
+    the decoder cannot read such a stream, so it could be stored and never analysed."""
+
+    body = flac_header(sample_rate=16_000, channels=1, total_samples=0) + b"\xff\xf8" * 50
+
+    with pytest.raises(FlacHeaderError, match="declares no samples"):
+        inspect(body, inspector=FlacInspector())
+
+
+def test_a_flac_declaring_more_audio_than_its_bytes_can_hold_has_no_duration() -> None:
+    body = flac_header(sample_rate=8_000, channels=1, total_samples=2**36 - 1)  # 42 B, 99 days
+
+    assert inspect(body, inspector=FlacInspector()).duration_ms() is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"",
+        b"fLaC\x80",
+        b"ID3\x04" + b"\0" * 60,
+        flac_header(sample_rate=16_000, channels=1, total_samples=16, kind=4),  # no STREAMINFO
+        flac_header(sample_rate=0, channels=1, total_samples=16),
+    ],
+    ids=["empty", "truncated", "not-flac", "first-block-not-streaminfo", "no-sample-rate"],
+)
+def test_a_body_that_is_not_a_readable_flac_is_refused(body) -> None:
+    with pytest.raises(FlacHeaderError):
+        inspect(body, inspector=FlacInspector())
+
+
+# --- Ogg Opus headers -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("piece", [1, 7, 4096, 1 << 20])
+def test_the_real_livekit_recording_is_stereo_opus_of_34_seconds(piece) -> None:
+    body = LIVEKIT_RECORDING.read_bytes()
+
+    inspector = inspect(body, piece, OggInspector())
+
+    assert inspector.channels == 2
+    # RFC 7845 §4: (last granule position 1632805 - pre-skip 312) / 48 kHz.
+    assert inspector.duration_ms() == 34_010
+
+
+@pytest.mark.parametrize(("channels", "rate"), [(1, 48_000), (2, 16_000)])
+def test_a_real_ogg_opus_reports_its_channels_and_duration(channels, rate) -> None:
+    body = encoded("ogg", "libopus", rate=rate, channels=channels, seconds=1.5)
+
+    inspector = inspect(body, 1000, OggInspector())
+
+    assert inspector.channels == channels
+    # libopus pads the stream to whole 20 ms frames, and its last granule position
+    # (the end trim) counts the 6.5 ms of encoder delay too.
+    assert inspector.duration_ms() == 1506
+
+
+def test_an_ogg_knows_its_channels_from_its_first_page() -> None:
+    inspector = OggInspector()
+
+    inspector.feed(ogg_page(opus_head(2)))
+
+    assert (inspector.header_complete, inspector.channels) == (True, 2)
+
+
+def test_an_ogg_that_ends_inside_a_page_has_no_duration() -> None:
+    body = LIVEKIT_RECORDING.read_bytes()
+
+    assert inspect(body[:-10], 4096, OggInspector()).duration_ms() is None
+
+
+def test_an_ogg_declaring_more_audio_than_its_bytes_can_hold_has_no_duration() -> None:
+    body = (
+        ogg_page(opus_head(1))
+        + ogg_page(b"OpusTags" + b"\0" * 8, flags=0)
+        + ogg_page(b"\0" * 40, flags=0, granule=312 + 48_000 * 86_400 * 30)  # 30 days
+    )
+
+    assert inspect(body, inspector=OggInspector()).duration_ms() is None
+
+
+def test_an_ogg_with_a_second_logical_stream_has_no_duration() -> None:
+    body = (
+        ogg_page(opus_head(1))
+        + ogg_page(b"OpusTags" + b"\0" * 8, flags=0, serial=7)
+        + ogg_page(b"\0" * 40, flags=0, granule=48_312, serial=7)
+        + ogg_page(b"\0" * 40, flags=0, granule=96_312, serial=8)
+    )
+
+    assert inspect(body, inspector=OggInspector()).duration_ms() is None
+    assert inspect(body[: -len(ogg_page(b"\0" * 40))], inspector=OggInspector()).duration_ms() == (
+        1000
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"",
+        b"OggS\0",
+        b"RIFF" + b"\0" * 60,
+        ogg_page(b"\x01vorbis" + b"\0" * 23),  # Ogg Vorbis: Earshot reads Opus only
+        ogg_page(opus_head(1), flags=0),  # the first page is not a stream's first
+        ogg_page(b"OpusHead\x01"),  # a head too short to hold the channel count
+        ogg_page(opus_head(0)),
+    ],
+    ids=["empty", "truncated", "not-ogg", "vorbis", "no-bos", "short-head", "no-channels"],
+)
+def test_a_body_that_is_not_a_readable_ogg_opus_is_refused(body) -> None:
+    with pytest.raises(OggHeaderError):
+        inspect(body, inspector=OggInspector())
+
+
+# --- which bodies are read, and channel maps ------------------------------------------------
+
+
+def test_wav_flac_and_ogg_bodies_are_read_and_mp3_and_webm_are_not() -> None:
+    assert isinstance(media_inspector("audio/wav"), WavInspector)
+    assert isinstance(media_inspector("audio/flac"), FlacInspector)
+    assert isinstance(media_inspector("audio/ogg"), OggInspector)
+    assert media_inspector("audio/mpeg") is None
+    assert media_inspector("audio/webm") is None
+    assert issubclass(WavHeaderError, RecordingHeaderError)
+    assert issubclass(FlacHeaderError, RecordingHeaderError)
+    assert issubclass(OggHeaderError, RecordingHeaderError)
+
+
+@pytest.mark.parametrize(
+    ("value", "valid"),
+    [
+        (["user"], True),
+        (["agent"], True),
+        (["user", "agent"], True),
+        (["agent", "user"], True),
+        ([], False),
+        (["mixed"], False),
+        (["user", "user"], False),
+        (["user", "agent", "user"], False),
+        (["User"], False),
+        ("user", False),
+    ],
+)
+def test_a_channel_map_names_user_and_agent_at_most_once_each(value, valid) -> None:
+    assert valid_channel_speakers(value) is valid
+
+
 # --- byte ranges ----------------------------------------------------------------------------
 
 
@@ -237,7 +478,7 @@ def test_a_header_that_cannot_end_within_its_bound_is_refused(junk) -> None:
         ("bytes=abc", None),
         ("bytes=0-1\n", ByteRange(0, 2)),  # surrounding whitespace, as before
         ("bytes=٣-5", None),  # only ASCII digits are positions
-        # Positions longer than any object size (tribunal round 1, B-2): the end and
+        # Positions longer than any object size: the end and
         # a suffix are clamped to the object, as RFC 9110 reads them; leading zeros
         # are only zeros.
         ("bytes=0-" + "9" * 200, ByteRange(0, 100)),
@@ -268,7 +509,7 @@ def test_a_range_past_the_end_is_not_satisfiable(header) -> None:
 @pytest.mark.parametrize(
     "header",
     [
-        "bytes=x" + " " * 100_000 + "x",  # tribunal round 2, N-2: quadratic in a regex
+        "bytes=x" + " " * 100_000 + "x",  # quadratic in a regex
         "bytes=0-" + "9" * 5000,
         " " * MAX_RANGE_HEADER_LENGTH + "bytes=0-1",
     ],

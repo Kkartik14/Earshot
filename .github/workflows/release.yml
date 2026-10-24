@@ -98,11 +98,11 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Require the release version in both packages
+      - name: Require the release version in every package
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for package in packages/browser packages/viewer-ui; do
+          for package in packages/browser packages/viewer-ui packages/node; do
             version="$(node -p "require('./$package/package.json').version")"
             if [[ "$version" != "$RELEASE_VERSION" ]]; then
               echo "$package is version $version; the release is $RELEASE_VERSION" >&2
@@ -114,8 +114,8 @@ jobs:
         # would replace workspace: ranges; npm pack does neither.
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui build
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui pack \
+          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node build
+          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node pack \
             --pack-destination "$PWD/npm-dist"
       - name: Inspect the tarballs
         run: |

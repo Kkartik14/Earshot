@@ -10,6 +10,8 @@ from earshot.capture.calls import CaptureCallRegistry
 from earshot.capture.durable import CaptureSidecar, journal_path, sidecar_path, write_sidecar
 from earshot.codec import encode_incident_protobuf
 from earshot.storage import ProjectInactiveError, StorageError
+from earshot.storage_calls import CallStore
+from earshot.storage_deliveries import DeliveryDigests, DeliveryStore
 from incident_factory import make_valid_bundle
 from store_support import catalog_rows, drop_post_v19_objects, make_store
 
@@ -56,10 +58,11 @@ def test_project_deletion_is_repeatable_and_keeps_another_project_intact(tmp_pat
         record_type="call",
         external_id="call-a",
     )
-    claim = store.claim_delivery(
+    deliveries = DeliveryStore(store, calls=CallStore(store))
+    claim = deliveries.claim(
         connector,
         delivery_key_hmac=store.fingerprint("delivery:test", "pending-a"),
-        body_sha256="a" * 64,
+        digests=DeliveryDigests(evidence="a" * 64, body="b" * 64),
         event_type="finalized",
         now_unix_nano=1_000_000_000,
     )
@@ -77,12 +80,7 @@ def test_project_deletion_is_repeatable_and_keeps_another_project_intact(tmp_pat
     with pytest.raises(ProjectInactiveError):
         store.get_record(bundle_a.profile.manifest.bundle_id, project_id="tenant-a")
     with pytest.raises(StorageError):
-        store.complete_delivery(
-            claim.receipt_id,
-            state="ignored",
-            completed_at_unix_nano=2_000_000_000,
-            lease_token=claim.lease_token or 0,
-        )
+        deliveries.fail(claim.receipt_id, lease_token=claim.lease_token or 0, failure_code="LATE")
 
     for table in (
         "api_keys",
@@ -375,11 +373,12 @@ def test_project_deletion_batches_owned_delivery_receipts(tmp_path) -> None:
         secret_ref="env:ELEVENLABS_SECRET",
         endpoint_id="receipt_batch_endpoint",
     )
+    deliveries = DeliveryStore(store, calls=CallStore(store))
     for index in range(3):
-        store.claim_delivery(
+        deliveries.claim(
             connector,
             delivery_key_hmac=store.fingerprint("delivery:test", f"receipt-{index}"),
-            body_sha256=str(index) * 64,
+            digests=DeliveryDigests(evidence=str(index) * 64, body="b" * 64),
             event_type="finalized",
             now_unix_nano=index + 1,
         )

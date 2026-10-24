@@ -1,4 +1,4 @@
-"""AC1.3, AC1.4, AC1.5: real 0.1.x catalogs upgrade to head, and old releases refuse them after.
+"""Real 0.1.x catalogs upgrade to head, and old releases refuse them after.
 
 The fixtures under ``fixtures/upgrade`` were written by each release's own code,
 extracted from git and run in a subprocess (``scripts/make_upgrade_fixtures.py``):
@@ -49,7 +49,12 @@ FIXTURES = upgrade_fixture_names()
 OLDEST, NEWEST = FIXTURES[0], FIXTURES[-1]
 # A table the upgrade creates is empty afterwards, except these (and
 # incident_ingest_order, see below).
-ROWS_OF_ADDED_TABLES = {"alembic_version": 1, "earshot_meta": 1, "storage_maintenance": 1}
+ROWS_OF_ADDED_TABLES = {
+    "alembic_version": 1,
+    "builtin_price_version": 1,
+    "earshot_meta": 1,
+    "storage_maintenance": 1,
+}
 
 
 def _row_counts(database: Path) -> dict[str, int]:
@@ -394,7 +399,7 @@ def test_a_crash_after_bootstrapping_a_populated_legacy_catalog_loses_no_row(
     assert _row_counts(database) == _expected_rows_after_upgrade(OLDEST, fresh_catalog)
     assert _foreign_key_violations(database) == []
     assert _stored_objects(data_dir) == fixture["objects"]
-    # The bootstrap the next open completed also kept the 0.1.x privacy posture (AC3.1).
+    # The bootstrap the next open completed also kept the 0.1.x privacy posture.
     with closing(sqlite3.connect(database)) as connection:
         presets = connection.execute("SELECT DISTINCT capture_preset FROM projects").fetchall()
     assert presets == [("metadata_only",)]

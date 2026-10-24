@@ -655,11 +655,17 @@ class MediaRef(ContractModel):
     fill them with something it did not compute — is exactly the dishonesty
     this contract exists to prevent. The coherence rule is enforced by
     :func:`media_custody_incoherence` at every boundary, not by convention.
+
+    ``channel_index`` names one channel (from 0) of a multi-channel file: the
+    reference covers that channel only, and ``stream_id`` is that channel's
+    stream, so a stereo recording of a caller and an agent is two references to
+    the same bytes. Absent, the reference covers every channel of the file.
     """
 
     media_id: OpaqueId
     session_id: OpaqueId
     stream_id: OpaqueId
+    channel_index: StrictInt | None = Field(default=None, ge=0)
     media_kind: NonEmptyStr
     content_type: NonEmptyStr
     integrity: Literal["content_digest", "opaque_handle"] = "content_digest"

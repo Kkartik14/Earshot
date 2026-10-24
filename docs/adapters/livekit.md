@@ -5,8 +5,19 @@ Status: implemented pre-v1 normalization adapter with a
 render collection is planned and not shipped.
 
 Verified against `livekit-agents==1.6.5`, tag commit
-`dbc38dfbc113a2e06d36feb1278e543af3585ea9` on 2026-07-11. The supported package
-range is `>=1.6.5,<1.7`.
+`dbc38dfbc113a2e06d36feb1278e543af3585ea9` on 2026-07-11. Since 0.3.0 the supported
+package range is `>=1.6.5,<1.9`: the 1.6.10 and 1.8.8 objects are tested in process, and
+every `lk.*` attribute key of 1.6.5, 1.6.10, 1.7.1, 1.8.6 and 1.8.8 is listed in one key
+table (`earshot.call_capture.ATTRIBUTE_KEYS`) with its capture class. Keys are read by
+attribute, never by version.
+
+**Over OTLP (0.3.0).** The server builds a Call's Revision from LiveKit spans received
+at `/v1/traces` with this same adapter, through a shim that turns stored spans into its
+input; the turn facts equal the in-process ones on the real 1.8 capture
+(`fixtures/captured/livekit-otlp-1.8`). The server never imports `livekit-agents`. A
+Call's transcript is each `user_turn`'s transcript and each `agent_turn`'s played text,
+never an LLM reply LiveKit discarded, and every `llm_request` is billed. See the
+[OTLP quick start](../otlp-quickstart.md#livekit-snippet) and [the call view](../calls.md).
 
 ## Rules
 

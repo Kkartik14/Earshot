@@ -1,0 +1,246 @@
+.page {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.subtitle {
+  margin: 4px 0 14px;
+  font-size: 12px;
+  color: var(--tx-mid);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.control label {
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+}
+.control select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--tx);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.control select:hover {
+  border-color: var(--tx-low);
+}
+.control select:focus-visible,
+.toggle:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 1px;
+}
+
+.body {
+  padding: 16px 20px 40px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+}
+.costTile {
+  grid-column: span 2;
+}
+.tileLabel {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+}
+.tileValue {
+  margin: 0;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--tx);
+}
+.p95 {
+  color: var(--tx-mid);
+}
+.tileNote {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--tx-mid);
+  line-height: 1.45;
+}
+.tileHint {
+  display: block;
+  color: var(--tx-low);
+}
+
+.costs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.costRate {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+}
+.costLabel {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tx-mid);
+}
+
+.section {
+  margin-top: 24px;
+}
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.sectionTitle {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.muted {
+  color: var(--tx-low);
+  font-weight: 500;
+}
+.toggle {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--acc);
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+}
+
+/* One series: bars of calls per bucket, anchored to the baseline. */
+.bars {
+  display: flex;
+  align-items: flex-end;
+  height: 120px;
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--line);
+}
+.barSlot {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+.barSlot:hover .bar {
+  background: color-mix(in oklab, var(--acc) 80%, var(--tx));
+}
+.bar {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: var(--acc);
+}
+.axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--tx-low);
+  font-family: var(--mono);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.caption {
+  text-align: left;
+  font-size: 13px;
+  font-weight: 650;
+  padding-bottom: 6px;
+}
+.table th,
+.table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12.5px;
+  text-align: left;
+}
+.table thead th {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+.table tbody th {
+  font-weight: 500;
+}
+.table .num {
+  text-align: right;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--tx-mid);
+  white-space: nowrap;
+}
+.group {
+  font-family: var(--mono);
+  color: var(--tx);
+}
+.note {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  color: var(--tx-mid);
+  line-height: 1.5;
+  max-width: 640px;
+}
+
+@media (max-width: 640px) {
+  .costTile {
+    grid-column: auto;
+  }
+  .costs {
+    grid-template-columns: 1fr;
+  }
+}

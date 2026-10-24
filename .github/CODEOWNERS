@@ -1,0 +1,3 @@
+# CI gates must be reviewed by the repository owner before they can change.
+/.github/workflows/ @Kkartik14
+/.github/CODEOWNERS @Kkartik14

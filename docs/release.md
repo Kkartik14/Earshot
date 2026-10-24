@@ -116,15 +116,16 @@ migration revisions, and the `earshot` console entry point.
 
 ## npm packages
 
-`@earshot/browser` and `@earshot/viewer-ui` are published from the same tag, at the same
-version as the Python distribution. In the workspace, `@earshot/viewer-ui` exports its
+`@earshot/browser`, `@earshot/viewer-ui` and `@earshot/node` are published from the same
+tag, at the same version as the Python distribution. In the workspace, `@earshot/viewer-ui` exports its
 TypeScript sources; its `publishConfig` points the published `exports` and `types` at
 `dist/`. Only `pnpm pack` and `pnpm publish` apply `publishConfig`, so always pack it with
 pnpm. Check the tarballs locally:
 
 ```bash
-pnpm --filter @earshot/browser --filter @earshot/viewer-ui build
-pnpm --filter @earshot/browser --filter @earshot/viewer-ui pack --pack-destination "$DIST_DIR"
+pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node build
+pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node \
+  pack --pack-destination "$DIST_DIR"
 ```
 
 Each tarball must contain only `dist/`, `README.md`, `LICENSE` and `package.json`, every
@@ -133,10 +134,11 @@ range. The release workflow checks all three.
 
 ## Container image
 
-The image installs `earshot-observability[server,postgres,s3]` from wheels built in the
+The image installs `earshot-observability[server,postgres,s3,signals]` from wheels built in the
 same Dockerfile, runs as a non-root user with `/data` as its only writable path, and checks
-`/readyz`. It carries OCI labels, with the version from the `EARSHOT_VERSION` build
-argument:
+`/readyz`. It is about 142 MB, up from 94 MB before it gained the `signals` extra, which
+analyses recordings for the call view. It carries OCI labels, with the version from the
+`EARSHOT_VERSION` build argument:
 
 ```bash
 docker build -t earshot:local --build-arg EARSHOT_VERSION=0.2.0-local .

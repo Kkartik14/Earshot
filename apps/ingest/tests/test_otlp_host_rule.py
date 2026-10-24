@@ -1,4 +1,4 @@
-"""The loopback-Host rule and API keys, on every ``/v1`` route (AC5.9).
+"""The loopback-Host rule and API keys, on every ``/v1`` route.
 
 The ``Host`` check stops DNS rebinding against a server that serves without a
 credential: a page that rebinds its own name to 127.0.0.1 makes the browser send
@@ -175,7 +175,7 @@ def test_the_api_key_exemption_applies_to_every_v1_route(tmp_path, method, path,
     assert (anonymous.status, anonymous.problem_code()) == UNTRUSTED_HOST
 
 
-def test_the_operator_token_exemption_applies_to_every_v1_route_but_not_to_hooks(
+def test_the_operator_token_exemption_applies_to_every_v1_route_and_hooks_skip_the_rule(
     tmp_path,
 ) -> None:
     store = make_store(tmp_path)
@@ -192,4 +192,6 @@ def test_the_operator_token_exemption_applies_to_every_v1_route_but_not_to_hooks
         )
 
     assert routes == dict.fromkeys(routes, 200)
-    assert (hook.status, hook.problem_code()) == UNTRUSTED_HOST
+    # A hook carries its provider's credential, so the Host rule never applies to it
+    # (test_hook_host_exemption): it reaches its connector, here an unknown one.
+    assert (hook.status, hook.problem_code()) == (404, "EARSHOT_CONNECTOR_NOT_FOUND")

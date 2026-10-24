@@ -1,4 +1,4 @@
-"""FR-10: reading calls over HTTP (``GET /v1/calls``, ``GET /v1/calls/{call_id}``).
+"""Reading calls over HTTP (``GET /v1/calls``, ``GET /v1/calls/{call_id}``).
 
 Every test runs the real app on a real uvicorn server over a real catalog (both
 dialects), fed by ``CallStore.record_spans`` (the receiver's storage call) with
@@ -115,7 +115,7 @@ def _json(port: int, path: str):
     return reply.json()
 
 
-# --- the list (FR-10, AC10.1) ----------------------------------------------------------------
+# --- the list --------------------------------------------------------------------------------
 
 
 def test_the_call_list_is_newest_first_and_stable_while_calls_arrive_and_receive_spans(
@@ -172,7 +172,10 @@ def test_a_listed_call_carries_its_key_counts_evidence_times_and_latest_revision
         bad_cursor = _get(port, "/v1/calls?cursor=not-a-cursor")
         bad_limit = _get(port, "/v1/calls?limit=101")
 
-    assert items[call_id] == {
+    # The server's projection job projects a closed call in the background: its
+    # projection fields are test_call_view_api's and test_call_projection_job's.
+    listed_call = {key: value for key, value in items[call_id].items() if "projection" not in key}
+    assert listed_call == {
         "call_id": call_id,
         "key_source": "conversation.id",
         "state": "closed",
@@ -198,7 +201,7 @@ def test_a_listed_call_carries_its_key_counts_evidence_times_and_latest_revision
     assert bad_limit.status == 422
 
 
-# --- the detail (FR-10, AC10.2) --------------------------------------------------------------
+# --- the detail ------------------------------------------------------------------------------
 
 
 def _late_llm_span(world: World, span: int, text: str) -> None:
@@ -243,8 +246,8 @@ def test_call_detail_lists_revisions_recordings_and_the_transcript_of_its_spans(
         unknown = _get(port, "/v1/calls/call_0123456789abcdef0123456789abcdef")
         foreign = _get(port, f"/v1/calls/{call_id}", credential=other)
 
-    summary = {key: value for key, value in detail.items() if key in listed}
-    assert summary == listed
+    month_1 = {key: value for key, value in listed.items() if "projection" not in key}
+    assert {key: value for key, value in detail.items() if key in month_1} == month_1
     assert [
         {key: value for key, value in revision.items() if key != "created_unix_nano"}
         for revision in detail["revisions"]
@@ -283,12 +286,69 @@ def test_call_detail_lists_revisions_recordings_and_the_transcript_of_its_spans(
         "text",
         "start_unix_nano",
         "end_unix_nano",
+        "timing",
         "trace_id",
         "span_id",
     }
+    assert first["timing"] == "measured"
     assert first["start_unix_nano"].isdigit() and len(first["span_id"]) == 16
     for reply in (unknown, foreign):
         assert (reply.status, reply.problem_code()) == (404, "EARSHOT_CALL_NOT_FOUND")
+
+
+def test_call_detail_keeps_source_order_for_mixed_timing_connector_lines(tmp_path) -> None:
+    from earshot.connectors.base import transcript_line
+    from earshot.connectors.evidence import CALL, Evidence, EvidenceSpan, otlp_spans
+
+    world = _world(tmp_path)
+    call_span = EvidenceSpan(CALL, 0, START, START + 4 * SECOND)
+    lines = (
+        transcript_line(
+            0,
+            speaker="user",
+            text="measured first",
+            start=START + 2 * SECOND,
+            end=START + 2 * SECOND + 500_000_000,
+            timing="measured",
+        ),
+        transcript_line(
+            1,
+            speaker="agent",
+            text="untimed second",
+            start=START,
+            end=START,
+            timing="order_only",
+        ),
+        transcript_line(
+            2,
+            speaker="user",
+            text="measured third",
+            start=START + 3 * SECOND,
+            end=START + 3 * SECOND + 500_000_000,
+            timing="measured",
+        ),
+    )
+    evidence = Evidence(
+        provider="vapi",
+        provider_call_id="mixed_timing_transcript",
+        spans=(call_span, *(line for line in lines if line is not None)),
+    )
+    spans = otlp_spans(
+        evidence,
+        session_key="vapi:mixed_timing_transcript",
+        translator_version="test",
+    )
+    [call_id] = world.calls.record_spans("default", spans).call_ids
+
+    with serve(create_app(store=world.store)) as port:
+        detail = _json(port, f"/v1/calls/{call_id}")
+
+    assert [(line["text"], line["timing"]) for line in detail["transcript"]] == [
+        ("measured first", "measured"),
+        ("untimed second", "order_only"),
+        ("measured third", "measured"),
+    ]
+    assert detail["transcript"][1]["start_unix_nano"] is None
 
 
 def test_an_open_calls_transcript_grows_as_its_spans_arrive(tmp_path) -> None:
@@ -317,7 +377,7 @@ def test_an_open_calls_transcript_grows_as_its_spans_arrive(tmp_path) -> None:
 def test_a_calls_transcript_is_read_from_its_spans_lines_never_from_their_payloads(
     tmp_path,
 ) -> None:
-    # Carmack C3: every llm span's payload repeats the conversation so far, so a read
+    # Every llm span's payload repeats the conversation so far, so a read
     # that parses payloads costs the square of the call's length. Each span's line is
     # stored with it; with every payload unreadable the transcript is still whole.
     world = _world(tmp_path)
@@ -337,12 +397,12 @@ def test_a_calls_transcript_is_read_from_its_spans_lines_never_from_their_payloa
 def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_spans(
     tmp_path,
 ) -> None:
-    # Tribunal round 2, Bellard N-1 / Carmack CR2-1: with no ``sqlite_stat1``, SQLite
+    # With no ``sqlite_stat1``, SQLite
     # drove ``call_traces JOIN spans`` from every span of the project, probing the
     # call's traces once per span: 312 ms a detail read (and a claim's write-lock hold)
     # at 1M spans, whatever the call's own size. Each statement that reads one call's
     # spans must start from the call's traces and reach its spans by trace.
-    from earshot.storage_call_reads import TRANSCRIPT_SQL
+    from earshot.storage_call_reads import LEGACY_TRANSCRIPT_SQL, TRANSCRIPT_SQL
     from earshot.storage_closer import (
         SNAPSHOT_KEYS_SQL,
         SNAPSHOT_RESOURCES_SQL,
@@ -363,6 +423,7 @@ def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_s
         )
     statements = {
         "transcript": (TRANSCRIPT_SQL, ("default", call_id)),
+        "legacy transcript": (LEGACY_TRANSCRIPT_SQL, ("default", call_id)),
         "claim span keys": (SNAPSHOT_KEYS_SQL, ("default", call_id)),
         "snapshot resources": (SNAPSHOT_RESOURCES_SQL, ("default", "default", call_id)),
         "snapshot spans": (SNAPSHOT_SPANS_SQL, ("default", call_id)),
@@ -375,7 +436,9 @@ def test_every_read_of_a_calls_spans_starts_from_its_traces_never_the_projects_s
                 tuple(row)[-1]
                 for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}", parameters)
             ]
-            assert len(connection.execute(sql, parameters).fetchall()) > 0, name
+            rows = connection.execute(sql, parameters).fetchall()
+            if name != "legacy transcript":
+                assert rows, name
 
     def driven_from_traces(plan: list[str]) -> bool:
         steps = [step for step in plan if step.split()[:2] in (["SEARCH", "t"], ["SEARCH", "s"])]

@@ -1,0 +1,41 @@
+{
+  "end": 0,
+  "events": [
+    {
+      "request": {
+        "method": "POST",
+        "parameters": {
+          "account_sid": "AC00000000000000000000000000000001",
+          "async_amd": "false",
+          "from": "+15550100001",
+          "machine_detection_timeout": "0",
+          "method": "POST",
+          "record": "true",
+          "recording_channels": "dual",
+          "recording_track": "both",
+          "status_callback_method": "POST",
+          "timeout": "40",
+          "to": "+15550100002",
+          "transcribe": "false",
+          "trim": "trim-silence",
+          "twiml": "<Response><Say>This is an Earshot test call. It checks how call recordings are stored.</Say><Pause length=\"3\"/><Say>No reply is needed. The test plays three short sentences.</Say><Pause length=\"3\"/><Say>That is the end of the test. Thank you, and goodbye.</Say></Response>"
+        },
+        "url": "https://api.twilio.com/2010-04-01/Accounts/AC00000000000000000000000000000001/Calls.json"
+      },
+      "response": {
+        "content_type": "application/json",
+        "date_created": "Mon, 19 Oct 2026 12:49:57 +0000",
+        "request_duration": 126,
+        "response_body": "{\n  \"sid\": \"CA00000000000000000000000000000001\",\n  \"accountSid\": \"AC00000000000000000000000000000001\",\n  \"to\": \"+15550100002\",\n  \"toFormatted\": \"+15550100002\",\n  \"from\": \"+15550100001\",\n  \"fromFormatted\": \"(555) 010-0001\",\n  \"phoneNumberSid\": \"PN00000000000000000000000000000001\",\n  \"status\": \"queued\",\n  \"priceUnit\": \"USD\",\n  \"direction\": \"outbound-api\",\n  \"apiVersion\": \"2010-04-01\",\n  \"uri\": \"/2010-04-01/Accounts/AC00000000000000000000000000000001/Calls/CA00000000000000000000000000000001.json\",\n  \"subResourceUris\": {\n    \"notifications\": \"/2010-04-01/Accounts/AC00000000000000000000000000000001/Calls/CA00000000000000000000000000000001/Notifications.json\",\n    \"recordings\": \"/2010-04-01/Accounts/AC00000000000000000000000000000001/Calls/CA00000000000000000000000000000001/Recordings.json\"\n  },\n  \"callerId\": \"\",\n  \"queueTime\": 0\n}",
+        "response_code": 201
+      }
+    }
+  ],
+  "first_page_uri": "/2010-04-01/Accounts/AC00000000000000000000000000000001/Calls/CA00000000000000000000000000000001/Events.json?PageSize=50&Page=0",
+  "next_page_uri": null,
+  "page": 0,
+  "page_size": 50,
+  "previous_page_uri": null,
+  "start": 0,
+  "uri": "/2010-04-01/Accounts/AC00000000000000000000000000000001/Calls/CA00000000000000000000000000000001/Events.json?PageSize=50&Page=0"
+}

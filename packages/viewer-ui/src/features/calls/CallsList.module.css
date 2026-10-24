@@ -1,0 +1,204 @@
+.page {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.subtitle {
+  margin: 4px 0 14px;
+  font-size: 12px;
+  color: var(--tx-mid);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-start;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.field label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+}
+.field input {
+  font: inherit;
+  font-size: 12px;
+  color: var(--tx);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 9px;
+  width: 150px;
+}
+.range .field input {
+  width: 96px;
+}
+.field input:hover {
+  border-color: var(--tx-low);
+}
+.field input[aria-invalid="true"] {
+  border-color: var(--crit);
+}
+.fieldError {
+  font-size: 11px;
+  color: var(--crit);
+  max-width: 22ch;
+}
+
+.range {
+  display: flex;
+  gap: 8px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px 10px 8px;
+  margin: 0;
+}
+.range legend {
+  font-size: 10.5px;
+  color: var(--tx-mid);
+  padding: 0 4px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  align-self: flex-end;
+}
+.primary,
+.secondary,
+.more {
+  font: inherit;
+  font-size: 12px;
+  border-radius: 7px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+}
+.primary {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+  font-weight: 600;
+}
+.secondary,
+.more {
+  background: var(--panel);
+  color: var(--tx);
+}
+.more {
+  margin: 14px 0 24px;
+}
+.more:disabled {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.results {
+  padding: 12px 20px;
+}
+.note,
+.count {
+  font-size: 12px;
+  color: var(--tx-mid);
+  margin: 4px 0 10px;
+}
+.excluded {
+  font-size: 12px;
+  color: var(--est);
+  margin: 0 0 10px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.caption {
+  text-align: left;
+  font-size: 11px;
+  color: var(--tx-low);
+  padding: 8px 12px;
+}
+.table th,
+.table td {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+.table thead th {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.table tbody tr:hover {
+  background: color-mix(in oklab, var(--acc) 5%, transparent);
+}
+.num {
+  text-align: right !important;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dim {
+  color: var(--tx-low);
+}
+.estimate {
+  display: block;
+  font-size: 10.5px;
+  color: var(--est);
+}
+.nowrap {
+  white-space: nowrap;
+}
+
+.callCell {
+  font-weight: 400;
+  max-width: 320px;
+}
+.callLink {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--acc);
+  overflow-wrap: anywhere;
+}
+.callLink:hover {
+  text-decoration: underline;
+}
+.tag {
+  display: inline-block;
+  margin: 3px 4px 0 0;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--tx-mid);
+}

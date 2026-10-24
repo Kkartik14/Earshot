@@ -1,343 +1,240 @@
-"""Vapi finalized-report authentication and privacy-minimal normalization."""
+"""Vapi: the ``end-of-call-report`` server message as call evidence.
+
+Verified on documented payloads only (no Vapi account): the server-message
+reference, the ``Artifact`` schema of ``https://api.vapi.ai/api-json``, and
+``docs.vapi.ai/assistants/retrieve-call-artifacts``.
+
+- **Auth:** ``Authorization: Bearer <secret>`` or the legacy ``X-Vapi-Secret``,
+  exactly one; no timestamp, so no signature window.
+- **Consumed:** ``end-of-call-report``; every other ``message.type`` (status,
+  transcript and speech updates, tool calls) is ignored.
+- **Call:** ``startedAt``..``endedAt`` (ISO), the assistant ID, call type and status,
+  ``endedReason``; a reason naming an error marks the call failed.
+- **Transcript:** each ``bot``/``assistant`` and ``user`` message is a line. Its
+  ``time``..``endTime`` (epoch milliseconds) are measured times; with only
+  ``secondsFromStart`` it is ``start_only``; with neither, ``order_only``.
+- **Latency:** each ``performanceMetrics.turnLatencies`` item is a turn (milliseconds:
+  turn, model, voice, transcriber, endpointing). A report without
+  ``performanceMetrics`` keeps its transcript and audio, and says the coverage is
+  ``not_exposed``.
+- **Cost:** ``cost`` (USD). **Analysis:** ``analysis.summary``, ``successEvaluation``.
+- **Recordings:** the customer and assistant mono tracks (one timeline), from the
+  presigned URLs (expiring at ``presignedUrlsExpiresAt``) or the recording object;
+  else one mixed track. Vapi's API also serves each by call ID with a key.
+"""
 
 from __future__ import annotations
 
-import hmac
-import math
-from datetime import datetime
+from collections.abc import Mapping
 from typing import Any
 
-from earshot.clock import ManualClock
-from earshot.contract import (
-    Adapter,
-    Evidence,
-    QualityMeasurement,
-    QualitySample,
-    TimePoint,
-    TimeRange,
-)
-from earshot.recorder import IncidentRecorder, RecorderConfig
-
 from ..versions import VAPI_NORMALIZER_VERSION
-from .types import (
-    DeliveryPayloadError,
-    DeliveryTrustError,
-    ExternalIdentityInput,
-    NormalizationContext,
-    NormalizedProviderDelivery,
-    RawProviderDelivery,
+from .base import (
+    ProviderAdapter,
+    call_window,
+    event_name,
+    iso_unix_nano,
+    items,
+    mapping,
+    present,
+    provider_id,
+    required_mapping,
+    transcript_line,
 )
+from .evidence import (
+    AGENT_ID,
+    ANALYSIS,
+    ANALYSIS_SUCCESSFUL,
+    ANALYSIS_SUMMARY,
+    CALL,
+    CALL_ENDED_REASON,
+    CALL_STATUS,
+    CALL_TYPE,
+    COST,
+    COST_AMOUNT,
+    COST_SOURCE,
+    COST_UNIT,
+    COVERAGE_TURN_LATENCY,
+    LATENCY_ENDPOINTING_MS,
+    LATENCY_LLM_MS,
+    LATENCY_STT_MS,
+    LATENCY_TTS_MS,
+    LATENCY_TURN_MS,
+    TURN,
+    TURN_INDEX,
+    Evidence,
+    EvidenceSpan,
+    RecordingSource,
+    bounded_text,
+    content_type_for,
+    https_url,
+    number,
+)
+from .signatures import HeaderSecretVerifier
 
 ADAPTER_VERSION = VAPI_NORMALIZER_VERSION
-_METRIC_FIELDS = {
-    "modelLatency": "vapi.model_latency",
-    "voiceLatency": "vapi.voice_latency",
-    "transcriberLatency": "vapi.transcriber_latency",
-    "endpointingLatency": "vapi.endpointing_latency",
-    "turnLatency": "vapi.turn_latency",
+END_OF_CALL_REPORT = "end-of-call-report"
+_TURN_FIELDS = {
+    "turnLatency": LATENCY_TURN_MS,
+    "modelLatency": LATENCY_LLM_MS,
+    "voiceLatency": LATENCY_TTS_MS,
+    "transcriberLatency": LATENCY_STT_MS,
+    "endpointingLatency": LATENCY_ENDPOINTING_MS,
 }
+_SPEAKERS = {"bot": "agent", "assistant": "agent", "user": "user"}
+# Epoch milliseconds from 2001 on: what a message's ``time`` is when it is one.
+_EPOCH_MILLISECONDS = 1_000_000_000_000
+# (track, speaker, presigned field, recording.mono field)
+_MONO_TRACKS = (
+    ("customer", "user", "presignedCustomerUrl", "customerUrl"),
+    ("assistant", "agent", "presignedAssistantUrl", "assistantUrl"),
+)
 
 
-def _header_values(delivery: RawProviderDelivery, name: bytes) -> tuple[bytes, ...]:
-    lowered = name.lower()
-    return tuple(value for key, value in delivery.headers if key.lower() == lowered)
-
-
-def _iso_nano(value: object) -> int:
-    if not isinstance(value, str) or len(value) > 64:
-        raise DeliveryPayloadError
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise DeliveryPayloadError from None
-    if parsed.tzinfo is None:
-        raise DeliveryPayloadError
-    timestamp = parsed.timestamp()
-    if timestamp < 0:
-        raise DeliveryPayloadError
-    return int(timestamp * 1_000_000_000)
-
-
-def _nonnegative_number(value: object, *, maximum: float = 1_000_000_000_000.0) -> float:
-    if (
-        not isinstance(value, (int, float))
-        or isinstance(value, bool)
-        or not math.isfinite(float(value))
-        or float(value) < 0
-        or float(value) > maximum
-    ):
-        raise DeliveryPayloadError
-    return float(value)
-
-
-class VapiConnectorAdapter:
+class VapiConnectorAdapter(ProviderAdapter):
     provider = "vapi"
-    normalizer_version = ADAPTER_VERSION
+    translator_version = ADAPTER_VERSION
+    consumed_events = frozenset({END_OF_CALL_REPORT})
+    serves_recordings_by_id = True
 
-    def authenticate(
-        self,
-        delivery: RawProviderDelivery,
-        secrets: tuple[str, ...],
-        *,
-        now_unix_seconds: int,
-        tolerance_seconds: int,
-    ) -> None:
-        del now_unix_seconds, tolerance_seconds
-        authorization = _header_values(delivery, b"authorization")
-        legacy = _header_values(delivery, b"x-vapi-secret")
-        if not secrets or bool(authorization) == bool(legacy):
-            raise DeliveryTrustError
-        values = authorization or legacy
-        if len(values) != 1:
-            raise DeliveryTrustError
-        try:
-            supplied = values[0].decode("utf-8")
-        except UnicodeDecodeError:
-            raise DeliveryTrustError from None
-        if authorization:
-            scheme, separator, token = supplied.partition(" ")
-            if not separator or scheme.lower() != "bearer" or not token:
-                raise DeliveryTrustError
-            supplied = token
-        supplied_bytes = supplied.encode("utf-8")
-        valid = False
-        for secret in secrets:
-            valid = hmac.compare_digest(secret.encode("utf-8"), supplied_bytes) or valid
-        if not valid:
-            raise DeliveryTrustError
+    def verifier(self, headers, secrets, *, now):
+        del now
+        return HeaderSecretVerifier(headers, secrets, header=b"x-vapi-secret")
 
-    def normalize(
-        self,
-        payload: dict[str, Any],
-        context: NormalizationContext,
-    ) -> NormalizedProviderDelivery:
-        message = payload.get("message")
-        if not isinstance(message, dict) or message.get("type") != "end-of-call-report":
-            raise DeliveryPayloadError
-        call = message.get("call")
-        artifact = message.get("artifact")
-        if not isinstance(call, dict) or not isinstance(artifact, dict):
-            raise DeliveryPayloadError
-        call_id = call.get("id")
-        if not isinstance(call_id, str) or not call_id or len(call_id) > 512:
-            raise DeliveryPayloadError
-        identities = [ExternalIdentityInput("call_id", call_id)]
-        assistant_id = call.get("assistantId")
-        if isinstance(assistant_id, str) and assistant_id and len(assistant_id) <= 512:
-            identities.append(ExternalIdentityInput("assistant_id", assistant_id))
-        delivery_key = f"end-of-call-report:{call_id}"
-        bundle = self._report_bundle(
-            message,
-            call,
-            artifact,
-            call_id=call_id,
-            delivery_key=delivery_key,
-            context=context,
-        )
-        return NormalizedProviderDelivery(
-            delivery_key=delivery_key,
-            event_type="end-of-call-report",
-            disposition="incident",
-            external_identities=tuple(identities),
-            bundle=bundle,
-        )
+    def event_type(self, payload: Mapping[str, Any]) -> str:
+        return event_name(required_mapping(payload.get("message")).get("type"))
 
-    @staticmethod
-    def _report_bundle(
-        message: dict[str, Any],
-        call: dict[str, Any],
-        artifact: dict[str, Any],
-        *,
-        call_id: str,
-        delivery_key: str,
-        context: NormalizationContext,
-    ):
-        start_nano = _iso_nano(call.get("startedAt", call.get("createdAt")))
-        end_nano = _iso_nano(call.get("endedAt", message.get("timestamp")))
-        if end_nano < start_nano or end_nano - start_nano > 86_400 * 1_000_000_000:
-            raise DeliveryPayloadError
-        performance = artifact.get("performanceMetrics")
-        if not isinstance(performance, dict):
-            raise DeliveryPayloadError
-        raw_turns = performance.get("turnLatencies")
-        if not isinstance(raw_turns, list) or len(raw_turns) > 100_000:
-            raise DeliveryPayloadError
-        raw_messages = artifact.get("messages", [])
-        if not isinstance(raw_messages, list) or len(raw_messages) > 100_000:
-            raise DeliveryPayloadError
-        assistant_offsets: list[float | None] = []
-        for raw_message in raw_messages:
-            if not isinstance(raw_message, dict):
-                raise DeliveryPayloadError
-            if raw_message.get("role") in {"assistant", "bot"}:
-                offset = raw_message.get("secondsFromStart")
-                assistant_offsets.append(
-                    _nonnegative_number(offset, maximum=86_400.0) if offset is not None else None
-                )
-
-        session_fingerprint = context.fingerprint("vapi:call", call_id)
-        delivery_fingerprint = context.fingerprint("vapi:delivery", delivery_key)
-        clock = ManualClock(wall=start_nano, monotonic=0)
-        recorder = IncidentRecorder(
-            session_id=f"session-{session_fingerprint[:32]}",
-            bundle_id=f"bundle-{delivery_fingerprint[:32]}",
-            clock=clock,
-            config=RecorderConfig(
-                producer_name="earshot.connector.vapi",
-                producer_version=ADAPTER_VERSION,
-                adapters=(
-                    Adapter(
-                        name="earshot.vapi",
-                        version=ADAPTER_VERSION,
-                        framework="vapi",
-                    ),
-                ),
+    def translate(self, event_type: str, payload: Mapping[str, Any]) -> Evidence:
+        del event_type
+        message = required_mapping(payload.get("message"))
+        call = required_mapping(message.get("call"))
+        artifact = mapping(message.get("artifact"))
+        call_id = provider_id(call.get("id"))
+        start, end = call_window(
+            iso_unix_nano(
+                message.get("startedAt") or call.get("startedAt") or call.get("createdAt")
             ),
+            iso_unix_nano(message.get("endedAt") or call.get("endedAt")),
         )
-        recorder.add_participant("participant-agent", role="agent", endpoint_kind="provider")
-        recorder.record_coverage("provider.performance_metrics", "available")
-        for signal in ("stt.final", "turn.end", "tts.first_audio", "client.render"):
-            recorder.record_coverage(signal, "not_exposed", "provider_field_absent")
-        recorder.record_coverage(
-            "interruption.per_turn",
-            "not_exposed",
-            "provider_exports_session_aggregate_only",
-        )
-
-        session_start = TimePoint(
-            source_time_unix_nano=str(start_nano),
-            monotonic_time_nano="0",
-            clock_domain_id=recorder.clock_domain_id,
-        )
-        session_end = TimePoint(
-            source_time_unix_nano=str(end_nano),
-            monotonic_time_nano=str(end_nano - start_nano),
-            clock_domain_id=recorder.clock_domain_id,
-        )
-        session_window = TimeRange(start=session_start, end=session_end)
-
-        for index, raw_turn in enumerate(raw_turns):
-            if not isinstance(raw_turn, dict):
-                raise DeliveryPayloadError
-            values = {
-                name: _nonnegative_number(raw_turn[field])
-                for field, name in _METRIC_FIELDS.items()
-                if field in raw_turn
-            }
-            if "vapi.turn_latency" not in values:
-                raise DeliveryPayloadError
-            candidate_offset = assistant_offsets[index] if index < len(assistant_offsets) else None
-            point: TimePoint | None = None
-            turn_id: str | None = None
-            operation_id: str | None = None
-            sample_attributes: dict[str, Any] = {
-                "earshot.turn.index": index,
-                "earshot.unit_basis": "provider_schema_unit_undocumented",
-                "earshot.chronology": "not_exposed",
-            }
-            source_field = "message.artifact.performanceMetrics.turnLatencies"
-            confidence = "measured"
-            evidence_method = "provider_webhook"
-            if candidate_offset is not None:
-                offset_nano = int(candidate_offset * 1_000_000_000)
-                point = TimePoint(
-                    source_time_unix_nano=str(start_nano + offset_nano),
-                    monotonic_time_nano=str(offset_nano),
-                    clock_domain_id=recorder.clock_domain_id,
-                    uncertainty_nano="1000000000",
-                )
-                turn_id = f"turn-{index}"
-                operation_id = f"operation-provider-turn-{index}"
-                source_field = (
-                    "message.artifact.messages.secondsFromStart+"
-                    "message.artifact.performanceMetrics.turnLatencies"
-                )
-                confidence = "inferred"
-                evidence_method = "provider_ordered_index_join"
-                sample_attributes.update(
+        ended_reason = bounded_text(message.get("endedReason") or call.get("endedReason"))
+        performance = artifact.get("performanceMetrics")
+        turns = _turns(performance, start, end)
+        spans = [
+            EvidenceSpan(
+                CALL,
+                0,
+                start,
+                end,
+                present(
                     {
-                        "earshot.turn.id": turn_id,
-                        "earshot.operation.id": operation_id,
-                        "earshot.correlation": "ordered_index_inferred",
+                        AGENT_ID: bounded_text(call.get("assistantId")),
+                        CALL_TYPE: bounded_text(call.get("type")),
+                        CALL_STATUS: bounded_text(call.get("status")),
+                        CALL_ENDED_REASON: ended_reason,
+                        COVERAGE_TURN_LATENCY: (
+                            "available" if isinstance(performance, Mapping) else "not_exposed"
+                        ),
                     }
-                )
-            else:
-                sample_attributes["earshot.correlation"] = "provider_order_only"
-            evidence = Evidence(
-                source="provider",
-                observer="server",
-                method=evidence_method,
-                method_version=ADAPTER_VERSION,
-                source_field=source_field,
-                confidence=confidence,
-                availability="available",
-            )
-            if point is not None and operation_id is not None and turn_id is not None:
-                recorder.record_operation(
-                    operation_id=operation_id,
-                    operation_name="provider_turn_anchor",
-                    status="ok",
-                    started_at=point,
-                    ended_at=point,
-                    participant_id="participant-agent",
-                    turn_id=turn_id,
-                    evidence=evidence,
-                    attributes={"gen_ai.provider.name": "vapi"},
-                )
-            recorder.record_quality_sample(
-                QualitySample(
-                    sample_id=f"quality-turn-{index}",
-                    session_id=recorder.session_id,
-                    quality_kind="provider_latency",
-                    sample_window=(
-                        TimeRange(start=point, end=point) if point is not None else session_window
-                    ),
-                    measurements=tuple(
-                        QualityMeasurement(
-                            name=name,
-                            value=value,
-                            unit="provider_unit",
-                        )
-                        for name, value in sorted(values.items())
-                    ),
-                    evidence=evidence,
-                    participant_id="participant-agent",
-                    attributes=sample_attributes,
+                ),
+                error=ended_reason is not None and "error" in ended_reason,
+            ),
+            *_lines(artifact.get("messages"), start),
+            *turns,
+        ]
+        cost = number(message.get("cost", call.get("cost")))
+        if cost is not None:
+            spans.append(
+                EvidenceSpan(
+                    COST,
+                    0,
+                    start,
+                    end,
+                    {COST_AMOUNT: cost, COST_UNIT: "usd", COST_SOURCE: "message.cost"},
                 )
             )
+        analysis = mapping(message.get("analysis"))
+        analysed = present(
+            {
+                ANALYSIS_SUMMARY: bounded_text(analysis.get("summary"), maximum=64 * 1024),
+                ANALYSIS_SUCCESSFUL: bounded_text(analysis.get("successEvaluation"), maximum=64),
+            }
+        )
+        if analysed:
+            spans.append(EvidenceSpan(ANALYSIS, 0, start, end, analysed))
+        return Evidence(
+            provider=self.provider,
+            provider_call_id=call_id,
+            spans=tuple(spans),
+            recording_sources=_recordings(artifact, start),
+        )
 
-        count_measurements = []
-        for field, name in (
-            ("numUserInterrupted", "vapi.num_user_interrupted"),
-            ("numAssistantInterrupted", "vapi.num_assistant_interrupted"),
-        ):
-            if field in performance:
-                count_measurements.append(
-                    QualityMeasurement(
-                        name=name,
-                        value=_nonnegative_number(performance[field], maximum=1_000_000),
-                        unit="count",
-                    )
-                )
-        if count_measurements:
-            recorder.record_quality_sample(
-                QualitySample(
-                    sample_id="quality-interruptions",
-                    session_id=recorder.session_id,
-                    quality_kind="provider_session_aggregate",
-                    sample_window=session_window,
-                    measurements=tuple(count_measurements),
-                    evidence=Evidence(
-                        source="provider",
-                        observer="server",
-                        method="provider_webhook",
-                        method_version=ADAPTER_VERSION,
-                        source_field="message.artifact.performanceMetrics",
-                        confidence="measured",
-                        availability="available",
-                    ),
-                    participant_id="participant-agent",
-                )
-            )
-        clock.advance(end_nano - start_nano)
-        return recorder.close(status="completed")
+
+def _lines(messages: object, call_start: int) -> list[EvidenceSpan]:
+    lines = []
+    for ordinal, raw in enumerate(items(messages)):
+        item = mapping(raw)
+        speaker = _SPEAKERS.get(item.get("role"))  # type: ignore[arg-type]
+        if speaker is None:
+            continue
+        begin, finish = number(item.get("time")), number(item.get("endTime"))
+        offset = number(item.get("secondsFromStart"))
+        if begin is not None and finish is not None and _EPOCH_MILLISECONDS <= begin <= finish:
+            timing, start, end = "measured", int(begin * 1_000_000), int(finish * 1_000_000)
+        elif offset is not None:
+            timing = "start_only"
+            start = end = call_start + int(offset * 1_000_000_000)
+        else:
+            timing, start, end = "order_only", call_start, call_start
+        line = transcript_line(
+            ordinal,
+            speaker=speaker,
+            text=item.get("message"),
+            start=start,
+            end=end,
+            timing=timing,
+        )
+        if line is not None:
+            lines.append(line)
+    return lines
+
+
+def _turns(performance: object, start: int, end: int) -> list[EvidenceSpan]:
+    turns = []
+    for ordinal, raw in enumerate(items(mapping(performance).get("turnLatencies"))):
+        values = present(
+            {key: number(mapping(raw).get(field)) for field, key in _TURN_FIELDS.items()}
+        )
+        if values:
+            turns.append(EvidenceSpan(TURN, ordinal, start, end, {TURN_INDEX: ordinal, **values}))
+    return turns
+
+
+def _recordings(artifact: Mapping[str, Any], start: int) -> tuple[RecordingSource, ...]:
+    recording = mapping(artifact.get("recording"))
+    mono = mapping(recording.get("mono"))
+    expires = iso_unix_nano(artifact.get("presignedUrlsExpiresAt"))
+    sources = []
+    for track, speaker, presigned_field, mono_field in _MONO_TRACKS:
+        presigned = https_url(artifact.get(presigned_field))
+        url = presigned or https_url(mono.get(mono_field))
+        if url is not None:
+            sources.append(_source(track, speaker, url, start, expires if presigned else None))
+    if sources:
+        return tuple(sources)
+    presigned = https_url(artifact.get("presignedMonoUrl"))
+    url = presigned or https_url(mono.get("combinedUrl")) or https_url(artifact.get("recordingUrl"))
+    if url is None:
+        return ()
+    return (_source("mixed", "mixed", url, start, expires if presigned else None),)
+
+
+def _source(track: str, speaker: str, url: str, start: int, expires: int | None) -> RecordingSource:
+    return RecordingSource(
+        track=track,
+        speaker=speaker,
+        content_type=content_type_for(url, "audio/wav"),
+        started_at_unix_nano=start,
+        url=url,
+        url_expires_unix_nano=expires,
+        provider_api=True,
+    )

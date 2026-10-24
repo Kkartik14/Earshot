@@ -103,7 +103,7 @@ if hasattr(os, "register_at_fork"):
     )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Mapping
 
     from earshot.contract import IncidentBundle
 
@@ -129,7 +129,7 @@ class IncidentPurgedError(StorageError):
 
 
 class IncidentBelongsToCallError(StorageError):
-    """The incident is a revision of a call: it is purged only with its call (AC14.3)."""
+    """The incident is a revision of a call: it is purged only with its call."""
 
     code = "EARSHOT_INCIDENT_BELONGS_TO_CALL"
 
@@ -161,16 +161,6 @@ class CapturePresetUnavailableError(StorageError):
 
 class InvalidCursorError(StorageError):
     pass
-
-
-class DeliveryReceiptConflictError(StorageError):
-    pass
-
-
-class DeliveryInProgressError(StorageError):
-    def __init__(self, message: str, *, retry_after_seconds: int) -> None:
-        super().__init__(message)
-        self.retry_after_seconds = retry_after_seconds
 
 
 class StorageOpenError(StorageError):
@@ -559,7 +549,10 @@ class ConnectorRecord:
     provider: str
     secret_ref: str
     enabled: bool
+    # The version of the translator the connector was created with; informational.
     normalizer_version: str
+    # The connector's configuration as compact JSON (``None``: the defaults).
+    config_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -570,15 +563,6 @@ class ExternalReferenceRecord:
     record_type: str
     external_id: str
     linked_at_unix_nano: str
-
-
-@dataclass(frozen=True, slots=True)
-class DeliveryClaim:
-    receipt_id: str
-    disposition: str
-    bundle_id: str | None
-    canonical_sha256: str | None
-    lease_token: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,7 +627,7 @@ def prepare_incident(
     bundle: IncidentBundle, project_id: str, *, canonical_payload: bytes | None = None
 ) -> PreparedIncident:
     """Validate and encode ``bundle`` and derive its projections: the half of
-    ``ingest`` that needs no lock and no database (Fowler, second pass, 6)."""
+    ``ingest`` that needs no lock and no database."""
 
     from .codec import encode_incident_protobuf
     from .validation import assert_valid_incident
@@ -719,7 +703,7 @@ class AuthenticationStats:
 
 
 # The retention loop compacts SQLite (checkpoint plus VACUUM) after a purge drain
-# at most this often; a VACUUM blocks every writer while it runs (AC11.5).
+# at most this often; a VACUUM blocks every writer while it runs.
 COMPACTION_INTERVAL_NANO = 10 * 60 * 1_000_000_000
 
 # ``api_keys.last_used_at_unix_nano`` is advisory: it is written at most this often
@@ -727,8 +711,8 @@ COMPACTION_INTERVAL_NANO = 10 * 60 * 1_000_000_000
 KEY_USE_RECORD_INTERVAL_NANO = 60 * 1_000_000_000
 # How long an authenticated request waits for the write lock to record a key's
 # use. Past it the write is skipped and a later request retries it: the request
-# already passed the revocation check (AC2.2), and it must not queue behind a long
-# writer, a compaction or another process for a timestamp (AC5.7).
+# already passed the revocation check, and it must not queue behind a long
+# writer, a compaction or another process for a timestamp.
 KEY_USE_RECORD_BUDGET_SECONDS = 0.1
 
 
@@ -851,7 +835,7 @@ def _not_expired_sql(column: str) -> str:
 
 
 # What a project owns; project deletion empties each, and only then marks the
-# project deleted (AC14.5). The call tables come last, in deletion order.
+# project deleted. The call tables come last, in deletion order.
 _PROJECT_CALL_KEY_TABLES = (
     "otlp_resources",
     "call_key_generations",
@@ -878,9 +862,9 @@ _PROJECT_OWNED_TABLES = (
 )
 
 
-# Call revisions (FR-6) are incidents. A call's earlier revisions stay readable but
+# Call revisions are incidents. A call's earlier revisions stay readable but
 # are superseded by its latest one, so turn metrics count each call once; and a
-# revision is never reaped on its own, only with its call (AC14.4).
+# revision is never reaped on its own, only with its call.
 _CALL_REVISION_SQL = (
     "EXISTS (SELECT 1 FROM call_revisions WHERE call_revisions.bundle_id = incidents.bundle_id)"
 )
@@ -905,7 +889,7 @@ def _expired_alone(connection: DatabaseConnection, bundle_id: str, expiry: str |
     """Whether an incident's own retention deadline has passed and it expires alone.
 
     A call revision never expires alone, not even when read: it expires with its
-    call, once the call's latest revision has (AC14.4).
+    call, once the call's latest revision has.
     """
 
     return (
@@ -1095,6 +1079,7 @@ def _connector_record(row: Row) -> ConnectorRecord:
         secret_ref=row["secret_ref"],
         enabled=bool(row["enabled"]),
         normalizer_version=row["normalizer_version"],
+        config_json=row["config_json"],
     )
 
 
@@ -1326,7 +1311,7 @@ class IncidentStore:
         """Open a Postgres catalog. Nothing is written to the local filesystem.
 
         Artifacts are catalog rows, the write lock is ``K_write`` and the
-        correlation key comes from configuration (AC1.7), so ``data_dir`` is only
+        correlation key comes from configuration, so ``data_dir`` is only
         recorded, never created.
         """
 
@@ -1729,7 +1714,7 @@ class IncidentStore:
         Every step here is bounded by recovery or retention work, not by the size
         of the catalog. Incidents whose projections are older than this release
         (``projections_pending``) are re-projected later by ``reproject_stale``,
-        which the server runs in the background once it is serving (AC1.10).
+        which the server runs in the background once it is serving.
         """
 
         if not self._catalog_artifacts:
@@ -2197,7 +2182,7 @@ class IncidentStore:
                     if not incidents_remain:
                         from .storage_call_purge import delete_project_calls
 
-                        # Calls and all their evidence, then parked traces (FR-14);
+                        # Calls and all their evidence, then parked traces;
                         # their blobs are journaled for deletion after commit.
                         calls_remain = not delete_project_calls(
                             connection,
@@ -2615,7 +2600,7 @@ class IncidentStore:
         if not separator or len(key_id) != 16 or not secret or len(secret) > 128:
             return None
         # Every request reads the key's row: an indexed, lock-free SELECT that sees a
-        # revocation or a project deletion from any process at once (FR-2).
+        # revocation or a project deletion from any process at once.
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -2749,9 +2734,16 @@ class IncidentStore:
         secret_ref: str,
         endpoint_id: str | None = None,
         normalizer_version: str | None = None,
+        config: Mapping[str, Any] | None = None,
     ) -> ConnectorRecord:
+        """Create a connector. ``config`` is its configuration
+        (``connectors.config.ConnectorConfig``; ``None``: the defaults)."""
+
+        from .connectors.config import config_json
+
         if provider not in _CONNECTOR_NORMALIZER_VERSIONS:
             raise ValueError("unsupported connector provider")
+        stored_config = None if config is None else config_json(config)
         if not re.fullmatch(r"env:[A-Z][A-Z0-9_]{0,127}", secret_ref):
             raise ValueError("secret_ref must name a portable environment secret")
         identifier = endpoint_id or f"connector_{secrets.token_urlsafe(18)}"
@@ -2764,8 +2756,8 @@ class IncidentStore:
                 """
                 INSERT INTO connectors(
                     endpoint_id, project_id, provider, secret_ref, normalizer_version,
-                    created_at_unix_nano
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                    created_at_unix_nano, config_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -2774,6 +2766,7 @@ class IncidentStore:
                     secret_ref,
                     selected_normalizer,
                     time.time_ns(),
+                    stored_config,
                 ),
             )
             row = connection.execute(
@@ -2807,262 +2800,6 @@ class IncidentStore:
         value = f"{project_id}\x00{idempotency_key}"
         return f"bundle-{self.fingerprint('hosted-artifact-id-v1', value)}"
 
-    def claim_delivery(
-        self,
-        connector: ConnectorRecord,
-        *,
-        delivery_key_hmac: str,
-        body_sha256: str,
-        event_type: str,
-        now_unix_nano: int,
-        lease_nano: int = 30_000_000_000,
-    ) -> DeliveryClaim:
-        with self._mutation("claim_delivery"), self._connect() as connection:
-            connection.begin_write()
-            self._require_active_project(connection, connector.project_id)
-            stored_connector_row = connection.execute(
-                "SELECT * FROM connectors WHERE endpoint_id = ?",
-                (connector.endpoint_id,),
-            ).fetchone()
-            if (
-                stored_connector_row is None
-                or _connector_record(stored_connector_row) != connector
-                or not connector.enabled
-            ):
-                raise StorageError("delivery connector does not match stored configuration")
-            row = connection.execute(
-                """
-                SELECT * FROM delivery_receipts
-                WHERE endpoint_id = ? AND delivery_key_hmac = ?
-                """,
-                (connector.endpoint_id, delivery_key_hmac),
-            ).fetchone()
-            if row is not None:
-                if row["body_sha256"] != body_sha256:
-                    raise DeliveryReceiptConflictError("delivery key was reused with new content")
-                if row["state"] in {"applied", "ignored"}:
-                    return DeliveryClaim(
-                        receipt_id=row["receipt_id"],
-                        disposition="replayed",
-                        bundle_id=row["bundle_id"],
-                        canonical_sha256=row["canonical_sha256"],
-                        lease_token=None,
-                    )
-                lease_until = row["lease_until_unix_nano"]
-                if lease_until is not None and lease_until > now_unix_nano:
-                    remaining_nano = lease_until - now_unix_nano
-                    raise DeliveryInProgressError(
-                        "delivery is already being processed",
-                        retry_after_seconds=max(
-                            1,
-                            (remaining_nano + 999_999_999) // 1_000_000_000,
-                        ),
-                    )
-                next_attempt = int(row["attempt_count"]) + 1
-                connection.execute(
-                    """
-                    UPDATE delivery_receipts
-                    SET state = 'processing', lease_until_unix_nano = ?,
-                        attempt_count = attempt_count + 1,
-                        failure_code = NULL
-                    WHERE receipt_id = ?
-                    """,
-                    (now_unix_nano + lease_nano, row["receipt_id"]),
-                )
-                connection.commit()
-                return DeliveryClaim(row["receipt_id"], "claimed", None, None, next_attempt)
-
-            receipt_id = f"receipt_{secrets.token_urlsafe(18)}"
-            connection.execute(
-                """
-                INSERT INTO delivery_receipts(
-                    receipt_id, project_id, endpoint_id, delivery_key_hmac,
-                    body_sha256, event_type, state, first_received_at_unix_nano,
-                    lease_until_unix_nano, attempt_count
-                ) VALUES (?, ?, ?, ?, ?, ?, 'processing', ?, ?, 1)
-                """,
-                (
-                    receipt_id,
-                    connector.project_id,
-                    connector.endpoint_id,
-                    delivery_key_hmac,
-                    body_sha256,
-                    event_type,
-                    now_unix_nano,
-                    now_unix_nano + lease_nano,
-                ),
-            )
-            connection.commit()
-            return DeliveryClaim(receipt_id, "claimed", None, None, 1)
-
-    def complete_delivery(
-        self,
-        receipt_id: str,
-        *,
-        state: str,
-        completed_at_unix_nano: int,
-        lease_token: int,
-        bundle_id: str | None = None,
-        canonical_sha256: str | None = None,
-    ) -> None:
-        if state not in {"applied", "ignored"}:
-            raise ValueError("delivery completion state must be applied or ignored")
-        if state == "applied" and (bundle_id is None or canonical_sha256 is None):
-            raise ValueError("applied delivery requires a canonical incident binding")
-        if state == "ignored" and (bundle_id is not None or canonical_sha256 is not None):
-            raise ValueError("ignored delivery cannot bind a canonical incident")
-        with self._mutation("complete_delivery"), self._connect() as connection:
-            connection.begin_write()
-            project_row = connection.execute(
-                """
-                SELECT project.lifecycle_state
-                FROM delivery_receipts AS receipt
-                JOIN projects AS project ON project.project_id = receipt.project_id
-                WHERE receipt.receipt_id = ?
-                """,
-                (receipt_id,),
-            ).fetchone()
-            if project_row is None or project_row["lifecycle_state"] != "active":
-                raise StorageError("delivery project is no longer active")
-            if state == "applied":
-                binding = connection.execute(
-                    """
-                    SELECT receipt.project_id AS receipt_project_id,
-                           incident.project_id AS incident_project_id,
-                           incident.object_digest AS object_digest
-                    FROM delivery_receipts AS receipt
-                    JOIN incidents AS incident ON incident.bundle_id = ?
-                    WHERE receipt.receipt_id = ?
-                    """,
-                    (bundle_id, receipt_id),
-                ).fetchone()
-                if (
-                    binding is None
-                    or binding["receipt_project_id"] != binding["incident_project_id"]
-                    or binding["object_digest"] != canonical_sha256
-                ):
-                    raise StorageError(
-                        "delivery receipt cannot bind an incident from another project"
-                    )
-            result = connection.execute(
-                """
-                UPDATE delivery_receipts
-                SET state = ?, completed_at_unix_nano = ?, lease_until_unix_nano = NULL,
-                    bundle_id = ?, canonical_sha256 = ?, failure_code = NULL
-                WHERE receipt_id = ? AND state = 'processing' AND attempt_count = ?
-                """,
-                (
-                    state,
-                    completed_at_unix_nano,
-                    bundle_id,
-                    canonical_sha256,
-                    receipt_id,
-                    lease_token,
-                ),
-            )
-            if result.rowcount != 1:
-                raise StorageError("delivery receipt is not processing")
-            connection.commit()
-
-    def fail_delivery(
-        self,
-        receipt_id: str,
-        *,
-        lease_token: int,
-        failure_code: str,
-    ) -> None:
-        with self._mutation("fail_delivery"), self._connect() as connection:
-            project_row = connection.execute(
-                """
-                SELECT project.lifecycle_state
-                FROM delivery_receipts AS receipt
-                JOIN projects AS project ON project.project_id = receipt.project_id
-                WHERE receipt.receipt_id = ?
-                """,
-                (receipt_id,),
-            ).fetchone()
-            if project_row is None or project_row["lifecycle_state"] != "active":
-                raise StorageError("delivery project is no longer active")
-            result = connection.execute(
-                """
-                UPDATE delivery_receipts
-                SET state = 'failed', lease_until_unix_nano = NULL, failure_code = ?
-                WHERE receipt_id = ? AND state = 'processing' AND attempt_count = ?
-                """,
-                (failure_code, receipt_id, lease_token),
-            )
-            if result.rowcount != 1:
-                raise StorageError("delivery receipt lease is no longer owned")
-            connection.commit()
-
-    def record_external_identity(
-        self,
-        connector: ConnectorRecord,
-        *,
-        key_kind: str,
-        value_hmac: str,
-        bundle_id: str,
-        sensitivity: str = "identity",
-    ) -> None:
-        with self._mutation("record_external_identity"), self._connect() as connection:
-            connection.begin_write()
-            self._require_active_project(connection, connector.project_id)
-            stored_connector = connection.execute(
-                """
-                SELECT connector.project_id, connector.provider, project.lifecycle_state
-                FROM connectors AS connector
-                JOIN projects AS project ON project.project_id = connector.project_id
-                WHERE connector.endpoint_id = ?
-                """,
-                (connector.endpoint_id,),
-            ).fetchone()
-            incident = connection.execute(
-                "SELECT project_id FROM incidents WHERE bundle_id = ?",
-                (bundle_id,),
-            ).fetchone()
-            if (
-                stored_connector is None
-                or incident is None
-                or stored_connector["lifecycle_state"] != "active"
-                or stored_connector["project_id"] != connector.project_id
-                or stored_connector["provider"] != connector.provider
-                or incident["project_id"] != connector.project_id
-            ):
-                raise StorageError("external identity cannot cross connector and incident projects")
-            connection.execute(
-                connection.dialect.sql(
-                    "insert-or-ignore-external-identity",
-                    sqlite="""
-                INSERT OR IGNORE INTO external_identities(
-                    project_id, endpoint_id, provider, key_kind, value_hmac,
-                    bundle_id, sensitivity, created_at_unix_nano
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    # Only the duplicate is ignored here. OR IGNORE would also skip
-                    # NOT NULL and CHECK violations, but these values cannot violate
-                    # them: value_hmac is a 64-hex fingerprint and the connector and
-                    # incident rows were verified above.
-                    postgresql="""
-                INSERT INTO external_identities(
-                    project_id, endpoint_id, provider, key_kind, value_hmac,
-                    bundle_id, sensitivity, created_at_unix_nano
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT DO NOTHING
-                """,
-                ),
-                (
-                    connector.project_id,
-                    connector.endpoint_id,
-                    connector.provider,
-                    key_kind,
-                    value_hmac,
-                    bundle_id,
-                    sensitivity,
-                    time.time_ns(),
-                ),
-            )
-            connection.commit()
-
     def ingest(
         self,
         bundle: IncidentBundle,
@@ -3079,7 +2816,7 @@ class IncidentStore:
         ``before_commit`` runs inside the transaction that writes the catalog
         row (or finds it already written), just before it commits; whatever it
         writes commits with the incident, and if it raises nothing commits. The
-        call closer finishes a revision this way (FR-6, AC6.3).
+        call closer finishes a revision this way.
         """
 
         return self.ingest_prepared(
@@ -3641,7 +3378,7 @@ class IncidentStore:
 
         What the join removed is counted and returned, never dropped silently.
 
-        A call's revisions (FR-6) each project the whole call, so only its latest
+        A call's revisions each project the whole call, so only its latest
         revision counts; the earlier ones are superseded, not withheld.
         """
 

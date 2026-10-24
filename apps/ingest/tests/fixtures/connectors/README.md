@@ -21,6 +21,7 @@ or `ringg/`.
 {
   "provider": "retell",
   "secret_env": "RETELL_WEBHOOK_SECRET",
+  "signed_at_unix_seconds": 1752828600,
   "expected_disposition": "applied",
   "headers": [
     ["X-Retell-Signature", "v=1752828600000,d=abc123..."],
@@ -31,11 +32,13 @@ or `ringg/`.
 }
 ```
 
-The `secret_env` field names the environment variable. Do not put the secret in
-the JSON. `body_base64` must encode the exact bytes that the provider signed.
-Capture the body before parsing or re-serializing it. The optional
-`must_not_appear` list gives the test private strings to search for after
-normalization.
+Set the named environment variable only while running the checkpoint. Never put
+the secret itself in the JSON. `body_base64` must encode the exact bytes the provider
+signed. Capture the body before parsing or re-serializing it, or signature verification
+will fail. `signed_at_unix_seconds` records when the provider signed the delivery so the
+replay uses the same timestamp. The optional `must_not_appear` list gives the test
+private strings to search for after normalization. The test also checks that no URL is
+stored in a span.
 
 Create the base64 value with `base64 -i body.raw` on macOS or `base64 -w0
 body.raw` on Linux.

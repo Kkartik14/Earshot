@@ -1,504 +1,379 @@
-"""ElevenLabs finalized webhook authentication and normalization."""
+"""ElevenLabs Agents: post-call webhooks as call evidence.
+
+Tested on a real conversation (``fixtures/captured/elevenlabs``) wrapped in the
+documented webhook envelope and signed with a test secret; the webhook envelope,
+``call_initiation_failure`` and the traces-only OTel shape are from the docs.
+
+- **Auth:** ``ElevenLabs-Signature: t=<s>,v0=<hex>[,v0=…]``, HMAC-SHA256 of
+  ``"<t>." + body`` with the webhook secret; within 1800 s.
+- **Consumed:** ``post_call_transcription``, ``post_call_transcription_otel`` and
+  ``call_initiation_failure``. ``post_call_audio`` (base64 MP3, often over the body
+  cap) is authenticated as it streams, up to 64 MiB, and ignored: the audio comes
+  from the conversations API instead.
+- **Call:** ``metadata.start_time_unix_secs`` plus ``call_duration_secs``; agent,
+  status, ``termination_reason``.
+- **Transcript:** ``time_in_call_secs`` is a turn's start in whole seconds and there
+  is no end, so every line is ``start_only`` (never an end taken from the next line).
+- **Latency:** an agent turn's ``conversation_turn_metrics`` (seconds): LLM and TTS
+  time to first byte and ASR latency as stages; ``convai_ttf_audio_since_silence``
+  (time to first audio after the caller's silence) as the turn's reported latency.
+- **Cost:** ``metadata.cost``, in credits. **Analysis:** summary and success.
+- **Recording:** one mixed MP3 from ``GET /v1/convai/conversations/{id}/audio`` when
+  ``has_audio``; it needs an API key (``api_key_ref``), and without one there is none.
+
+Both transcription events describe the same conversation and write the same spans.
+The OTel event is translated from its conversation object when it carries one, and
+otherwise from its ``elevenlabs.conversation`` and ``elevenlabs.recv.*`` spans.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-import re
-from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
-from earshot.clock import ManualClock
-from earshot.contract import (
-    Adapter,
-    Evidence,
-    QualityMeasurement,
-    QualitySample,
-    TimePoint,
-    TimeRange,
-)
-from earshot.recorder import IncidentRecorder, RecorderConfig
-
 from ..versions import ELEVENLABS_NORMALIZER_VERSION
-from .types import (
-    DeliveryPayloadError,
-    DeliveryTrustError,
-    ExternalIdentityInput,
-    NormalizationContext,
-    NormalizedProviderDelivery,
-    RawProviderDelivery,
+from .base import (
+    ProviderAdapter,
+    call_window,
+    event_name,
+    items,
+    mapping,
+    present,
+    provider_id,
+    required_mapping,
+    transcript_line,
+    whole_number,
 )
+from .evidence import (
+    AGENT_ID,
+    AGENT_NAME,
+    ANALYSIS,
+    ANALYSIS_SUCCESSFUL,
+    ANALYSIS_SUMMARY,
+    CALL,
+    CALL_ENDED_REASON,
+    CALL_STATUS,
+    COST,
+    COST_AMOUNT,
+    COST_SOURCE,
+    COST_UNIT,
+    LATENCY_LLM_MS,
+    LATENCY_STT_MS,
+    LATENCY_TTS_MS,
+    LATENCY_TURN_MS,
+    TURN,
+    TURN_INDEX,
+    AttributeValue,
+    Evidence,
+    EvidenceSpan,
+    RecordingSource,
+    bounded_text,
+    number,
+)
+from .signatures import HmacVerifier, header_values, within_window
+from .types import DeliveryPayloadError, DeliveryTrustError
 
 ADAPTER_VERSION = ELEVENLABS_NORMALIZER_VERSION
-_HEX_PATTERN = re.compile(r"^[0-9a-f]+$")
-_SESSION_STATUS = {
-    "initiated": "in_progress",
-    "in-progress": "in_progress",
-    "processing": "processing",
-    "done": "completed",
-    "failed": "failed",
+TRANSCRIPTION = "post_call_transcription"
+TRANSCRIPTION_OTEL = "post_call_transcription_otel"
+INITIATION_FAILURE = "call_initiation_failure"
+AUDIO = "post_call_audio"
+SIGNATURE_WINDOW_SECONDS = 1800
+MAX_STREAMED_BYTES = 64 * 1024 * 1024
+_SECOND = 1_000_000_000
+_SPEAKERS = {"agent": "agent", "user": "user"}
+_TURN_METRICS = {
+    "convai_ttf_audio_since_silence": LATENCY_TURN_MS,
+    "convai_llm_service_ttfb": LATENCY_LLM_MS,
+    "convai_tts_service_ttfb": LATENCY_TTS_MS,
+    "convai_turn_asr_latency": LATENCY_STT_MS,
+}
+_FAILED_STATUSES = frozenset({"failed"})
+
+
+class ElevenLabsConnectorAdapter(ProviderAdapter):
+    provider = "elevenlabs"
+    translator_version = ADAPTER_VERSION
+    consumed_events = frozenset({TRANSCRIPTION, TRANSCRIPTION_OTEL, INITIATION_FAILURE})
+    streamed_events = frozenset({AUDIO})
+    serves_recordings_by_id = True
+
+    @property
+    def max_streamed_bytes(self) -> int:
+        return MAX_STREAMED_BYTES
+
+    def verifier(self, headers, secrets, *, now):
+        values = header_values(headers, b"elevenlabs-signature")
+        if len(values) != 1:
+            raise DeliveryTrustError
+        try:
+            pieces = [piece.strip() for piece in values[0].decode("ascii").split(",")]
+        except UnicodeDecodeError:
+            raise DeliveryTrustError from None
+        timestamps = [piece[2:] for piece in pieces if piece.startswith("t=")]
+        signatures = tuple(piece[3:] for piece in pieces if piece.startswith("v0="))
+        if (
+            len(timestamps) != 1
+            or not timestamps[0].isdigit()
+            or len(timestamps[0]) > 16
+            or not signatures
+            or any(len(value) != 64 for value in signatures)
+        ):
+            raise DeliveryTrustError
+        within_window(int(timestamps[0]), now, SIGNATURE_WINDOW_SECONDS)
+        return HmacVerifier(secrets, signatures, prefix=timestamps[0].encode("ascii") + b".")
+
+    def event_type(self, payload: Mapping[str, Any]) -> str:
+        return event_name(payload.get("type"))
+
+    def translate(self, event_type: str, payload: Mapping[str, Any]) -> Evidence:
+        data = required_mapping(payload.get("data"))
+        conversation_id = provider_id(data.get("conversation_id"))
+        if event_type == INITIATION_FAILURE:
+            spans = _initiation_failure(data, whole_number(payload.get("event_timestamp")))
+            return Evidence(self.provider, conversation_id, spans)
+        if event_type == TRANSCRIPTION_OTEL and "transcript" not in data:
+            return Evidence(self.provider, conversation_id, _from_traces(data))
+        metadata = mapping(data.get("metadata"))
+        start_seconds = whole_number(metadata.get("start_time_unix_secs"))
+        if start_seconds is None:
+            raise DeliveryPayloadError
+        duration = number(metadata.get("call_duration_secs")) or 0.0
+        start, end = call_window(
+            start_seconds * _SECOND, start_seconds * _SECOND + int(duration * _SECOND)
+        )
+        status = bounded_text(data.get("status"))
+        analysis = mapping(data.get("analysis"))
+        spans = [
+            _call(
+                start,
+                end,
+                agent_id=data.get("agent_id"),
+                agent_name=data.get("agent_name"),
+                status=status,
+                reason=metadata.get("termination_reason"),
+            ),
+            *_lines_and_turns(data.get("transcript"), start),
+            *_analysis_and_cost(
+                start,
+                end,
+                summary=analysis.get("transcript_summary"),
+                successful=analysis.get("call_successful"),
+                cost=metadata.get("cost"),
+            ),
+        ]
+        recordings = (
+            (
+                RecordingSource(
+                    track="mixed",
+                    speaker="mixed",
+                    content_type="audio/mpeg",
+                    started_at_unix_nano=start,
+                    provider_api=True,
+                ),
+            )
+            if data.get("has_audio") is True
+            else ()
+        )
+        return Evidence(self.provider, conversation_id, tuple(spans), recordings)
+
+
+def _call(
+    start: int,
+    end: int,
+    *,
+    agent_id: object,
+    agent_name: object,
+    status: str | None,
+    reason: object,
+    error: bool = False,
+) -> EvidenceSpan:
+    return EvidenceSpan(
+        CALL,
+        0,
+        start,
+        end,
+        present(
+            {
+                AGENT_ID: bounded_text(agent_id),
+                AGENT_NAME: bounded_text(agent_name),
+                CALL_STATUS: status,
+                CALL_ENDED_REASON: bounded_text(reason),
+            }
+        ),
+        error=error or status in _FAILED_STATUSES,
+    )
+
+
+def _lines_and_turns(transcript: object, call_start: int) -> list[EvidenceSpan]:
+    spans = []
+    for ordinal, raw in enumerate(items(transcript)):
+        entry = mapping(raw)
+        speaker = _SPEAKERS.get(entry.get("role"))  # type: ignore[arg-type]
+        offset = number(entry.get("time_in_call_secs"))
+        if speaker is None or offset is None:
+            continue
+        at = call_start + int(offset * _SECOND)
+        interrupted = entry.get("interrupted")
+        line = transcript_line(
+            ordinal,
+            speaker=speaker,
+            text=entry.get("message"),
+            start=at,
+            end=at,
+            timing="start_only",
+            interrupted=interrupted if isinstance(interrupted, bool) else False,
+        )
+        if line is not None:
+            spans.append(line)
+        if speaker != "agent":
+            continue
+        turn_metrics = mapping(entry.get("conversation_turn_metrics"))
+        metrics = mapping(turn_metrics.get("metrics", turn_metrics))
+        values: dict[str, AttributeValue] = {}
+        for name, key in _TURN_METRICS.items():
+            seconds = number(mapping(metrics.get(name)).get("elapsed_time"))
+            if seconds is not None:
+                values[key] = seconds * 1_000
+        if values:
+            spans.append(EvidenceSpan(TURN, ordinal, at, at, {TURN_INDEX: ordinal, **values}))
+    return spans
+
+
+def _analysis_and_cost(
+    start: int, end: int, *, summary: object, successful: object, cost: object
+) -> list[EvidenceSpan]:
+    spans = []
+    analysed = present(
+        {
+            ANALYSIS_SUMMARY: bounded_text(summary, maximum=64 * 1024),
+            ANALYSIS_SUCCESSFUL: bounded_text(successful, maximum=64),
+        }
+    )
+    if analysed:
+        spans.append(EvidenceSpan(ANALYSIS, 0, start, end, analysed))
+    amount = number(cost)
+    if amount is not None:
+        spans.append(
+            EvidenceSpan(
+                COST,
+                0,
+                start,
+                end,
+                {COST_AMOUNT: amount, COST_UNIT: "credit", COST_SOURCE: "data.metadata.cost"},
+            )
+        )
+    return spans
+
+
+def _initiation_failure(data: Mapping[str, Any], event_seconds: int | None) -> tuple:
+    if event_seconds is None:
+        raise DeliveryPayloadError
+    at = event_seconds * _SECOND
+    call_window(at, at)
+    return (
+        _call(
+            at,
+            at,
+            agent_id=data.get("agent_id"),
+            agent_name=None,
+            status="initiation_failed",
+            reason=data.get("failure_reason"),
+            error=True,
+        ),
+    )
+
+
+def _from_traces(data: Mapping[str, Any]) -> tuple[EvidenceSpan, ...]:
+    """The OTel event's own spans (OTLP/JSON) as the facts the transcription event
+    gives: the conversation span is the call, each ``elevenlabs.recv.*`` span a line."""
+
+    spans = [
+        mapping(span)
+        for resource in items(required_mapping(data.get("otlp_traces")).get("resourceSpans"))
+        for scope in items(mapping(resource).get("scopeSpans"))
+        for span in items(mapping(scope).get("spans"))
+    ]
+    conversations = [span for span in spans if span.get("name") == "elevenlabs.conversation"]
+    if len(conversations) != 1:
+        raise DeliveryPayloadError
+    [conversation] = conversations
+    facts = _otlp_attributes(conversation.get("attributes"))
+    start, end = call_window(
+        _otlp_time(conversation.get("startTimeUnixNano")),
+        _otlp_time(conversation.get("endTimeUnixNano")),
+    )
+    evidence = [
+        _call(
+            start,
+            end,
+            agent_id=facts.get("elevenlabs.agent_id", data.get("agent_id")),
+            agent_name=facts.get("elevenlabs.agent_name"),
+            status=bounded_text(facts.get("elevenlabs.status")),
+            reason=facts.get("elevenlabs.termination_reason"),
+        ),
+        *_analysis_and_cost(
+            start,
+            end,
+            summary=facts.get("elevenlabs.analysis.transcript_summary"),
+            successful=facts.get("elevenlabs.analysis.call_successful"),
+            cost=facts.get("elevenlabs.cost"),
+        ),
+    ]
+    for span in spans:
+        speaker = _TRACE_SPEAKERS.get(span.get("name"))  # type: ignore[arg-type]
+        at = _otlp_time(span.get("startTimeUnixNano"))
+        values = _otlp_attributes(span.get("attributes"))
+        index = values.get("elevenlabs.turn.index")
+        if speaker is None or at is None or not isinstance(index, (str, int)):
+            continue
+        ordinal = whole_number(int(index)) if str(index).isdigit() else None
+        if ordinal is None:
+            continue
+        line = transcript_line(
+            ordinal,
+            speaker=speaker,
+            text=values.get(f"elevenlabs.{speaker}.text"),
+            start=at,
+            end=at,
+            timing="start_only",
+            interrupted=values.get("elevenlabs.interrupted") is True,
+        )
+        if line is not None:
+            evidence.append(line)
+    return tuple(evidence)
+
+
+_TRACE_SPEAKERS = {
+    "elevenlabs.recv.agent_response": "agent",
+    "elevenlabs.recv.user_transcript": "user",
 }
 
 
-@dataclass(frozen=True, slots=True)
-class _OtlpSpan:
-    trace_id: str
-    span_id: str
-    parent_span_id: str | None
-    name: str
-    start_nano: int
-    end_nano: int
-    status: str
+def _otlp_time(value: object) -> int | None:
+    """An OTLP/JSON time (a decimal string, or a number) as nanoseconds."""
+
+    if isinstance(value, str) and value.isdigit() and len(value) <= 20:
+        return int(value)
+    return whole_number(value)
 
 
-def _header_values(delivery: RawProviderDelivery, name: bytes) -> tuple[bytes, ...]:
-    lowered = name.lower()
-    return tuple(value for key, value in delivery.headers if key.lower() == lowered)
+def _otlp_attributes(values: object) -> dict[str, object]:
+    """OTLP/JSON attributes (``[{key, value: {stringValue|intValue|…}}]``) as a dict
+    of their scalar values; the first of a repeated key wins."""
 
-
-class ElevenLabsConnectorAdapter:
-    provider = "elevenlabs"
-    normalizer_version = ADAPTER_VERSION
-
-    def authenticate(
-        self,
-        delivery: RawProviderDelivery,
-        secrets: tuple[str, ...],
-        *,
-        now_unix_seconds: int,
-        tolerance_seconds: int,
-    ) -> None:
-        signature_headers = _header_values(delivery, b"elevenlabs-signature")
-        if len(signature_headers) != 1 or not secrets:
-            raise DeliveryTrustError
-        try:
-            pieces = [piece.strip() for piece in signature_headers[0].decode("ascii").split(",")]
-            timestamps = [piece[2:] for piece in pieces if piece.startswith("t=")]
-            signatures = [piece[3:] for piece in pieces if piece.startswith("v0=")]
-            if (
-                len(timestamps) != 1
-                or not signatures
-                or not timestamps[0].isdigit()
-                or any(len(value) != 64 for value in signatures)
-            ):
-                raise ValueError
-            timestamp = int(timestamps[0])
-        except (UnicodeDecodeError, ValueError):
-            raise DeliveryTrustError from None
-        if abs(now_unix_seconds - timestamp) > tolerance_seconds:
-            raise DeliveryTrustError
-        signed = str(timestamp).encode("ascii") + b"." + delivery.body
-        valid = False
-        for secret in secrets:
-            expected = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
-            for supplied in signatures:
-                valid = hmac.compare_digest(expected, supplied) or valid
-        if not valid:
-            raise DeliveryTrustError
-
-    def normalize(
-        self,
-        payload: dict[str, Any],
-        context: NormalizationContext,
-    ) -> NormalizedProviderDelivery:
-        event_type = payload.get("type")
-        event_timestamp = payload.get("event_timestamp")
-        data = payload.get("data")
-        if (
-            not isinstance(event_type, str)
-            or not isinstance(event_timestamp, int)
-            or isinstance(event_timestamp, bool)
-            or event_timestamp < 0
-            or not isinstance(data, dict)
-        ):
-            raise DeliveryPayloadError
-        conversation_id = data.get("conversation_id")
-        if (
-            not isinstance(conversation_id, str)
-            or not conversation_id
-            or len(conversation_id) > 512
-        ):
-            raise DeliveryPayloadError
-        delivery_key = f"{event_type}:{conversation_id}:{event_timestamp}"
-        identities = [ExternalIdentityInput("conversation_id", conversation_id)]
-        agent_id = data.get("agent_id")
-        if isinstance(agent_id, str) and agent_id and len(agent_id) <= 512:
-            identities.append(ExternalIdentityInput("agent_id", agent_id))
-
-        if event_type == "post_call_audio":
-            return NormalizedProviderDelivery(
-                delivery_key=delivery_key,
-                event_type=event_type,
-                disposition="ignore",
-                external_identities=tuple(identities),
-                bundle=None,
-            )
-        if event_type == "post_call_transcription_otel":
-            bundle = self._otel_bundle(
-                data,
-                conversation_id=conversation_id,
-                delivery_key=delivery_key,
-                context=context,
-            )
-            return NormalizedProviderDelivery(
-                delivery_key=delivery_key,
-                event_type=event_type,
-                disposition="incident",
-                external_identities=tuple(identities),
-                bundle=bundle,
-            )
-        if event_type != "post_call_transcription":
-            raise DeliveryPayloadError
-
-        bundle = self._transcription_bundle(
-            data,
-            event_timestamp=event_timestamp,
-            conversation_id=conversation_id,
-            delivery_key=delivery_key,
-            context=context,
-        )
-        return NormalizedProviderDelivery(
-            delivery_key=delivery_key,
-            event_type=event_type,
-            disposition="incident",
-            external_identities=tuple(identities),
-            bundle=bundle,
-        )
-
-    @staticmethod
-    def _otel_bundle(
-        data: dict[str, Any],
-        *,
-        conversation_id: str,
-        delivery_key: str,
-        context: NormalizationContext,
-    ):
-        traces = data.get("otlp_traces")
-        resource_spans = traces.get("resourceSpans") if isinstance(traces, dict) else None
-        if not isinstance(resource_spans, list) or len(resource_spans) > 256:
-            raise DeliveryPayloadError
-
-        spans: list[_OtlpSpan] = []
-        identities: set[tuple[str, str]] = set()
-        for resource_span in resource_spans:
-            if not isinstance(resource_span, dict):
-                raise DeliveryPayloadError
-            scope_spans = resource_span.get("scopeSpans")
-            if not isinstance(scope_spans, list) or len(scope_spans) > 1_024:
-                raise DeliveryPayloadError
-            for scope_span in scope_spans:
-                if not isinstance(scope_span, dict):
-                    raise DeliveryPayloadError
-                raw_spans = scope_span.get("spans")
-                if not isinstance(raw_spans, list):
-                    raise DeliveryPayloadError
-                for raw_span in raw_spans:
-                    if len(spans) >= 100_000 or not isinstance(raw_span, dict):
-                        raise DeliveryPayloadError
-                    span = ElevenLabsConnectorAdapter._parse_otlp_span(raw_span)
-                    identity = (span.trace_id, span.span_id)
-                    if identity in identities:
-                        raise DeliveryPayloadError
-                    identities.add(identity)
-                    spans.append(span)
-        if not spans:
-            raise DeliveryPayloadError
-
-        earliest = min(span.start_nano for span in spans)
-        latest = max(span.end_nano for span in spans)
-        session_fingerprint = context.fingerprint("elevenlabs:conversation", conversation_id)
-        delivery_fingerprint = context.fingerprint("elevenlabs:delivery", delivery_key)
-        clock = ManualClock(wall=earliest, monotonic=0)
-        recorder = IncidentRecorder(
-            session_id=f"session-{session_fingerprint[:32]}",
-            bundle_id=f"bundle-{delivery_fingerprint[:32]}",
-            clock=clock,
-            config=RecorderConfig(
-                producer_name="earshot.connector.elevenlabs",
-                producer_version=ADAPTER_VERSION,
-                adapters=(
-                    Adapter(
-                        name="earshot.elevenlabs.otlp",
-                        version=ADAPTER_VERSION,
-                        framework="elevenlabs_agents",
-                    ),
-                ),
-            ),
-        )
-        recorder.add_participant("participant-agent", role="agent", endpoint_kind="provider")
-        recorder.record_coverage("provider.trace", "available")
-        for signal in (
-            "stt.final",
-            "turn.end",
-            "tts.first_audio",
-            "client.render",
-            "interruption",
-        ):
-            recorder.record_coverage(signal, "not_exposed", "provider_field_absent")
-
-        agent_spans = sorted(
-            (span for span in spans if span.name == "elevenlabs.recv.agent_response"),
-            key=lambda span: (span.start_nano, span.span_id),
-        )
-        turn_by_span = {
-            (span.trace_id, span.span_id): f"turn-{index}" for index, span in enumerate(agent_spans)
-        }
-        for span in spans:
-            turn_id = turn_by_span.get((span.trace_id, span.span_id))
-            if turn_id is None and span.name.startswith("elevenlabs.tool."):
-                turn_id = turn_by_span.get((span.trace_id, span.parent_span_id or ""))
-            started = TimePoint(
-                source_time_unix_nano=str(span.start_nano),
-                monotonic_time_nano=str(span.start_nano - earliest),
-                clock_domain_id=recorder.clock_domain_id,
-                uncertainty_nano="1000000",
-            )
-            ended = TimePoint(
-                source_time_unix_nano=str(span.end_nano),
-                monotonic_time_nano=str(span.end_nano - earliest),
-                clock_domain_id=recorder.clock_domain_id,
-                uncertainty_nano="1000000",
-            )
-            if span.name == "elevenlabs.conversation":
-                operation_name = "agent"
-            elif span.name == "elevenlabs.recv.agent_response":
-                operation_name = "agent_response"
-            elif span.name == "elevenlabs.recv.user_transcript":
-                operation_name = "provider_transcript"
-            elif span.name.startswith("elevenlabs.tool."):
-                operation_name = "tool"
-            else:
-                operation_name = "provider_span"
-            recorder.record_operation(
-                operation_id=f"operation-{span.span_id}",
-                operation_name=operation_name,
-                status=span.status,
-                started_at=started,
-                ended_at=ended,
-                participant_id="participant-agent",
-                turn_id=turn_id,
-                trace_id=span.trace_id,
-                span_id=span.span_id,
-                parent_span_id=span.parent_span_id,
-                parent_scope=(
-                    "internal"
-                    if span.parent_span_id and (span.trace_id, span.parent_span_id) in identities
-                    else "external"
-                    if span.parent_span_id
-                    else "unknown"
-                ),
-                instrumentation_scope_name="elevenlabs.convai",
-                evidence=Evidence(
-                    source="provider",
-                    observer="server",
-                    method="provider_otlp_json",
-                    method_version=ADAPTER_VERSION,
-                    source_field="data.otlp_traces.resourceSpans",
-                    confidence="measured",
-                    availability="available",
-                ),
-                attributes={"gen_ai.provider.name": "elevenlabs"},
-            )
-        clock.advance(latest - earliest)
-        session_status = "failed" if any(span.status == "error" for span in spans) else "completed"
-        return recorder.close(status=session_status)
-
-    @staticmethod
-    def _parse_otlp_span(value: dict[str, Any]) -> _OtlpSpan:
-        def identifier(field: str, length: int, *, optional: bool = False) -> str | None:
-            raw = value.get(field)
-            if optional and raw in {None, ""}:
-                return None
-            if not isinstance(raw, str):
-                raise DeliveryPayloadError
-            normalized = raw.lower()
-            if (
-                len(normalized) != length
-                or not _HEX_PATTERN.fullmatch(normalized)
-                or set(normalized) == {"0"}
-            ):
-                raise DeliveryPayloadError
-            return normalized
-
-        def timestamp(field: str) -> int:
-            raw = value.get(field)
-            if not isinstance(raw, str) or not raw.isdigit() or len(raw) > 20:
-                raise DeliveryPayloadError
-            parsed = int(raw)
-            if parsed > (1 << 64) - 1:
-                raise DeliveryPayloadError
-            return parsed
-
-        trace_id = identifier("traceId", 32)
-        span_id = identifier("spanId", 16)
-        parent_span_id = identifier("parentSpanId", 16, optional=True)
-        name = value.get("name")
-        if not isinstance(name, str) or not name or len(name) > 512:
-            raise DeliveryPayloadError
-        start_nano = timestamp("startTimeUnixNano")
-        end_nano = timestamp("endTimeUnixNano")
-        if end_nano < start_nano:
-            raise DeliveryPayloadError
-        status_value = value.get("status")
-        status_code = status_value.get("code") if isinstance(status_value, dict) else None
-        status = "error" if status_code in {2, "STATUS_CODE_ERROR"} else "ok"
-        assert trace_id is not None and span_id is not None
-        return _OtlpSpan(
-            trace_id,
-            span_id,
-            parent_span_id,
-            name,
-            start_nano,
-            end_nano,
-            status,
-        )
-
-    @staticmethod
-    def _transcription_bundle(
-        data: dict[str, Any],
-        *,
-        event_timestamp: int,
-        conversation_id: str,
-        delivery_key: str,
-        context: NormalizationContext,
-    ):
-        metadata = data.get("metadata")
-        metadata = metadata if isinstance(metadata, dict) else {}
-        start_seconds = metadata.get("start_time_unix_secs", event_timestamp)
-        duration_seconds = metadata.get("call_duration_secs", 0)
-        if (
-            not isinstance(start_seconds, int)
-            or isinstance(start_seconds, bool)
-            or start_seconds < 0
-            or not isinstance(duration_seconds, (int, float))
-            or isinstance(duration_seconds, bool)
-            or duration_seconds < 0
-            or duration_seconds > 86_400
-        ):
-            raise DeliveryPayloadError
-        provider_status = data.get("status")
-        if not isinstance(provider_status, str):
-            raise DeliveryPayloadError
-        session_status = _SESSION_STATUS.get(provider_status)
-        if session_status is None:
-            raise DeliveryPayloadError
-
-        session_fingerprint = context.fingerprint("elevenlabs:conversation", conversation_id)
-        delivery_fingerprint = context.fingerprint("elevenlabs:delivery", delivery_key)
-        clock = ManualClock(wall=start_seconds * 1_000_000_000, monotonic=0)
-        recorder = IncidentRecorder(
-            session_id=f"session-{session_fingerprint[:32]}",
-            bundle_id=f"bundle-{delivery_fingerprint[:32]}",
-            clock=clock,
-            config=RecorderConfig(
-                producer_name="earshot.connector.elevenlabs",
-                producer_version=ADAPTER_VERSION,
-                adapters=(
-                    Adapter(
-                        name="earshot.elevenlabs",
-                        version=ADAPTER_VERSION,
-                        framework="elevenlabs_agents",
-                    ),
-                ),
-            ),
-        )
-        recorder.add_participant("participant-user", role="user", endpoint_kind="provider")
-        recorder.add_participant("participant-agent", role="agent", endpoint_kind="provider")
-        recorder.record_coverage("provider.transcript", "available")
-        for signal in (
-            "stt.final",
-            "turn.end",
-            "tts.first_audio",
-            "client.render",
-            "interruption",
-        ):
-            recorder.record_coverage(signal, "not_exposed", "provider_field_absent")
-
-        transcript = data.get("transcript")
-        if not isinstance(transcript, list) or len(transcript) > 100_000:
-            raise DeliveryPayloadError
-        agent_turn_index = 0
-        for entry in transcript:
-            if not isinstance(entry, dict) or entry.get("role") != "agent":
-                continue
-            offset = entry.get("time_in_call_secs")
-            if (
-                not isinstance(offset, (int, float))
-                or isinstance(offset, bool)
-                or offset < 0
-                or offset > duration_seconds + 300
-            ):
-                raise DeliveryPayloadError
-            turn_id = f"turn-{agent_turn_index}"
-            operation_id = f"operation-agent-{agent_turn_index}"
-            provider_nano = int(offset * 1_000_000_000)
-            point = TimePoint(
-                source_time_unix_nano=str(start_seconds * 1_000_000_000 + provider_nano),
-                monotonic_time_nano=str(provider_nano),
-                clock_domain_id=recorder.clock_domain_id,
-                uncertainty_nano="1000000000",
-            )
-            evidence = Evidence(
-                source="provider",
-                observer="server",
-                method="provider_webhook",
-                method_version=ADAPTER_VERSION,
-                source_field="data.transcript.time_in_call_secs",
-                confidence="measured",
-                availability="available",
-            )
-            recorder.record_operation(
-                operation_id=operation_id,
-                operation_name="provider_turn_anchor",
-                status="ok",
-                started_at=point,
-                ended_at=point,
-                participant_id="participant-agent",
-                turn_id=turn_id,
-                evidence=evidence,
-                attributes={"gen_ai.provider.name": "elevenlabs"},
-            )
-            turn_metrics = entry.get("conversation_turn_metrics")
-            if isinstance(turn_metrics, dict):
-                llm_ttfb = turn_metrics.get("convai_llm_service_ttfb")
-                elapsed = llm_ttfb.get("elapsed_time") if isinstance(llm_ttfb, dict) else None
-                if isinstance(elapsed, (int, float)) and not isinstance(elapsed, bool):
-                    if elapsed < 0 or elapsed > 600:
-                        raise DeliveryPayloadError
-                    recorder.record_quality_sample(
-                        QualitySample(
-                            sample_id=f"quality-llm-{agent_turn_index}",
-                            session_id=recorder.session_id,
-                            quality_kind="provider_latency",
-                            sample_window=TimeRange(start=point, end=point),
-                            measurements=(
-                                QualityMeasurement(
-                                    name="earshot.llm.ttft",
-                                    value=float(elapsed) * 1_000,
-                                    unit="ms",
-                                ),
-                            ),
-                            evidence=Evidence(
-                                source="provider",
-                                observer="server",
-                                method="provider_webhook",
-                                method_version=ADAPTER_VERSION,
-                                source_field=(
-                                    "data.transcript.conversation_turn_metrics."
-                                    "convai_llm_service_ttfb.elapsed_time"
-                                ),
-                                confidence="measured",
-                                availability="available",
-                            ),
-                            participant_id="participant-agent",
-                            attributes={
-                                "earshot.turn.id": turn_id,
-                                "earshot.operation.id": operation_id,
-                                "earshot.correlation": "provider_turn_scalar",
-                                "earshot.chronology": "not_exposed",
-                            },
-                        )
-                    )
-            agent_turn_index += 1
-        clock.advance(int(duration_seconds * 1_000_000_000))
-        return recorder.close(status=session_status)
+    found: dict[str, object] = {}
+    for raw in items(values):
+        item = mapping(raw)
+        key, value = item.get("key"), mapping(item.get("value"))
+        if not isinstance(key, str) or key in found:
+            continue
+        for kind in ("stringValue", "boolValue", "doubleValue"):
+            if kind in value:
+                found[key] = value[kind]
+                break
+        else:
+            if "intValue" in value:
+                raw_int = value["intValue"]
+                found[key] = int(raw_int) if str(raw_int).lstrip("-").isdigit() else None
+    return found
