@@ -1,4 +1,4 @@
-"""AC8.6 (usage) and the per-framework anchors: what a call's stored spans say for cost and timing.
+"""Usage and the per-framework anchors: what a call's stored spans say for cost and timing.
 
 The usage→meter table (``call_span_facts.USAGE_SPANS`` and ``usage_items``) and the
 turn anchors (``turn_anchors``) are pinned here on both real captures: Pipecat 1.5
@@ -7,6 +7,8 @@ turn anchors (``turn_anchors``) are pinned here on both real captures: Pipecat 1
 """
 
 from __future__ import annotations
+
+import math
 
 import pytest
 
@@ -203,7 +205,7 @@ def test_providers_normalize_to_the_genai_registry_spelling_or_lower_case(raw, n
     assert provider_name(raw) == normalized
 
 
-# --- anchors (M6) ---------------------------------------------------------------------------
+# --- anchors --------------------------------------------------------------------------------
 
 
 def test_pipecat_anchors_are_stt_starts_and_tts_first_audio_less_the_turn_latency() -> None:
@@ -233,7 +235,7 @@ def test_livekit_anchors_are_the_speaking_spans_and_match_the_reported_latency(p
     started = int(livekit_manifest()["audio"]["started_at_unix_nano"])
     anchors = turn_anchors(_livekit(preset))
 
-    # Seconds from the recording's first sample (impl-log/WS0.md, anchor findings).
+    # Seconds from the recording's first sample (the anchor findings of the real capture).
     assert [
         (
             round((anchor.user_on_unix_nano[0] - started) / 1e9, 3),
@@ -272,3 +274,70 @@ def test_a_turn_without_agent_audio_has_no_agent_anchor_and_no_user_off() -> Non
 
     assert [anchor.agent_on_unix_nano for anchor in anchors] == [None, None, None]
     assert all(anchor.user_off_unix_nano is not None for anchor in anchors)
+
+
+def _turn_reporting(seconds: float):
+    """One Pipecat turn whose latency attribute (and its tts span's time to first
+    byte) report ``seconds``, as the receiver stores them."""
+
+    from opentelemetry.proto.common.v1.common_pb2 import InstrumentationScope, KeyValue
+    from opentelemetry.proto.resource.v1.resource_pb2 import Resource
+    from opentelemetry.proto.trace.v1.trace_pb2 import Span
+
+    from earshot.call_capture import OtlpSpan
+
+    def double(key: str, value: float) -> KeyValue:
+        item = KeyValue(key=key)
+        item.value.double_value = value
+        return item
+
+    trace = b"\x01" * 16
+    turn = Span(
+        trace_id=trace,
+        span_id=b"\x02" * 8,
+        name="turn",
+        start_time_unix_nano=10**18,
+        attributes=[double("turn.user_bot_latency_seconds", seconds)],
+    )
+    tts = Span(
+        trace_id=trace,
+        span_id=b"\x03" * 8,
+        parent_span_id=b"\x02" * 8,
+        name="tts",
+        start_time_unix_nano=10**18 + 10**9,
+        attributes=[double("metrics.ttfb", seconds)],
+    )
+    scope = InstrumentationScope(name="pipecat")
+    spans = [OtlpSpan(resource=Resource(), scope=scope, span=span) for span in (turn, tts)]
+    [anchor] = turn_anchors(spans)
+    return anchor
+
+
+@pytest.mark.parametrize("seconds", [1e300, 9.3e9])
+def test_a_reported_time_whose_nanoseconds_overflow_is_unknown(seconds) -> None:
+    """A producer-reported duration is converted to nanoseconds for the anchors; one
+    that cannot be held as signed 64-bit nanoseconds is unknown, like a negative or
+    non-finite one, so it never becomes an anchor or a reported latency."""
+
+    anchor = _turn_reporting(seconds)
+
+    assert (anchor.agent_on_unix_nano, anchor.user_off_unix_nano, anchor.reported_latency_ms) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_a_reported_time_is_known_exactly_when_its_nanoseconds_fit_signed_64_bits() -> None:
+    """The bound is on the converted nanoseconds: the largest duration whose
+    nanoseconds are at most 2**63 - 1 is known, the next one up is not."""
+
+    int64_max = 2**63 - 1
+    largest = int64_max / 1e9
+    while round(largest * 1e9) > int64_max:
+        largest = math.nextafter(largest, 0.0)
+    smallest_over = math.nextafter(largest, math.inf)
+    assert round(largest * 1e9) <= int64_max < round(smallest_over * 1e9)
+
+    assert _turn_reporting(largest).reported_latency_ms == largest * 1000
+    assert _turn_reporting(smallest_over).reported_latency_ms is None

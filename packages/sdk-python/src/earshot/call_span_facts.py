@@ -340,14 +340,27 @@ def provider_name(provider: str | None) -> str | None:
 
 
 def _seconds(value: object) -> float | None:
+    """A producer-reported duration in seconds, or ``None`` when it is not a number,
+    is negative or non-finite, or whose nanoseconds are not in ``[0, 2**63 - 1]``
+    (the anchors are nanosecond instants)."""
+
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     seconds = float(value)
-    return seconds if math.isfinite(seconds) and seconds >= 0 else None
+    # The product is a float that may overflow to infinity, so it is judged before
+    # ``_nano`` rounds it.
+    nanoseconds = seconds * _NANOSECONDS_PER_SECOND
+    if not math.isfinite(nanoseconds) or not 0 <= nanoseconds <= _MAX_INT64:
+        return None
+    return seconds
+
+
+_NANOSECONDS_PER_SECOND = 1_000_000_000
+_MAX_INT64 = 2**63 - 1
 
 
 def _nano(seconds: float) -> int:
-    return round(seconds * 1_000_000_000)
+    return round(seconds * _NANOSECONDS_PER_SECOND)
 
 
 def _children(spans: Sequence[OtlpSpan]) -> dict[tuple[bytes, bytes], list[OtlpSpan]]:
