@@ -27,15 +27,21 @@ URL), and the API key from ``EARSHOT_API_KEY``, else the ``Authorization`` entry
 ``OTEL_EXPORTER_OTLP_HEADERS``: the one the OTLP exporter already sends.
 
 It needs only the standard library; when httpx is installed it is used instead
-(``transport="auto"``), which keeps one connection pool per client. A refused
-request raises ``EarshotError`` with the HTTP status and Earshot's stable error
-code; its message never holds the API key or a session key.
+(``transport="auto"``), which keeps one connection pool per client. Both transports
+behave alike: neither follows a redirect, so the API key is only ever sent to the
+URL the client was given. A refused request raises ``EarshotError`` with the HTTP
+status and Earshot's stable error code; so does a redirect, an answer that is not
+JSON (a proxy's page, say), and a request that got no whole answer (status 0). Its
+message never holds the API key. It does name the request's path, and a recording
+ID that ``recording_id_for`` derived holds the session key itself when the key is
+made only of characters an ID may hold.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -49,6 +55,7 @@ from typing import Any, BinaryIO, Protocol
 from urllib.parse import quote, unquote
 
 from .call_capture import valid_session_key
+from .exporter import _RejectRedirects
 
 SESSION_KEY_ATTRIBUTE = "earshot.session.id"
 DEFAULT_TIMEOUT_SECONDS = 120.0
@@ -59,7 +66,8 @@ _RECORDING_ID_MAX = 128
 
 
 class EarshotError(RuntimeError):
-    """A request Earshot refused (or that never got an answer: ``status`` 0)."""
+    """A request Earshot refused, one it redirected (never followed), one whose answer
+    is not JSON, or one that never got a whole answer (``status`` 0)."""
 
     def __init__(
         self, method: str, path: str, status: int, code: str | None, message: str | None
@@ -101,7 +109,8 @@ def recording_id_for(session_key: str, name: str) -> str:
 
     Characters a recording ID cannot hold become ``-``; an ID that changed, or is
     too long, keeps a prefix plus a hash of the whole key, so distinct keys never
-    share one.
+    share one. A key made only of ID characters is used as it is, so the ID (and a
+    request path or error that names it) shows the session key.
     """
 
     suffix = f".{name}"
@@ -132,10 +141,14 @@ class _Transport(Protocol):
 
 
 class _UrllibTransport:
-    """The standard library's HTTP: one connection per request."""
+    """The standard library's HTTP: one connection per request. A redirect is
+    answered as it is, never followed (urllib would send the ``Authorization``
+    header on to the new URL). An answer cut short, or not HTTP at all, raises
+    ``OSError``, as no answer does."""
 
     def __init__(self, timeout: float) -> None:
         self._timeout = timeout
+        self._opener = urllib.request.build_opener(_RejectRedirects())
 
     def send(
         self,
@@ -146,25 +159,29 @@ class _UrllibTransport:
     ) -> _Reply:
         request = urllib.request.Request(url, data=body, method=method, headers=dict(headers))
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as reply:
-                return _Reply(reply.status, reply.read())
-        except urllib.error.HTTPError as error:
-            with error:
-                return _Reply(error.code, error.read())
+            try:
+                with self._opener.open(request, timeout=self._timeout) as reply:
+                    return _Reply(reply.status, reply.read())
+            except urllib.error.HTTPError as error:
+                with error:
+                    return _Reply(error.code, error.read())
+        except http.client.HTTPException as error:
+            raise ConnectionError(type(error).__name__) from error
 
     def close(self) -> None:
         return None
 
 
 class _HttpxTransport:
-    """httpx: one connection pool for the client's life. A request that gets no answer
-    raises ``OSError``, as the standard library's does."""
+    """httpx: one connection pool for the client's life. A redirect is answered as it
+    is, never followed. A request that gets no whole answer raises ``OSError``, as
+    the standard library's does."""
 
     def __init__(self, timeout: float) -> None:
         import httpx
 
-        self._client = httpx.Client(timeout=timeout)
-        self._transport_error = httpx.TransportError
+        self._client = httpx.Client(timeout=timeout, follow_redirects=False)
+        self._transport_error = httpx.RequestError
 
     def send(
         self,
@@ -364,9 +381,9 @@ class EarshotClient:
             sent["Authorization"] = self._authorization
         try:
             reply = self._transport.send(method, self.base_url + path, sent, body)
-        except OSError as error:  # no answer: refused, reset, timed out
+        except OSError as error:  # no whole answer: refused, reset, timed out, cut short
             raise EarshotError(method, path, 0, None, type(error).__name__) from None
-        if reply.status >= 400:
+        if not 200 <= reply.status < 300:  # a refusal, or a redirect (never followed)
             code, message = None, None
             try:
                 problem = json.loads(reply.body)["error"]
@@ -374,4 +391,7 @@ class EarshotClient:
             except (ValueError, KeyError, TypeError):
                 pass
             raise EarshotError(method, path, reply.status, code, message)
-        return json.loads(reply.body)
+        try:
+            return json.loads(reply.body)
+        except ValueError:  # not Earshot's answer: a proxy's page, say
+            raise EarshotError(method, path, reply.status, None, "the answer is not JSON") from None

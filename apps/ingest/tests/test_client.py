@@ -1,17 +1,24 @@
-"""``earshot.client`` (AC9.1) against a real Earshot server.
+"""``earshot.client`` against a real Earshot server.
 
 Every test that talks to a server runs the real app on a real uvicorn server, with
 a real catalog (SQLite, or Postgres under ``--db postgresql``), a real project API
 key and a real blob store on local disk, through both of the client's transports:
 the standard library's and httpx's. Audio is the real LiveKit 1.8 stereo Ogg Opus
-recording and real WAV bytes.
+recording and real WAV bytes. What an Earshot server never answers (a redirect, a
+proxy's page, an answer cut short) comes from real local HTTP servers, a
+standard-library one and a raw socket.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import io
 import re
+import socket
+import threading
+from collections.abc import Callable, Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -229,3 +236,135 @@ def test_a_recording_id_is_derived_from_the_session_key_and_a_name(
     if expected is not None:
         assert derived == expected
     assert recording_id_for("x" * 300, "user") != recording_id_for("x" * 299 + "y", "user")
+
+
+# --- answers an Earshot server never gives --------------------------------------------------------
+
+_Answer = tuple[int, dict[str, str], bytes]
+_JSON = {"Content-Type": "application/json"}
+
+
+class _Answering(BaseHTTPRequestHandler):
+    """Records each request (method, path, ``Authorization``) and answers it with the
+    server's ``answer(path)``."""
+
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, *args) -> None:
+        return None
+
+    def _answer(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length:
+            self.rfile.read(length)
+        self.server.seen.append((self.command, self.path, self.headers.get("Authorization")))
+        status, headers, body = self.server.answer(self.path)
+        self.send_response(status)
+        for name, value in {"Content-Length": str(len(body)), **headers}.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(body)
+
+    do_GET = do_POST = do_PUT = _answer
+
+
+@contextlib.contextmanager
+def _answering(answer: Callable[[str], _Answer]) -> Iterator[ThreadingHTTPServer]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Answering)
+    server.seen, server.answer = [], answer
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _url(server: ThreadingHTTPServer) -> str:
+    return f"http://127.0.0.1:{server.server_address[1]}"
+
+
+@pytest.mark.parametrize("transport", TRANSPORTS)
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+@pytest.mark.parametrize("where", ["another-origin", "the-same-origin"])
+def test_a_redirect_is_an_error_and_the_key_never_follows_it(transport, status, where) -> None:
+    key = "earshot_sk_redirect-canary"
+    with _answering(lambda path: (200, _JSON, b'{"call_id": "call_x"}')) as other:
+
+        def redirect(path: str) -> _Answer:
+            if path.startswith("/moved"):
+                return 200, _JSON, b'{"call_id": "call_x"}'
+            origin = _url(other) if where == "another-origin" else ""
+            return status, {"Location": f"{origin}/moved{path}"}, b""
+
+        with (
+            _answering(redirect) as server,
+            EarshotClient(_url(server), api_key=key, transport=transport, timeout=10) as client,
+        ):
+            with pytest.raises(EarshotError) as read:
+                client.get_call("call_1")
+            with pytest.raises(EarshotError) as upload:
+                client.upload_recording(
+                    {"upload_path": "/v1/recordings/r1/content", "content_type": "audio/wav"},
+                    io.BytesIO(b"RIFF" + bytes(64)),
+                )
+            followed = [seen for seen in server.seen + other.seen if seen[1].startswith("/moved")]
+
+    assert (read.value.status, read.value.code) == (status, None)
+    assert (upload.value.status, upload.value.code) == (status, None)
+    assert followed == []
+    assert key not in f"{read.value} {read.value.message}"
+
+
+@pytest.mark.parametrize("transport", TRANSPORTS)
+def test_a_success_whose_answer_is_not_json_is_an_earshot_error(transport) -> None:
+    page = (200, {"Content-Type": "text/html"}, b"<html>a proxy's sign-in page</html>")
+    with (
+        _answering(lambda path: page) as server,
+        EarshotClient(_url(server), api_key="earshot_sk_x", transport=transport) as client,
+        pytest.raises(EarshotError) as error,
+    ):
+        client.get_call("call_1")
+
+    assert (error.value.status, error.value.code) == (200, None)
+
+
+@contextlib.contextmanager
+def _raw_answer(answer: bytes) -> Iterator[str]:
+    """A server that reads a request, writes ``answer`` as it is, and hangs up."""
+
+    listener = socket.create_server(("127.0.0.1", 0))
+
+    def serve() -> None:
+        with contextlib.suppress(OSError):
+            while True:
+                connection, _ = listener.accept()
+                with connection:
+                    connection.recv(65536)
+                    connection.sendall(answer)
+
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{listener.getsockname()[1]}"
+    finally:
+        listener.close()
+
+
+@pytest.mark.parametrize("transport", TRANSPORTS)
+@pytest.mark.parametrize(
+    "answer",
+    [
+        b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{"ca',
+        b"this is not HTTP\r\n\r\n",
+    ],
+    ids=["cut-short", "not-http"],
+)
+def test_an_answer_cut_short_or_not_http_is_no_answer(transport, answer) -> None:
+    with (
+        _raw_answer(answer) as url,
+        EarshotClient(url, api_key="earshot_sk_x", transport=transport, timeout=10) as client,
+        pytest.raises(EarshotError) as error,
+    ):
+        client.get_call("call_1")
+
+    assert (error.value.status, error.value.code) == (0, None)
