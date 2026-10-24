@@ -4,7 +4,7 @@ Notable changes to Earshot. Versions follow the
 [alpha compatibility policy](docs/release.md#alpha-compatibility-policy). Earlier releases
 are described in their [GitHub release notes](https://github.com/Kkartik14/Earshot/releases).
 
-## 0.3.0 (Unreleased)
+## 0.3.0 (2026-10-24)
 
 Every closed Call now has a call view: its audio with a waveform, the transcript on the
 audio's time axis, per-turn latency as the framework reports it beside the audible gap at
@@ -198,7 +198,7 @@ matters only to installs from source. See the
 - LiveKit's TTS and STT audio-duration metrics stay quality measurements and are no
   longer copied onto the operation.
 
-## 0.2.0 (Unreleased)
+## 0.2.0 (not published)
 
 Earshot now receives OpenTelemetry traces and call recordings, groups them into Calls, and
 runs on SQLite or Postgres with local or S3 storage for audio. Read the Breaking section

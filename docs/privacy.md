@@ -79,7 +79,7 @@ that needs masking must use `metadata_only` until one exists.
 
 - **New installs.** Every database created by 0.2.0 or later, SQLite or Postgres, starts
   with the `default` Project set to `full`. Every Project created later is `full` too.
-- **Upgrades.** A 0.1.x data directory opened by 0.2.0 sets **every existing Project to
+- **Upgrades.** A 0.1.x data directory opened by 0.2.0 or later sets **every existing Project to
   `metadata_only`**, in the same transaction as the upgrade, and logs
   `EARSHOT_LEGACY_CAPTURE_PRESET` with the count. This includes a data directory with no
   Incidents. An upgrade never widens what an installation stores. Until an operator opts a
