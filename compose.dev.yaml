@@ -1,0 +1,11 @@
+# Build the Earshot image from this checkout instead of pulling the release.
+# Add it after either Compose file:
+#
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build --wait
+#   docker compose -f compose.full.yaml -f compose.dev.yaml up -d --build --wait
+#
+# The local build is tagged earshot:dev, so it never stands in for a release tag.
+services:
+  earshot:
+    build: .
+    image: earshot:dev

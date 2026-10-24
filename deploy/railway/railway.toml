@@ -1,0 +1,26 @@
+# Railway config-as-code for the Earshot service, used when the service deploys
+# from this repository (set its config file path to deploy/railway/railway.toml).
+# A template that runs the published image sets the same values in Railway's
+# template composer. Docs: docs/install-railway.md.
+# Schema: https://railway.com/railway.schema.json
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# One server per database: a second Earshot exits with EARSHOT_DATABASE_IN_USE.
+numReplicas = 1
+# A volume at /data is mandatory. Railway never keeps two deployments of a
+# service with a volume active at once, so a redeploy stops the old server
+# before the new one starts, and the new one can take the database lock.
+# Without a volume the new deployment would start beside the old one, fail its
+# health check on EARSHOT_DATABASE_IN_USE, and every redeploy would fail.
+requiredMountPath = "/data"
+healthcheckPath = "/readyz"
+# Migrations run before the server listens.
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+# At shutdown the server gives a revision build in progress 10 s.
+drainingSeconds = 15

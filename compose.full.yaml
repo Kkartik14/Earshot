@@ -1,0 +1,120 @@
+# Earshot with a Postgres 17 catalog and recordings in S3-compatible storage
+# (MinIO), on one host. Docs: docs/install-compose.md.
+#
+#   1. Put the four secrets in a .env file next to this one (CHANGEME: generate
+#      your own; the docs page has a one-line generator):
+#        EARSHOT_TOKEN, EARSHOT_CORRELATION_KEY, POSTGRES_PASSWORD, MINIO_ROOT_PASSWORD
+#   2. docker compose -f compose.full.yaml up -d --wait
+#   3. Open http://127.0.0.1:4319 and sign in with EARSHOT_TOKEN.
+#
+# Only Earshot publishes a port, and only on host loopback. Postgres and MinIO
+# are reachable on the Compose network alone. Every container runs with a
+# read-only root filesystem, no capabilities and no privilege escalation.
+services:
+  earshot:
+    image: ghcr.io/kkartik14/earshot:0.4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # Optional, and the same file Compose reads the secrets below from. Its other
+    # variables reach the server too, such as the webhook secrets a connector
+    # names as env:NAME.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      EARSHOT_HOST: 0.0.0.0
+      # Every /v1 request needs a credential: this operator token, or a project
+      # API key created with it.
+      EARSHOT_TOKEN: ${EARSHOT_TOKEN:?set EARSHOT_TOKEN in .env}
+      # Bots in other containers on this Compose network may export to
+      # http://earshot:4319 with a credential. The published port stays on loopback.
+      EARSHOT_TRUST_LOCAL_NETWORK: "true"
+      # Keep it with your backups: Call IDs and fingerprints are derived from it.
+      EARSHOT_CORRELATION_KEY: ${EARSHOT_CORRELATION_KEY:?set EARSHOT_CORRELATION_KEY in .env}
+      # The password goes into a URL: keep it to letters and digits (hex).
+      EARSHOT_DATABASE_URL: postgresql://earshot:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/earshot
+      EARSHOT_BLOB_URL: "s3://earshot/recordings?endpoint=http://minio:9000&region=us-east-1&path_style=1"
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-earshot}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${EARSHOT_PUBLISHED_PORT:-4319}:4319"
+    volumes:
+      - earshot-data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  postgres:
+    image: postgres:17
+    user: postgres
+    environment:
+      POSTGRES_USER: earshot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: earshot
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # Over TCP, so the check fails while the image's first-run setup holds a
+    # socket-only server and passes once the real server listens.
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "earshot", "-d", "earshot"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /var/run/postgresql:size=1m,mode=1777
+    shm_size: 128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  minio:
+    # Chainguard's MinIO build, pinned by digest (a multi-architecture index):
+    # upstream MinIO no longer publishes images, and Chainguard's free tier
+    # offers only :latest. Bump the digest deliberately.
+    image: cgr.dev/chainguard/minio@sha256:709099319add48dfb44aa596a7070d3ddd8dd04d7ae881765719aec29df9e510
+    # A top-level directory under the data path is a bucket: this creates
+    # Earshot's bucket before the server starts.
+    entrypoint:
+      - sh
+      - -c
+      - mkdir -p /data/earshot && exec minio server /data --address :9000 --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-earshot}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      # The health check's mc client keeps its configuration here (the root
+      # filesystem is read-only).
+      MC_CONFIG_DIR: /tmp/.mc
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  earshot-data:
+  postgres-data:
+  minio-data:

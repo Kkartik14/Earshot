@@ -1,17 +1,29 @@
+# Earshot quick start: one container, SQLite and recordings on a named volume.
+#
+#   docker compose up -d --wait
+#   open http://127.0.0.1:4319
+#
+# Docs: docs/install-compose.md. For Postgres and S3 (MinIO), use compose.full.yaml.
+# To build the image from a checkout instead of pulling it, add compose.dev.yaml:
+#   docker compose -f compose.yaml -f compose.dev.yaml up -d --build --wait
 services:
   earshot:
-    build: .
-    image: earshot:local
+    image: ghcr.io/kkartik14/earshot:0.4
+    # Optional. Variables in a .env file next to this one reach the server, for
+    # example EARSHOT_TOKEN or the webhook secrets a connector names as env:NAME.
+    env_file:
+      - path: .env
+        required: false
     environment:
       EARSHOT_HOST: 0.0.0.0
-      # Single-machine use: the API runs without auth, but the port below is
-      # published to host loopback only, so the listener stays on a trusted
-      # boundary. To expose beyond localhost, drop this line and instead set
-      # EARSHOT_TOKEN (a high-entropy secret) + EARSHOT_BEHIND_TLS_PROXY=true
-      # and front it with your own TLS proxy.
+      # The port below is published on host loopback only, so the listener stays
+      # on a trusted boundary and the API answers without a credential (set
+      # EARSHOT_TOKEN in .env to require one anyway). Never publish this port on
+      # a public interface; to expose Earshot, use compose.full.yaml or the Helm
+      # chart behind a TLS proxy.
       EARSHOT_TRUST_LOCAL_NETWORK: "true"
     ports:
-      - "127.0.0.1:4319:4319"
+      - "127.0.0.1:${EARSHOT_PUBLISHED_PORT:-4319}:4319"
     volumes:
       - earshot-data:/data
     restart: unless-stopped
