@@ -22,7 +22,12 @@ type Environment = Readonly<Record<string, string | undefined>>;
 const UNSAFE = /[^A-Za-z0-9._-]+/g;
 const RECORDING_ID_MAX = 128;
 
-/** A request Earshot refused, or one that got no answer (`status` 0, `code` null). */
+/**
+ * A request Earshot refused, one it redirected (never followed), one whose answer is
+ * not JSON, or one that got no whole answer (`status` 0, `code` null). `detail` is
+ * Earshot's message (Python's `EarshotError.message`); a JavaScript error's
+ * `message` is its summary line.
+ */
 export class EarshotError extends Error {
   constructor(
     readonly method: string,
@@ -109,7 +114,10 @@ export interface EarshotClientOptions {
   timeoutMs?: number;
 }
 
-/** The recordings and calls API of one Earshot server, as one project's API key. */
+/**
+ * The recordings and calls API of one Earshot server, as one project's API key. It
+ * never follows a redirect, so the key is only ever sent to `baseUrl`.
+ */
 export class EarshotClient {
   readonly baseUrl: string;
   readonly #authorization: string | undefined;
@@ -206,6 +214,8 @@ export class EarshotClient {
         method,
         headers,
         signal,
+        // Following would send the key on to a URL the caller never chose.
+        redirect: "manual",
       });
       [status, text] = [reply.status, await reply.text()];
     } catch (error) {
@@ -219,7 +229,15 @@ export class EarshotClient {
         String(cause ?? (error as Error).name),
       );
     }
-    if (status >= 400) throw new EarshotError(method, path, status, ...problemOf(text));
-    return JSON.parse(text) as T;
+    // A refusal, or a redirect (never followed).
+    if (status < 200 || status >= 300) {
+      throw new EarshotError(method, path, status, ...problemOf(text));
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      // Not Earshot's answer: a proxy's page, say.
+      throw new EarshotError(method, path, status, null, "the answer is not JSON");
+    }
   }
 }

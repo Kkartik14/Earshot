@@ -108,6 +108,9 @@ const call = await earshot.getCall(call_id);
   no answer has `status` 0. Error messages never contain the API key.
 - **Timeouts.** `timeoutMs` bounds each request, uploads included. Without it, a stalled
   request is ended by Node's fetch idle timeouts.
+- **Redirects.** The client never follows a redirect, because a redirect could carry the
+  API key to another place. A redirect, or an answer that is not JSON, throws an
+  `EarshotError` with the HTTP `status` and no `code`.
 - **Types.** `Recording`, `CallDetail` and `CallResolution` are the server's response
   types. `paths` and `components` cover Earshot's whole HTTP API. Use them with a typed
   fetch client such as `openapi-fetch` for the routes this package doesn't wrap, such as
