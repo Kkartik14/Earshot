@@ -65,7 +65,7 @@ export function useCalls(filters: CallListFilters) {
   });
 }
 
-/** One call with its projection (null until projected) and its Month 1 fields. */
+/** One call with its projection (null until projected) and its span-transcript fields. */
 export function useCall(callId: string) {
   const scope = useViewerQueryScope();
   return useQuery({

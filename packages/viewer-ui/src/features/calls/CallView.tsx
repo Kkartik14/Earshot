@@ -93,7 +93,7 @@ function Facts({ projection }: { projection: CallProjection }) {
   );
 }
 
-/** The call's Month 1 view: its transcript as read from its spans (it grows while
+/** The call's span-transcript view: its transcript as read from its spans (it grows while
  * the call is open) and its recordings. No turns, analysis or cost without a
  * projection. */
 function SpanTranscript({ call }: { call: CallDetail }) {

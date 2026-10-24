@@ -1,4 +1,4 @@
-"""Scrub a raw hosted-provider capture into ``fixtures/captured/<provider>/`` (M3 WS0, T4).
+"""Scrub a raw hosted-provider capture into ``fixtures/captured/<provider>/``.
 
     python scripts/scrub_provider_capture.py elevenlabs
     python scripts/scrub_provider_capture.py twilio
@@ -12,7 +12,7 @@ Identifiers are replaced by format-valid placeholders (same prefix and length, b
 zeros plus a counter) in first-seen order, everywhere they occur: fields, URIs and
 JSON-in-a-string bodies. Phone numbers become ``+1555010000N``.
 
-Audio (T4(a)):
+Audio:
 * ElevenLabs: both sides were synthetic (ElevenLabs agent TTS, Cartesia caller), so
   the MP3 is committed as fetched.
 * Twilio: the callee may be a person, so the recordings are regenerated with the raw

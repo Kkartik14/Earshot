@@ -1,4 +1,4 @@
-"""Shared plumbing for the hosted-provider capture scripts (Month 3 WS0).
+"""Shared plumbing for the hosted-provider capture scripts (the integrity fixtures).
 
 Only the capture scripts (``capture_elevenlabs.py``, ``capture_twilio.py``) and the
 scrubber (``scrub_provider_capture.py``) use this. Rules it enforces:
@@ -105,7 +105,7 @@ def write_response(
     write_json(directory / f"{name}.meta.json", {"status": status, "headers": keep})
 
 
-# --- Leak rules (T4(c)): the one authority for the scrubber and the integrity tests. ---
+# --- Leak rules: the one authority for the scrubber and the integrity tests. -----------
 
 # Placeholders are format-valid IDs whose body is zeros plus a small hex counter.
 _PLACEHOLDER_BODY = re.compile(rb"^0+[0-9a-f]{1,4}$")
@@ -161,7 +161,7 @@ def env_secret_values(env_files: list[Path]) -> dict[str, str]:
 
 
 def sha256_prefixes(values: dict[str, str]) -> dict[str, str]:
-    """T4(c): the 16-hex sha256 prefix of each secret, so a hashed leak is caught too."""
+    """The 16-hex sha256 prefix of each secret, so a hashed leak is caught too."""
     import hashlib
 
     return {name: hashlib.sha256(v.encode()).hexdigest()[:16] for name, v in values.items()}

@@ -231,7 +231,7 @@ describe("call view on a real server", () => {
     // The real rendition peaks: the analysis job's two mono files side by side.
     expect(source.peaks?.map((lane) => lane.length)).toEqual([2 * 2031, 2 * 2031]);
     expect(screen.getByText("≤ 3.08 s")).toBeInTheDocument();
-    // Turn 2 as the projection job measures it (goldens.md: 1.510 s ± 75 ms).
+    // Turn 2 as the projection job measures it (the golden: 1.510 s ± 75 ms).
     expect(screen.getByText("1.51 s ± 0.08")).toBeInTheDocument();
   });
 

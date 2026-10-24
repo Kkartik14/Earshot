@@ -12,7 +12,7 @@ import { MediaClockContext } from "./Player";
 import { SpanDetail } from "./SpanDrawer";
 
 // The call detail and span bodies are the frozen contract's examples
-// (`month-2/api-shapes.md` §4 and §5), which are real bodies from a real server.
+// (the API shapes), which are real bodies from a real server.
 // The views get them as data; only the media clock is the declared fake.
 const base = exampleCall as CallDetail;
 const baseProjection = base.projection as CallProjection;
@@ -308,7 +308,7 @@ describe("signals and cost", () => {
   });
 });
 
-describe("a call without a projection (the Month 1 view)", () => {
+describe("a call without a projection (the span-transcript view)", () => {
   it("shows the transcript read from its spans and no turns, analysis or cost", () => {
     renderCall({ ...base, projection: null, projection_state: "none" });
 

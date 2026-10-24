@@ -129,14 +129,7 @@ Negative:
 
 ## Evidence
 
-Paths under `local/` are git-ignored planning and research records; they are not
-shipped.
-
-- `local/superpowers/month-2/final-plan.md`: FR-4, FR-5 and amendments M5, M7 and M8.
-- `local/superpowers/month-2/architecture-review.md`: "Cost".
-- `local/research/month-2/livekit-ts-sdk-cost.md` §6: the providers' price pages, fetched
-  2026-10-19.
-- `local/superpowers/month-2/measurements.md`: §9.5, reprice time.
+- Prices: the providers' public price pages, fetched 2026-10-19.
 - Code: `packages/sdk-python/src/earshot/call_span_facts.py` (the usage table),
   `call_cost.py` (usage and pricing), `pricing_defaults.py` (the built-in rows and the
   choices behind them), `storage_prices.py`.

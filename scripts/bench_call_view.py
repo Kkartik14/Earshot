@@ -1,4 +1,4 @@
-"""Measure Month 2's kept gating numbers (final-plan §9, M19 as trimmed). Not run in CI.
+"""Measure the call view's gating numbers. Not run in CI.
 
 ``view``: a 60-minute synthetic call in the Pipecat shape and in the LiveKit shape
 (360 turns, every ``llm`` request carrying the whole conversation so far, as both
@@ -6,7 +6,7 @@ frameworks export it), recorded through ``CallStore.record_spans``, closed by th
 real ``Closer`` into revision 1 (timed: the materialization), then projected by the
 real ``CallProjector`` (timed). Its recordings are real rows with a stored analysis
 whose speech runs are synthetic (one user and one agent run per turn): the
-analysis's own cost is §9.2's, measured by WS2. The revision bundle is checked for
+analysis's own cost is measured separately. The revision bundle is checked for
 a declared truncation (``recorder_capture_truncated``). A real server then serves
 ``GET /v1/calls/{id}``, timed over ``--reads`` reads (p50, p95), with its body size
 raw and gzipped. Thresholds: no truncation; view ≤ 1 MB gzipped; p95 ≤ 500 ms.
@@ -14,7 +14,7 @@ raw and gzipped. Thresholds: no truncation; view ≤ 1 MB gzipped; p95 ≤ 500 m
 ``search``: ``--calls`` projected calls (20 transcript lines each), written straight
 into the catalog, then ``GET /v1/calls?q=…`` through ``CallReads.list_calls``:
 a rare word, a common word, and ``q`` with filters, each timed over ``--reads``.
-Threshold (M19, measured at 10k here; 50k is deferred): ≤ 1 s.
+Threshold (measured at 10k here; 50k is deferred): ≤ 1 s.
 
 ``reprice``: ``--calls`` projected calls with the Pipecat fixture's usage; one
 project price insert makes them stale; the projection job reprices them all

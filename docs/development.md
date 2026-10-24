@@ -256,8 +256,8 @@ setup and invocation commands before running it.
 
 ## Operational limits
 
-- M1 bundles are final post-session snapshots, not streaming assembly.
-- M1 automatic capture is the normalized profile. Exact raw OTLP chunks are supported
+- Bundles are final post-session snapshots, not streaming assembly.
+- Automatic capture is the normalized profile. Exact raw OTLP chunks are supported
   only through explicit caller-supplied, policy-enabled SDK input.
 - The server is single-node; Project scoping is an authorization boundary, not a
   distributed multi-organization control plane.

@@ -83,7 +83,7 @@ describe("gapReadout", () => {
   });
 
   it("rounds the uncertainty to 10 ms, a half up, never below what was measured", () => {
-    // Pipecat turn 2's measured ± is 75 ms (goldens.md). 0.075 has no exact binary
+    // Pipecat turn 2's measured ± is 75 ms. 0.075 has no exact binary
     // form and is stored just below it, so a plain toFixed(2) would print 0.07.
     expect(gapReadout(gap({ value_ms: 1510, uncertainty_ms: 75 })).value).toBe(
       "1.51 s ± 0.08",

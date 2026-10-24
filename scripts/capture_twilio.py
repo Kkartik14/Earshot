@@ -1,4 +1,4 @@
-"""Capture one real Twilio call and its recording for Month 3 WS0 (FR-4 AC4.1).
+"""Capture one real Twilio call and its recording for the integrity fixtures.
 
 No webhooks and no tunnel: the call is placed with inline TwiML and the REST API is
 polled. Raw output goes to ``.earshot/raw-captures/twilio/`` (git-ignored); the callee

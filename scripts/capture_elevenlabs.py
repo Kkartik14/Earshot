@@ -1,4 +1,4 @@
-"""Capture a real ElevenLabs Agents conversation for Month 3 WS0 (FR-4 AC4.2).
+"""Capture a real ElevenLabs Agents conversation for the integrity fixtures.
 
 Subcommands (raw output goes to ``.earshot/raw-captures/elevenlabs/``, git-ignored):
 
@@ -13,7 +13,7 @@ Subcommands (raw output goes to ``.earshot/raw-captures/elevenlabs/``, git-ignor
 ``converse``
     The one owner-approved conversation: creates a dedicated test agent, then drives
     it over the official conversation websocket with a synthetic (Cartesia TTS) caller
-    read from the WS0b cache ``.earshot/pipecat_otlp/caller.wav``. Both sides are
+    read from the cache ``.earshot/pipecat_otlp/caller.wav``. Both sides are
     synthetic. It then waits for the conversation to finish processing and fetches
     the conversation JSON and ``/audio``.
 
