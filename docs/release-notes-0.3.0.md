@@ -24,6 +24,10 @@ and searches transcript text. LiveKit Agents 1.6 to 1.8 now get the same view as
   the played text as the agent's transcript, and LiveKit's own stereo recording.
 - **Clients**: Python's `earshot.client` (in the base install) and the new npm package
   `@earshot/node`. See the [quick start](./otlp-quickstart.md).
+- **Pipecat 1.6**: the extras and the OTLP example move to Pipecat 1.6; a real 1.6.0 call
+  passes the done-when e2e.
+- **TVIC runtime adapter**: a metadata-only, in-process receiver for TVIC's runtime
+  observations. See [the TVIC adapter](./adapters/tvic.md).
 
 ## Upgrading
 

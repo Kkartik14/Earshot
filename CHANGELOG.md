@@ -34,6 +34,9 @@ matters only to installs from source. See the
 
 ### Added
 
+- **TVIC runtime adapter.** An in-process, metadata-only receiver for TVIC's bounded
+  runtime-observation envelope, mapped into normalized events and coverage. See
+  [the TVIC adapter](docs/adapters/tvic.md).
 - **The call view.** `GET /v1/calls/{id}` keeps every 0.2.0 field and adds
   `projection_state` (`none`, `stale`, `current`) and `projection`: agent, framework,
   outcome, tags, duration, turns with the framework's reported latency and the audible
@@ -132,6 +135,9 @@ matters only to installs from source. See the
 
 ### Changed
 
+- **Pipecat 1.6.** The `pipecat` and `pipecat-groq` extras require Pipecat `>=1.6,<1.7`, and
+  the OTLP example runs on it. The real-provider done-when e2e passes on a real Pipecat 1.6.0
+  call; the captured replay fixture is still a Pipecat 1.5 call.
 - **The `livekit` extra allows `livekit-agents>=1.6.5,<1.9`.** Keys are read by
   attribute, never by version.
 - **LiveKit job-tail spans** after `session_close` (`agent_session`, `on_session_end`,
@@ -147,8 +153,44 @@ matters only to installs from source. See the
 - **Viewer media custody panel:** Recordings Earshot stores are labelled as held by
   Earshot with an Earshot-measured digest, and are played in the call view. Media held
   elsewhere is still a reference only.
+- **`CALL_PROJECTION_VERSION` is 6**, so every existing projection is recomputed.
+- **A mono pair is one timeline only when unambiguous.** The analysis and the projection
+  share one rule (`call_timeline.one_timeline_pairs`): a user and an agent mono Recording
+  with the same start and durations within 20 ms, and no other mono user or agent
+  Recording at that start. Otherwise there is no rendition, and the turn is
+  `not_one_timeline`.
+- **The analysis timeout is at most 1 hour**, and 15 minutes when the declared duration is
+  more than the file's bytes could hold; the lease is at most 61 minutes.
+- **The clients never follow a redirect**, so the API key goes only to the URL given. A
+  redirect was followed before.
 
 ### Fixed
+
+- **Projection:**
+  - A bad value on one Call no longer stops other Calls being projected. The Call is set
+    aside with `EARSHOT_PROJECTION_INPUT_INVALID`, `EARSHOT_PROJECTION_OUT_OF_RANGE` or
+    `EARSHOT_PROJECTION_WRITE_REFUSED` and retried with backoff.
+  - A value outside the catalog's range (a time or latency in nanoseconds past signed
+    64 bits, a cost total, a producer-reported duration) is unknown, never clamped.
+  - U+0000 is never stored.
+  - A projection shows exactly its Revision's evidence: spans and Recordings stored later
+    wait for a later Revision (new `first_revision` columns in migration `0005`).
+  - Per-channel media references are made only for WAV, FLAC and Ogg Opus.
+  - The decoded duration is preferred over the header's.
+- **Analysis:**
+  - A failure outside the child (spool, reading the Recording, writing the result) is
+    retried, then ends `failed` with `EARSHOT_ANALYSIS_SPOOL_FAILED`,
+    `EARSHOT_ANALYSIS_SOURCE_UNREADABLE`, `EARSHOT_ANALYSIS_CRASHED` or
+    `EARSHOT_ANALYSIS_STORE_FAILED`; it used to leave the job `running`. A lease that
+    runs out counts as a failed attempt (`EARSHOT_ANALYSIS_LEASE_EXPIRED`).
+  - Lease tokens are unique, so a claim on a purged job cannot write to its replacement.
+  - A derived blob from a write that landed after its reservation was drained is deleted.
+  - WAV header parsing is linear in the header's size.
+- **Uploads:** an empty WAV (`data` size 0, or no whole sample) or FLAC (STREAMINFO with
+  no samples) is refused with 422 `EARSHOT_RECORDING_INVALID_WAV` or
+  `EARSHOT_RECORDING_INVALID_FLAC`.
+- **Clients:** a redirect, a non-JSON answer and an answer cut short are `EarshotError`
+  in the Python and Node clients.
 
 - Under full capture, the in-process LiveKit adapter refused LiveKit 1.6 `agent_turn` spans
   (user input, instructions and reply) and every `tts_request` span (text plus an
@@ -435,7 +477,7 @@ before upgrading a 0.1.x installation.
   less time.
 - CI runs the storage modules on Postgres and the blob store on MinIO, and enforces branch
   coverage on the combined results.
-- Removed the superseded M0 TypeScript prototype, `packages/schema` and `packages/analysis`.
+- Removed the superseded TypeScript prototype, `packages/schema` and `packages/analysis`.
   Neither was published.
 
 ### Fixed
