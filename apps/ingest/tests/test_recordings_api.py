@@ -1,9 +1,10 @@
-"""The recordings API over real HTTP (FR-9, AC9.1, AC9.3), on both blob backends.
+"""The recordings API over real HTTP, on both blob backends.
 
 Every test runs the real app on a real uvicorn server against a real catalog
 (SQLite, or Postgres under ``--db postgresql``) and a real blob store: local disk
 (``[local]``) and MinIO (``[s3]``). Audio bodies are real WAV files written by the
-standard ``wave`` module.
+standard ``wave`` module, real FLAC from PyAV's encoder, and the real LiveKit 1.8
+stereo Ogg Opus recording.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import io
 import json
 import select
 import socket
+import struct
 import threading
 import time
 import uuid
@@ -26,6 +28,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from audio_support import LIVEKIT_RECORDING, encoded
 from earshot.api import ApiConfig, create_app
 from earshot.clock import ManualClock
 from earshot.recordings import MAX_RANGE_HEADER_LENGTH
@@ -91,7 +94,10 @@ def server(tmp_path, blob_backend) -> Iterator[tuple[int, object]]:
 
 
 def _journal(tmp_path) -> list[tuple]:
-    return catalog_rows(tmp_path, "SELECT blob_key FROM pending_blob_deletions")
+    # Upload attempts' keys; the server's analysis also journals its outputs briefly.
+    return catalog_rows(
+        tmp_path, "SELECT blob_key FROM pending_blob_deletions WHERE blob_key LIKE 'recordings/%'"
+    )
 
 
 def _wait_for_empty_journal(tmp_path) -> None:
@@ -147,7 +153,7 @@ def test_a_mono_wav_is_created_uploaded_and_read_back(tmp_path, blob_backend, se
     assert catalog_rows(
         tmp_path, "SELECT recording_count, dirty FROM calls WHERE call_id = ?", (call_id,)
     ) == [(1, 1)]
-    (key,) = blob_backend.objects()
+    (key,) = blob_backend.objects("recordings/")
     prefix, _, attempt = key.rpartition("/")
     assert prefix == "recordings/default" and uuid.UUID(attempt)
     assert blob_backend.leftovers() == [] and _journal(tmp_path) == []
@@ -169,7 +175,7 @@ def test_ranges_are_answered_from_the_blob_store_with_206_and_416(blob_backend, 
         ranged("bytes=0-1,5-6"),
         ranged(f"bytes={len(body)}-"),
     )
-    # Positions past any object (tribunal round 1, B-2): never a 500.
+    # Positions past any object: never a 500.
     huge_end, huge_start = ranged("bytes=0-" + "9" * 200), ranged("bytes=" + "9" * 200 + "-")
     too_long = ranged("x" * (MAX_RANGE_HEADER_LENGTH + 1))
 
@@ -224,7 +230,7 @@ def test_create_is_idempotent_by_recording_id_and_a_different_manifest_conflicts
         {"started_at_unix_nano": 1_800_000_000},
         {"started_at_unix_nano": "01"},
         {"started_at_unix_nano": "18446744073709551616"},
-        # The call pipeline is int64 (tribunal round 1, M-C): [1, 2^63 - 1] only.
+        # The call pipeline is int64: [1, 2^63 - 1] only.
         {"started_at_unix_nano": "0"},
         {"started_at_unix_nano": "9223372036854775808"},
         {"started_at_unix_nano": "18446744073709551615"},
@@ -252,7 +258,7 @@ def test_an_invalid_manifest_is_422_and_creates_nothing(tmp_path, server, fields
 def test_a_recording_at_either_bound_of_its_start_closes_into_a_revision(
     tmp_path, blob_backend, started_at
 ) -> None:
-    """What the API accepts, the closer can materialize (tribunal round 1, M-C)."""
+    """What the API accepts, the closer can materialize."""
 
     store = make_store(tmp_path)
     app = create_app(
@@ -277,7 +283,7 @@ def test_a_recording_at_either_bound_of_its_start_closes_into_a_revision(
 
 
 def test_a_call_takes_sixteen_recordings_and_refuses_the_seventeenth(tmp_path) -> None:
-    """Tribunal round 3, Lamport LAM3-1: a revision holds a call's recordings with one
+    """A revision holds a call's recordings with one
     media clock domain each, and the recorder keeps at most 16; a 17th recording
     made every build of its call fail. The limit is per call, and a repeated create
     of a recording the call has is still answered."""
@@ -307,6 +313,205 @@ def test_a_metadata_only_project_gets_422_for_a_recording(tmp_path, server) -> N
     assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
 
 
+# --- stereo recordings -------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body_of", "duration_ms"),
+    [
+        ("audio/ogg", lambda: LIVEKIT_RECORDING.read_bytes(), 34_010),
+        (
+            "audio/flac",
+            lambda: encoded("flac", "flac", rate=16_000, channels=2, seconds=1.5),
+            1500,
+        ),
+        ("audio/wav", lambda: wav(channels=2, seconds=1.5), 1500),
+    ],
+    ids=["livekit-ogg-opus", "flac", "wav"],
+)
+def test_a_stereo_recording_with_a_channel_map_is_created_uploaded_and_read_back(
+    tmp_path, blob_backend, server, content_type, body_of, duration_ms
+) -> None:
+    port, _ = server
+    body = body_of()
+    manifest = {
+        "recording_id": "call-1.stereo",
+        "speaker": "mixed",
+        "content_type": content_type,
+        "channel_speakers": ["user", "agent"],
+    }
+
+    created = post_recording(port, **manifest)
+    again = post_recording(port, **manifest)
+    swapped = post_recording(port, **{**manifest, "channel_speakers": ["agent", "user"]})
+    uploaded = put_content(port, "call-1.stereo", body, content_type=content_type)
+    whole = request(port, "GET", "/v1/recordings/call-1.stereo/content")
+    mono = post_recording(port, recording_id="call-1.user")
+
+    assert created.status == 201, created.body
+    assert (created.json()["speaker"], created.json()["channel_speakers"]) == (
+        "mixed",
+        ["user", "agent"],
+    )
+    assert (again.status, again.json()) == (200, created.json())
+    assert (swapped.status, swapped.problem_code()) == (409, "EARSHOT_RECORDING_CONFLICT")
+    assert uploaded.status == 200, uploaded.body
+    assert {key: uploaded.json()[key] for key in ("state", "duration_ms", "channel_speakers")} == {
+        "state": "stored",
+        "duration_ms": duration_ms,
+        "channel_speakers": ["user", "agent"],
+    }
+    assert (whole.status, whole.body, whole.headers["content-type"]) == (200, body, content_type)
+    assert mono.json()["channel_speakers"] is None
+    assert catalog_rows(
+        tmp_path, "SELECT recording_id, channel_speakers_json FROM recordings ORDER BY 1"
+    ) == [("call-1.stereo", '["user","agent"]'), ("call-1.user", None)]
+
+
+@pytest.mark.parametrize(
+    ("manifest", "content_type", "body_of"),
+    [
+        ({"speaker": "agent"}, "audio/ogg", lambda: LIVEKIT_RECORDING.read_bytes()),
+        ({"speaker": "mixed"}, "audio/wav", lambda: wav(channels=2, seconds=0.5)),
+        (
+            {"speaker": "user"},
+            "audio/flac",
+            lambda: encoded("flac", "flac", rate=16_000, channels=2, seconds=0.5),
+        ),
+        (
+            {"speaker": "mixed", "channel_speakers": ["user", "agent"]},
+            "audio/wav",
+            lambda: wav(channels=1, seconds=0.5),
+        ),
+        (
+            {"speaker": "mixed", "channel_speakers": ["agent"]},
+            "audio/ogg",
+            lambda: LIVEKIT_RECORDING.read_bytes(),
+        ),
+    ],
+    ids=[
+        "mono-ogg-gets-stereo",
+        "mixed-gets-stereo",
+        "mono-flac-gets-stereo",
+        "map-2-gets-1",
+        "map-1-gets-2",
+    ],
+)
+def test_an_upload_whose_header_has_another_channel_count_is_refused(
+    tmp_path, blob_backend, server, manifest, content_type, body_of
+) -> None:
+    port, _ = server
+    post_recording(port, recording_id="r1", content_type=content_type, **manifest)
+
+    reply = put_content(port, "r1", body_of(), content_type=content_type)
+    state = request(port, "GET", "/v1/recordings/r1").json()["state"]
+
+    assert (reply.status, reply.problem_code()) == (422, "EARSHOT_RECORDING_CHANNEL_MISMATCH")
+    assert state == "pending"
+    assert blob_backend.objects() == [] and blob_backend.leftovers() == []
+    assert _journal(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body", "code"),
+    [
+        ("audio/flac", b"ID3\x04" + bytes(4096), "EARSHOT_RECORDING_INVALID_FLAC"),
+        ("audio/ogg", b"RIFF" + bytes(4096), "EARSHOT_RECORDING_INVALID_OGG"),
+        # Ogg Vorbis: Earshot reads the channel count of Ogg Opus only.
+        (
+            "audio/ogg",
+            b"OggS\x00\x02" + bytes(20) + b"\x01\x1e\x01vorbis" + bytes(23),
+            "EARSHOT_RECORDING_INVALID_OGG",
+        ),
+    ],
+    ids=["not-flac", "not-ogg", "ogg-vorbis"],
+)
+def test_a_flac_or_ogg_body_whose_header_cannot_be_read_is_refused(
+    tmp_path, blob_backend, server, content_type, body, code
+) -> None:
+    port, _ = server
+    post_recording(port, recording_id="r1", content_type=content_type)
+
+    reply = put_content(port, "r1", body, content_type=content_type)
+
+    assert (reply.status, reply.problem_code()) == (422, code)
+    assert blob_backend.objects() == [] and _journal(tmp_path) == []
+
+
+def _wav_declaring_no_audio() -> bytes:
+    body = bytearray(wav(seconds=0.5))
+    struct.pack_into("<I", body, 40, 0)  # its data size: libsndfile reads no frames
+    return bytes(body)
+
+
+def _flac_declaring_no_samples() -> bytes:
+    """A real FLAC whose STREAMINFO total was never written back (0, "unknown")."""
+
+    body = bytearray(encoded("flac", "flac", rate=16_000, channels=1, seconds=0.5))
+    (packed,) = struct.unpack_from(">Q", body, 18)
+    struct.pack_into(">Q", body, 18, packed & ~0xF_FFFF_FFFF)
+    return bytes(body)
+
+
+@pytest.mark.parametrize(
+    ("content_type", "body_of", "code"),
+    [
+        ("audio/wav", _wav_declaring_no_audio, "EARSHOT_RECORDING_INVALID_WAV"),
+        ("audio/flac", _flac_declaring_no_samples, "EARSHOT_RECORDING_INVALID_FLAC"),
+    ],
+    ids=["wav-data-size-0", "flac-total-samples-0"],
+)
+def test_an_upload_whose_header_declares_no_audio_is_refused(
+    tmp_path, blob_backend, server, content_type, body_of, code
+) -> None:
+    """The analysis could never read it, so it is refused before it is stored."""
+
+    port, _ = server
+    post_recording(port, recording_id="r1", content_type=content_type)
+
+    reply = put_content(port, "r1", body_of(), content_type=content_type)
+
+    assert (reply.status, reply.problem_code()) == (422, code)
+    assert request(port, "GET", "/v1/recordings/r1").json()["state"] == "pending"
+    assert blob_backend.objects() == [] and _journal(tmp_path) == []
+
+
+@pytest.mark.parametrize(
+    ("fields", "code"),
+    [
+        ({"speaker": "mixed", "channel_speakers": []}, "EARSHOT_INVALID_REQUEST"),
+        ({"speaker": "mixed", "channel_speakers": ["mixed"]}, "EARSHOT_INVALID_REQUEST"),
+        (
+            {"speaker": "mixed", "channel_speakers": ["user", "agent", "user"]},
+            "EARSHOT_INVALID_REQUEST",
+        ),
+        ({"speaker": "mixed", "channel_speakers": "user"}, "EARSHOT_INVALID_REQUEST"),
+        (
+            {"speaker": "mixed", "channel_speakers": ["user", "user"]},
+            "EARSHOT_INVALID_CHANNEL_SPEAKERS",
+        ),
+        ({"speaker": "user", "channel_speakers": ["user"]}, "EARSHOT_INVALID_CHANNEL_SPEAKERS"),
+        (
+            {
+                "speaker": "mixed",
+                "content_type": "audio/mpeg",
+                "channel_speakers": ["user", "agent"],
+            },
+            "EARSHOT_INVALID_CHANNEL_SPEAKERS",
+        ),
+    ],
+    ids=["empty", "mixed-channel", "three", "not-a-list", "twice", "not-mixed", "mp3"],
+)
+def test_an_invalid_channel_map_is_422_and_creates_nothing(tmp_path, server, fields, code) -> None:
+    port, _ = server
+
+    reply = post_recording(port, recording_id="r1", **fields)
+
+    assert (reply.status, reply.problem_code()) == (422, code), reply.body
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM calls") == [(0,)]
+
+
 # --- uploads ------------------------------------------------------------------------------------
 
 
@@ -332,7 +537,7 @@ def test_an_upload_to_a_stored_recording_is_hashed_and_never_written(
 @pytest.mark.parametrize(
     ("case", "status", "code"),
     [
-        ("stereo", 422, "EARSHOT_RECORDING_NOT_MONO"),
+        ("stereo", 422, "EARSHOT_RECORDING_CHANNEL_MISMATCH"),
         ("not a wav", 422, "EARSHOT_RECORDING_INVALID_WAV"),
         ("wrong type", 415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE"),
         ("no type", 415, "EARSHOT_UNSUPPORTED_MEDIA_TYPE"),
@@ -434,7 +639,7 @@ def test_an_upload_to_a_failed_or_unknown_recording_is_refused(tmp_path, blob_ba
 def test_a_put_cancelled_while_it_discards_its_attempt_still_ends_the_attempt(
     tmp_path, blob_backend
 ) -> None:
-    """Tribunal round 2, Linus L2-1: a cancellation (a server stopping, a proxy
+    """A cancellation (a server stopping, a proxy
     aborting) that lands while the handler discards its attempt skipped ``end_upload``,
     so the attempt stayed "in flight" for the process's life: its recording was never
     swept, and its call never closed. The real upload endpoint, awaited directly so
@@ -511,11 +716,11 @@ def test_a_put_cancelled_while_it_discards_its_attempt_still_ends_the_attempt(
 def test_a_put_cancelled_while_it_begins_its_attempt_still_ends_the_attempt(
     tmp_path, blob_backend
 ) -> None:
-    """Tribunal round 3, Linus R3-2: a cancellation that lands while the handler
+    """A cancellation that lands while the handler
     awaits ``begin_upload`` in the threadpool cannot stop the thread, which goes on
     to register the attempt; the handler never reached the ``finally`` that ends it,
     so the attempt held its call, and kept its recording from the sweep, for the
-    process's life. The real upload endpoint, awaited directly (as in L2-1); its
+    process's life. The real upload endpoint, awaited directly (as in the test above); its
     ``begin_upload`` waits for the store's write lock, which the test holds."""
 
     from starlette.requests import Request
@@ -594,10 +799,10 @@ class _HeldBody:
 
 
 def test_a_slow_put_that_crosses_the_pending_deadline_still_stores(tmp_path, blob_backend) -> None:
-    """Tribunal round 1, M-B: the server's own upload sweep (a 3 s hold here, a real
+    """The server's own upload sweep (a 3 s hold here, a real
     clock and maintenance loop) never fails a recording whose PUT is still streaming.
     The PUT starts late, so it crosses the pending deadline while it lasts less
-    than the hold cap, which ends a PUT (tribunal round 3, R3-1)."""
+    than the hold cap, which ends a PUT."""
 
     store = make_store(tmp_path)
     app = create_app(
@@ -652,7 +857,7 @@ def _wait_for_revision(tmp_path, seconds: float = 20.0) -> list[tuple]:
 def test_the_server_closes_a_call_only_after_its_slow_put_and_revision_one_has_it(
     tmp_path, blob_backend
 ) -> None:
-    """Tribunal round 2, Linus N-1 / Lamport LAM2-5, end to end: the real maintenance
+    """End to end: the real maintenance
     loop and closer (1 s timings, a 4 s hold), a call with spans and a PUT that starts
     at 2.5 s and stalls 3 s mid-body, past the call's due time and its pending
     deadline but inside the hold cap that ends a PUT. The call stays open, and
@@ -696,7 +901,7 @@ def test_the_server_closes_a_call_only_after_its_slow_put_and_revision_one_has_i
 def test_an_upload_that_sends_nothing_for_its_idle_timeout_is_ended_and_releases_its_call(
     tmp_path, blob_backend
 ) -> None:
-    """Tribunal round 2, R2-C's progress bound: a PUT that stops sending (a client
+    """The progress bound: a PUT that stops sending (a client
     whose connection died without a FIN) is answered 408 after the idle timeout (60 s
     in the server, 1 s here, under a 3 s hold cap), and its attempt ends: the call
     closes, without it."""
@@ -749,7 +954,7 @@ def test_an_upload_that_sends_nothing_for_its_idle_timeout_is_ended_and_releases
 def test_an_upload_that_trickles_past_its_hold_cap_is_ended_and_releases_its_call(
     tmp_path, blob_backend
 ) -> None:
-    """Tribunal round 3, Linus R3-1 / Bellard N3-2: the idle timeout bounds silence,
+    """The idle timeout bounds silence,
     not progress, so a PUT sending a byte just inside it held its call for as long
     as it trickled. A PUT is ended with 408 once it has run for the upload hold cap
     (600 s in the server, 2 s here), and its attempt ends: the call closes without it."""
@@ -858,10 +1063,10 @@ def test_two_concurrent_uploads_store_one_object_and_the_loser_cleans_up(
     assert request(port, "GET", "/v1/recordings/r1/content").body == bodies[winner]
     _wait_for_empty_journal(tmp_path)
     assert _journal(tmp_path) == []
-    assert len(blob_backend.objects()) == 1 and blob_backend.leftovers() == []
+    assert len(blob_backend.objects("recordings/")) == 1 and blob_backend.leftovers() == []
 
 
-# --- AC9.3: project isolation -----------------------------------------------------------------
+# --- project isolation ------------------------------------------------------------------------
 
 
 def test_another_projects_recording_is_404_and_ids_are_per_project(tmp_path, blob_backend) -> None:

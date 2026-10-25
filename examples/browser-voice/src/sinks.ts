@@ -17,12 +17,7 @@ export function supportsSinkSelection(ctx: AudioContext): boolean {
   return typeof asSinkSwitchable(ctx).setSinkId === "function";
 }
 
-/**
- * Enumerate audio output devices for the UI dropdown. Labels are only populated
- * after microphone permission is granted, which the app requests first. These
- * labels are shown locally and never sent — the SDK hashes the sink id it
- * observes before anything leaves the client.
- */
+/** List output devices for the UI; labels stay local and sink ids are hashed before capture. */
 export async function listOutputDevices(): Promise<MediaDeviceInfo[]> {
   const devices = await navigator.mediaDevices.enumerateDevices();
   return devices.filter((device) => device.kind === "audiooutput");

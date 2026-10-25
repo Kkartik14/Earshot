@@ -1,0 +1,12 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      // The tests run against a real `earshot serve` (the Python server), which
+      // turbo cannot hash as an input, so a cached pass could hide a server change.
+      "cache": false,
+      "passThroughEnv": ["EARSHOT_BIN"]
+    }
+  }
+}

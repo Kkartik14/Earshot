@@ -1,4 +1,4 @@
-"""Recordings in the catalog (FR-9 storage, AC9.2's now-testable part, FR-6's hold).
+"""Recordings in the catalog (catalog and upload lifecycle).
 
 ``RecordingStore`` is the storage half of the recordings API: it creates a
 recording and its call, journals every upload attempt, commits the winning
@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-from captured_otlp import CAPTURED_SESSION_KEY, captured_requests
 from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
 from earshot.clock import ManualClock
@@ -36,6 +35,7 @@ from earshot.storage_recordings import (
 )
 from otlp_support import make_request, make_span, string_attribute
 from store_support import catalog, catalog_rows, make_store
+from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 
 pytestmark = pytest.mark.integration
 
@@ -131,7 +131,7 @@ def test_a_recording_for_a_new_key_creates_its_call_keyed_by_the_recording(tmp_p
         None,
     )
     assert recording.call_id == calls.resolve_call("default", "call-1")
-    # Not due before LONG_QUIET without spans or an end marker (FR-6, L39).
+    # This call is not due before LONG_QUIET without spans or an end marker.
     assert _call(tmp_path, recording.call_id) == (
         "recording", "call-1", 1, START + LONG_QUIET, START, START, 0, 0, "open"
     )  # fmt: skip
@@ -158,8 +158,7 @@ def test_a_recording_for_a_new_key_creates_its_call_keyed_by_the_recording(tmp_p
 def test_the_store_itself_refuses_a_start_outside_the_catalogs_time_range(
     tmp_path, started_at, valid
 ) -> None:
-    # Tribunal round 2, Bellard R-3: the API bounds the start (B-1), but the store is
-    # where the invariant lives; a second entry point must not poison a call.
+    # The store enforces the time range too, so alternate entry points cannot poison a call.
     recordings, _, _ = _open(tmp_path)
 
     if valid:
@@ -344,7 +343,7 @@ def test_an_upload_to_a_stored_or_failed_recording_starts_no_attempt(tmp_path) -
     assert _journal(tmp_path) == []
 
 
-# --- AC9.2: a stored recording is evidence ----------------------------------------------------
+# --- Stored recording evidence ----------------------------------------------------
 
 
 def test_a_stored_recording_marks_an_open_call_dirty_and_due_a_quiet_period_later(
@@ -364,9 +363,9 @@ def test_a_stored_recording_marks_an_open_call_dirty_and_due_a_quiet_period_late
 
 def test_a_stored_recording_on_an_ended_call_is_due_after_the_end_grace(tmp_path) -> None:
     recordings, calls, clock = _open(tmp_path)
-    for request in captured_requests():  # the real call: its conversation span ends it
+    for request in synthetic_requests():  # the synthetic call: its conversation span ends it
         calls.record_spans("default", spans_from_request(request))
-    recording, _ = recordings.create("default", manifest(session_key=CAPTURED_SESSION_KEY))
+    recording, _ = recordings.create("default", manifest(session_key=SYNTHETIC_SESSION_KEY))
     clock.advance(5 * SECOND)
 
     _upload(recordings)
@@ -379,7 +378,7 @@ def test_a_recording_stored_after_close_dirties_the_call_after_the_late_debounce
     recordings, _, clock = _open(tmp_path)
     recording, _ = recordings.create("default", manifest())
     recordings.create("default", manifest("call-1.agent", speaker="agent"))
-    with catalog(tmp_path) as connection:  # what the closer (WS7) leaves after a revision
+    with catalog(tmp_path) as connection:  # the closed call after a revision
         connection.execute(
             "UPDATE calls SET state = 'closed', dirty = 0, close_due_unix_nano = NULL, "
             "end_signal_unix_nano = ?",
@@ -397,7 +396,7 @@ def test_a_recording_stored_after_close_dirties_the_call_after_the_late_debounce
     assert _call(tmp_path, recording.call_id)[6] == 2
 
 
-# --- the pending deadline, the hold and the sweep (FR-6, FR-9) --------------------------------
+# --- The pending deadline, hold, and sweep --------------------------------
 
 
 def test_the_pending_deadline_is_the_latest_of_creation_evidence_and_end_plus_the_hold() -> None:
@@ -443,7 +442,7 @@ def test_a_call_still_receiving_evidence_keeps_its_pending_recording_past_the_ho
 
 
 def test_an_upload_still_streaming_past_the_deadline_is_not_failed_and_stores(tmp_path) -> None:
-    """Tribunal round 1, M-B: the deadline cannot expire while an attempt streams."""
+    """The deadline cannot expire while an upload attempt is streaming."""
 
     recordings, _, clock = _open(tmp_path)
     recording, _ = recordings.create("default", manifest())
@@ -483,8 +482,8 @@ def test_a_recording_past_its_deadline_fails_once_its_last_attempt_ends(tmp_path
 
 
 def test_discard_keeps_the_object_of_a_recording_that_did_store(tmp_path) -> None:
-    """Tribunal round 1, LAM-2: the PUT handler discards whenever it did not see the
-    stored result (an ambiguous commit). The object a stored recording owns stays."""
+    """The PUT handler may discard after an ambiguous commit. A stored recording's
+    object must remain available."""
 
     recordings, _, _ = _open(tmp_path)
     recordings.create("default", manifest())

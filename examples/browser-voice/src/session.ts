@@ -243,16 +243,7 @@ export class CaptureSession {
     );
   }
 
-  /**
-   * Run the real `getUserMedia` microphone-permission path via the SDK and return
-   * the live stream (or `null` if the user/agent denied it). The SDK records a
-   * `granted` (with an opaque device hash) or `denied` permission event; this
-   * method never throws.
-   *
-   * The SDK types the result structurally as `MediaStreamLike`; at runtime it is
-   * the browser's real `MediaStream`, which the caller needs in full to add
-   * tracks to a peer connection and to build an `AudioContext` source.
-   */
+  /** Return the live microphone stream, or `null` on denial; the SDK records the permission outcome. */
   async requestMicrophone(
     constraints: MediaStreamConstraints,
   ): Promise<MediaStream | null> {
@@ -269,11 +260,7 @@ export class CaptureSession {
     return stream as MediaStream;
   }
 
-  /**
-   * Read + watch the real Permissions API `microphone` descriptor and
-   * `devicechange`. Some browsers reject `query({ name: "microphone" })`; the SDK
-   * records that as coverage rather than throwing.
-   */
+  /** Watch microphone permission and device changes; unsupported permission queries become coverage. */
   async observeDevices(): Promise<void> {
     this.log("observing permissions + devicechange…");
     await this.recorder.observeMediaDevices(navigator.mediaDevices, {
@@ -287,11 +274,7 @@ export class CaptureSession {
     this.log(`sampling RTCPeerConnection.getStats() every ${intervalMs}ms`);
   }
 
-  /**
-   * Observe a real `AudioContext` render path: state changes, `outputLatency`,
-   * the `getOutputTimestamp()` render-queue depth, and `sinkchange`. Anything the
-   * platform does not expose becomes an SDK coverage note, not a guessed value.
-   */
+  /** Observe AudioContext render signals and report unsupported platform data as coverage. */
   attachAudioContext(ctx: AudioContext, renderTimingIntervalMs = 1000): void {
     this.recorder.attachAudioContext(ctx, { renderTimingIntervalMs });
     this.log(
@@ -371,13 +354,7 @@ export class CaptureSession {
     });
   }
 
-  /**
-   * Recover a terminal 413 by sending a smaller body at the same session and
-   * drain sequence. By default this keeps identity, clock, end, and coverage
-   * metadata while omitting snapshots and device events. A host may pass an
-   * ordered subset of those observations to retain when a smaller body is
-   * enough. The loss is declared as `capture.upload` coverage.
-   */
+  /** Retry a terminal 413 with a smaller body at the same sequence and declare omitted data as `capture.upload` coverage. */
   retryFinalWithReducedPayload(
     replacement?: CapturePayload,
   ): Promise<CaptureSessionFinishResult> {

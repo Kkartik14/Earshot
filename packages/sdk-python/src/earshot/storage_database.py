@@ -76,7 +76,7 @@ class DatabaseConnection(Protocol):
         """``execute`` for a statement whose text varies with its data (an ``IN`` list
         of a batch's values): never prepared on the server. Postgres would otherwise
         keep the generic plan it made for such a text, which on a fresh table (no
-        statistics yet) is a scan of the project (tribunal round 2, Carmack CR2-4)."""
+        statistics yet) is a scan of the project."""
         ...
 
     def executemany(self, sql: str, parameters: Any, /) -> Any: ...

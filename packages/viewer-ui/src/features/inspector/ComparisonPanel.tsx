@@ -212,14 +212,7 @@ function ComparisonDiff({ result }: { result: ComparisonResult }) {
   );
 }
 
-/** Pick a known-good incident and diff this one against it.
- *
- * The picker is loaded lazily — the session list is only fetched once the reader
- * opens it. Every failure the backend can report about the baseline
- * (`EARSHOT_KNOWN_GOOD_NOT_FOUND` / `_PURGED` / `_ANALYSIS_NOT_AVAILABLE`) or
- * about a stale analysis (`EARSHOT_ANALYSIS_BINDING_MISMATCH`) is rendered as an
- * explicit state, and a metric pair the analyzer marked incomparable is shown as
- * incomparable with its reason — never as a zero, a hidden row, or a blank. */
+/** Lazily compare against a selected baseline and render backend failures or incomparable metrics with their reasons. */
 export function ComparisonPanel({ bundleId }: { bundleId: string | undefined }) {
   const [open, setOpen] = useState(false);
   const [knownGood, setKnownGood] = useState<string | null>(null);

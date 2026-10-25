@@ -78,17 +78,26 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      - name: Install Earshot for the real-server viewer and Node tests
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev,server]'
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
-      - name: Check generated viewer API types
+      - name: Check generated viewer and Node API types
         run: |
           pnpm --filter @earshot/viewer-ui gen:api
-          git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts
+          pnpm --filter @earshot/node gen:api
+          git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts packages/node/src/openapi.ts
       - name: Test, typecheck, and format
         run: |
           pnpm test
@@ -100,7 +109,7 @@ jobs:
     needs: [prepare]
     if: needs.prepare.outputs.run_full_ci == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
@@ -149,14 +158,72 @@ jobs:
           apps/ingest/tests/test_example_recording_upload.py
           apps/ingest/tests/test_closer.py
           apps/ingest/tests/test_closer_conformance.py
+          apps/ingest/tests/test_analysis_api.py
+          apps/ingest/tests/test_analysis_job.py
+          apps/ingest/tests/test_analysis_storage.py
+          apps/ingest/tests/test_analysis_without_signals.py
+          apps/ingest/tests/test_api_response_contract.py
+          apps/ingest/tests/test_call_projection_job.py
+          apps/ingest/tests/test_call_view_api.py
+          apps/ingest/tests/test_elevenlabs_connector.py
+          apps/ingest/tests/test_retell_connector.py
+          apps/ingest/tests/test_ringg_connector.py
+          apps/ingest/tests/test_vapi_connector.py
+          apps/ingest/tests/test_client.py
+          apps/ingest/tests/test_connector_body_stream.py
+          apps/ingest/tests/test_connector_evidence.py
+          apps/ingest/tests/test_connector_ingestion.py
+          apps/ingest/tests/test_connector_revisions.py
+          apps/ingest/tests/test_dashboard_api.py
+          apps/ingest/tests/test_hook_host_exemption.py
+          apps/ingest/tests/test_livekit_otlp_calls.py
+          apps/ingest/tests/test_livekit_otlp_server.py
+          apps/ingest/tests/test_migration_0005.py
+          apps/ingest/tests/test_migration_0006.py
+          apps/ingest/tests/test_prices_api.py
+          apps/ingest/tests/test_prices_cli.py
+          apps/ingest/tests/test_recording_fetch_job.py
+          apps/ingest/tests/test_recording_fetch_server.py
+          apps/ingest/tests/test_recording_transcripts_api.py
+          apps/ingest/tests/test_sqlite_server_lock.py
+          apps/ingest/tests/test_privacy_e2e.py
+          apps/ingest/tests/test_ingest_security_regressions.py
+          apps/ingest/tests/test_calls_presets.py
+          packages/sdk-python/tests/test_call_timeline.py
+          packages/sdk-python/tests/test_call_projection.py
+          packages/sdk-python/tests/test_call_materializer.py
+          packages/sdk-python/tests/test_call_span_facts.py
+          packages/sdk-python/tests/test_captured_elevenlabs_fixture.py
+          packages/sdk-python/tests/test_captured_livekit_otlp_fixture.py
+          packages/sdk-python/tests/test_captured_twilio_fixture.py
+          packages/sdk-python/tests/test_livekit_otel_adapter.py
+          packages/sdk-python/tests/test_livekit_otlp_materializer.py
+          packages/sdk-python/tests/test_recording_fetcher.py
+          packages/sdk-python/tests/test_signals_analysis.py
+          packages/sdk-python/tests/test_otlp_receiver.py
+          packages/sdk-python/tests/test_transcripts.py
+
+  python_sqlite_coverage:
+    name: SQLite full suite with branch coverage
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COVERAGE_FILE: .coverage.sqlite
+      COVERAGE_RCFILE: ${{ github.workspace }}/pyproject.toml
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install backend and pinned framework lanes
+        run: python -m pip install -e '.[dev,pipecat-groq,livekit]'
       - name: Test the full suite on SQLite with branch coverage
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          COVERAGE_FILE: .coverage.sqlite
-          COVERAGE_RCFILE: ${{ github.workspace }}/pyproject.toml
         run: pytest --cov=earshot --cov-report= --cov-fail-under=0 -q
       - name: Keep SQLite coverage data
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-sqlite
@@ -168,9 +235,9 @@ jobs:
   python_postgres:
     name: Postgres catalog and S3 blob store
     needs: [prepare]
-    if: needs.prepare.outputs.run_full_ci == 'true'
+    if: needs.prepare.outputs.run_full_ci == 'true' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:16
@@ -228,8 +295,72 @@ jobs:
           pytest -q --db postgresql -m postgres_only
           apps/ingest/tests/test_calls_storage.py
           apps/ingest/tests/test_otlp_backpressure.py
+      - name: Check S3 recording API contracts on MinIO
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q --db postgresql
+          -k 's3 and (test_a_mono_wav_is_created_uploaded_and_read_back or
+          test_ranges_are_answered_from_the_blob_store_with_206_and_416)'
+          apps/ingest/tests/test_recordings_api.py
+      - name: Test the blob store on S3 (MinIO) contract suite
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q -m 'not slow'
+          apps/ingest/tests/test_blobstore.py
+      - name: Show MinIO logs after a failure
+        if: failure()
+        run: docker logs minio
+
+  python_postgres_coverage:
+    name: Postgres and S3 full suites with branch coverage
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: earshot
+          POSTGRES_PASSWORD: earshot-ci
+          POSTGRES_DB: earshot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username earshot --dbname earshot"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      EARSHOT_TEST_POSTGRES_URL: postgresql://earshot:earshot-ci@127.0.0.1:5432/earshot
+      COVERAGE_FILE: .coverage.postgres
+      COVERAGE_RCFILE: ${{ github.workspace }}/pyproject.toml
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install the server with the Postgres and S3 extras
+        run: python -m pip install -e '.[dev,server,postgres,s3]'
+      - name: Start MinIO
+        run: |
+          s3_user="ci-$(openssl rand -hex 8)"
+          s3_secret="$(openssl rand -hex 24)"
+          echo "::add-mask::$s3_secret"
+          docker run --detach --name minio \
+            --publish 127.0.0.1:9000:9000 \
+            --env "MINIO_ROOT_USER=$s3_user" \
+            --env "MINIO_ROOT_PASSWORD=$s3_secret" \
+            cgr.dev/chainguard/minio:latest server /data
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --output /dev/null http://127.0.0.1:9000/minio/health/live; then
+              break
+            fi
+            sleep 1
+          done
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:9000/minio/health/live
+          echo "EARSHOT_TEST_S3_URL=http://$s3_user:$s3_secret@127.0.0.1:9000" >> "$GITHUB_ENV"
       - name: Test the full storage modules on Postgres with branch coverage
-        if: github.event_name == 'workflow_dispatch'
         run: >-
           pytest -q --db postgresql
           --cov=earshot --cov-report= --cov-fail-under=0
@@ -249,26 +380,25 @@ jobs:
           apps/ingest/tests/test_closer_conformance.py
           apps/ingest/tests/test_calls_read.py apps/ingest/tests/test_calls_purge.py
           apps/ingest/tests/test_page_cursors.py
-      - name: Check S3 recording API contracts on MinIO
-        if: github.event_name != 'workflow_dispatch'
-        run: >-
-          pytest -q --db postgresql
-          -k 's3 and (test_a_mono_wav_is_created_uploaded_and_read_back or
-          test_ranges_are_answered_from_the_blob_store_with_206_and_416)'
-          apps/ingest/tests/test_recordings_api.py
-      - name: Test the blob store on S3 (MinIO) with its full contract suite
-        if: github.event_name == 'workflow_dispatch'
+          apps/ingest/tests/test_migration_0005.py apps/ingest/tests/test_client.py
+          apps/ingest/tests/test_analysis_storage.py apps/ingest/tests/test_analysis_job.py
+          apps/ingest/tests/test_analysis_api.py apps/ingest/tests/test_call_view_api.py
+          apps/ingest/tests/test_prices_api.py apps/ingest/tests/test_prices_cli.py
+          apps/ingest/tests/test_api_response_contract.py apps/ingest/tests/test_call_projection_job.py
+          apps/ingest/tests/test_livekit_otlp_calls.py apps/ingest/tests/test_livekit_otlp_server.py
+          apps/ingest/tests/test_migration_0006.py apps/ingest/tests/test_connector_ingestion.py
+          apps/ingest/tests/test_connector_revisions.py apps/ingest/tests/test_hook_host_exemption.py
+          apps/ingest/tests/test_elevenlabs_connector.py apps/ingest/tests/test_retell_connector.py
+          apps/ingest/tests/test_ringg_connector.py apps/ingest/tests/test_vapi_connector.py
+          apps/ingest/tests/test_finalized_adapter_conformance.py apps/ingest/tests/test_recording_fetch_job.py
+          apps/ingest/tests/test_recording_fetch_server.py apps/ingest/tests/test_recording_transcripts_api.py
+          apps/ingest/tests/test_dashboard_api.py
+      - name: Test the blob store on S3 with branch coverage
         run: >-
           pytest -q
           --cov=earshot --cov-append --cov-report= --cov-fail-under=0
           apps/ingest/tests/test_blobstore.py
-      - name: Test the blob store on S3 (MinIO) contract suite
-        if: github.event_name != 'workflow_dispatch'
-        run: >-
-          pytest -q -m 'not slow'
-          apps/ingest/tests/test_blobstore.py
       - name: Keep Postgres and S3 coverage data
-        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-postgres
@@ -283,7 +413,7 @@ jobs:
   coverage:
     name: Branch coverage, SQLite and Postgres combined
     if: github.event_name == 'workflow_dispatch'
-    needs: [prepare, python, python_postgres]
+    needs: [python_sqlite_coverage, python_postgres_coverage]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -349,7 +479,7 @@ jobs:
             dependency: livekit-agents==1.6.5
           - integration: livekit
             lane: current
-            dependency: livekit-agents>=1.6.5,<1.7
+            dependency: livekit-agents>=1.8,<1.9
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -368,6 +498,12 @@ jobs:
             -k '${{ matrix.integration }}'
           pytest -q packages/sdk-python/tests/test_adapter_conformance.py \
             -k '${{ matrix.integration }}'
+      - name: Replay the real LiveKit capture in process and through the materializer
+        if: matrix.integration == 'livekit'
+        run: >-
+          pytest -q
+          packages/sdk-python/tests/test_livekit_otel_adapter.py
+          packages/sdk-python/tests/test_livekit_otlp_materializer.py
 
   macos_smoke:
     name: macOS framework smoke
@@ -394,7 +530,7 @@ jobs:
     needs: [prepare]
     if: needs.prepare.outputs.run_full_ci == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -423,26 +559,41 @@ jobs:
         run: |
           python scripts/smoke_artifact.py dist/*.whl
           python scripts/smoke_artifact.py dist/*.tar.gz
+      - name: Viewer smoke on the wheel
+        run: |
+          python -m venv /tmp/viewer-smoke
+          /tmp/viewer-smoke/bin/python -m pip install \
+            "earshot-observability[server,signals] @ file://$(ls "$PWD"/dist/*.whl)"
+          python scripts/viewer_smoke.py --earshot /tmp/viewer-smoke/bin/earshot
 
   typescript:
     name: TypeScript compatibility packages
     needs: [prepare]
     if: needs.prepare.outputs.run_full_ci == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      - name: Install Earshot for the real-server viewer tests
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev,server]'
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
       - name: Check generated viewer API types
         run: |
           pnpm --filter @earshot/viewer-ui gen:api
-          git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts
+          pnpm --filter @earshot/node gen:api
+          git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts packages/node/src/openapi.ts
       - name: Test, typecheck, build, and format
         run: |
           pnpm test
@@ -455,7 +606,7 @@ jobs:
     needs: [prepare]
     if: needs.prepare.outputs.run_full_ci == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - name: Build and exercise hardened container

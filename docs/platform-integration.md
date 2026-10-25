@@ -301,13 +301,12 @@ omissions alongside evidence.
 
 ## Viewer package and standalone use
 
-The React feature is in the Earshot-owned `@earshot/viewer-ui` package, now
-publish-ready at `0.2.0`: it is published to npm from the same tag and at the same
-version as the Python distribution (see [npm packages](./release.md#npm-packages)), and
-the published package ships compiled JavaScript in `dist/`. React and React Query are
-peer dependencies; the package has no React Router or Next.js runtime dependency. Hosts
-provide navigation. Until 0.2.0 is published, Platform's local integration links the
-workspace source, which exports TypeScript, so a Next.js host transpiles it. Embedded
+The React feature is in the Earshot-owned `@earshot/viewer-ui` package. It is
+published to npm from the same tag and at the same version as the Python distribution
+(see [npm packages](./release.md#npm-packages)), and the published package ships
+compiled JavaScript in `dist/`. React and React Query are peer dependencies; the
+package has no React Router or Next.js runtime dependency. Hosts provide navigation.
+Until the package is on npm, Platform's local integration links the workspace source, which exports TypeScript, so a Next.js host transpiles it. Embedded
 hosts import `styles/embedded.css`, not the standalone global styles.
 
 The Vite `apps/viewer` remains bundled into the Python wheel and single-process

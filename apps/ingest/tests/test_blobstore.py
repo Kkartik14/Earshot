@@ -1,4 +1,4 @@
-"""The BlobStore contract (FR-8), run unchanged against local disk and real S3.
+"""The BlobStore contract run unchanged against local disk and real S3.
 
 Every test that takes ``blob_backend`` runs as ``[local]`` (a ``file://`` store
 under ``tmp_path``) and ``[s3]`` (the real S3-compatible test server, by default

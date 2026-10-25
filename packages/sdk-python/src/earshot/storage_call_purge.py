@@ -1,4 +1,4 @@
-"""Purging calls (FR-14): a call purge, call retention, and a project's call evidence.
+"""Purging calls: a call purge, call retention, and a project's call evidence.
 
 **A call purge** (``CallPurger.purge_call``: ``DELETE /v1/calls/{call_id}`` and
 ``earshot call purge``) runs in one ``_mutation`` and one write transaction. It
@@ -13,23 +13,23 @@ After commit it deletes the revision artifacts and the journaled blobs (a failed
 blob delete stays journaled; the ``blob-deletions`` job retries it), then scrubs
 SQLite's deleted pages.
 
-**Purged keys** (AC14.2). While a live tombstone covers a key, its evidence is
+**Purged keys**. While a live tombstone covers a key, its evidence is
 dropped and counted (``purged_call_evidence_dropped``) by ``CallStore`` and
 ``RecordingStore``; so are spans of the purged call's traces. Because the purge
 already incremented the key's generation, evidence after the tombstone expires
 starts a new call with a new ID; the purged call and its tombstoned revision IDs
 are never rebuilt.
 
-**Retention** (AC14.4). A revision never expires alone (the incident reaper and
+**Retention**. A revision never expires alone (the incident reaper and
 the reads that expire an incident skip call revisions). A closed call whose
 **latest** revision's retention deadline has passed is purged whole, as above,
 in bounded batches (``purge_expired_calls``, ``call_retention_job``). An open
-call has no revision, so it never expires. Month 1 revisions carry no retention
+call has no revision, so it never expires. Call revisions carry no retention
 policy (their deadline is NULL), so a call lives until it is purged or its
 project is deleted. The same job deletes expired ``call_tombstones``
 (``collect_expired_tombstones``); key generations stay.
 
-**Project deletion** (AC14.5) calls ``delete_project_calls`` from
+**Project deletion** calls ``delete_project_calls`` from
 ``IncidentStore.delete_project_data`` once the project's incidents are gone: it
 deletes calls with all their evidence, then parked traces, in bounded batches;
 ``delete_project_data`` then deletes the project's resources, generations,
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 
 _SECOND = 1_000_000_000
 # A purged key stays tombstoned this long after LONG_QUIET: enough to absorb a
-# client's retries and late batches of the purged call (AC14.1).
+# client's retries and late batches of the purged call.
 TOMBSTONE_GRACE_NANO = 24 * 3600 * _SECOND
 # Calls one retention batch purges at most; each is its own transaction.
 CALL_EXPIRY_BATCH_SIZE = 20
@@ -165,6 +165,20 @@ def delete_calls(
                 scope,
             ).fetchall()
         )
+        # What their analyses derived (peaks, renditions): the rows go with the
+        # recordings (ON DELETE CASCADE), so their keys are journaled first.
+        blob_keys.extend(
+            key
+            for row in connection.execute_unprepared(
+                "SELECT a.peaks_blob_key, a.rendition_blob_key FROM audio_analysis a "
+                "JOIN recordings r ON r.project_id = a.project_id "
+                "AND r.recording_id = a.recording_id "
+                f"WHERE r.project_id = ? AND r.call_id IN ({marks})",
+                scope,
+            ).fetchall()
+            for key in (row["peaks_blob_key"], row["rendition_blob_key"])
+            if key is not None
+        )
         digests.update(_delete_traces(connection, project_id, traces))
         for table in ("recordings", "call_revisions", "calls"):
             connection.execute_unprepared(f"DELETE FROM {table} WHERE {in_calls}", scope)
@@ -201,9 +215,11 @@ def _delete_traces(
 def delete_project_calls(
     connection: DatabaseConnection, project_id: str, *, limit: int, now: int
 ) -> bool:
-    """One bounded batch of a deleted project's calls (with all their evidence),
-    then of its parked traces. ``True`` once neither is left. Runs in the caller's
-    write transaction, after the project's incidents are gone."""
+    """One bounded batch of a deleted project's calls (with all their evidence:
+    their projections, tags and transcript lines go with them), then of its parked
+    traces, then of its own prices (never the built-in ones). ``True`` once none is
+    left. Runs in the caller's write transaction, after the project's incidents are
+    gone."""
 
     call_ids = [
         row["call_id"]
@@ -223,11 +239,16 @@ def delete_project_calls(
         ).fetchall()
     ]
     _delete_traces(connection, project_id, parked)
+    connection.execute(
+        "DELETE FROM prices WHERE id IN "
+        "(SELECT id FROM prices WHERE project_id = ? ORDER BY id LIMIT ?)",
+        (project_id, limit),
+    )
     return not any(
         connection.execute(
             f"SELECT 1 FROM {table} WHERE project_id = ? LIMIT 1", (project_id,)
         ).fetchone()
-        for table in ("calls", "call_traces")
+        for table in ("calls", "call_traces", "prices")
     )
 
 
@@ -248,7 +269,7 @@ class CallPurger:
     def purge_call(
         self, project_id: str, call_id: str, *, budget_s: float | None = None
     ) -> CallPurge:
-        """Purge the call and all its evidence (AC14.1); ``CallNotFoundError`` if the
+        """Purge the call and all its evidence; ``CallNotFoundError`` if the
         project has no such call."""
 
         with self.store._mutation("purge_call", budget_s=budget_s):
@@ -269,8 +290,8 @@ class CallPurger:
         limit: int = CALL_EXPIRY_BATCH_SIZE,
         budget_s: float | None = None,
     ) -> int:
-        """Purge up to ``limit`` closed calls whose latest revision has expired
-        (AC14.4), each in its own transaction; how many were purged.
+        """Purge up to ``limit`` closed calls whose latest revision has expired,
+        each in its own transaction; how many were purged.
 
         A read finds the candidates first, so an idle pass takes no write lock;
         each is checked again under the lock before it is purged.
@@ -388,7 +409,7 @@ class CallPurger:
             self.store._purge_incident_rows(connection, stored, now)
             expires = now + self.calls.timings.long_quiet_nano + TOMBSTONE_GRACE_NANO
             [(fingerprint, generation)] = deleted.keys
-            # The key's next call is a new call: bump its generation now (AC14.2).
+            # The key's next call is a new call: bump its generation now.
             connection.execute(
                 "INSERT INTO call_key_generations(project_id, key_fingerprint, generation) "
                 "VALUES (?, ?, ?) ON CONFLICT(project_id, key_fingerprint) "

@@ -178,3 +178,43 @@ describe("MediaCustodyPanel", () => {
     expect(screen.getByText(/No locator is declared/i)).toBeInTheDocument();
   });
 });
+
+describe("MediaCustodyPanel for a recording Earshot holds", () => {
+  // A call revision's recording, as the call materializer references it: held in
+  // Earshot's blob store, with the digest Earshot measured while storing it.
+  const held = view({
+    custodian: "earshot.blob_store",
+    integrity: "content_digest",
+    digest: "b".repeat(64),
+    sizeBytes: 1_039_604,
+    integrityNote:
+      "digest declared by the producer — earshot did not read these bytes and has not verified it",
+    locatorUri: null,
+  });
+
+  it("names Earshot as the holder and points to the call view's player", () => {
+    render(<MediaCustodyPanel media={[held]} />);
+
+    const panel = within(screen.getByRole("region", { name: /media custody/i }));
+    expect(
+      panel.getByText(/earshot holds these bytes in its blob store/i),
+    ).toBeInTheDocument();
+    expect(panel.getByText(/play it from the call's view/i)).toBeInTheDocument();
+    expect(panel.queryByText(/holds the bytes; earshot does not/i)).toBeNull();
+    expect(panel.queryByText(/never the media/i)).toBeNull();
+    expect(panel.queryByText(/No locator is declared/i)).toBeNull();
+  });
+
+  it("attributes the digest to Earshot's own measurement", () => {
+    render(<MediaCustodyPanel media={[held]} />);
+
+    expect(screen.getByText(/measured by earshot while storing/i)).toBeInTheDocument();
+    expect(screen.queryByText(/earshot did not read these bytes/i)).toBeNull();
+  });
+
+  it("still loads no media on this panel", () => {
+    const { container } = render(<MediaCustodyPanel media={[held]} />);
+
+    expect(container.querySelectorAll("audio, video, source, [src]")).toHaveLength(0);
+  });
+});

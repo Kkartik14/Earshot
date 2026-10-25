@@ -1,0 +1,321 @@
+{
+  "format_version": 1,
+  "provider": "elevenlabs",
+  "description": "One real ElevenLabs Agents conversation fetched with the conversations API, scrubbed. Both sides are synthetic speech. Used by the conversation import and `start_only` transcript tests.",
+  "provenance": {
+    "captured_on": "2026-10-19",
+    "source_kind": "real_capture_scrubbed",
+    "capture_driver": "scripts/capture_elevenlabs.py",
+    "capture_driver_sha256": "46874870d963283abfa6669661ab005a66655641177c84dd6d8d5a8dbf67ba71",
+    "scrubber": "scripts/scrub_provider_capture.py",
+    "scrubber_sha256": "f8d310dde424da83b8993cabdcda95268b9d0e061371635ef7fb4222b1141171",
+    "survey": "free GET /v1/convai/agents and /v1/convai/conversations: 0 agents, 0 conversations",
+    "requests": {
+      "conversation.json": "GET https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}",
+      "conversation.otel.json": "GET …/conversations/{id}?format=opentelemetry",
+      "audio.mp3": "GET …/conversations/{id}/audio (content-type audio/mpeg)"
+    },
+    "conversation": "POST /v1/convai/agents/create (a dedicated test agent), GET /v1/convai/conversation/get-signed-url, then one session on wss://api.elevenlabs.io/v1/convai/conversation: user_audio_chunk = base64 pcm_16000 at real-time pace in 100 ms chunks; pong on every ping; the client closed the socket (code 1000) after the agent's last reply.",
+    "agent_config": {
+      "first_message": "Hello, thanks for calling the restaurant. How can I help?",
+      "prompt": "You are a restaurant booking line used for an automated test. Reply in one short sentence of at most twelve words. Never ask for names, phone numbers or emails.",
+      "language": "en",
+      "max_duration_seconds": 90,
+      "asr.user_input_audio_format": "pcm_16000",
+      "tts.agent_output_audio_format": "pcm_16000",
+      "llm": "account default (`producing_llm` in the transcript)"
+    },
+    "caller": {
+      "source": "Cartesia TTS audio generated from the shared caller script",
+      "script": [
+        "Hi, I would like to book a table for two people tomorrow evening.",
+        "Seven thirty works for us. Could we sit somewhere quiet near the window?",
+        "Perfect, that is everything I needed. Thank you very much, goodbye."
+      ]
+    },
+    "websocket_events": {
+      "agent_response": 5,
+      "audio": 39,
+      "caller_line_0": 1,
+      "caller_line_1": 1,
+      "caller_line_2": 1,
+      "conversation_initiation_metadata": 1,
+      "interruption": 1,
+      "ping": 18,
+      "user_transcript": 4
+    },
+    "account_tier": "free"
+  },
+  "cost_reported": {
+    "metadata.cost": 386,
+    "metadata.cost_unit": "credits",
+    "metadata.cost_fiat": 0.03840430375462008,
+    "metadata.charging.llm_charge": 25,
+    "metadata.charging.call_charge": 361,
+    "metadata.charging.llm_price": 0.0026039,
+    "subscription.character_count_delta": 0
+  },
+  "scrub_rules": [
+    "agent_id, conversation_id, branch_id, version_id, user_id and system__*_id dynamic variables, plus any agent_/conv_/agtbrch_/agtvrsn_/user_ ID found by shape: same prefix and length, body = zeros + first-seen counter",
+    "voice_id (turn metrics, charging.tts_usage, OTel elevenlabs.voice_id): `voice` + zeros + counter, same length",
+    "replacement is applied to the whole text, so IDs inside URIs, OTel attributes and system__conversation_history are covered",
+    "kept verbatim: timestamps, durations, costs, metrics, model names and all text. All text is synthetic: the caller script above and the agent's LLM replies",
+    "the build refuses to write on any provider_capture.find_leaks rule, env secret (value, phone variants, sha256 prefix) or raw identifier in the output bytes"
+  ],
+  "privacy": {
+    "t4_audio": "synthetic_both_sides",
+    "agent_name": "kept: `earshot-fixture-agent` is the synthetic test agent name"
+  },
+  "field_table": [
+    {
+      "path": "conversation_id",
+      "type": "str",
+      "meaning": "provider call ID; the session key (`earshot.session.id`)"
+    },
+    {
+      "path": "agent_id",
+      "type": "str",
+      "meaning": "agent ID; becomes the `agent` attribute"
+    },
+    {
+      "path": "status",
+      "type": "str",
+      "meaning": "`done` once post-call processing finished"
+    },
+    {
+      "path": "has_audio",
+      "type": "bool",
+      "meaning": "gate for GET /audio"
+    },
+    {
+      "path": "has_user_audio",
+      "type": "bool",
+      "meaning": "user side present in the audio"
+    },
+    {
+      "path": "has_response_audio",
+      "type": "bool",
+      "meaning": "agent side present in the audio"
+    },
+    {
+      "path": "transcript",
+      "type": "list",
+      "meaning": "turns in order"
+    },
+    {
+      "path": "transcript[].role",
+      "type": "str",
+      "meaning": "`agent` | `user`"
+    },
+    {
+      "path": "transcript[].message",
+      "type": "str",
+      "meaning": "turn text; an interrupted agent turn reads `...`"
+    },
+    {
+      "path": "transcript[].time_in_call_secs",
+      "type": "int",
+      "meaning": "turn START, whole seconds from start_time"
+    },
+    {
+      "path": "transcript[].interrupted",
+      "type": "bool",
+      "meaning": "agent turn cut off by the user"
+    },
+    {
+      "path": "transcript[].source_medium",
+      "type": "NoneType",
+      "meaning": "`audio` on user turns, null on agent turns"
+    },
+    {
+      "path": "transcript[].conversation_turn_metrics",
+      "type": "dict",
+      "meaning": "per-turn `metrics.<name>.elapsed_time` (s)"
+    },
+    {
+      "path": "metadata.start_time_unix_secs",
+      "type": "int",
+      "meaning": "call start, epoch seconds; t=0 of every turn"
+    },
+    {
+      "path": "metadata.accepted_time_unix_secs",
+      "type": "int",
+      "meaning": "accept time, epoch seconds"
+    },
+    {
+      "path": "metadata.call_duration_secs",
+      "type": "int",
+      "meaning": "duration, whole seconds"
+    },
+    {
+      "path": "metadata.termination_reason",
+      "type": "str",
+      "meaning": "free text, e.g. `Client disconnected: 1000`"
+    },
+    {
+      "path": "metadata.cost",
+      "type": "int",
+      "meaning": "provider cost in credits = charging.llm_charge + call_charge"
+    },
+    {
+      "path": "metadata.cost_fiat",
+      "type": "float",
+      "meaning": "provider cost as a fiat amount (unit not stated; USD tier)"
+    },
+    {
+      "path": "metadata.charging.llm_charge",
+      "type": "int",
+      "meaning": "credits for the LLM"
+    },
+    {
+      "path": "metadata.charging.call_charge",
+      "type": "int",
+      "meaning": "credits for the call (platform)"
+    },
+    {
+      "path": "metadata.charging.llm_price",
+      "type": "float",
+      "meaning": "LLM price, fiat"
+    },
+    {
+      "path": "metadata.phone_call",
+      "type": "NoneType",
+      "meaning": "null for a websocket call; telephony details otherwise"
+    },
+    {
+      "path": "analysis.call_successful",
+      "type": "str",
+      "meaning": "`success` | `failure` | `unknown`"
+    },
+    {
+      "path": "analysis.transcript_summary",
+      "type": "str",
+      "meaning": "LLM summary"
+    }
+  ],
+  "turn_metric_names": [
+    "convai_asr_trailing_service_latency",
+    "convai_llm_service_tt_last_sentence",
+    "convai_llm_service_ttf_sentence",
+    "convai_llm_service_ttfb",
+    "convai_ttf_audio_since_silence",
+    "convai_tts_service_ttfb",
+    "convai_turn_asr_excess",
+    "convai_turn_asr_latency",
+    "convai_turn_silence_before_initiation"
+  ],
+  "timing": {
+    "semantics": "start_only",
+    "turn_start": "transcript[].time_in_call_secs: whole seconds after start_time",
+    "turn_end": "absent; the API gives no end time",
+    "otel_variant": "recv spans start at time_in_call_secs; each end is the next span's start (the root's end for the last). The interrupted agent turn lasts 10 ms. Ends are derived, not measured.",
+    "turns": [
+      {
+        "index": 0,
+        "role": "agent",
+        "time_in_call_secs": 0,
+        "interrupted": false
+      },
+      {
+        "index": 1,
+        "role": "user",
+        "time_in_call_secs": 5,
+        "interrupted": false
+      },
+      {
+        "index": 2,
+        "role": "agent",
+        "time_in_call_secs": 8,
+        "interrupted": false
+      },
+      {
+        "index": 3,
+        "role": "user",
+        "time_in_call_secs": 12,
+        "interrupted": false
+      },
+      {
+        "index": 4,
+        "role": "agent",
+        "time_in_call_secs": 14,
+        "interrupted": true
+      },
+      {
+        "index": 5,
+        "role": "user",
+        "time_in_call_secs": 14,
+        "interrupted": false
+      },
+      {
+        "index": 6,
+        "role": "agent",
+        "time_in_call_secs": 16,
+        "interrupted": false
+      },
+      {
+        "index": 7,
+        "role": "user",
+        "time_in_call_secs": 21,
+        "interrupted": false
+      },
+      {
+        "index": 8,
+        "role": "agent",
+        "time_in_call_secs": 25,
+        "interrupted": false
+      }
+    ],
+    "audio_speech_segments_s": [
+      [0.25, 3.1],
+      [5.15, 7.8],
+      [8.45, 10.6],
+      [12.8, 14.05],
+      [14.55, 16.35],
+      [17.05, 19.5],
+      [21.55, 23.0],
+      [23.35, 24.55],
+      [25.6, 28.65]
+    ],
+    "audio_speech_segments_method": "afconvert decode + 50 ms RMS>200 VAD (scripts/scrub_provider_capture.py _segments)",
+    "observed": "user turns are floor(speech onset) in all 4 cases (5.15->5, 12.8->12, 14.55->14, 21.55->21); agent turns start at or up to 1.05 s before the audible onset (16 vs 17.05). Audio t=0 = start_time [inferred: turn 0 at 0 is audible from 0.25 s]."
+  },
+  "audio": {
+    "file": "audio.mp3",
+    "provenance": "synthetic_both_sides",
+    "content_type": "audio/mpeg",
+    "container": "MPEG audio elementary stream with an ID3v2.4 tag",
+    "codec": "mp3",
+    "mpeg": "MPEG-2 Layer III, constant bitrate, no Xing/Info frame",
+    "id3_text": ["TSSE", "Lavf63.1.102"],
+    "channels": 1,
+    "channel_layout": "mixed: agent and caller in one mono channel",
+    "sample_rate": 16000,
+    "bitrate_kbps": 128,
+    "frames": 874,
+    "duration_s": 31.464,
+    "call_duration_secs": 32
+  },
+  "files": [
+    {
+      "file": "conversation.json",
+      "kind": "json",
+      "source": "GET /v1/convai/conversations/{id}",
+      "bytes": 32223,
+      "canonical_sha256": "b8bc30ebbaf804dfe41eaa781da0fb93ea2fee32e22dabfb494df7d0a7017ccb"
+    },
+    {
+      "file": "conversation.otel.json",
+      "kind": "json",
+      "source": "?format=opentelemetry",
+      "bytes": 70989,
+      "canonical_sha256": "ce048cf2e5b095f21c3e06a027aeb8c3e73c6341b9fe11b8dc24d325918762fd"
+    },
+    {
+      "file": "audio.mp3",
+      "kind": "audio",
+      "source": "GET /v1/convai/conversations/{id}/audio",
+      "bytes": 503468,
+      "sha256": "ba0f0e318ca10f2a94ab38f9e7f5833990d0b00060d496e625d47b7ebab126d5"
+    }
+  ]
+}

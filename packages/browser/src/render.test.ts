@@ -1,13 +1,4 @@
-/**
- * Capture-to-render instrumentation: only what the platform actually exposes.
- *
- * Every signal asserted here has a real W3C source — `AudioContext`'s
- * `getOutputTimestamp()`/`currentTime`/`sampleRate`, `MediaTrackSettings`, and
- * the `media-playout` (`RTCAudioPlayoutStats`) and jitter-buffer/processing
- * members of `getStats()`. The counterpart assertions matter just as much: where
- * a browser does not expose a signal, the recorder must emit an explicit
- * coverage note rather than a plausible-looking number.
- */
+/** Verify capture uses exposed W3C signals and reports unsupported measurements as coverage. */
 
 import { describe, expect, it } from "vitest";
 

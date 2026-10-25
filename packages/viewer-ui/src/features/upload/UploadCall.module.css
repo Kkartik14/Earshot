@@ -1,0 +1,129 @@
+.page {
+  height: 100%;
+  overflow-y: auto;
+}
+
+.head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--tx-mid);
+}
+
+.form {
+  padding: 16px 20px 0;
+  max-width: 62ch;
+}
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.field label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tx-low);
+  font-weight: 600;
+}
+.field input,
+.field select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--tx);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 6px 9px;
+  max-width: 100%;
+}
+.field input:hover,
+.field select:hover {
+  border-color: var(--tx-low);
+}
+.field input[aria-invalid="true"],
+.field select[aria-invalid="true"] {
+  border-color: var(--crit);
+}
+.hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--tx-mid);
+}
+.fieldError {
+  font-size: 11px;
+  color: var(--crit);
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+.primary,
+.secondary {
+  font: inherit;
+  font-size: 12px;
+  border-radius: 7px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+}
+.primary {
+  background: var(--acc);
+  border-color: var(--acc);
+  color: #fff;
+  font-weight: 600;
+}
+.secondary {
+  background: var(--panel);
+  color: var(--tx);
+}
+.fields:disabled .primary {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.outcome {
+  padding: 12px 20px 24px;
+  max-width: 62ch;
+}
+.status {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--tx-mid);
+  min-height: 1.4em;
+}
+.callLink {
+  font-size: 12px;
+  color: var(--acc);
+  font-weight: 600;
+}
+.failure {
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--crit);
+  border: 1px solid var(--crit);
+  border-radius: var(--r);
+  background: var(--panel);
+}

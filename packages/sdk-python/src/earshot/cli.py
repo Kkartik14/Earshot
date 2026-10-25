@@ -189,7 +189,7 @@ def _purge_command(arguments: argparse.Namespace) -> int:
     try:
         store.purge(arguments.bundle_id, project_id=_project_id(arguments))
     except _storage().IncidentBelongsToCallError as error:
-        # A call's revisions go with their call (AC14.3).
+        # A call's revisions go with their call.
         print(
             f"earshot: {error.code}: {error}: earshot call purge {error.call_id}",
             file=sys.stderr,
@@ -200,7 +200,7 @@ def _purge_command(arguments: argparse.Namespace) -> int:
 
 
 def _call_purge_command(arguments: argparse.Namespace) -> int:
-    """Purge one call and all its evidence (FR-14), as ``DELETE /v1/calls/{id}`` does.
+    """Purge one call and all its evidence, as ``DELETE /v1/calls/{id}`` does.
 
     The call lifecycle timings and the blob store come from the same settings the
     server reads (``EARSHOT_CALL_*``, ``EARSHOT_BLOB_URL``).
@@ -537,6 +537,61 @@ def _db_reproject_command(arguments: argparse.Namespace) -> int:
         }
     )
     return 1 if convergence.failed else 0
+
+
+def _prices_add_command(arguments: argparse.Namespace) -> int:
+    """Append a price: the project's own, or (``--builtin``) a built-in for every
+    project. Each insert bumps its scope's price version, so the projections it may
+    change are repriced by a running server."""
+
+    from .storage_prices import NewPrice, PriceStore
+
+    store = _open_store(arguments)
+    price = PriceStore(store).add(
+        None if arguments.builtin else arguments.project,
+        NewPrice(
+            provider=arguments.provider,
+            model=arguments.model,
+            unit=arguments.unit,
+            price_nano_usd=arguments.price_nano_usd,
+            per_quantity=arguments.per_quantity,
+            effective_from_unix_nano=arguments.effective_from_unix_nano,
+            source_url=arguments.source_url,
+            note=arguments.note,
+        ),
+    )
+    _print_json(price.document())
+    return 0
+
+
+def _prices_list_command(arguments: argparse.Namespace) -> int:
+    """Every price a project's calls may use: the built-ins and its own, oldest first."""
+
+    from .storage_prices import PriceStore
+
+    prices = PriceStore(_open_store(arguments))
+    listed, cursor = [], None
+    while True:
+        page = prices.list_prices(_project_id(arguments), limit=100, cursor=cursor)
+        listed.extend(price.document() for price in page.items)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+    _print_json(listed)
+    return 0
+
+
+def _db_enable_transcript_index_command(arguments: argparse.Namespace) -> int:
+    from .storage_call_reads import TranscriptIndexError, enable_transcript_index
+
+    store = _open_store(arguments)
+    try:
+        name = enable_transcript_index(store)
+    except TranscriptIndexError as error:
+        print(f"earshot: {error}", file=sys.stderr)
+        return 2
+    _print_json({"index": name})
+    return 0
 
 
 def _serve_command(arguments: argparse.Namespace) -> int:
@@ -918,6 +973,51 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     db_reproject.set_defaults(handler=_db_reproject_command)
+    db_transcript_index = db_commands.add_parser(
+        "enable-transcript-index",
+        help=(
+            "Postgres: create the optional pg_trgm index that speeds up transcript search "
+            "(q); outside the migration chain, idempotent"
+        ),
+    )
+    _add_store_arguments(db_transcript_index)
+    db_transcript_index.set_defaults(handler=_db_enable_transcript_index_command)
+
+    prices = commands.add_parser("prices", help="manage the prices calls are costed with")
+    prices_commands = prices.add_subparsers(dest="prices_command", required=True)
+    prices_add = prices_commands.add_parser(
+        "add", help="append a price (integer nano-USD per per-quantity units)"
+    )
+    _add_store_arguments(prices_add)
+    scope = prices_add.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--project", help="the project the price is for")
+    scope.add_argument(
+        "--builtin", action="store_true", help="a built-in price, for every project (operator)"
+    )
+    prices_add.add_argument("--provider", required=True)
+    prices_add.add_argument("--model", required=True)
+    prices_add.add_argument(
+        "--unit",
+        required=True,
+        help="input_token, output_token, cached_input_token, character or audio_second",
+    )
+    prices_add.add_argument("--price-nano-usd", type=int, required=True)
+    prices_add.add_argument("--per-quantity", type=int, default=1)
+    prices_add.add_argument(
+        "--effective-from-unix-nano",
+        type=int,
+        default=0,
+        help="calls whose first evidence is at or after this time use it (default 0: all)",
+    )
+    prices_add.add_argument("--source-url")
+    prices_add.add_argument("--note")
+    prices_add.set_defaults(handler=_prices_add_command)
+    prices_list = prices_commands.add_parser(
+        "list", help="list the built-in prices and a project's own"
+    )
+    _add_store_arguments(prices_list)
+    prices_list.add_argument("--project")
+    prices_list.set_defaults(handler=_prices_list_command)
     return parser
 
 

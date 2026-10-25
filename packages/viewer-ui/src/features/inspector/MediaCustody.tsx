@@ -37,21 +37,19 @@ const ALIGNMENT_LABEL: Record<MediaCustodyView["alignment"]["state"], string> = 
   undeclared: "no media timeline",
 };
 
-/** Custody facts for media held by somebody else — never a player.
- *
- *  Earshot stores references, not bytes: it never ingests, fetches, caches, or
- *  proxies media, so this panel can only report what the artifact declares. Two
- *  consequences are deliberate and load-bearing:
- *
- *  1. Integrity is always attributed to whoever measured the bytes. Even a
- *     `content_digest` reference is a *declaration carried by the artifact*, not
- *     an earshot verification, and the copy says so in both modes.
- *  2. The locator is a plain user-initiated link with `rel="noreferrer"`, never
- *     an `<audio src>`. An `src` would make the viewer fetch the media on render
- *     — turning earshot into a media path, leaking the reader's network position
- *     and the referrer to the custodian, without anyone asking for playback.
- *     Following the link is the reader's own request to the custodian, with the
- *     reader's own credentials, and nothing about it passes through earshot. */
+/** The recording Earshot itself holds: the call materializer names
+ *  this custodian on every recording it stored, with the digest it measured. */
+const EARSHOT_CUSTODIAN = "earshot.blob_store";
+const heldByEarshot = (media: MediaCustodyView) => media.custodian === EARSHOT_CUSTODIAN;
+
+const headNote = (media: MediaCustodyView[]): string => {
+  const held = media.filter(heldByEarshot).length;
+  if (held === media.length) return "held by earshot · played in the call view, not here";
+  if (held === 0) return "held elsewhere · earshot stores the reference, never the media";
+  return "some held by earshot, some elsewhere · this panel loads no media";
+};
+
+/** Reports media custody without loading media: stored recordings stream through Earshot; external media uses an explicit noreferrer link. */
 export function MediaCustodyPanel({ media }: { media: MediaCustodyView[] }) {
   if (media.length === 0) return null;
   return (
@@ -59,9 +57,7 @@ export function MediaCustodyPanel({ media }: { media: MediaCustodyView[] }) {
       <div className={styles.panelHead}>
         <h2>Media custody</h2>
         <span className={styles.count}>{media.length}</span>
-        <span className={styles.note}>
-          held elsewhere · earshot stores the reference, never the media
-        </span>
+        <span className={styles.note}>{headNote(media)}</span>
       </div>
 
       <div className={styles.list}>
@@ -90,7 +86,9 @@ export function MediaCustodyPanel({ media }: { media: MediaCustodyView[] }) {
                 <span className={styles.detail}>
                   {item.custodian == null
                     ? "nobody is named as holding these bytes"
-                    : "holds the bytes; earshot does not"}
+                    : heldByEarshot(item)
+                      ? "earshot holds these bytes in its blob store"
+                      : "holds the bytes; earshot does not"}
                 </span>
               </div>
 
@@ -101,7 +99,11 @@ export function MediaCustodyPanel({ media }: { media: MediaCustodyView[] }) {
                     ? "no digest"
                     : `sha256 ${item.digest.slice(0, 12)}…`}
                 </span>
-                <span className={styles.detail}>{item.integrityNote}</span>
+                <span className={styles.detail}>
+                  {heldByEarshot(item) && item.digest != null
+                    ? "sha256 measured by earshot while storing the recording"
+                    : item.integrityNote}
+                </span>
               </div>
 
               <div className={styles.row}>
@@ -136,7 +138,15 @@ export function MediaCustodyPanel({ media }: { media: MediaCustodyView[] }) {
               </div>
             </div>
 
-            {item.locatorUri == null ? (
+            {heldByEarshot(item) ? (
+              <p className={styles.handoff}>
+                <span className={styles.handoffNote}>
+                  This is a call recording earshot stored. Play it from the call&apos;s
+                  view (Calls), which streams it from this server; this panel loads none
+                  of it.
+                </span>
+              </p>
+            ) : item.locatorUri == null ? (
               <p className={styles.noLocator}>
                 No locator is declared, so there is nowhere for a reader to go for these
                 bytes.

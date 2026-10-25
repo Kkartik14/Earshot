@@ -9,11 +9,7 @@ let apiBasePath = "";
 
 export let api = createClient<paths, JsonMediaType>({ baseUrl: "/" });
 
-/**
- * Configure the same-origin API proxy before mounting Observe. A relative path
- * keeps browser credentials on the Platform/Earshot origin; remote Earshot
- * credentials must stay behind a server-side proxy.
- */
+/** Configure a same-origin API proxy so remote Earshot credentials stay server-side. */
 export function configureApiBasePath(path: string): void {
   const normalized = path === "/" ? "" : path.replace(/\/+$/, "");
   if (

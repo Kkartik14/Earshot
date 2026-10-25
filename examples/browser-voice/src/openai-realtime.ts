@@ -1,8 +1,4 @@
-/** Raw browser WebRTC integration for OpenAI Realtime, using its SDP exchange.
- * Read the key at runtime; never embed it in source or build-time configuration.
- * Browser WebRTC is used because browser WebSocket handshakes cannot set the
- * required Authorization header.
- */
+/** OpenAI Realtime WebRTC integration; read credentials at runtime because browser WebSockets cannot set auth headers. */
 
 import type { VoiceModeHandle } from "./mode.js";
 import { realtimeSdpUrl, requireRealtimeKey } from "./realtime-url.js";
@@ -36,11 +32,7 @@ async function exchangeSdp(offerSdp: string, key: string, url: string): Promise<
   return response.text();
 }
 
-/**
- * Start OpenAI Realtime mode against an already-constructed {@link CaptureSession}.
- * The caller owns `session.start()`/`session.stop()`; this returns a handle that
- * tears down only the mode-specific media resources.
- */
+/** Start realtime mode; the caller owns the capture session lifecycle. */
 export async function startOpenAiRealtime(
   session: CaptureSession,
   options: OpenAiRealtimeOptions,

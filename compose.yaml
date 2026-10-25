@@ -4,11 +4,7 @@ services:
     image: earshot:local
     environment:
       EARSHOT_HOST: 0.0.0.0
-      # Single-machine use: the API runs without auth, but the port below is
-      # published to host loopback only, so the listener stays on a trusted
-      # boundary. To expose beyond localhost, drop this line and instead set
-      # EARSHOT_TOKEN (a high-entropy secret) + EARSHOT_BEHIND_TLS_PROXY=true
-      # and front it with your own TLS proxy.
+      # This unauthenticated setup binds to loopback; use a token and TLS proxy before exposing it elsewhere.
       EARSHOT_TRUST_LOCAL_NETWORK: "true"
     ports:
       - "127.0.0.1:4319:4319"

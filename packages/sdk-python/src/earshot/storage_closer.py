@@ -1,4 +1,4 @@
-"""The closer: a due call's next revision, claimed, materialized and finished (FR-6).
+"""The closer: a due call's next revision, claimed, materialized and finished.
 
 A ``Closer`` runs on an ``IncidentStore``'s database, locks and clock, with the
 ``CallStore`` (the call rules) and the ``RecordingStore`` (the hold). The server's
@@ -6,15 +6,17 @@ maintenance loop runs ``call_closer_job`` every tick; tests call the three steps
 
 **Claim** (one short mutation, one call). A call is claimable when it is dirty and
 due, or has a revision pending from a claim that never finished; its lease is free
-or expired; no pending recording holds it (WS6's one pending deadline,
+or expired; no pending recording holds it (the one pending deadline,
 ``storage_recordings.pending_deadline``, checked per candidate in the claim's
 query) and no upload of its recordings is in flight
 (``RecordingStore.uploading_calls``, read under the claim's write lock); and it is
 not at the revision cap (``UNCAPPED_SQL``). The claim clears
 ``dirty``, sets ``pending_revision`` to the latest revision plus one, leases the
 call for ``LEASE_SECONDS`` under a new ``lease_token``, and snapshots the call: its
-span keys and stored recordings. Evidence that commits after the claim makes the
-call dirty again, so it is in the next revision, never lost.
+span keys and stored recordings, each marked with the revision it first belongs to
+(``first_revision``, set once), so a projection reads exactly a revision's evidence.
+Evidence that commits after the claim makes the call dirty again, so it is in the
+next revision, never lost.
 
 **Integrity.** A stored revision that is still pending cannot happen (finish is
 atomic with the catalog write). If the claim ever sees one, it logs
@@ -93,6 +95,19 @@ MATERIALIZER_CLOSE_GRACE_SECONDS = 10.0
 # A claim's snapshot: its span keys (read inside the claim's write mutation), the
 # resources those spans name, and the spans' payloads (read outside every lock).
 SNAPSHOT_KEYS_SQL = call_spans_sql("s.trace_id, s.span_id", order_by="s.trace_id, s.span_id")
+# The claim's marks: the evidence a revision is the first to hold. Each starts from the
+# call (its traces, ``recordings_call_idx``), never from every stored row of the
+# project: the update runs under the write lock.
+MARK_SPANS_SQL = (
+    "UPDATE spans SET first_revision = ? WHERE project_id = ? AND first_revision IS NULL "
+    "AND trace_id IN (SELECT trace_id FROM call_traces WHERE project_id = ? AND call_id = ?)"
+)
+# ``state`` is compared as an expression: with no statistics the planner otherwise
+# picks the narrower ``recordings_state_idx`` and walks every stored recording.
+MARK_RECORDINGS_SQL = (
+    "UPDATE recordings SET first_revision = ? WHERE project_id = ? AND call_id = ? "
+    "AND COALESCE(state, '') = 'stored' AND first_revision IS NULL"
+)
 SNAPSHOT_RESOURCES_SQL = (
     "SELECT resource_digest, payload FROM otlp_resources WHERE project_id = ? "
     f"AND resource_digest IN ({call_spans_sql('s.resource_digest')})"
@@ -117,7 +132,7 @@ def claim_candidate_queries(
     finished (the first read), or is dirty and due (the second), each by due time,
     ``limit`` rows. Its lease must be free or expired; it is not set aside
     (``CALL_INTEGRITY``) or at the revision cap (``UNCAPPED_SQL``); its project is
-    active (a project being deleted takes its calls with it, FR-14, unrevised); and
+    active (a project being deleted takes its calls with it, unrevised); and
     no pending recording holds it. A pending recording holds its call while ``now``
     is before its pending deadline, ``max(created, last_evidence, end_signal or 0) +
     UPLOAD_HOLD_CAP`` (``storage_recordings.pending_deadline``), which is the
@@ -126,8 +141,7 @@ def claim_candidate_queries(
     Each read is a range of one ``calls`` index (``calls_pending_revision_idx``,
     ``calls_close_due_idx``) with one probe of the candidate's own recordings
     (``recordings_call_idx``). One query that OR-ed the two made SQLite walk every
-    call of the catalog, once a tick and again inside the claim's write lock
-    (tribunal round 2).
+    call of the catalog, once a tick and again inside the claim's write lock.
     """
 
     held = (
@@ -245,11 +259,7 @@ class InProcessMaterializer:
         pass
 
 
-# The worker protocol. Parent to child: the snapshot (pickled, without spans),
-# then each span as two raw frames (its resource digest, its payload), then an
-# empty frame, then ``_BUILD`` or ``_ABORT``; ``None`` instead of a snapshot stops
-# the child. Child to parent: ``_READY`` once, then per build ``(_BUILT,
-# PreparedIncident)`` or ``(_REFUSED, exception type name)``.
+# Parent streams a snapshot and spans; child returns readiness and build status.
 _READY = "ready"
 _BUILD = "build"
 _ABORT = "abort"
@@ -348,7 +358,7 @@ class MaterializerProcess:
             self._process = process
         finally:
             # The child holds its own copy now. Ours, kept open, would hide a child
-            # that dies before it is ready until the start timeout (tribunal round 2).
+            # that dies before it is ready until the start timeout.
             child.close()
         if self._process is process:
             try:
@@ -546,11 +556,11 @@ class Closer:
         self, connection: DatabaseConnection, now: int, uploading: frozenset[tuple[str, str]]
     ) -> Any | None:
         """The next claimable call: pending revisions first, then by due time; never
-        one in ``uploading`` (a call with an upload in flight is held, FR-6). Each
+        one in ``uploading`` (a call with an upload in flight is held). Each
         read takes one row more than ``uploading`` has calls, so a held call never
         hides a claimable one behind it."""
 
-        horizon = now - self.recordings.timings.upload_hold_nano
+        horizon = now - self.recordings.calls.timings.upload_hold_nano
         for sql, parameters in claim_candidate_queries(now, horizon, limit=len(uploading) + 1):
             for row in connection.execute(sql, parameters).fetchall():
                 if (row["project_id"], row["call_id"]) not in uploading:
@@ -570,7 +580,7 @@ class Closer:
         )
 
     def _set_aside(self, connection: DatabaseConnection, row: Any) -> None:
-        """AC6.4's invariant broke: log, count, set aside; never repair."""
+        """The invariant broke: log, count, set aside; never repair."""
 
         self.integrity_errors += 1
         _LOGGER.error(
@@ -646,6 +656,8 @@ class Closer:
             (bytes(item["trace_id"]), bytes(item["span_id"]))
             for item in connection.execute(SNAPSHOT_KEYS_SQL, (project_id, call_id)).fetchall()
         )
+        connection.execute(MARK_SPANS_SQL, (revision, project_id, project_id, call_id))
+        connection.execute(MARK_RECORDINGS_SQL, (revision, project_id, call_id))
         return CallClaim(
             project_id=project_id,
             call_id=call_id,
@@ -709,7 +721,7 @@ class Closer:
     def finish(
         self, materialized: MaterializedRevision, *, now_unix_nano: int | None = None
     ) -> IngestResult | None:
-        """Store the revision and close the call in one transaction (AC6.3)."""
+        """Store the revision and close the call in one transaction."""
 
         claim = materialized.claim
         now = self._now(now_unix_nano)
@@ -744,6 +756,12 @@ class Closer:
             )
             # Evidence that arrived since the claim and that the cap now keeps out.
             self.calls.note_evidence_past_cap(connection, claim.project_id, claim.call_id)
+            # A new revision is new input to the call's projection.
+            connection.execute(
+                "UPDATE calls SET projection_seq = projection_seq + 1 "
+                "WHERE project_id = ? AND call_id = ?",
+                (claim.project_id, claim.call_id),
+            )
 
         result = self.store.ingest_prepared(prepared, before_commit=record_revision)
         crash_point("after_catalog_commit")
@@ -774,13 +792,13 @@ class Closer:
     # --- failure -------------------------------------------------------------------------
 
     def fail(self, claim: CallClaim, code: str, *, now_unix_nano: int | None = None) -> bool:
-        """Record a failed attempt and put the call off (AC6.5).
+        """Record a failed attempt and put the call off.
 
         Only while the claim still holds its call: the same lease token, its revision
         still pending, and not stored. ``False`` otherwise: the lease was taken over,
         or the claim's finish committed before the error was seen (a post-commit
         step raised, or a commit's answer was lost), and a failure there would make
-        the stored revision dirty again and build it twice (tribunal round 2, Lamport LAM2-1).
+        the stored revision dirty again and build it twice.
         """
 
         now = self._now(now_unix_nano)
@@ -843,8 +861,8 @@ class Closer:
             return self._failed(claim, outcome, MATERIALIZE_CONFLICT, error, now_unix_nano)
         except Exception as error:
             # Anything else a finish raises (the store refusing the revision, a lost
-            # connection) is a failed attempt with its backoff and a stable code
-            # (AC6.5), never a silent retry at every lease expiry. If the database
+            # connection) is a failed attempt with its backoff and a stable code,
+            # never a silent retry at every lease expiry. If the database
             # cannot even record that, ``fail`` raises and the lease expiry retries.
             return self._failed(claim, outcome, MATERIALIZE_FINISH_FAILED, error, now_unix_nano)
         if materialized.prepared is None:
@@ -876,7 +894,7 @@ class Closer:
                 outcome.project_id, outcome.call_id, outcome.revision, "failed", code
             )
         # ``fail`` recorded nothing: the claim no longer holds its call. Report what
-        # became of it (tribunal round 3, R3-4).
+        # became of it.
         result = self._settled(claim)
         if result == "stale":
             _LOGGER.warning(

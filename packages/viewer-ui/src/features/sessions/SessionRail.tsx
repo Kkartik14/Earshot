@@ -35,6 +35,39 @@ export function SessionRail({
         Fleet metrics
       </LinkComponent>
 
+      <LinkComponent
+        href="/dashboard"
+        className={
+          currentPath === "/dashboard"
+            ? `${styles.overview} ${styles.overviewActive}`
+            : styles.overview
+        }
+      >
+        Dashboard
+      </LinkComponent>
+
+      <LinkComponent
+        href="/calls"
+        className={
+          currentPath === "/calls" || currentPath.startsWith("/calls/")
+            ? `${styles.overview} ${styles.overviewActive}`
+            : styles.overview
+        }
+      >
+        Calls
+      </LinkComponent>
+
+      <LinkComponent
+        href="/upload"
+        className={
+          currentPath === "/upload"
+            ? `${styles.overview} ${styles.overviewActive}`
+            : styles.overview
+        }
+      >
+        Upload a call
+      </LinkComponent>
+
       {live.isError ? (
         <p className={styles.note} role="alert">
           Active sessions are unavailable. Refresh this page to try again.

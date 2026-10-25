@@ -1,129 +1,102 @@
-"""Conformance for finalized Provider Deliveries using sanitized synthetic fixtures."""
+"""Conformance every connector's evidence meets, on each provider's final delivery.
+
+- Every attribute a connector span carries is registered: the ``earshot.connector.*``
+  vocabulary and the receiver's keys in ``semconv/earshot.yaml``, or the
+  OpenTelemetry GenAI agent keys.
+- No URL, and so no signed query string, reaches a stored span under any preset:
+  recording URLs go to the fetch job only.
+- Under ``metadata_only`` no transcript text, summary or provider call ID is stored.
+- The same delivery to two stores stores the same span bytes (the evidence is a
+  pure function of the payload).
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 import test_elevenlabs_connector as elevenlabs
 import test_retell_connector as retell
 import test_ringg_connector as ringg
 import test_vapi_connector as vapi
-from adapter_conformance import assert_canonical_payload_conforms
-from earshot.connectors import HostedProviderIngestion, MappingSecretResolver
-from store_support import make_store
+from connector_support import ROOT, connector_world
+from earshot.call_capture import attribute_values
 
 pytestmark = pytest.mark.integration
 
-IDENTITY_KEY = b"c" * 32
-
 
 @dataclass(frozen=True)
-class FinalizedCase:
+class FinalCase:
     provider: str
-    secret_ref: str
-    secret: str
-    payload: object
-    delivery: object
-    forbidden_values: tuple[str, ...]
-    now_unix_seconds: int | None = None
+    payload: Any
+    # What must never be stored under metadata_only.
+    content: tuple[str, ...]
 
 
 CASES = (
-    FinalizedCase(
-        provider="elevenlabs",
-        secret_ref="env:ELEVENLABS_WEBHOOK_SECRET",
-        secret=elevenlabs.WEBHOOK_SECRET,
-        payload=elevenlabs._payload,
-        delivery=elevenlabs._delivery,
-        forbidden_values=(
-            elevenlabs.TRANSCRIPT_SENTINEL,
-            "private-agent-response",
-            "private-dynamic-variable",
-            "conversation-sensitive-456",
-        ),
-        now_unix_seconds=1_739_537_300,
+    FinalCase(
+        "elevenlabs",
+        elevenlabs._transcription,
+        ("table for two", "quiet near the window", elevenlabs.CONVERSATION_ID),
     ),
-    FinalizedCase(
-        provider="vapi",
-        secret_ref="env:VAPI_SERVER_SECRET",
-        secret=vapi.SECRET,
-        payload=vapi._payload,
-        delivery=vapi._delivery,
-        forbidden_values=(vapi.PRIVATE_TEXT, "call-sensitive-vapi-123"),
+    FinalCase("vapi", vapi._report, ("Green Valley", "moved a clinic visit", vapi.CALL_ID)),
+    FinalCase(
+        "retell",
+        lambda: retell._call("call_analyzed"),
+        ("move my visit", "asked to move", retell.CALL_ID),
     ),
-    FinalizedCase(
-        provider="retell",
-        secret_ref="env:RETELL_WEBHOOK_API_KEY",
-        secret=retell.SECRET,
-        payload=retell._payload,
-        delivery=retell._delivery,
-        forbidden_values=(retell.PRIVATE_TEXT, "call-sensitive-retell-123"),
-        now_unix_seconds=retell.NOW_MS // 1_000,
-    ),
-    FinalizedCase(
-        provider="ringg",
-        secret_ref="env:RINGG_WEBHOOK_SECRET",
-        secret=ringg.SECRET,
-        payload=ringg._payload,
-        delivery=ringg._delivery,
-        forbidden_values=(
-            ringg.PRIVATE_TEXT,
-            ringg.PRIVATE_PHONE,
-            ringg.PRIVATE_URL,
-            ringg.CALL_ID,
-            ringg.CALL_SID,
-        ),
-    ),
+    FinalCase("ringg", ringg._final, ("payment reminder", "confirmed the payment", ringg.CALL_ID)),
 )
 
 
-def _capture(case: FinalizedCase, data_dir: Path) -> bytes:
-    data_dir.mkdir()
-    (data_dir / "instance-correlation.key").write_bytes(IDENTITY_KEY)
-    store = make_store(data_dir)
-    store.create_project("support", display_name="Support")
-    endpoint = store.create_connector(
-        "support",
-        provider=case.provider,
-        secret_ref=case.secret_ref,
-        endpoint_id=f"connector_conformance_{case.provider}",
-    )
-    options = {}
-    if case.now_unix_seconds is not None:
-        options["now_unix_seconds"] = lambda: case.now_unix_seconds
-    ingestion = HostedProviderIngestion(
-        store,
-        secrets=MappingSecretResolver({case.secret_ref: case.secret}),
-        **options,
-    )
-    body = case.payload()
-    delivery = case.delivery(endpoint.endpoint_id, body)
+def _registered() -> set[str]:
+    registry = yaml.safe_load((ROOT / "semconv" / "earshot.yaml").read_text())
+    [group] = [group for group in registry["groups"] if group["id"] == "registry.earshot"]
+    return {attribute["id"] for attribute in group["attributes"]} | {
+        "gen_ai.agent.id",
+        "gen_ai.agent.name",
+    }
 
-    outcome = ingestion.receive(delivery)
-    replay = ingestion.receive(delivery)
 
-    assert outcome.disposition == "applied"
-    assert replay.disposition == "replayed"
-    assert replay.bundle_id == outcome.bundle_id
-    assert outcome.bundle_id is not None
-    canonical = store.get_artifact(outcome.bundle_id, project_id="support")[1]
-    store.close()
-    return canonical
+def _stored(path: Path, case: FinalCase, *, preset: str = "full"):
+    world = connector_world(path, case.provider, preset=preset)
+    assert world.deliver(case.payload()).disposition == "applied"
+    payloads = world.rows("SELECT payload, text_json FROM spans ORDER BY trace_id, span_id")
+    resources = world.rows("SELECT payload FROM otlp_resources")
+    return world, payloads, resources
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.provider)
-def test_finalized_delivery_sanitized_synthetic_capture_meets_shared_conformance(
-    case: FinalizedCase,
-    tmp_path,
-) -> None:
-    first = _capture(case, tmp_path / "first")
-    second = _capture(case, tmp_path / "second")
+def test_connector_evidence_conforms(tmp_path, case) -> None:
+    world, payloads, resources = _stored(tmp_path / "first", case)
+    _, again, _ = _stored(tmp_path / "second", case)
+    registered = _registered()
 
-    assert_canonical_payload_conforms(
-        first,
-        deterministic_peer=second,
-        forbidden_values=case.forbidden_values,
+    keys = {
+        key
+        for span in world.spans()
+        for key in attribute_values(span.span.attributes)
+        if not key.startswith("earshot.session.")
+    }
+    assert keys - registered == set()
+    stored = b"".join(bytes(payload) for payload, _ in payloads) + b"".join(
+        bytes(resource) for (resource,) in resources
     )
+    assert b"https://" not in stored and b"Signature" not in stored
+    assert [bytes(payload) for payload, _ in payloads] == [bytes(payload) for payload, _ in again]
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.provider)
+def test_metadata_only_stores_no_content_of_any_connector(tmp_path, case) -> None:
+    world, payloads, resources = _stored(tmp_path, case, preset="metadata_only")
+
+    stored = b"".join(
+        bytes(payload) + (text or "").encode() for payload, text in payloads
+    ) + b"".join(bytes(resource) for (resource,) in resources)
+    for value in case.content:
+        assert value.encode() not in stored, value
+    assert world.rows("SELECT count(*) FROM recordings") == [(0,)]

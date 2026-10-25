@@ -1,0 +1,24 @@
+{
+  "account_sid": "AC00000000000000000000000000000001",
+  "api_version": "2010-04-01",
+  "call_sid": "CA00000000000000000000000000000001",
+  "channels": 2,
+  "conference_sid": null,
+  "date_created": "Mon, 19 Oct 2026 12:50:14 +0000",
+  "date_updated": "Mon, 19 Oct 2026 12:50:28 +0000",
+  "duration": "12",
+  "encryption_details": null,
+  "error_code": null,
+  "media_url": "https://api.twilio.com/2010-04-01/Accounts/AC00000000000000000000000000000001/Recordings/RE00000000000000000000000000000001",
+  "price": "-0.00250",
+  "price_unit": "USD",
+  "sid": "RE00000000000000000000000000000001",
+  "source": "OutboundAPI",
+  "start_time": "Mon, 19 Oct 2026 12:50:14 +0000",
+  "status": "completed",
+  "subresource_uris": {
+    "add_on_results": "/2010-04-01/Accounts/AC00000000000000000000000000000001/Recordings/RE00000000000000000000000000000001/AddOnResults.json",
+    "transcriptions": "/2010-04-01/Accounts/AC00000000000000000000000000000001/Recordings/RE00000000000000000000000000000001/Transcriptions.json"
+  },
+  "uri": "/2010-04-01/Accounts/AC00000000000000000000000000000001/Recordings/RE00000000000000000000000000000001.json"
+}

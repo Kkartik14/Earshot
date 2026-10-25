@@ -1,19 +1,30 @@
-"""A call's stored evidence as a revision bundle (FR-7), and as transcript lines (AC7.3).
+"""A call's stored evidence as a revision bundle, and as transcript lines.
 
 Pure: it reads nothing and writes nothing. The closer (``storage_closer``) takes a
 snapshot of a call's spans and stored recordings and hands it here; the receiver
 asks here for each span's transcript line as it stores the span.
 
-**Transcript lines** come from one rule, ``transcript_text``. A user line is
-every Pipecat ``stt`` span with a non-blank ``transcript`` (``is_final`` is not a
+**Transcript lines** come from one rule, ``transcript_text``. For Pipecat, a user
+line is every ``stt`` span with a non-blank ``transcript`` (``is_final`` is not a
 filter: it was false on every ``stt`` span of the real 1.5 capture). An agent
-line is a Pipecat ``llm`` span's ``output``, which is complete on every Pipecat
+line is an ``llm`` span's ``output``, which is complete on every Pipecat
 version and keeps partial output on interruption; ``tts.text`` holds only the
 last sentence on 1.5 and is never used. A cancelled ``llm`` span has no output
-and gives no line. ``"NOT_GIVEN"`` is an absent value. The receiver stores each
+and gives no line. For LiveKit, a user line is a ``user_turn``'s transcript and
+an agent line an ``agent_turn``'s reply text, the text actually played (cut where
+an interruption stopped it), under either spelling (``lk.pii.*`` from 1.7,
+``lk.*`` before): parsed by attribute, never by version. A LiveKit ``llm_request``
+output never gives a line, because a preemptive generation LiveKit discarded
+still carries one that was never spoken. ``"NOT_GIVEN"`` is an absent value, and
+U+0000 is removed from a line's text: it shows nothing, and no catalog text column
+can hold it (Postgres refuses it). The receiver stores each
 span's line when it stores the span (``spans.text_json``), so the read API reads
 a call's transcript without its spans' payloads; a revision reads it from the
 spans it is built from (``transcript_lines``).
+
+Connector transcript-line spans use the same speaker and text vocabulary. Their
+``earshot.connector.transcript.timing`` and ``.index`` attributes also survive storage,
+so an untimed provider line stays unplaced and same-time lines keep their source order.
 
 **A revision** (``materialize``) is built the way the hosted connectors build a
 bundle on the server: an ``IncidentRecorder`` on a ``ManualClock`` set from the
@@ -21,8 +32,9 @@ evidence (first start to last end; never the server clock), bundle ID
 ``<call_id>.r<n>``, session ID ``call_id``, clock domain ``otlp-<call_id>``, and
 a manual trace ID derived from the bundle ID, so one snapshot always gives the
 same bytes. Spans go in ``(start, trace_id, span_id)`` order to the adapter their
-instrumentation scope names (``_ADAPTERS_BY_SCOPE``: Pipecat in Month 1); spans
-of other scopes stay in the catalog and are declared, not bundled.
+instrumentation scope names (``_ADAPTERS_BY_SCOPE``: Pipecat and LiveKit), as the
+dict ``adapter_span`` converts them to; spans of other scopes stay in the catalog
+and are declared, not bundled.
 
 What a span carries reaches the bundle only under the capture class the receiver
 gave it (``call_capture.attribute_capture_class``): an attribute the recorder
@@ -33,7 +45,12 @@ linearly with the call. Full fidelity stays in ``spans``.
 
 Each stored recording becomes a ``MediaRef`` held by ``earshot.blob_store``
 (its sha256 and size, its speaker's stream), on its own media clock domain with a
-``ClockRelation`` from ``started_at_unix_nano`` to the call's clock. An
+``ClockRelation`` from ``started_at_unix_nano`` to the call's clock. A recording
+with a channel map, in a format whose channel count the upload reads from its
+header (WAV, FLAC, Ogg Opus: ``recordings.media_inspector``), becomes one
+``AudioStream`` and one ``MediaRef`` per channel (``channel_index``), all on the
+file's one media clock domain. On MP3 or WebM nothing verified the map, so the file
+stays one reference under its own speaker. An
 end-signal close is ``final``; any other close is a partial observation
 (``close_partial``, ``otlp_quiet_period``/``no_end_signal``, ``interrupted``).
 """
@@ -46,16 +63,19 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .adapters.livekit import LiveKitAdapter
 from .adapters.pipecat import PipecatAdapter, native_attribute_name
 from .call_capture import (
     CAPTURE_PRESET_FULL,
     CAPTURE_PRESET_METADATA_ONLY,
+    LIVEKIT_SCOPE,
     NOT_GIVEN,
     OtlpSpan,
     any_value,
     attribute_capture_class,
     attribute_values,
     canonical_attribute_key,
+    recorder_agrees,
 )
 from .clock import ManualClock
 from .contract import (
@@ -70,6 +90,7 @@ from .contract import (
 )
 from .privacy import CaptureClass, CapturePolicy, classify_attribute
 from .recorder import IncidentRecorder, RecorderConfig
+from .recordings import verified_channel_speakers
 from .versions import PACKAGE_VERSION
 
 if TYPE_CHECKING:
@@ -112,47 +133,64 @@ class TranscriptLine:
     end_unix_nano: int
     trace_id: str
     span_id: str
+    timing: str = "measured"
+    transcript_index: int | None = None
 
 
 def _span_order(span: OtlpSpan) -> tuple[int, bytes, bytes]:
     return (span.span.start_time_unix_nano, span.span.trace_id, span.span.span_id)
 
 
-# The span kinds that carry a transcript line, by span name (in ``PIPECAT_SCOPES``):
-# ``(speaker, attribute)``. Readers may select only these spans before asking
-# ``transcript_lines`` for the lines.
-TRANSCRIPT_SPAN_SOURCES = {"stt": ("user", "transcript"), "llm": ("agent", "output")}
+# The span kinds that carry a transcript line, by (instrumentation scope, span name):
+# ``(speaker, attributes)``, the first attribute present giving the text. ``None``
+# means the speaker is carried by an attribute, as it is for uploaded transcripts.
+TRANSCRIPT_SPAN_SOURCES: dict[tuple[str, str], tuple[str | None, tuple[str, ...]]] = {
+    **{(scope, "stt"): ("user", ("transcript",)) for scope in PIPECAT_SCOPES},
+    **{(scope, "llm"): ("agent", ("output",)) for scope in PIPECAT_SCOPES},
+    (LIVEKIT_SCOPE, "user_turn"): ("user", ("lk.pii.user_transcript", "lk.user_transcript")),
+    (LIVEKIT_SCOPE, "agent_turn"): ("agent", ("lk.pii.response.text", "lk.response.text")),
+}
+_CONNECTOR_TRANSCRIPT_SOURCE = (None, ("earshot.connector.transcript.text",))
+_CONNECTOR_TRANSCRIPT_SPAN = "earshot.connector.transcript_line"
+_CONNECTOR_TRANSCRIPT_TIMING = "earshot.connector.transcript.timing"
+_CONNECTOR_TRANSCRIPT_INDEX = "earshot.connector.transcript.index"
+_TRANSCRIPT_TIMINGS = frozenset({"measured", "start_only", "order_only"})
+_UPLOAD_SCOPE = "earshot.upload"
 # ``transcript_coverage`` values: lines found; the preset stores none; none observed.
 TRANSCRIPT_AVAILABLE = "available"
 TRANSCRIPT_NOT_CAPTURED = "not_captured_by_preset"
 TRANSCRIPT_NOT_OBSERVED = "not_observed"
 
 
-def _line_source(span: OtlpSpan) -> tuple[str, str] | None:
-    """``(speaker, attribute)`` of the span kinds that carry a transcript line."""
+def _line_source(span: OtlpSpan) -> tuple[str | None, tuple[str, ...]] | None:
+    """``(speaker, attributes)`` of the span kinds that carry a transcript line."""
 
-    if span.scope.name not in PIPECAT_SCOPES:
-        return None
-    return TRANSCRIPT_SPAN_SOURCES.get(span.span.name)
+    if span.span.name == _CONNECTOR_TRANSCRIPT_SPAN and (
+        span.scope.name == _UPLOAD_SCOPE or span.scope.name.startswith("earshot.connector.")
+    ):
+        return _CONNECTOR_TRANSCRIPT_SOURCE
+    return TRANSCRIPT_SPAN_SOURCES.get((span.scope.name, span.span.name))
 
 
-def _attribute_value(attributes: Iterable[Any], key: str) -> Any:
-    """``attribute_values(attributes).get(key)``, converting only ``key``'s value: an
-    ``llm`` span's other attributes include the whole conversation (``input``)."""
+def _attribute_value(attributes: Iterable[Any], keys: tuple[str, ...]) -> Any:
+    """The value of the first of ``keys`` the span carries (``attribute_values``'s
+    reading), converting only that value: an ``llm`` span's other attributes include
+    the whole conversation (``input``)."""
 
+    found: dict[str, Any] = {}
     for item in attributes:
-        if item.key != key:
+        if item.key not in keys or item.key in found:
             continue
         value = any_value(item.value)
         if value is not None and value != NOT_GIVEN:
-            return value
-    return None
+            found[item.key] = value
+    return next((found[key] for key in keys if key in found), None)
 
 
 def transcript_text(span: OtlpSpan) -> tuple[str, str] | None:
     """``(speaker, text)`` of the transcript line a span carries, or ``None``.
 
-    The one rule for what a line is: the transcript keeps these lines (FR-10), and
+    The one rule for what a line is: the transcript keeps these lines, and
     so does a revision's transcript coverage. The receiver extracts it when it
     stores a span (``transcript_text_json``), so reading a transcript never
     parses a stored span.
@@ -161,11 +199,41 @@ def transcript_text(span: OtlpSpan) -> tuple[str, str] | None:
     source = _line_source(span)
     if source is None:
         return None
-    speaker, attribute = source
-    text = _attribute_value(span.span.attributes, attribute)
-    if not isinstance(text, str) or not text.strip():
+    speaker, attributes = source
+    text = _attribute_value(span.span.attributes, attributes)
+    if not isinstance(text, str):
         return None
+    text = text.replace("\x00", "")
+    if not text.strip():
+        return None
+    if speaker is None:
+        uploaded_speaker = _attribute_value(
+            span.span.attributes, ("earshot.connector.transcript.speaker",)
+        )
+        if uploaded_speaker not in {"user", "agent"}:
+            return None
+        speaker = uploaded_speaker
     return speaker, text
+
+
+def _transcript_metadata(span: OtlpSpan) -> tuple[str, int | None]:
+    """Timing provenance and source order carried by a connector transcript line."""
+
+    if _line_source(span) is None or span.span.name != _CONNECTOR_TRANSCRIPT_SPAN:
+        return "measured", None
+    timing = _attribute_value(span.span.attributes, (_CONNECTOR_TRANSCRIPT_TIMING,))
+    if not isinstance(timing, str) or timing not in _TRANSCRIPT_TIMINGS:
+        # Older or malformed connector spans with no usable timing declaration are
+        # only considered measured when their span has a non-zero time window.
+        timing = (
+            "order_only"
+            if timing is not None or span.span.start_time_unix_nano == span.span.end_time_unix_nano
+            else "measured"
+        )
+    index = _attribute_value(span.span.attributes, (_CONNECTOR_TRANSCRIPT_INDEX,))
+    if type(index) is not int or index < 0:
+        index = None
+    return timing, index
 
 
 def transcript_text_json(span: OtlpSpan) -> str | None:
@@ -175,7 +243,34 @@ def transcript_text_json(span: OtlpSpan) -> str | None:
     if line is None:
         return None
     speaker, text = line
-    return json.dumps({"speaker": speaker, "text": text}, separators=(",", ":"))
+    timing, index = _transcript_metadata(span)
+    document: dict[str, Any] = {"speaker": speaker, "text": text}
+    if timing != "measured":
+        document["timing"] = timing
+    if index is not None:
+        document["index"] = index
+    return json.dumps(document, separators=(",", ":"))
+
+
+def transcript_text_json_from_stored_span(scope_name: str, payload: bytes) -> str | None:
+    """Extract a transcript line from an older stored connector span payload.
+
+    Uploads and connector transcripts were accepted before ``spans.text_json`` knew
+    those span kinds. Call detail uses this only for their legacy rows; new spans
+    continue to read their precomputed text without parsing payloads.
+    """
+
+    from opentelemetry.proto.common.v1.common_pb2 import InstrumentationScope
+    from opentelemetry.proto.resource.v1.resource_pb2 import Resource
+    from opentelemetry.proto.trace.v1.trace_pb2 import Span
+
+    return transcript_text_json(
+        OtlpSpan(
+            resource=Resource(),
+            scope=InstrumentationScope(name=scope_name),
+            span=Span.FromString(payload),
+        )
+    )
 
 
 def stored_transcript_line(
@@ -184,6 +279,12 @@ def stored_transcript_line(
     """A ``spans.text_json`` value and its span's columns as a transcript line."""
 
     line = json.loads(text_json)
+    timing = line.get("timing", "measured")
+    if not isinstance(timing, str) or timing not in _TRANSCRIPT_TIMINGS:
+        timing = "order_only"
+    index = line.get("index")
+    if type(index) is not int or index < 0:
+        index = None
     return TranscriptLine(
         speaker=line["speaker"],
         text=line["text"],
@@ -191,17 +292,59 @@ def stored_transcript_line(
         end_unix_nano=end_unix_nano,
         trace_id=trace_id.hex(),
         span_id=span_id.hex(),
+        timing=timing,
+        transcript_index=index,
     )
 
 
-def transcript_order(line: TranscriptLine) -> tuple[int, str, str]:
-    """Span start order, then trace and span ID (hex sorts as the bytes do)."""
+def transcript_order(
+    line: TranscriptLine, *, effective_start_unix_nano: int | None = None
+) -> tuple[int, str, int, int, str]:
+    """Effective start, trace, explicit source index, then span ID."""
 
-    return (line.start_unix_nano, line.trace_id, line.span_id)
+    return (
+        line.start_unix_nano if effective_start_unix_nano is None else effective_start_unix_nano,
+        line.trace_id,
+        0 if line.transcript_index is not None else 1,
+        line.transcript_index if line.transcript_index is not None else 0,
+        line.span_id,
+    )
+
+
+def ordered_transcript_lines(lines: Iterable[TranscriptLine]) -> list[TranscriptLine]:
+    """Order by time while retaining indexed provider source order within a trace.
+
+    An order-only line's span time is the call start. Use the greatest preceding
+    indexed time as its effective sort time so it stays between source neighbors
+    without giving its public line a fabricated timestamp. The monotonic maximum
+    also preserves source order if provider timestamps arrive out of order.
+    """
+
+    materialized = list(lines)
+    effective_starts: dict[tuple[str, str], int] = {}
+    by_trace: dict[str, list[TranscriptLine]] = {}
+    for line in materialized:
+        if line.transcript_index is not None:
+            by_trace.setdefault(line.trace_id, []).append(line)
+    for trace_lines in by_trace.values():
+        previous_start: int | None = None
+        for line in sorted(trace_lines, key=lambda item: (item.transcript_index, item.span_id)):
+            start = line.start_unix_nano
+            if previous_start is not None:
+                start = max(start, previous_start)
+            effective_starts[(line.trace_id, line.span_id)] = start
+            previous_start = start
+    return sorted(
+        materialized,
+        key=lambda line: transcript_order(
+            line,
+            effective_start_unix_nano=effective_starts.get((line.trace_id, line.span_id)),
+        ),
+    )
 
 
 def transcript_lines(spans: Iterable[OtlpSpan]) -> list[TranscriptLine]:
-    """The call's transcript, in span start order (then trace and span ID)."""
+    """The transcript lines from spans, ordered for the call detail."""
 
     lines: list[TranscriptLine] = []
     for span in spans:
@@ -209,6 +352,7 @@ def transcript_lines(spans: Iterable[OtlpSpan]) -> list[TranscriptLine]:
         if line is None:
             continue
         speaker, text = line
+        timing, index = _transcript_metadata(span)
         lines.append(
             TranscriptLine(
                 speaker=speaker,
@@ -217,9 +361,11 @@ def transcript_lines(spans: Iterable[OtlpSpan]) -> list[TranscriptLine]:
                 end_unix_nano=span.span.end_time_unix_nano,
                 trace_id=span.span.trace_id.hex(),
                 span_id=span.span.span_id.hex(),
+                timing=timing,
+                transcript_index=index,
             )
         )
-    return sorted(lines, key=transcript_order)
+    return ordered_transcript_lines(lines)
 
 
 def adapter_span(span: OtlpSpan) -> dict[str, Any]:
@@ -422,19 +568,53 @@ def _pipecat_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any]
     return converted
 
 
-# Which adapter consumes a scope's spans, and the input it takes. A plain mapping:
-# Pipecat in Month 1.
-_ADAPTERS_BY_SCOPE: dict[str, tuple[type, Callable[[IncidentRecorder, OtlpSpan], Any]]] = (
-    dict.fromkeys(PIPECAT_SCOPES, (PipecatAdapter, _pipecat_input))
-)
+def _livekit_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any]:
+    """The span as the LiveKit adapter consumes it, keeping only attributes the
+    adapter records (under their semantic key, ``call_capture.ATTRIBUTE_KEYS``) in the
+    class the receiver gives them, and no LLM input history (the rest declared)."""
+
+    converted = adapter_span(span)
+    kept: dict[str, Any] = {}
+    for key, value in converted["attributes"].items():
+        expected = attribute_capture_class(key)
+        recorded_as = canonical_attribute_key(key)
+        if recorded_as in _INPUT_HISTORY_KEYS or not recorder_agrees(recorded_as, expected):
+            recorder.record_omission(key, capture_class=expected)
+            continue
+        kept[key] = value
+    converted["attributes"] = kept
+    return converted
+
+
+# Which adapter consumes a scope's spans, and the input it takes. A plain mapping.
+_ADAPTERS_BY_SCOPE: dict[str, tuple[type, Callable[[IncidentRecorder, OtlpSpan], Any]]] = {
+    **dict.fromkeys(PIPECAT_SCOPES, (PipecatAdapter, _pipecat_input)),
+    LIVEKIT_SCOPE: (LiveKitAdapter, _livekit_input),
+}
+
+
+def _recording_channels(recording: Recording) -> list[tuple[int | None, str, str]]:
+    """``(channel_index, speaker, media_id)`` of each reference a recording becomes: the
+    whole file under its speaker, or one per channel of a channel map the upload
+    verified (module docstring)."""
+
+    mapped = verified_channel_speakers(recording.content_type, recording.channel_speakers)
+    if mapped is None:
+        return [(None, recording.speaker, f"recording-{recording.recording_id}")]
+    return [
+        (index, speaker, f"recording-{recording.recording_id}.ch{index}")
+        for index, speaker in enumerate(mapped)
+    ]
 
 
 def _add_recording(
     recorder: IncidentRecorder, recording: Recording, domain: str, policy: CapturePolicy
 ) -> None:
-    participant_id, role, stream_id, direction = _SPEAKERS[recording.speaker]
-    recorder.add_participant(participant_id, role=role)
-    recorder.add_stream(stream_id, participant_id=participant_id, direction=direction)
+    channels = _recording_channels(recording)
+    for _, speaker, _ in channels:
+        participant_id, role, stream_id, direction = _SPEAKERS[speaker]
+        recorder.add_participant(participant_id, role=role)
+        recorder.add_stream(stream_id, participant_id=participant_id, direction=direction)
     started = int(recording.started_at_unix_nano)
     media_domain: str | None = None
     if policy.allows(CaptureClass.AUDIO):
@@ -458,26 +638,27 @@ def _add_recording(
                 method="client_declared_start",
             )
         )
-    recorder.add_media_ref(
-        MediaRef(
-            media_id=f"recording-{recording.recording_id}",
-            session_id=recorder.session_id,
-            stream_id=stream_id,
-            media_kind="audio",
-            content_type=recording.content_type,
-            integrity="content_digest",
-            sha256=recording.sha256,
-            size_bytes=recording.size,
-            custodian=MEDIA_CUSTODIAN,
-            clock_domain_id=media_domain,
-            time_range=TimeRange(
-                start=TimePoint(source_time_unix_nano=str(started), clock_domain_id=domain),
-                end=TimePoint(
-                    source_time_unix_nano=str(_recording_end(recording)), clock_domain_id=domain
-                ),
-            ),
-        )
+    time_range = TimeRange(
+        start=TimePoint(source_time_unix_nano=str(started), clock_domain_id=domain),
+        end=TimePoint(source_time_unix_nano=str(_recording_end(recording)), clock_domain_id=domain),
     )
+    for channel_index, speaker, media_id in channels:
+        recorder.add_media_ref(
+            MediaRef(
+                media_id=media_id,
+                session_id=recorder.session_id,
+                stream_id=_SPEAKERS[speaker][2],
+                channel_index=channel_index,
+                media_kind="audio",
+                content_type=recording.content_type,
+                integrity="content_digest",
+                sha256=recording.sha256,
+                size_bytes=recording.size,
+                custodian=MEDIA_CUSTODIAN,
+                clock_domain_id=media_domain,
+                time_range=time_range,
+            )
+        )
 
 
 def transcript_coverage(lines: Sequence[TranscriptLine], preset: str) -> str:

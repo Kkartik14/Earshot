@@ -357,22 +357,14 @@ class _ClockAligner:
         if not candidates:
             return None
 
-        # Deterministic, principled selection: prefer the tightest calibration
-        # (smallest own uncertainty), then the smaller aligned value, then the
-        # relation id. A relation declaring no bound is not "tightest" -- unknown
-        # is not zero -- so it sorts after every relation that declares one. This is
-        # a stable serialization rule, not a quality claim.
+        # Choose by uncertainty, aligned value, then relation ID; unknown bounds sort last.
         def order(item: tuple[int, int | None, str]) -> tuple[int, int, int, str]:
             value, uncertainty, relation_id = item
             known = uncertainty is not None
             return (0 if known else 1, uncertainty or 0, value, relation_id)
 
         ordered = sorted(candidates, key=order)
-        # Honesty over guessing: two in-window calibrations that place the same
-        # instant differently must be shown to agree before either is used. They
-        # agree when their separation is within their combined bound -- which cannot
-        # be shown at all when a bound is unknown. Either way the alignment is not
-        # decidable from declared evidence, so refuse.
+        # Refuse conflicting calibrations unless both uncertainty bounds cover their separation.
         for index_a in range(len(ordered)):
             value_a, uncertainty_a, _ = ordered[index_a]
             for index_b in range(index_a + 1, len(ordered)):
@@ -1112,11 +1104,7 @@ def _provider_stage_latency_fallback(
     }
 
 
-# The canonical, ordered stages of a barge-in teardown. Each maps to one or more
-# open Earshot event names (or, for ``intent``/``resumed``, a provider
-# measurement, and for ``tool_outcome``, a tool operation's status). A stage is
-# *observed* only when the artifact actually contains its signal; a missing stage
-# is reported as coverage with a reason, never as a fabricated coordinate.
+# Barge-in stages map to observed evidence; missing signals remain coverage gaps.
 _STAGE_OVERLAP = "overlap_observed"
 _STAGE_INTENT = "intent"
 _STAGE_CLASSIFIED = "classified"
@@ -1946,13 +1934,8 @@ def _operation_turn_ids(operations: Sequence[Operation]) -> dict[str, str | None
     return resolved
 
 
-# Each rule turns governed evidence into an evidence-linked ``Diagnosis`` that
-# names the boundary at fault. Rules are deterministic and source-order-invariant
-# (inputs are sorted), they cite only real operation/event/sample ids, and they
-# emit nothing when the deciding signal is absent or unmeasured. Confidence is
-# ``measured`` when the deciding signal is a direct governed fact (a QoS reading,
-# a governed event, an operation status, a causal link) and ``inferred`` when the
-# analyzer had to derive it (an SLO breach on a computed latency, or an absence).
+# Rules cite observed evidence and skip absent or unmeasured signals.
+# Confidence is ``measured`` for direct facts and ``inferred`` for derived findings.
 _DEVICE_EVENT_PREFIX = "earshot.device."
 _TRANSPORT_EVENT_PREFIX = "earshot.transport."
 _RENDER_EVENT_PREFIX = "earshot.audio.render."

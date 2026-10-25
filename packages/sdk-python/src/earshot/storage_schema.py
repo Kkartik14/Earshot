@@ -24,7 +24,9 @@ The baseline is frozen. A later revision changes the schema with its own
 operations; it never edits this function.
 
 ``capture_preset_column()`` and ``add_calls_tables()`` are what revision
-``0004_calls`` adds, frozen the same way.
+``0004_calls`` adds, ``projection_columns()`` and ``add_projection_tables()``
+what ``0005_projections`` adds, and ``connector_columns()`` and
+``add_connector_tables()`` what ``0006_connectors`` adds, frozen the same way.
 """
 
 from __future__ import annotations
@@ -608,15 +610,8 @@ V19_SEED_STATEMENTS = (
 
 
 # --- Revision 0004_calls (frozen) ------------------------------------------------------
-#
-# What ``0004_calls`` adds: ``projects.capture_preset`` and the call tables. Like the
-# baseline, these definitions are frozen history: a later revision changes the
-# schema with its own operations and never edits them, so a catalog created
-# today and one upgraded later end up identical.
-#
-# Boolean columns are ``INTEGER`` with ``CHECK (x IN (0, 1))``, as the baseline's
-# are (``export_allowed_local_api``, ``connectors.enabled``): the hand-written SQL
-# binds 0 and 1 on both dialects.
+# Adds capture presets and call tables; keep this revision immutable for upgrade parity.
+# Boolean columns use checked INTEGER values on both dialects.
 
 CALLS_TABLES = (
     "calls",
@@ -919,3 +914,357 @@ def add_calls_tables(metadata: MetaData) -> list[Table]:
     )
 
     return [metadata.tables[name] for name in CALLS_TABLES]
+
+
+# --- Revision 0005_projections (frozen) ------------------------------------------------
+# Adds projection and price tables plus columns via ALTER TABLE to preserve SQLite checks.
+# Unknown projection values stay NULL; open vocabularies are validated by writers, not SQL checks.
+
+PROJECTION_TABLES = (
+    "builtin_price_version",
+    "prices",
+    "audio_analysis",
+    "call_projections",
+    "call_transcripts",
+    "call_tags",
+)
+PROJECTION_COLUMNS = (
+    ("recordings", "channel_speakers_json"),
+    ("calls", "projection_seq"),
+    ("projects", "price_version"),
+    ("spans", "first_revision"),
+    ("recordings", "first_revision"),
+)
+# A recording's channels in order, as compact JSON: user and agent, each at most once.
+_CHANNEL_SPEAKERS_JSON = ('["user"]', '["agent"]', '["user","agent"]', '["agent","user"]')
+_ANALYSIS_STATES = ("pending", "running", "stored", "failed", "unavailable")
+# A projection's summary of its revision's analyses: no recording; any analysis not
+# yet terminal; all stored; terminal with some stored; terminal with none stored and
+# some failed; all unavailable.
+_CALL_ANALYSIS_STATES = ("none", "pending", "stored", "partial", "failed", "unavailable")
+_TRANSCRIPT_SPEAKERS = ("user", "agent")
+_TRANSCRIPT_TIMINGS = ("measured", "start_only", "order_only")
+# A transcript line's times follow its timing: both, the start only, or neither (an
+# end is never inferred from the next line's start).
+_TRANSCRIPT_TIMING_SHAPE = (
+    "(timing = 'measured' AND start_ms IS NOT NULL AND end_ms IS NOT NULL) OR "
+    "(timing = 'start_only' AND start_ms IS NOT NULL AND end_ms IS NULL) OR "
+    "(timing = 'order_only' AND start_ms IS NULL AND end_ms IS NULL)"
+)
+_ROW_ID = BigInteger().with_variant(Integer(), "sqlite")
+
+
+def _counter(name: str) -> Column[int]:
+    return _required(name, BigInteger, _at_least(name, 0), server_default=text("0"))
+
+
+def _unknown_or_at_least_zero(name: str, type_: type[TypeEngine[object]] = BigInteger):
+    return _optional(name, type_, _at_least(name, 0))
+
+
+def projection_columns() -> list[tuple[str, Column[object]]]:
+    """The columns revision ``0005_projections`` adds, as ``(table, column)``."""
+
+    return [
+        (
+            "recordings",
+            _optional(
+                "channel_speakers_json",
+                Text,
+                _in("channel_speakers_json", _CHANNEL_SPEAKERS_JSON),
+            ),
+        ),
+        # Bumped with every change a call's projection reads (a finished revision, a
+        # stored analysis result); a projection records the value it was built from.
+        ("calls", _counter("projection_seq")),
+        # Bumped by every insert of the project's own prices.
+        ("projects", _counter("price_version")),
+        # The first revision built from the span or recording (NULL: none yet), set
+        # once by the claim that snapshots it: revision r holds exactly the evidence
+        # with first_revision <= r.
+        ("spans", _optional("first_revision", Integer, _at_least("first_revision", 1))),
+        ("recordings", _optional("first_revision", Integer, _at_least("first_revision", 1))),
+    ]
+
+
+def add_projection_tables(metadata: MetaData) -> list[Table]:
+    """Add the tables revision ``0005_projections`` creates to ``metadata`` (which
+    holds ``projects`` and the call tables) and return them, parents first."""
+
+    # The version of the built-in prices (``prices.project_id IS NULL``): one row.
+    Table(
+        "builtin_price_version",
+        metadata,
+        Column(
+            "singleton",
+            Integer,
+            CheckConstraint("singleton = 1"),
+            primary_key=True,
+            autoincrement=False,
+        ),
+        _counter("version"),
+    )
+
+    # Append-only and effective-dated. ``project_id`` NULL is a built-in price; a
+    # project's own row wins over a built-in one. A price is ``price_nano_usd`` per
+    # ``per_quantity`` units, so a fraction of a nano-USD per unit stays exact.
+    prices = Table(
+        "prices",
+        metadata,
+        Column("id", _ROW_ID, primary_key=True, autoincrement=True),
+        _optional("project_id", Text, ForeignKey("projects.project_id")),
+        _required("provider", Text, _length_range("provider", 1, 128)),
+        _required("model", Text, _length_range("model", 1, 256)),
+        _required("unit", Text, _length_range("unit", 1, 64)),
+        _required("price_nano_usd", BigInteger, _at_least("price_nano_usd", 0)),
+        _required("per_quantity", BigInteger, _at_least("per_quantity", 1)),
+        _required("effective_from_unix_nano", UNIX_NANO),
+        _optional("source_url", Text),
+        _optional("note", Text),
+        _required("created_unix_nano", UNIX_NANO),
+        sqlite_autoincrement=True,
+    )
+    Index(
+        "prices_match_idx",
+        prices.c.provider,
+        prices.c.model,
+        prices.c.unit,
+        prices.c.project_id,
+        prices.c.effective_from_unix_nano,
+    )
+    Index("prices_project_idx", prices.c.project_id)
+
+    # One analysis job per recording. Its result is written only by the lease that
+    # computed it (``lease_token``), and goes with its recording.
+    analysis = Table(
+        "audio_analysis",
+        metadata,
+        _required("project_id", Text),
+        _required("recording_id", Text),
+        _required("state", Text, _in("state", _ANALYSIS_STATES)),
+        _required("attempts", Integer, _at_least("attempts", 0), server_default=text("0")),
+        _optional("lease_until_unix_nano", UNIX_NANO),
+        _counter("lease_token"),
+        # When a retried job may run again (its backoff); NULL: now.
+        _optional("next_attempt_unix_nano", UNIX_NANO),
+        _optional("error_code", Text),
+        # The analysis algorithm a result was computed with; 0 before any has run.
+        _required("algorithm_version", Integer, _at_least("algorithm_version", 0)),
+        _optional("peaks_blob_key", Text),
+        _optional("rendition_blob_key", Text),
+        _required("updated_unix_nano", UNIX_NANO),
+        # Last: it can be large, and SQLite reads a column stored after a large value
+        # by walking that value's overflow pages.
+        _optional("result_json", Text),
+        PrimaryKeyConstraint("project_id", "recording_id"),
+        ForeignKeyConstraint(
+            ["project_id", "recording_id"],
+            ["recordings.project_id", "recordings.recording_id"],
+            ondelete="CASCADE",
+        ),
+    )
+    Index("audio_analysis_lease_idx", analysis.c.state, analysis.c.lease_until_unix_nano)
+    Index("audio_analysis_due_idx", analysis.c.state, analysis.c.next_attempt_unix_nano)
+
+    # A call's projection: what its latest revision, that revision's analyses and the
+    # prices say, stamped with the inputs' versions it was computed from.
+    projection = Table(
+        "call_projections",
+        metadata,
+        _required("project_id", Text),
+        _required("call_id", Text),
+        _required("revision", Integer, _at_least("revision", 1)),
+        _required("source_seq", BigInteger, _at_least("source_seq", 0)),
+        _required("price_version", BigInteger, _at_least("price_version", 0)),
+        _required("builtin_price_version", BigInteger, _at_least("builtin_price_version", 0)),
+        _required("projection_version", Integer, _at_least("projection_version", 1)),
+        # sha256 (hex) of the inputs: an unchanged input is not rewritten.
+        _required("input_digest", Text, _length("input_digest", 64)),
+        _optional("agent", Text),
+        _optional("framework", Text),
+        _optional("outcome", Text),
+        # The call's own evidence start (not the server's receive time).
+        _optional("started_unix_nano", UNIX_NANO),
+        _unknown_or_at_least_zero("duration_ms"),
+        _required("turn_count", Integer, _at_least("turn_count", 0)),
+        _unknown_or_at_least_zero("reported_latency_p50_ms"),
+        _unknown_or_at_least_zero("reported_latency_max_ms"),
+        _required("measurable_turns", Integer, _at_least("measurable_turns", 0)),
+        _unknown_or_at_least_zero("audible_gap_p50_ms"),
+        _unknown_or_at_least_zero("audible_gap_max_ms"),
+        _unknown_or_at_least_zero("talk_time_user_ms"),
+        _unknown_or_at_least_zero("talk_time_agent_ms"),
+        _unknown_or_at_least_zero("overlap_ms"),
+        _unknown_or_at_least_zero("barge_in_count", Integer),
+        _unknown_or_at_least_zero("talk_over_count", Integer),
+        _unknown_or_at_least_zero("long_silence_count", Integer),
+        _unknown_or_at_least_zero("dead_air_ms"),
+        _unknown_or_at_least_zero("cost_lower_bound_nano_usd"),
+        _unknown_or_at_least_zero("cost_estimated_nano_usd"),
+        _required("cost_unknown_items", Integer, _at_least("cost_unknown_items", 0)),
+        # What a hosted provider reported the call cost, never added to Earshot's own.
+        _unknown_or_at_least_zero("provider_cost_nano_usd"),
+        _optional("provider_cost_basis", Text),
+        _required("analysis_state", Text, _in("analysis_state", _CALL_ANALYSIS_STATES)),
+        _required("updated_unix_nano", UNIX_NANO),
+        # The usage a reprice reads instead of the bundle, then the call view's body.
+        _optional("usage_json", Text),
+        _required("detail_json", Text),
+        PrimaryKeyConstraint("project_id", "call_id"),
+        ForeignKeyConstraint(
+            ["project_id", "call_id"],
+            ["calls.project_id", "calls.call_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "call_id", "revision"],
+            ["call_revisions.project_id", "call_revisions.call_id", "call_revisions.revision"],
+            ondelete="CASCADE",
+        ),
+    )
+    Index("call_projections_agent_idx", projection.c.project_id, projection.c.agent)
+    Index("call_projections_outcome_idx", projection.c.project_id, projection.c.outcome)
+    Index(
+        "call_projections_reported_latency_idx",
+        projection.c.project_id,
+        projection.c.reported_latency_p50_ms,
+    )
+    Index(
+        "call_projections_audible_gap_idx",
+        projection.c.project_id,
+        projection.c.audible_gap_p50_ms,
+    )
+    Index(
+        "call_projections_cost_idx",
+        projection.c.project_id,
+        projection.c.cost_lower_bound_nano_usd,
+    )
+    Index(
+        "call_projections_started_idx",
+        projection.c.project_id,
+        projection.c.started_unix_nano,
+    )
+
+    # A projection's transcript, one row per line in order (written under the
+    # ``full`` preset only); call-relative milliseconds.
+    Table(
+        "call_transcripts",
+        metadata,
+        _required("project_id", Text),
+        _required("call_id", Text),
+        _required("line_no", Integer, _at_least("line_no", 0)),
+        _required("speaker", Text, _in("speaker", _TRANSCRIPT_SPEAKERS)),
+        _required("timing", Text, _in("timing", _TRANSCRIPT_TIMINGS)),
+        _optional("start_ms", BigInteger),
+        _optional("end_ms", BigInteger),
+        _required("text", Text),
+        CheckConstraint(_TRANSCRIPT_TIMING_SHAPE),
+        PrimaryKeyConstraint("project_id", "call_id", "line_no"),
+        ForeignKeyConstraint(
+            ["project_id", "call_id"],
+            ["call_projections.project_id", "call_projections.call_id"],
+            ondelete="CASCADE",
+        ),
+    )
+
+    # A projection's tags (the union of the call's ``earshot.call.tags``).
+    tags = Table(
+        "call_tags",
+        metadata,
+        _required("project_id", Text),
+        _required("call_id", Text),
+        _required("tag", Text, _length_range("tag", 1, 256)),
+        PrimaryKeyConstraint("project_id", "call_id", "tag"),
+        ForeignKeyConstraint(
+            ["project_id", "call_id"],
+            ["call_projections.project_id", "call_projections.call_id"],
+            ondelete="CASCADE",
+        ),
+    )
+    Index("call_tags_tag_idx", tags.c.project_id, tags.c.tag)
+
+    return [metadata.tables[name] for name in PROJECTION_TABLES]
+
+
+# --- Revision 0006_connectors (frozen) -------------------------------------------------
+# Adds connector configuration and recording-fetch tables; keep this revision immutable.
+
+CONNECTOR_TABLES = ("recording_fetches",)
+CONNECTOR_COLUMNS = (
+    ("connectors", "config_json"),
+    ("delivery_receipts", "call_id"),
+    ("delivery_receipts", "digest_kind"),
+)
+# What a receipt's ``body_sha256`` holds: the sha256 of the raw body (every receipt
+# 0.3.x wrote), or of the delivery's canonical evidence and recording locators.
+_DIGEST_KINDS = ("body_v1", "evidence_v1")
+# Where a fetch gets its bytes: a URL the provider put in the payload, or one built
+# from the provider call ID on the provider's own API host.
+_FETCH_SOURCE_KINDS = ("payload_url", "provider_api")
+# ``pending`` and ``running`` as the leased-job helper uses them; the rest terminal.
+_FETCH_STATES = ("pending", "running", "stored", "failed", "expired")
+
+
+def connector_columns() -> list[tuple[str, Column[object]]]:
+    """The columns revision ``0006_connectors`` adds, as ``(table, column)``."""
+
+    return [
+        # JSON, validated by the code that writes it; NULL: the defaults.
+        ("connectors", _optional("config_json", Text)),
+        # The call an applied delivery's evidence went to (NULL: none, or a 0.3.x
+        # receipt, which bound an incident instead).
+        ("delivery_receipts", _optional("call_id", Text)),
+        (
+            "delivery_receipts",
+            _required(
+                "digest_kind",
+                Text,
+                _in("digest_kind", _DIGEST_KINDS),
+                server_default=text("'body_v1'"),
+            ),
+        ),
+    ]
+
+
+def add_connector_tables(metadata: MetaData) -> list[Table]:
+    """Add the tables revision ``0006_connectors`` creates to ``metadata`` (which
+    holds the baseline's ``connectors`` and the call tables) and return them."""
+
+    # One fetch job per provider recording, with the leased-job helper's columns. A
+    # payload URL is a bearer capability: it is kept only while the job can use it.
+    fetches = Table(
+        "recording_fetches",
+        metadata,
+        _required("project_id", Text),
+        _required("recording_id", Text),
+        _required(
+            "endpoint_id",
+            Text,
+            ForeignKey("connectors.endpoint_id", ondelete="CASCADE"),
+        ),
+        _required("source_kind", Text, _in("source_kind", _FETCH_SOURCE_KINDS)),
+        # The locator: the connector's provider, this call ID and this track.
+        _required("provider_call_id", Text, _length_range("provider_call_id", 1, 512)),
+        _required("track", Text, _length_range("track", 1, 64)),
+        _optional("url", Text),
+        _optional("url_expires_unix_nano", UNIX_NANO),
+        _required("state", Text, _in("state", _FETCH_STATES)),
+        _required("attempts", Integer, _at_least("attempts", 0), server_default=text("0")),
+        _optional("lease_until_unix_nano", UNIX_NANO),
+        _counter("lease_token"),
+        _optional("next_attempt_unix_nano", UNIX_NANO),
+        _optional("error_code", Text),
+        _required("created_unix_nano", UNIX_NANO),
+        _required("updated_unix_nano", UNIX_NANO),
+        PrimaryKeyConstraint("project_id", "recording_id"),
+        ForeignKeyConstraint(
+            ["project_id", "recording_id"],
+            ["recordings.project_id", "recordings.recording_id"],
+            ondelete="CASCADE",
+        ),
+    )
+    Index("recording_fetches_lease_idx", fetches.c.state, fetches.c.lease_until_unix_nano)
+    Index("recording_fetches_due_idx", fetches.c.state, fetches.c.next_attempt_unix_nano)
+    Index("recording_fetches_endpoint_idx", fetches.c.endpoint_id)
+
+    return [metadata.tables[name] for name in CONNECTOR_TABLES]

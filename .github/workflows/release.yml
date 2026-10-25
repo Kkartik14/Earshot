@@ -98,11 +98,11 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Require the release version in both packages
+      - name: Require the release version in every package
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for package in packages/browser packages/viewer-ui; do
+          for package in packages/browser packages/viewer-ui packages/node; do
             version="$(node -p "require('./$package/package.json').version")"
             if [[ "$version" != "$RELEASE_VERSION" ]]; then
               echo "$package is version $version; the release is $RELEASE_VERSION" >&2
@@ -114,8 +114,8 @@ jobs:
         # would replace workspace: ranges; npm pack does neither.
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui build
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui pack \
+          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node build
+          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node pack \
             --pack-destination "$PWD/npm-dist"
       - name: Inspect the tarballs
         run: |
@@ -152,6 +152,13 @@ jobs:
               }
               console.log(`${manifest.name}@${manifest.version}: ${targets.length} entry points present`);
             ' "$unpacked/package"
+          done
+      - name: Dry-run the publish command
+        # The same tarball paths as publish-npm, which runs only on a tag. npm
+        # reads a bare dir/name.tgz as a GitHub repository; ./ makes it a file.
+        run: |
+          for tarball in ./npm-dist/*.tgz; do
+            npm publish "$tarball" --dry-run --access public
           done
       - name: Upload immutable release inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -238,7 +245,9 @@ jobs:
           name: python-distributions
           path: dist
       - name: Publish the distributions
-        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        # v1.14.2 or later: hatchling 1.32 writes Metadata-Version 2.5, which the
+        # twine bundled in earlier releases rejects.
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
   publish-npm:
     name: Publish npm packages with provenance
@@ -272,7 +281,7 @@ jobs:
           if [[ "$PRERELEASE" == "true" ]]; then
             dist_tag=next
           fi
-          for tarball in npm-dist/*.tgz; do
+          for tarball in ./npm-dist/*.tgz; do
             npm publish "$tarball" --provenance --access public --tag "$dist_tag"
           done
 

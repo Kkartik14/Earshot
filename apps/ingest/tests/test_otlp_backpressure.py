@@ -1,4 +1,4 @@
-"""Back-pressure on ``POST /v1/traces`` (AC5.7): 503 with ``Retry-After: 3``, never 429.
+"""Back-pressure on ``POST /v1/traces``: 503 with ``Retry-After: 3``, never 429.
 
 - An admission limiter caps requests in flight at the pool size; a request past
   it is refused at once.

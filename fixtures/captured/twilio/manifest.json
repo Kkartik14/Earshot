@@ -1,0 +1,326 @@
+{
+  "format_version": 1,
+  "provider": "twilio",
+  "description": "One real outbound-API Twilio call with Record=true and RecordingChannels=dual, polled over the REST API (no webhooks, no tunnel). REST responses scrubbed; recordings regenerated. Used by the recording poll/import and fetch tests.",
+  "provenance": {
+    "captured_on": "2026-10-19",
+    "source_kind": "real_capture_scrubbed",
+    "capture_driver": "scripts/capture_twilio.py",
+    "capture_driver_sha256": "9eaeda413c14e7beca59650c2d4743f36b8cfc699e4933147d0fb0b1e3528b38",
+    "scrubber": "scripts/scrub_provider_capture.py",
+    "scrubber_sha256": "f8d310dde424da83b8993cabdcda95268b9d0e061371635ef7fb4222b1141171",
+    "account_type": "Trial",
+    "create_call_form": {
+      "To": "TWILIO_TO_NUMBER",
+      "From": "TWILIO_FROM_NUMBER",
+      "Twiml": "<Response><Say>This is an Earshot test call. It checks how call recordings are stored.</Say><Pause length=\"3\"/><Say>No reply is needed. The test plays three short sentences.</Say><Pause length=\"3\"/><Say>That is the end of the test. Thank you, and goodbye.</Say></Response>",
+      "Record": "true",
+      "RecordingChannels": "dual",
+      "Timeout": "40",
+      "TimeLimit": "60"
+    },
+    "applied_parameters": {
+      "record": "true",
+      "recording_channels": "dual",
+      "recording_track": "both",
+      "trim": "trim-silence",
+      "timeout": "40"
+    },
+    "status_sequence_polled": ["queued", "ringing", "in-progress", "completed"],
+    "outcome": "Answered. The trial-account announcement played on the Twilio channel and asked for a key press; no key was pressed, so the inline TwiML <Say> never ran and the call ended after 12 s.",
+    "requests": {
+      "create_call.json": "POST /Accounts/{AccountSid}/Calls.json (201)",
+      "call.json": "GET /Accounts/{AccountSid}/Calls/{CallSid}.json, after completion",
+      "call_recordings.json": "GET …/Calls/{CallSid}/Recordings.json",
+      "recordings_by_callsid.json": "GET …/Recordings.json?CallSid=",
+      "recording.json": "GET …/Recordings/{RecordingSid}.json",
+      "call_events.json": "GET …/Calls/{CallSid}/Events.json",
+      "call_notifications.json": "GET …/Calls/{CallSid}/Notifications.json"
+    },
+    "media_requests": {
+      "Recordings/{sid}.wav": "dual WAV, byte-identical to ?RequestedChannels=2",
+      "Recordings/{sid}.wav?RequestedChannels=2": "2 ch",
+      "Recordings/{sid}.wav?RequestedChannels=1": "1 ch mix"
+    }
+  },
+  "cost_reported": {
+    "call.price": "-0.04960",
+    "recording.price": "-0.00250",
+    "price_unit": "USD",
+    "note": "Twilio reports charges as negative strings; this account is on trial credit"
+  },
+  "scrub_rules": [
+    "Twilio SIDs (AC, CA, RE, PN, SK + 32 hex): same prefix, body = zeros + first-seen counter, in every string (fields, URIs, events response_body)",
+    "E.164 numbers (+ and %2B forms) -> +1555010NNNN in first-seen order; a *_formatted form that differs from its E.164 -> (555) 010-NNNN (from_formatted here; to_formatted was already E.164 and follows that mapping)",
+    "a non-empty caller_name -> `Captured Caller` (it was empty)",
+    "kept verbatim: statuses, times, durations, prices, the TwiML and request defaults",
+    "the build refuses to write on any provider_capture.find_leaks rule, env secret (value, phone variants, sha256 prefix) or raw value in the output bytes"
+  ],
+  "field_table": {
+    "call": [
+      {
+        "field": "sid",
+        "type": "str",
+        "meaning": "CallSid; the session key and the merge key with a host's `earshot.session.id`"
+      },
+      {
+        "field": "account_sid",
+        "type": "str",
+        "meaning": "account"
+      },
+      {
+        "field": "status",
+        "type": "str",
+        "meaning": "final: completed | busy | failed | no-answer | canceled"
+      },
+      {
+        "field": "direction",
+        "type": "str",
+        "meaning": "`outbound-api` for a REST-created call"
+      },
+      {
+        "field": "start_time",
+        "type": "str",
+        "meaning": "RFC 2822, 1 s resolution, UTC"
+      },
+      {
+        "field": "end_time",
+        "type": "str",
+        "meaning": "RFC 2822, 1 s resolution, UTC"
+      },
+      {
+        "field": "duration",
+        "type": "str",
+        "meaning": "whole seconds as a string; equals end_time - start_time"
+      },
+      {
+        "field": "price",
+        "type": "str",
+        "meaning": "negative decimal string = charge; null until Twilio prices the call"
+      },
+      {
+        "field": "price_unit",
+        "type": "str",
+        "meaning": "ISO currency"
+      },
+      {
+        "field": "from",
+        "type": "str",
+        "meaning": "E.164 caller (scrubbed to +1555…)"
+      },
+      {
+        "field": "to",
+        "type": "str",
+        "meaning": "E.164 callee (scrubbed to +1555…)"
+      },
+      {
+        "field": "date_created",
+        "type": "str",
+        "meaning": "request time; here 16 s before start_time (queued + ringing)"
+      },
+      {
+        "field": "forwarded_from",
+        "type": "str",
+        "meaning": "set by Twilio; equal to `to` on this outbound call"
+      },
+      {
+        "field": "answered_by",
+        "type": "NoneType",
+        "meaning": "null without machine detection"
+      },
+      {
+        "field": "parent_call_sid",
+        "type": "NoneType",
+        "meaning": "null for a single-leg call"
+      },
+      {
+        "field": "subresource_uris",
+        "type": "dict",
+        "meaning": "relative URIs incl. recordings and events"
+      }
+    ],
+    "recording": [
+      {
+        "field": "sid",
+        "type": "str",
+        "meaning": "RecordingSid; media at Recordings/{sid}.wav"
+      },
+      {
+        "field": "call_sid",
+        "type": "str",
+        "meaning": "owning CallSid"
+      },
+      {
+        "field": "channels",
+        "type": "int",
+        "meaning": "1 or 2; 2 with RecordingChannels=dual"
+      },
+      {
+        "field": "source",
+        "type": "str",
+        "meaning": "`OutboundAPI` for Record=true on Create Call"
+      },
+      {
+        "field": "status",
+        "type": "str",
+        "meaning": "`completed` once media is ready"
+      },
+      {
+        "field": "duration",
+        "type": "str",
+        "meaning": "whole seconds as a string"
+      },
+      {
+        "field": "start_time",
+        "type": "str",
+        "meaning": "RFC 2822, 1 s resolution"
+      },
+      {
+        "field": "price",
+        "type": "str",
+        "meaning": "negative decimal string = charge"
+      },
+      {
+        "field": "price_unit",
+        "type": "str",
+        "meaning": "ISO currency"
+      },
+      {
+        "field": "media_url",
+        "type": "str",
+        "meaning": "absolute https URL without extension; needs Basic auth"
+      },
+      {
+        "field": "conference_sid",
+        "type": "NoneType",
+        "meaning": "null outside a conference"
+      },
+      {
+        "field": "error_code",
+        "type": "NoneType",
+        "meaning": "null on success"
+      }
+    ]
+  },
+  "timing": {
+    "resolution": "1 s: every Twilio time is an RFC 2822 string",
+    "call_window": "Mon, 19 Oct 2026 12:50:13 +0000 .. Mon, 19 Oct 2026 12:50:25 +0000 (12 s)",
+    "recording_start": "Mon, 19 Oct 2026 12:50:14 +0000",
+    "recording_duration_s": "12",
+    "trim": "Trim defaulted to trim-silence: recording t=0 is not guaranteed = answer"
+  },
+  "audio": {
+    "provenance": "regenerated_synthetic",
+    "raw_frames": 95584,
+    "raw_container": {
+      "dual": {
+        "chunks": ["fmt ", "data"],
+        "fmt": [1, 2, 8000, 32000, 4, 16]
+      },
+      "mono": {
+        "chunks": ["fmt ", "data"],
+        "fmt": [1, 1, 8000, 16000, 2, 16]
+      },
+      "fmt_fields": "format_tag, channels, sample_rate, byte_rate, block_align, bits",
+      "content_type": "audio/x-wav"
+    },
+    "dual": {
+      "file": "audio/recording.dual.wav",
+      "channels": 2,
+      "frames": 95584,
+      "sha256": "0d6a9e073fcf9101983c37ac5d09d54f61bc148e12669a203085fd511c235162"
+    },
+    "mono": {
+      "file": "audio/recording.mono.wav",
+      "channels": 1,
+      "frames": 95584,
+      "sha256": "f93ba4fc8b74a5c972ef3c0898713b00fd4c95988a3c9e8af499b7797dd79abd"
+    },
+    "regeneration": "Same RIFF layout (fmt 16 + data), PCM16, 8 kHz, channels and frame count as the raw media. Channel 0 is digital silence. Channel 1 holds synthetic Cartesia speech cut from fixtures/captured/pipecat-otlp-1.5/audio/user.wav (low-passed and decimated to 8 kHz), one line per raw channel-1 speech window, truncated to the window with a 20 ms fade. Mono = ch0 + ch1.",
+    "synthetic_source_sha256": "fe65147baa47c22b5c420bf695556b402f1bf54ad6cd9102da8d5c86dd307aa1",
+    "channel_order": {
+      "0": {
+        "side": "callee",
+        "track": "inbound (audio Twilio received from the called party)",
+        "raw_speech_s": 1.0,
+        "evidence": "offline ASR: none of the announcement words; raw not committed"
+      },
+      "1": {
+        "side": "twilio_generated",
+        "track": "outbound (what Twilio played: trial announcement; TwiML plays here)",
+        "speech_segments_s": [
+          [0.0, 1.3],
+          [1.65, 5.5],
+          [5.9, 8.05]
+        ],
+        "evidence": "offline ASR (faster-whisper base.en, CPU) of raw channel 1 found the trial announcement words trial/account/upgrading/press/key/execute. [I] <Say> audio would use the same outbound track; not observed because the TwiML never ran."
+      },
+      "mono": "a mix of both channels (raw mono correlates 1.0 with channel 1)"
+    }
+  },
+  "files": [
+    {
+      "file": "create_call.json",
+      "kind": "json",
+      "source": "POST /Accounts/{AccountSid}/Calls.json (201)",
+      "bytes": 2106,
+      "canonical_sha256": "b49a1f9f990650159e38c648b4d991abf209d14bc1f14b4d21195b3d5c723315"
+    },
+    {
+      "file": "call.json",
+      "kind": "json",
+      "source": "GET /Accounts/{AccountSid}/Calls/{CallSid}.json, after completion",
+      "bytes": 2237,
+      "canonical_sha256": "bf913436bcff3daed52644fc2c047384dfce72e2242d6ee7ace9524e99a69a90"
+    },
+    {
+      "file": "call_recordings.json",
+      "kind": "json",
+      "source": "GET …/Calls/{CallSid}/Recordings.json",
+      "bytes": 1672,
+      "canonical_sha256": "fb75e4517240b0c6cb39cd04507dc3d9beef7b10f24a5369e8f444ed8dc2ee91"
+    },
+    {
+      "file": "recordings_by_callsid.json",
+      "kind": "json",
+      "source": "GET …/Recordings.json?CallSid=",
+      "bytes": 1676,
+      "canonical_sha256": "e0487bbdcb4a7f2523d98942697a9f2541cbf9d72cfec98e1d8ac468ff61e583"
+    },
+    {
+      "file": "recording.json",
+      "kind": "json",
+      "source": "GET …/Recordings/{RecordingSid}.json",
+      "bytes": 1139,
+      "canonical_sha256": "641d3fea89f804978d3fc80e6e5162d0f17826bc2786e90e8ab5d175daab581a"
+    },
+    {
+      "file": "call_events.json",
+      "kind": "json",
+      "source": "GET …/Calls/{CallSid}/Events.json",
+      "bytes": 2548,
+      "canonical_sha256": "eaa75a2a1c97d26c1930a4a62c6bac98ed034b8445ad573e5fd1ee1b142b90b5"
+    },
+    {
+      "file": "call_notifications.json",
+      "kind": "json",
+      "source": "GET …/Calls/{CallSid}/Notifications.json",
+      "bytes": 443,
+      "canonical_sha256": "814a53a9b85acdb5ed9db154272f17fc661dfcd91de8d9bd5aff6911a59262c9"
+    },
+    {
+      "file": "audio/recording.dual.wav",
+      "kind": "audio",
+      "source": "regenerated: Recordings/{sid}.wav",
+      "bytes": 382380,
+      "sha256": "0d6a9e073fcf9101983c37ac5d09d54f61bc148e12669a203085fd511c235162"
+    },
+    {
+      "file": "audio/recording.mono.wav",
+      "kind": "audio",
+      "source": "regenerated: ?RequestedChannels=1",
+      "bytes": 191212,
+      "sha256": "f93ba4fc8b74a5c972ef3c0898713b00fd4c95988a3c9e8af499b7797dd79abd"
+    }
+  ]
+}

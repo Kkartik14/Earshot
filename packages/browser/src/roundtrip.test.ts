@@ -1,29 +1,4 @@
-/**
- * Contract round-trip: prove the drained `CapturePayload` deserialises into the
- * two Python engines' inputs WITHOUT importing Python (this is a TS package).
- *
- * The assertions below mirror the Python normalisers so a drift on either side
- * fails a test:
- *
- * `analyze_webrtc_stats(snapshots)`
- *   — packages/sdk-python/src/earshot/engines/webrtc.py
- *   Each snapshot is `{ timestamp_ms: number, stats: { [id]: RTCStats-dict } }`.
- *   `_normalize_snapshots` requires: `timestamp_ms` finite number (not bool),
- *   `stats` a mapping, stat ids strings, stat values mappings. The engine then
- *   reads members: type, kind/mediaType, packetsReceived, packetsLost, jitter,
- *   jitterBufferDelay, jitterBufferEmittedCount, concealedSamples,
- *   totalSamplesReceived, roundTripTime/currentRoundTripTime, iceState/dtlsState,
- *   selectedCandidatePairId, selected/nominated, localCandidateId, networkType.
- *   A MISSING member must stay missing (never 0).
- *
- * `analyze_audio_graph(events)`
- *   — packages/sdk-python/src/earshot/engines/device.py
- *   Each event is `{ type, timestamp_ms, ... }`. `_normalize_events` requires a
- *   non-empty (it lower-cases it) string `type` and a finite number
- *   `timestamp_ms`. The engine reads: state (permission/audiocontext_state),
- *   configured_hz/actual_hz (sample_rate_mismatch), base_latency_s/
- *   output_latency_s (latency), and the devicechange/sink_change/underrun types.
- */
+/** Keep browser payloads compatible with the Python WebRTC and audio-graph engines without importing Python. */
 
 import { describe, expect, it } from "vitest";
 

@@ -1,13 +1,4 @@
-/**
- * The capture transport's job is not "POST some JSON" — it is to make delivery
- * failure *visible*. These tests pin the four properties the server contract
- * depends on: the payload is versioned and authenticated, retries are bounded
- * and only attempted where they could work, the queue cannot grow without
- * limit, and nothing is ever dropped without coverage saying so.
- *
- * Cookie/BFF authentication is checked without exposing a project key to browser
- * code, and CSRF material must stay out of results, failures and logs.
- */
+/** Verify bounded delivery, safe authentication, retry behavior, and explicit coverage for dropped payloads. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 

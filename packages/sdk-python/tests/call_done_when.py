@@ -1,9 +1,11 @@
-"""FR-12's done-when checks for one call, shared by the two end-to-end tests.
+"""The done-when checks for one call, shared by the end-to-end tests.
 
-Both tests drive a real ``earshot serve`` process with one call's evidence: a real
-Pipecat call (``apps/ingest/tests/e2e_real``) or the real capture replayed
-(``apps/ingest/tests/e2e``). Both then ask the same questions of the server's
-HTTP API, its catalog and its blob store:
+The tests drive a real ``earshot serve`` process with one call's evidence: a real
+Pipecat or LiveKit call (``apps/ingest/tests/e2e_real``) or a captured scripted
+call replayed in ``apps/ingest/tests/e2e``. They then ask the same questions of
+the server's HTTP API, catalog, and blob store.
+
+``assert_done_when`` (a call with WAV recordings):
 
 - the call settles: ``state=closed``, not ``dirty``, no pending recording, and the
   latest revision holds both recordings (hard timeout 120 s);
@@ -14,6 +16,19 @@ HTTP API, its catalog and its blob store:
 - every exported span is stored, and no span was rejected, conflicted or parked
   and discarded;
 - the recordings' ``started_at`` is within 5 s of the first ``stt`` span.
+
+``wait_until_projected`` then ``assert_call_view`` (the call view):
+
+- the projection is current for the latest revision, and every recording's
+  analysis is stored;
+- every turn's audible gap at the agent is measured, with a value in (0, 15 s) and
+  a ± of at most 100 ms (the release's accuracy target), or not measurable with
+  its reason, or a talk-over; at least one turn is measured; the framework's own
+  latency is reported for at least one turn;
+- the cost has a lower bound above 0, and each provider of the call (STT, LLM, TTS)
+  has a priced or estimated item; the totals are the sums of their items;
+- the transcript is placed on the call's axis: every line has measured times
+  inside the recording, and each measured turn's agent speech starts a line.
 
 The catalog is read directly only for what the API does not show (``dirty``, the
 stored span rows, the recordings' blob keys); reads take no lock.
@@ -38,6 +53,30 @@ from otlp_support import Reply, request
 SETTLE_TIMEOUT_S = 120.0
 ALIGNMENT_BOUND_NANO = 5_000_000_000
 LOSS_COUNTERS = ("rejected_spans", "span_conflicts", "parked_traces_discarded")
+
+# The call view.
+PROJECTION_TIMEOUT_S = 120.0
+GAP_RANGE_MS = (0, 15_000)  # exclusive: a real turn's audible gap lies inside it
+MAX_GAP_UNCERTAINTY_MS = 100  # the release's accuracy target for a measured gap
+PLACEMENT_TOLERANCE_MS = 300
+NOT_MEASURABLE_REASONS = frozenset(
+    {
+        "recorder_timeline_discontinuity",
+        "no_agent_audio",
+        "no_clear_pairing",
+        "not_one_timeline",
+        "no_recording",
+        "analysis_not_stored",
+        "boundary_uncertainty_too_high",
+    }
+)
+GAP_BASES = frozenset({"anchors_checked", "continuous_timeline_assumed"})
+# The operation -> the meters that make its cost, and the statuses that count.
+COSTED = {
+    "llm": ({"input_token", "output_token"}, {"priced"}),
+    "tts": ({"character"}, {"priced"}),
+    "stt": ({"audio_second"}, {"priced", "estimated"}),
+}
 
 
 @dataclass(frozen=True)
@@ -84,6 +123,14 @@ class Earshot:
         reply = self.call(method, path, encoded, headers)
         assert reply.status in {200, 201}, (method, path, reply.status, reply.body[:500])
         return reply.json()
+
+    def send(
+        self, method: str, path: str, body: bytes | None, headers: Mapping[str, str]
+    ) -> tuple[int, bytes]:
+        """One request as ``capture_replay`` sends it: its status and body."""
+
+        reply = self.call(method, path, body, headers)
+        return reply.status, reply.body
 
 
 @contextlib.contextmanager
@@ -175,7 +222,7 @@ class SettledCall:
 
 
 def assert_done_when(earshot: Earshot, sent: SentCall) -> SettledCall:
-    """Wait for the call of ``sent`` to settle, then check FR-12's assertions."""
+    """Wait for the call of ``sent`` to settle, then check the done-when assertions."""
 
     call_id = earshot.json("POST", "/v1/calls:resolve", {"session_key": sent.session_key})[
         "call_id"
@@ -246,3 +293,152 @@ def assert_done_when(earshot: Earshot, sent: SentCall) -> SettledCall:
     offset = int(first_stt) - sent.started_at_unix_nano
     assert abs(offset) < ALIGNMENT_BOUND_NANO
     return SettledCall(detail, offset)
+
+
+def wait_until_projected(
+    earshot: Earshot, call_id: str, *, timeout: float = PROJECTION_TIMEOUT_S
+) -> dict[str, Any]:
+    """The call's detail once its projection is current for its latest revision and
+    no analysis of its recordings is still pending or running.
+
+    The server projects a call after each revision and again after each analysis
+    result, so a current projection can say ``pending`` until the analyses end."""
+
+    deadline = time.monotonic() + timeout
+    while True:
+        detail = earshot.json("GET", f"/v1/calls/{call_id}")
+        projection, latest = detail["projection"], detail["latest_revision"]
+        seen = {
+            "projection_state": detail["projection_state"],
+            "revision": None if projection is None else projection["revision"],
+            "latest_revision": None if latest is None else latest["revision"],
+            "analysis_state": None if projection is None else projection["analysis_state"],
+        }
+        if (
+            seen["projection_state"] == "current"
+            and seen["revision"] == seen["latest_revision"]
+            and seen["analysis_state"] != "pending"
+        ):
+            return detail
+        assert time.monotonic() < deadline, f"the call was not projected in {timeout} s: {seen}"
+        time.sleep(0.5)
+
+
+def _assert_turns(turns: list[dict[str, Any]], measurable_turns: int) -> list[dict[str, Any]]:
+    """Every turn's audible gap is measured, not measurable with a reason, or a
+    talk-over; at least one is measured. The measured turns."""
+
+    low, high = GAP_RANGE_MS
+    measured = []
+    for turn in turns:
+        gap = turn["audible_gap"]
+        if gap["status"] == "measured":
+            assert gap["reason"] is None and gap["basis"] in GAP_BASES, turn
+            assert low < gap["value_ms"] < high, turn
+            assert gap["uncertainty_ms"] is not None, turn
+            assert gap["uncertainty_ms"] <= MAX_GAP_UNCERTAINTY_MS, turn
+            assert gap["agent_start_ms"] - gap["user_end_ms"] == gap["value_ms"], turn
+            measured.append(turn)
+        elif gap["status"] == "not_measurable":
+            assert gap["reason"] in NOT_MEASURABLE_REASONS and gap["value_ms"] is None, turn
+            # Only a discontinuity bounds the gap ("≤ raw gap"); nothing else guesses.
+            assert gap["bound_ms"] is None or gap["reason"] == "recorder_timeline_discontinuity"
+        else:
+            assert (gap["status"], gap["value_ms"]) == ("talk_over", None), turn
+        assert turn["reported_latency_ms"] is None or turn["reported_latency_ms"] > 0, turn
+    assert measured, [turn["audible_gap"] for turn in turns]
+    assert measurable_turns == len(measured)
+    assert any(turn["reported_latency_ms"] is not None for turn in turns), turns
+    return measured
+
+
+def _assert_cost(projection: dict[str, Any], providers: Mapping[str, Mapping[str, str]]) -> None:
+    """A lower bound above 0, the totals the sums of their items, and a costed item
+    from each of the call's providers."""
+
+    cost, items = projection["cost"], projection["cost_items"]
+    priced = [item["cost_nano_usd"] for item in items if item["status"] == "priced"]
+    estimated = [item["cost_nano_usd"] for item in items if item["status"] == "estimated"]
+    assert cost["lower_bound_nano_usd"] is not None and cost["lower_bound_nano_usd"] > 0, cost
+    assert cost["lower_bound_nano_usd"] == sum(priced), (cost, items)
+    assert cost["estimated_nano_usd"] == (sum(estimated) if estimated else None), (cost, items)
+    unknown = [item for item in items if item["status"] in ("no_price", "not_reported")]
+    assert cost["unknown_items"] == len(unknown), (cost, items)
+    operations = {operation for operation in providers if operation in COSTED}
+    assert {item["operation"] for item in items} == operations, items
+    for operation in operations:
+        units, statuses = COSTED[operation]
+        own = [item for item in items if item["operation"] == operation]
+        assert {item["provider"] for item in own} == {providers[operation]["provider"]}, own
+        costed = {
+            item["unit"]
+            for item in own
+            if item["status"] in statuses and (item["cost_nano_usd"] or 0) > 0
+        }
+        assert units <= costed, (operation, own)
+
+
+def _assert_placed(projection: dict[str, Any], measured: list[dict[str, Any]]) -> None:
+    """Every line has measured times inside the recordings, and each measured turn's
+    agent speech starts an agent line."""
+
+    transcript, media = projection["transcript"], projection["media"]
+    assert {line["speaker"] for line in transcript} == {"user", "agent"}, transcript
+    first = min(item["offset_ms"] for item in media) - PLACEMENT_TOLERANCE_MS
+    last = max(item["offset_ms"] + item["duration_ms"] for item in media) + PLACEMENT_TOLERANCE_MS
+    for line in transcript:
+        assert line["timing"] == "measured", line
+        assert first <= line["start_ms"] <= last and line["start_ms"] <= line["end_ms"], line
+    for turn in measured:
+        onset = turn["audible_gap"]["agent_start_ms"]
+        assert any(
+            line["speaker"] == "agent" and abs(line["start_ms"] - onset) <= PLACEMENT_TOLERANCE_MS
+            for line in transcript
+        ), (turn, transcript)
+
+
+def assert_call_view(
+    detail: dict[str, Any], providers: Mapping[str, Mapping[str, str]]
+) -> dict[str, Any]:
+    """Check a projected call's view (the module docstring's second list).
+
+    ``providers`` maps each operation the call ran (``stt``, ``llm``, ``tts``; other
+    keys are ignored) to ``{"provider": …}``. Returns the view's numbers, for a
+    test's summary."""
+
+    projection = detail["projection"]
+    assert detail["projection_state"] == "current" and projection is not None, detail
+    assert projection["revision"] == detail["latest_revision"]["revision"], projection
+    assert projection["analysis_state"] == "stored", projection["media"]
+    assert projection["media"], "the call view has no playable media"
+    for media in projection["media"]:
+        assert (media["analysis_state"], media["analysis_error_code"]) == ("stored", None), media
+        assert media["peaks_path"] is not None and media["duration_ms"] is not None, media
+    speakers = {channel["speaker"] for item in projection["media"] for channel in item["channels"]}
+    assert speakers == {"user", "agent"}, projection["media"]
+    turns = projection["turns"]
+    assert turns and projection["turn_count"] == len(turns), projection["turn_count"]
+    measured = _assert_turns(turns, projection["measurable_turns"])
+    _assert_cost(projection, providers)
+    _assert_placed(projection, measured)
+    return {
+        "analysis_state": projection["analysis_state"],
+        "media": [
+            {key: item[key] for key in ("source", "content_type", "duration_ms", "channels")}
+            for item in projection["media"]
+        ],
+        "turns": [
+            {"reported_latency_ms": turn["reported_latency_ms"]}
+            | {
+                key: turn["audible_gap"][key]
+                for key in ("status", "value_ms", "uncertainty_ms", "bound_ms", "reason", "basis")
+            }
+            for turn in turns
+        ],
+        "cost": projection["cost"],
+        "cost_items": [
+            [item[key] for key in ("status", "operation", "provider", "model", "unit", "quantity")]
+            for item in projection["cost_items"]
+        ],
+        "transcript_lines": len(projection["transcript"]),
+    }

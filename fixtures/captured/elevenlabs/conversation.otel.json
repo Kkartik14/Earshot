@@ -1,0 +1,2134 @@
+{
+  "agent_id": "agent_0000000000000000000000000001",
+  "agent_name": "earshot-fixture-agent",
+  "conversation_product": "agent",
+  "status": "done",
+  "user_id": null,
+  "branch_id": "agtbrch_0000000000000000000000000001",
+  "version_id": "agtvrsn_0000000000000000000000000001",
+  "metadata": {
+    "start_time_unix_secs": 1792413877,
+    "accepted_time_unix_secs": 1792413877,
+    "call_duration_secs": 32,
+    "queue_wait_secs": null,
+    "cost": 386,
+    "deletion_settings": {
+      "deletion_time_unix_secs": null,
+      "deleted_logs_at_time_unix_secs": null,
+      "deleted_audio_at_time_unix_secs": null,
+      "deleted_transcript_at_time_unix_secs": null,
+      "delete_transcript_and_pii": false,
+      "delete_audio": false
+    },
+    "feedback": {
+      "type": null,
+      "overall_score": null,
+      "likes": 0,
+      "dislikes": 0,
+      "rating": null,
+      "comment": null
+    },
+    "authorization_method": "signed_url",
+    "charging": {
+      "dev_discount": false,
+      "is_burst": false,
+      "tier": "free",
+      "llm_usage": {
+        "irreversible_generation": {
+          "model_usage": {
+            "deepseek-v41-flash": {
+              "input": {
+                "tokens": 469,
+                "price": 0.00025795
+              },
+              "input_cache_read": {
+                "tokens": 1664,
+                "price": 0.0004576
+              },
+              "input_cache_write": {
+                "tokens": 448,
+                "price": 0.0002464
+              },
+              "output_total": {
+                "tokens": 62,
+                "price": 0.00093
+              }
+            }
+          },
+          "detailed_model_usage": [
+            {
+              "config": {
+                "model": "deepseek-v41-flash",
+                "service_tier": "standard"
+              },
+              "usage": {
+                "input": {
+                  "tokens": 469,
+                  "price": 0.00025795
+                },
+                "input_cache_read": {
+                  "tokens": 1664,
+                  "price": 0.0004576
+                },
+                "input_cache_write": {
+                  "tokens": 448,
+                  "price": 0.0002464
+                },
+                "output_total": {
+                  "tokens": 62,
+                  "price": 0.00093
+                }
+              }
+            }
+          ]
+        },
+        "initiated_generation": {
+          "model_usage": {
+            "deepseek-v41-flash": {
+              "input": {
+                "tokens": 946,
+                "price": 0.0005202999999999999
+              },
+              "input_cache_read": {
+                "tokens": 2208,
+                "price": 0.0006072
+              },
+              "input_cache_write": {
+                "tokens": 448,
+                "price": 0.0002464
+              },
+              "output_total": {
+                "tokens": 82,
+                "price": 0.00123
+              }
+            }
+          },
+          "detailed_model_usage": [
+            {
+              "config": {
+                "model": "deepseek-v41-flash",
+                "service_tier": "standard"
+              },
+              "usage": {
+                "input": {
+                  "tokens": 946,
+                  "price": 0.0005202999999999999
+                },
+                "input_cache_read": {
+                  "tokens": 2208,
+                  "price": 0.0006072
+                },
+                "input_cache_write": {
+                  "tokens": 448,
+                  "price": 0.0002464
+                },
+                "output_total": {
+                  "tokens": 82,
+                  "price": 0.00123
+                }
+              }
+            }
+          ]
+        }
+      },
+      "llm_price": 0.0026039,
+      "llm_charge": 25,
+      "call_charge": 361,
+      "platform_charge": 361,
+      "platform_usage": {
+        "category_usage": {
+          "voice": {
+            "credits": 361,
+            "price": 0.03580040375462008,
+            "quantity": 0.5400060563193014
+          }
+        }
+      },
+      "platform_price": 0.03580040375462008,
+      "free_minutes_consumed": 0.0,
+      "free_llm_dollars_consumed": 0.0,
+      "tts_usage": {
+        "primary_tts_model": "eleven_v4_turbo",
+        "total_audio_output_seconds": 13.31175,
+        "total_characters": 288,
+        "per_voice_usage": [
+          {
+            "voice_id": "voice000000000000001",
+            "audio_output_seconds": 13.31175
+          }
+        ]
+      },
+      "asr_usage": {
+        "asr_model": "scribe_realtime",
+        "total_transcription_calls": 73,
+        "total_audio_input_seconds": 13.160000000000007
+      },
+      "analysis": null,
+      "subagent_charge": 0
+    },
+    "phone_call": null,
+    "batch_call": null,
+    "termination_reason": "Client disconnected: 1000",
+    "error": null,
+    "warnings": [],
+    "main_language": "en",
+    "rag_usage": null,
+    "text_only": false,
+    "features_usage": {
+      "language_detection": {
+        "enabled": false,
+        "used": false
+      },
+      "transfer_to_agent": {
+        "enabled": false,
+        "used": false
+      },
+      "transfer_to_number": {
+        "enabled": false,
+        "used": false
+      },
+      "multivoice": {
+        "enabled": false,
+        "used": false
+      },
+      "dtmf_tones": {
+        "enabled": false,
+        "used": false
+      },
+      "external_mcp_servers": {
+        "enabled": false,
+        "used": false
+      },
+      "pii_zrm_workspace": false,
+      "pii_zrm_agent": false,
+      "tool_dynamic_variable_updates": {
+        "enabled": false,
+        "used": false
+      },
+      "is_livekit": false,
+      "voicemail_detection": {
+        "enabled": false,
+        "used": false
+      },
+      "dtmf_input": {
+        "enabled": false,
+        "used": false
+      },
+      "workflow": {
+        "enabled": false,
+        "tool_node": {
+          "enabled": false,
+          "used": false
+        },
+        "standalone_agent_node": {
+          "enabled": false,
+          "used": false
+        },
+        "phone_number_node": {
+          "enabled": false,
+          "used": false
+        },
+        "end_node": {
+          "enabled": false,
+          "used": false
+        },
+        "override_agent_node": {
+          "enabled": false,
+          "used": false
+        },
+        "say_node": {
+          "enabled": false,
+          "used": false
+        },
+        "update_state_node": {
+          "enabled": false,
+          "used": false
+        },
+        "subgraph_node": {
+          "enabled": false,
+          "used": false
+        },
+        "transfer_to_genesys_node": {
+          "enabled": false,
+          "used": false
+        }
+      },
+      "agent_testing": {
+        "enabled": false,
+        "tests_ran_after_last_modification": false,
+        "tests_ran_in_last_7_days": false
+      },
+      "versioning": {
+        "enabled": true,
+        "used": false
+      },
+      "file_input": {
+        "enabled": true,
+        "used": false
+      },
+      "freeform_procedure": {
+        "enabled": false,
+        "used": false
+      },
+      "structured_procedure": {
+        "enabled": false,
+        "used": false
+      }
+    },
+    "eleven_assistant": {
+      "is_eleven_assistant": false
+    },
+    "initiator_id": null,
+    "conversation_initiation_source": "unknown",
+    "conversation_initiation_source_version": null,
+    "timezone": null,
+    "async_metadata": null,
+    "whatsapp": null,
+    "sms": null,
+    "agent_created_from": "api",
+    "agent_last_updated_from": "api",
+    "stream_state": null,
+    "voice_rewards": [],
+    "cost_fiat": 0.03840430375462008
+  },
+  "analysis": {
+    "evaluation_criteria_results": {},
+    "data_collection_results": {},
+    "evaluation_criteria_results_list": [],
+    "data_collection_results_list": [],
+    "call_successful": "success",
+    "call_success_score": null,
+    "transcript_summary": "The user booked a restaurant table for two people for tomorrow evening at 7:30 PM. They requested a quiet window table, which the agent confirmed. The conversation was friendly and concluded with the booking successfully made.",
+    "call_summary_title": "Table Booking Request",
+    "scoped": [],
+    "sentiment_analysis": {
+      "overall_label": "positive",
+      "overall_sentiment_score": 0.6,
+      "overall_frustration_score": 0.0,
+      "min_user_sentiment_score": 0.0,
+      "max_user_frustration_score": 0.0,
+      "num_scored_user_turns": 2
+    }
+  },
+  "visited_agents": [
+    {
+      "agent_id": "agent_0000000000000000000000000001",
+      "branch_id": "agtbrch_0000000000000000000000000001"
+    }
+  ],
+  "conversation_initiation_client_data": {
+    "conversation_config_override": {
+      "asr": null,
+      "turn": null,
+      "tts": null,
+      "conversation": null,
+      "agent": null
+    },
+    "custom_llm_extra_body": {},
+    "user_id": null,
+    "source_info": {
+      "source": null,
+      "version": null
+    },
+    "branch_id": null,
+    "environment": null,
+    "starting_workflow_node_id": null,
+    "experiments": [],
+    "procedure_ids": null,
+    "dynamic_variables": {
+      "system__agent_id": "agent_0000000000000000000000000001",
+      "system__agent_turns": 5,
+      "system__current_agent_turns": 5,
+      "system__current_subagent_turns": 5,
+      "system__current_agent_id": "agent_0000000000000000000000000001",
+      "system__conversation_id": "conv_0000000000000000000000000001",
+      "system__call_duration_secs": 32,
+      "system__time_utc": "2026-10-19T12:45:09.600226+00:00",
+      "system__timezone": null,
+      "system__time": "Monday, 12:45 19 October 2026",
+      "system__time_hour": 12,
+      "system__time_minute": 45,
+      "system__time_second": 9,
+      "system__is_text_only": false,
+      "system__channel": "unknown",
+      "system__caller_id": null,
+      "system__called_number": null,
+      "system__call_sid": null,
+      "system__call_id": null,
+      "system__conversation_history": "{\"x-elevenlabs-history\": true, \"entries\": [{\"role\": \"agent\", \"message\": \"Hello, thanks for calling the restaurant. How can I help?\"}, {\"role\": \"user\", \"message\": \"Hi, I would like to book a table for two people tomorrow evening.\"}, {\"role\": \"agent\", \"message\": \"[happy] Certainly, what time would you like to book?\"}, {\"role\": \"user\", \"message\": \"7:30 works for us.\"}, {\"role\": \"agent\", \"message\": \"...\"}, {\"role\": \"user\", \"message\": \"Could we sit somewhere quiet near the window?\"}, {\"role\": \"agent\", \"message\": \"[happy] I will note a quiet window table for you.\"}, {\"role\": \"user\", \"message\": \"Perfect. That is everything I needed. Thank you very much. Goodbye.\"}, {\"role\": \"agent\", \"message\": \"[happy] You're welcome, see you tomorrow at seven thirty. Goodbye.\"}]}",
+      "system__user_id": null,
+      "system__initiator_id": null,
+      "system__environment": "production"
+    },
+    "tool_mock_config": {
+      "mocking_strategy": "none",
+      "fallback_strategy": "raise_error",
+      "mocked_tool_names": []
+    },
+    "tool_mock_overrides": {}
+  },
+  "environment": "production",
+  "experiment_assignments": null,
+  "hiding_reason": null,
+  "smb_metadata": null,
+  "conversation_id": "conv_0000000000000000000000000001",
+  "has_audio": true,
+  "has_user_audio": true,
+  "has_response_audio": true,
+  "has_auxiliary_audio": false,
+  "transcript": [
+    {
+      "role": "agent",
+      "agent_metadata": {
+        "agent_id": "agent_0000000000000000000000000001",
+        "branch_id": "agtbrch_0000000000000000000000000001",
+        "workflow_node_id": null,
+        "version_id": "agtvrsn_0000000000000000000000000001"
+      },
+      "message": "Hello, thanks for calling the restaurant. How can I help?",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": "deepseek-v41-flash",
+      "time_in_call_secs": 0,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_tts_service_ttfb": {
+            "elapsed_time": 0.07158974790945649
+          },
+          "convai_ttf_audio_since_silence": {
+            "elapsed_time": 0.08261230820789933
+          },
+          "convai_turn_silence_before_initiation": {
+            "elapsed_time": 0.0
+          }
+        },
+        "convai_asr_provider": null,
+        "convai_tts_model": "eleven_v4_turbo",
+        "convai_tts_cascade": null,
+        "voice_id": "voice000000000000001"
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": null,
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": null,
+      "source_event_id": 1,
+      "used_static_kb_document_ids": [],
+      "analysis": null,
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "user",
+      "agent_metadata": null,
+      "message": "Hi, I would like to book a table for two people tomorrow evening.",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": null,
+      "time_in_call_secs": 5,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_asr_trailing_service_latency": {
+            "elapsed_time": 0.060371078085154295
+          }
+        },
+        "convai_asr_provider": "Scribe v2 Realtime",
+        "convai_tts_model": null,
+        "convai_tts_cascade": null,
+        "voice_id": null
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": null,
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": "audio",
+      "source_event_id": 50,
+      "used_static_kb_document_ids": [],
+      "analysis": {
+        "user_sentiment_score": 0.0,
+        "user_frustration_score": 0.0
+      },
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "agent",
+      "agent_metadata": {
+        "agent_id": "agent_0000000000000000000000000001",
+        "branch_id": "agtbrch_0000000000000000000000000001",
+        "workflow_node_id": null,
+        "version_id": "agtvrsn_0000000000000000000000000001"
+      },
+      "message": "[happy] Certainly, what time would you like to book?",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": "deepseek-v41-flash",
+      "time_in_call_secs": 8,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_llm_service_ttf_sentence": {
+            "elapsed_time": 0.17928181495517492
+          },
+          "convai_llm_service_ttfb": {
+            "elapsed_time": 0.11730481684207916
+          },
+          "convai_llm_service_tt_last_sentence": {
+            "elapsed_time": 0.1792722148820758
+          },
+          "convai_tts_service_ttfb": {
+            "elapsed_time": 0.07575559709221125
+          },
+          "convai_ttf_audio_since_silence": {
+            "elapsed_time": 0.48998427934944633
+          },
+          "convai_turn_silence_before_initiation": {
+            "elapsed_time": 0.16
+          },
+          "convai_turn_asr_latency": {
+            "elapsed_time": 0.060371078085154295
+          },
+          "convai_turn_asr_excess": {
+            "elapsed_time": 0.060371078085154295
+          }
+        },
+        "convai_asr_provider": null,
+        "convai_tts_model": "eleven_v4_turbo",
+        "convai_tts_cascade": null,
+        "voice_id": "voice000000000000001"
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": {
+        "model_usage": {
+          "deepseek-v41-flash": {
+            "input": {
+              "tokens": 196,
+              "price": 0.0001078
+            },
+            "input_cache_read": {
+              "tokens": 128,
+              "price": 3.52e-5
+            },
+            "input_cache_write": {
+              "tokens": 288,
+              "price": 0.0001584
+            },
+            "output_total": {
+              "tokens": 14,
+              "price": 0.00021
+            }
+          }
+        },
+        "detailed_model_usage": [
+          {
+            "config": {
+              "model": "deepseek-v41-flash",
+              "service_tier": "standard"
+            },
+            "usage": {
+              "input": {
+                "tokens": 196,
+                "price": 0.0001078
+              },
+              "input_cache_read": {
+                "tokens": 128,
+                "price": 3.52e-5
+              },
+              "input_cache_write": {
+                "tokens": 288,
+                "price": 0.0001584
+              },
+              "output_total": {
+                "tokens": 14,
+                "price": 0.00021
+              }
+            }
+          }
+        ]
+      },
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": null,
+      "source_event_id": 50,
+      "used_static_kb_document_ids": [],
+      "analysis": null,
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "user",
+      "agent_metadata": null,
+      "message": "7:30 works for us.",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": null,
+      "time_in_call_secs": 12,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_asr_trailing_service_latency": {
+            "elapsed_time": 0.06060539931058884
+          }
+        },
+        "convai_asr_provider": "Scribe v2 Realtime",
+        "convai_tts_model": null,
+        "convai_tts_cascade": null,
+        "voice_id": null
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": null,
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": "audio",
+      "source_event_id": 89,
+      "used_static_kb_document_ids": [],
+      "analysis": null,
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "agent",
+      "agent_metadata": {
+        "agent_id": "agent_0000000000000000000000000001",
+        "branch_id": "agtbrch_0000000000000000000000000001",
+        "workflow_node_id": null,
+        "version_id": "agtvrsn_0000000000000000000000000001"
+      },
+      "message": "...",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": "deepseek-v41-flash",
+      "time_in_call_secs": 14,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_llm_service_ttf_sentence": {
+            "elapsed_time": 0.11349851731210947
+          },
+          "convai_llm_service_ttfb": {
+            "elapsed_time": 0.07328347815200686
+          },
+          "convai_llm_service_tt_last_sentence": {
+            "elapsed_time": 0.13570640608668327
+          },
+          "convai_tts_service_ttfb": {
+            "elapsed_time": 0.07434874773025513
+          },
+          "convai_ttf_audio_since_silence": {
+            "elapsed_time": 0.5109647806510329
+          },
+          "convai_turn_silence_before_initiation": {
+            "elapsed_time": 0.224
+          },
+          "convai_turn_asr_latency": {
+            "elapsed_time": 0.06060539931058884
+          },
+          "convai_turn_asr_excess": {
+            "elapsed_time": 0.06060539931058884
+          }
+        },
+        "convai_asr_provider": null,
+        "convai_tts_model": "eleven_v4_turbo",
+        "convai_tts_cascade": null,
+        "voice_id": "voice000000000000001"
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": {
+        "model_usage": {
+          "deepseek-v41-flash": {
+            "input": {
+              "tokens": 124,
+              "price": 6.82e-5
+            },
+            "input_cache_read": {
+              "tokens": 384,
+              "price": 0.0001056
+            },
+            "input_cache_write": {
+              "tokens": 128,
+              "price": 7.04e-5
+            },
+            "output_total": {
+              "tokens": 16,
+              "price": 0.00024
+            }
+          }
+        },
+        "detailed_model_usage": [
+          {
+            "config": {
+              "model": "deepseek-v41-flash",
+              "service_tier": "standard"
+            },
+            "usage": {
+              "input": {
+                "tokens": 124,
+                "price": 6.82e-5
+              },
+              "input_cache_read": {
+                "tokens": 384,
+                "price": 0.0001056
+              },
+              "input_cache_write": {
+                "tokens": 128,
+                "price": 7.04e-5
+              },
+              "output_total": {
+                "tokens": 16,
+                "price": 0.00024
+              }
+            }
+          }
+        ]
+      },
+      "interrupted": true,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": "[happy] Great, a table for two at seven thirty tomorrow evening.",
+      "reasoning": [],
+      "source_medium": null,
+      "source_event_id": 89,
+      "used_static_kb_document_ids": [],
+      "analysis": null,
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "user",
+      "agent_metadata": null,
+      "message": "Could we sit somewhere quiet near the window?",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": null,
+      "time_in_call_secs": 14,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_asr_trailing_service_latency": {
+            "elapsed_time": 0.0666256882250309
+          }
+        },
+        "convai_asr_provider": "Scribe v2 Realtime",
+        "convai_tts_model": null,
+        "convai_tts_cascade": null,
+        "voice_id": null
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": null,
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": "audio",
+      "source_event_id": 103,
+      "used_static_kb_document_ids": [],
+      "analysis": null,
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "agent",
+      "agent_metadata": {
+        "agent_id": "agent_0000000000000000000000000001",
+        "branch_id": "agtbrch_0000000000000000000000000001",
+        "workflow_node_id": null,
+        "version_id": "agtvrsn_0000000000000000000000000001"
+      },
+      "message": "[happy] I will note a quiet window table for you.",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": "deepseek-v41-flash",
+      "time_in_call_secs": 16,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_llm_service_ttf_sentence": {
+            "elapsed_time": 0.12746149580925703
+          },
+          "convai_llm_service_ttfb": {
+            "elapsed_time": 0.06472547817975283
+          },
+          "convai_llm_service_tt_last_sentence": {
+            "elapsed_time": 0.13730577612295747
+          },
+          "convai_tts_service_ttfb": {
+            "elapsed_time": 0.0757026276551187
+          },
+          "convai_ttf_audio_since_silence": {
+            "elapsed_time": 0.5218011607192456
+          },
+          "convai_turn_silence_before_initiation": {
+            "elapsed_time": 0.224
+          },
+          "convai_turn_asr_latency": {
+            "elapsed_time": 0.0666256882250309
+          },
+          "convai_turn_asr_excess": {
+            "elapsed_time": 0.0666256882250309
+          }
+        },
+        "convai_asr_provider": null,
+        "convai_tts_model": "eleven_v4_turbo",
+        "convai_tts_cascade": null,
+        "voice_id": "voice000000000000001"
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": {
+        "model_usage": {
+          "deepseek-v41-flash": {
+            "input": {
+              "tokens": 106,
+              "price": 5.830000000000001e-5
+            },
+            "input_cache_read": {
+              "tokens": 512,
+              "price": 0.0001408
+            },
+            "input_cache_write": {
+              "tokens": 32,
+              "price": 1.76e-5
+            },
+            "output_total": {
+              "tokens": 14,
+              "price": 0.00021
+            }
+          }
+        },
+        "detailed_model_usage": [
+          {
+            "config": {
+              "model": "deepseek-v41-flash",
+              "service_tier": "standard"
+            },
+            "usage": {
+              "input": {
+                "tokens": 106,
+                "price": 5.830000000000001e-5
+              },
+              "input_cache_read": {
+                "tokens": 512,
+                "price": 0.0001408
+              },
+              "input_cache_write": {
+                "tokens": 32,
+                "price": 1.76e-5
+              },
+              "output_total": {
+                "tokens": 14,
+                "price": 0.00021
+              }
+            }
+          }
+        ]
+      },
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": null,
+      "source_event_id": 103,
+      "used_static_kb_document_ids": [],
+      "analysis": null,
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "user",
+      "agent_metadata": null,
+      "message": "Perfect. That is everything I needed. Thank you very much. Goodbye.",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": null,
+      "time_in_call_secs": 21,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_asr_trailing_service_latency": {
+            "elapsed_time": 0.08226027805358171
+          }
+        },
+        "convai_asr_provider": "Scribe v2 Realtime",
+        "convai_tts_model": null,
+        "convai_tts_cascade": null,
+        "voice_id": null
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": null,
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": "audio",
+      "source_event_id": 153,
+      "used_static_kb_document_ids": [],
+      "analysis": {
+        "user_sentiment_score": 0.8,
+        "user_frustration_score": 0.0
+      },
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    },
+    {
+      "role": "agent",
+      "agent_metadata": {
+        "agent_id": "agent_0000000000000000000000000001",
+        "branch_id": "agtbrch_0000000000000000000000000001",
+        "workflow_node_id": null,
+        "version_id": "agtvrsn_0000000000000000000000000001"
+      },
+      "message": "[happy] You're welcome, see you tomorrow at seven thirty. Goodbye.",
+      "multivoice_message": null,
+      "tool_calls": [],
+      "tool_results": [],
+      "feedback": null,
+      "llm_override": null,
+      "producing_llm": "deepseek-v41-flash",
+      "time_in_call_secs": 25,
+      "conversation_turn_metrics": {
+        "metrics": {
+          "convai_llm_service_ttf_sentence": {
+            "elapsed_time": 0.4629259957000613
+          },
+          "convai_llm_service_ttfb": {
+            "elapsed_time": 0.0950983171351254
+          },
+          "convai_llm_service_tt_last_sentence": {
+            "elapsed_time": 0.48604562506079674
+          },
+          "convai_tts_service_ttfb": {
+            "elapsed_time": 0.09690185682848096
+          },
+          "convai_ttf_audio_since_silence": {
+            "elapsed_time": 0.8727745192199945
+          },
+          "convai_turn_silence_before_initiation": {
+            "elapsed_time": 0.192
+          },
+          "convai_turn_asr_latency": {
+            "elapsed_time": 0.08226027805358171
+          },
+          "convai_turn_asr_excess": {
+            "elapsed_time": 0.08226027805358171
+          }
+        },
+        "convai_asr_provider": null,
+        "convai_tts_model": "eleven_v4_turbo",
+        "convai_tts_cascade": null,
+        "voice_id": "voice000000000000001"
+      },
+      "rag_retrieval_info": null,
+      "llm_usage": {
+        "model_usage": {
+          "deepseek-v41-flash": {
+            "input": {
+              "tokens": 43,
+              "price": 2.3650000000000002e-5
+            },
+            "input_cache_read": {
+              "tokens": 640,
+              "price": 0.000176
+            },
+            "input_cache_write": {
+              "tokens": 0,
+              "price": 0.0
+            },
+            "output_total": {
+              "tokens": 18,
+              "price": 0.00027
+            }
+          }
+        },
+        "detailed_model_usage": [
+          {
+            "config": {
+              "model": "deepseek-v41-flash",
+              "service_tier": "standard"
+            },
+            "usage": {
+              "input": {
+                "tokens": 43,
+                "price": 2.3650000000000002e-5
+              },
+              "input_cache_read": {
+                "tokens": 640,
+                "price": 0.000176
+              },
+              "input_cache_write": {
+                "tokens": 0,
+                "price": 0.0
+              },
+              "output_total": {
+                "tokens": 18,
+                "price": 0.00027
+              }
+            }
+          }
+        ]
+      },
+      "interrupted": false,
+      "ignored_as_backchannel": false,
+      "platform_event": null,
+      "original_message": null,
+      "reasoning": [],
+      "source_medium": null,
+      "source_event_id": 153,
+      "used_static_kb_document_ids": [],
+      "analysis": null,
+      "user_identifier": null,
+      "id": null,
+      "compaction": null,
+      "triggered_guardrails": [],
+      "file_input": null,
+      "file_inputs": [],
+      "contextual_update_info": null,
+      "config_snapshot_id": null,
+      "reasoned": false
+    }
+  ],
+  "tag_ids": [],
+  "realtime_config_snapshots": null,
+  "orchestrator": "conversational",
+  "realtime_context": null,
+  "otlp_traces": {
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": [
+            {
+              "key": "service.name",
+              "value": {
+                "stringValue": "elevenlabs-convai"
+              }
+            },
+            {
+              "key": "elevenlabs.conversation_id",
+              "value": {
+                "stringValue": "conv_0000000000000000000000000001"
+              }
+            },
+            {
+              "key": "elevenlabs.agent_id",
+              "value": {
+                "stringValue": "agent_0000000000000000000000000001"
+              }
+            }
+          ]
+        },
+        "scopeSpans": [
+          {
+            "scope": {
+              "name": "elevenlabs.convai",
+              "version": "1.0.0"
+            },
+            "spans": [
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.conversation",
+                "kind": 1,
+                "startTimeUnixNano": "1792413877000000000",
+                "endTimeUnixNano": "1792413909000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.agent_name",
+                    "value": {
+                      "stringValue": "earshot-fixture-agent"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.conversation_id",
+                    "value": {
+                      "stringValue": "conv_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.conversation_product",
+                    "value": {
+                      "stringValue": "agent"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.status",
+                    "value": {
+                      "stringValue": "done"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.session.duration_ms",
+                    "value": {
+                      "intValue": "32000"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.source",
+                    "value": {
+                      "stringValue": "post_call_webhook"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.environment",
+                    "value": {
+                      "stringValue": "production"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.cost",
+                    "value": {
+                      "intValue": "386"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.cost_fiat",
+                    "value": {
+                      "doubleValue": 0.03840430375462008
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.authorization_method",
+                    "value": {
+                      "stringValue": "signed_url"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.termination_reason",
+                    "value": {
+                      "stringValue": "Client disconnected: 1000"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.analysis.call_successful",
+                    "value": {
+                      "stringValue": "success"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.analysis.transcript_summary",
+                    "value": {
+                      "stringValue": "The user booked a restaurant table for two people for tomorrow evening at 7:30 PM. They requested a quiet window table, which the agent confirmed. The conversation was friendly and concluded with the booking successfully made."
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.analysis.call_summary_title",
+                    "value": {
+                      "stringValue": "Table Booking Request"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__agent_turns",
+                    "value": {
+                      "intValue": "5"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__current_agent_turns",
+                    "value": {
+                      "intValue": "5"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__current_subagent_turns",
+                    "value": {
+                      "intValue": "5"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__current_agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__conversation_id",
+                    "value": {
+                      "stringValue": "conv_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__call_duration_secs",
+                    "value": {
+                      "intValue": "32"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__time_utc",
+                    "value": {
+                      "stringValue": "2026-10-19T12:45:09.600226+00:00"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__time",
+                    "value": {
+                      "stringValue": "Monday, 12:45 19 October 2026"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__time_hour",
+                    "value": {
+                      "intValue": "12"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__time_minute",
+                    "value": {
+                      "intValue": "45"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__time_second",
+                    "value": {
+                      "intValue": "9"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__is_text_only",
+                    "value": {
+                      "boolValue": false
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__channel",
+                    "value": {
+                      "stringValue": "unknown"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__conversation_history",
+                    "value": {
+                      "stringValue": "{\"x-elevenlabs-history\": true, \"entries\": [{\"role\": \"agent\", \"message\": \"Hello, thanks for calling the restaurant. How can I help?\"}, {\"role\": \"user\", \"message\": \"Hi, I would like to book a table for two people tomorrow evening.\"}, {\"role\": \"agent\", \"message\": \"[happy] Certainly, what time would you like to book?\"}, {\"role\": \"user\", \"message\": \"7:30 works for us.\"}, {\"role\": \"agent\", \"message\": \"...\"}, {\"role\": \"user\", \"message\": \"Could we sit somewhere quiet near the window?\"}, {\"role\": \"agent\", \"message\": \"[happy] I will note a quiet window table for you.\"}, {\"role\": \"user\", \"message\": \"Perfect. That is everything I needed. Thank you very much. Goodbye.\"}, {\"role\": \"agent\", \"message\": \"[happy] You're welcome, see you tomorrow at seven thirty. Goodbye.\"}]}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.dynamic_variable.system__environment",
+                    "value": {
+                      "stringValue": "production"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.visited_agents.0.agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.visited_agents.0.branch_id",
+                    "value": {
+                      "stringValue": "agtbrch_0000000000000000000000000001"
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "023ad69552e946a4",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.agent_response",
+                "kind": 1,
+                "startTimeUnixNano": "1792413877000000000",
+                "endTimeUnixNano": "1792413882000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "agent"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.agent.text",
+                    "value": {
+                      "stringValue": "Hello, thanks for calling the restaurant. How can I help?"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "0"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.producing_llm",
+                    "value": {
+                      "stringValue": "deepseek-v41-flash"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.voice_id",
+                    "value": {
+                      "stringValue": "voice000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.branch_id",
+                    "value": {
+                      "stringValue": "agtbrch_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.version_id",
+                    "value": {
+                      "stringValue": "agtvrsn_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_tts_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 71.6
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_ttf_audio_since_silence_ms",
+                    "value": {
+                      "doubleValue": 82.6
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_silence_before_initiation_ms",
+                    "value": {
+                      "doubleValue": 0.0
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "96c6a34e556e4fa0",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.user_transcript",
+                "kind": 1,
+                "startTimeUnixNano": "1792413882000000000",
+                "endTimeUnixNano": "1792413885000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "user"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.user.text",
+                    "value": {
+                      "stringValue": "Hi, I would like to book a table for two people tomorrow evening."
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "1"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "c08b472ee1414a6f",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.agent_response",
+                "kind": 1,
+                "startTimeUnixNano": "1792413885000000000",
+                "endTimeUnixNano": "1792413889000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "agent"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.agent.text",
+                    "value": {
+                      "stringValue": "[happy] Certainly, what time would you like to book?"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "2"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.producing_llm",
+                    "value": {
+                      "stringValue": "deepseek-v41-flash"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.voice_id",
+                    "value": {
+                      "stringValue": "voice000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.branch_id",
+                    "value": {
+                      "stringValue": "agtbrch_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.version_id",
+                    "value": {
+                      "stringValue": "agtvrsn_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttf_sentence_ms",
+                    "value": {
+                      "doubleValue": 179.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 117.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_tt_last_sentence_ms",
+                    "value": {
+                      "doubleValue": 179.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_tts_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 75.8
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_ttf_audio_since_silence_ms",
+                    "value": {
+                      "doubleValue": 490.0
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_silence_before_initiation_ms",
+                    "value": {
+                      "doubleValue": 160.0
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_latency_ms",
+                    "value": {
+                      "doubleValue": 60.4
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_excess_ms",
+                    "value": {
+                      "doubleValue": 60.4
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input",
+                    "value": {
+                      "stringValue": "{\"tokens\": 196, \"price\": 0.0001078}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_read",
+                    "value": {
+                      "stringValue": "{\"tokens\": 128, \"price\": 3.52e-05}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_write",
+                    "value": {
+                      "stringValue": "{\"tokens\": 288, \"price\": 0.0001584}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.output_total",
+                    "value": {
+                      "stringValue": "{\"tokens\": 14, \"price\": 0.00021}"
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "d1d84dca3e784ed5",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.user_transcript",
+                "kind": 1,
+                "startTimeUnixNano": "1792413889000000000",
+                "endTimeUnixNano": "1792413891000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "user"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.user.text",
+                    "value": {
+                      "stringValue": "7:30 works for us."
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "3"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "46f163ef92a847c1",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.agent_response",
+                "kind": 1,
+                "startTimeUnixNano": "1792413891000000000",
+                "endTimeUnixNano": "1792413891009999872",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "agent"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.agent.text",
+                    "value": {
+                      "stringValue": "..."
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "4"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.producing_llm",
+                    "value": {
+                      "stringValue": "deepseek-v41-flash"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.voice_id",
+                    "value": {
+                      "stringValue": "voice000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.interrupted",
+                    "value": {
+                      "boolValue": true
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.branch_id",
+                    "value": {
+                      "stringValue": "agtbrch_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.version_id",
+                    "value": {
+                      "stringValue": "agtvrsn_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttf_sentence_ms",
+                    "value": {
+                      "doubleValue": 113.5
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 73.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_tt_last_sentence_ms",
+                    "value": {
+                      "doubleValue": 135.7
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_tts_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 74.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_ttf_audio_since_silence_ms",
+                    "value": {
+                      "doubleValue": 511.0
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_silence_before_initiation_ms",
+                    "value": {
+                      "doubleValue": 224.0
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_latency_ms",
+                    "value": {
+                      "doubleValue": 60.6
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_excess_ms",
+                    "value": {
+                      "doubleValue": 60.6
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input",
+                    "value": {
+                      "stringValue": "{\"tokens\": 124, \"price\": 6.82e-05}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_read",
+                    "value": {
+                      "stringValue": "{\"tokens\": 384, \"price\": 0.0001056}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_write",
+                    "value": {
+                      "stringValue": "{\"tokens\": 128, \"price\": 7.04e-05}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.output_total",
+                    "value": {
+                      "stringValue": "{\"tokens\": 16, \"price\": 0.00024}"
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "436cd6fbaeae477a",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.user_transcript",
+                "kind": 1,
+                "startTimeUnixNano": "1792413891000000000",
+                "endTimeUnixNano": "1792413893000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "user"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.user.text",
+                    "value": {
+                      "stringValue": "Could we sit somewhere quiet near the window?"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "5"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "7f0245853e7c4640",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.agent_response",
+                "kind": 1,
+                "startTimeUnixNano": "1792413893000000000",
+                "endTimeUnixNano": "1792413898000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "agent"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.agent.text",
+                    "value": {
+                      "stringValue": "[happy] I will note a quiet window table for you."
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "6"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.producing_llm",
+                    "value": {
+                      "stringValue": "deepseek-v41-flash"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.voice_id",
+                    "value": {
+                      "stringValue": "voice000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.branch_id",
+                    "value": {
+                      "stringValue": "agtbrch_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.version_id",
+                    "value": {
+                      "stringValue": "agtvrsn_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttf_sentence_ms",
+                    "value": {
+                      "doubleValue": 127.5
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 64.7
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_tt_last_sentence_ms",
+                    "value": {
+                      "doubleValue": 137.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_tts_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 75.7
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_ttf_audio_since_silence_ms",
+                    "value": {
+                      "doubleValue": 521.8
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_silence_before_initiation_ms",
+                    "value": {
+                      "doubleValue": 224.0
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_latency_ms",
+                    "value": {
+                      "doubleValue": 66.6
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_excess_ms",
+                    "value": {
+                      "doubleValue": 66.6
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input",
+                    "value": {
+                      "stringValue": "{\"tokens\": 106, \"price\": 5.830000000000001e-05}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_read",
+                    "value": {
+                      "stringValue": "{\"tokens\": 512, \"price\": 0.0001408}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_write",
+                    "value": {
+                      "stringValue": "{\"tokens\": 32, \"price\": 1.76e-05}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.output_total",
+                    "value": {
+                      "stringValue": "{\"tokens\": 14, \"price\": 0.00021}"
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "83c14e8940554b6d",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.user_transcript",
+                "kind": 1,
+                "startTimeUnixNano": "1792413898000000000",
+                "endTimeUnixNano": "1792413902000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "user"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.user.text",
+                    "value": {
+                      "stringValue": "Perfect. That is everything I needed. Thank you very much. Goodbye."
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "7"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              },
+              {
+                "traceId": "f2cf9a898c7c5f4a447531e3b262bed5",
+                "spanId": "7a7736688eb74138",
+                "parentSpanId": "e6e29cb34b2f46ea",
+                "name": "elevenlabs.recv.agent_response",
+                "kind": 1,
+                "startTimeUnixNano": "1792413902000000000",
+                "endTimeUnixNano": "1792413909000000000",
+                "attributes": [
+                  {
+                    "key": "elevenlabs.event.type",
+                    "value": {
+                      "stringValue": "agent"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.agent.text",
+                    "value": {
+                      "stringValue": "[happy] You're welcome, see you tomorrow at seven thirty. Goodbye."
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.index",
+                    "value": {
+                      "intValue": "8"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.producing_llm",
+                    "value": {
+                      "stringValue": "deepseek-v41-flash"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.voice_id",
+                    "value": {
+                      "stringValue": "voice000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.ignored_as_backchannel",
+                    "value": {
+                      "boolValue": false
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.agent_id",
+                    "value": {
+                      "stringValue": "agent_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.branch_id",
+                    "value": {
+                      "stringValue": "agtbrch_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.turn.version_id",
+                    "value": {
+                      "stringValue": "agtvrsn_0000000000000000000000000001"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttf_sentence_ms",
+                    "value": {
+                      "doubleValue": 462.9
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 95.1
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_llm_service_tt_last_sentence_ms",
+                    "value": {
+                      "doubleValue": 486.0
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_tts_service_ttfb_ms",
+                    "value": {
+                      "doubleValue": 96.9
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_ttf_audio_since_silence_ms",
+                    "value": {
+                      "doubleValue": 872.8
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_silence_before_initiation_ms",
+                    "value": {
+                      "doubleValue": 192.0
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_latency_ms",
+                    "value": {
+                      "doubleValue": 82.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.metric.convai_turn_asr_excess_ms",
+                    "value": {
+                      "doubleValue": 82.3
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input",
+                    "value": {
+                      "stringValue": "{\"tokens\": 43, \"price\": 2.3650000000000002e-05}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_read",
+                    "value": {
+                      "stringValue": "{\"tokens\": 640, \"price\": 0.000176}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.input_cache_write",
+                    "value": {
+                      "stringValue": "{\"tokens\": 0, \"price\": 0.0}"
+                    }
+                  },
+                  {
+                    "key": "elevenlabs.llm_usage.deepseek-v41-flash.output_total",
+                    "value": {
+                      "stringValue": "{\"tokens\": 18, \"price\": 0.00027}"
+                    }
+                  }
+                ],
+                "status": {
+                  "code": 1
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

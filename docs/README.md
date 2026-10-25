@@ -1,75 +1,73 @@
-# Earshot public documentation
+# Earshot documentation
 
-These documents are the public, reproducible source of truth. They are sufficient
-to implement another producer or consumer without access to `docs/private`.
-
-The current release is a pre-v1 alpha. What Earshot receives today is listed in the
-repository [README](../README.md#what-earshot-receives-today); mobile capture, OTLP over
-gRPC, a call view in the viewer, and regression-fixture export are planned and are not
-shipped APIs.
-
-## Run Earshot
-
-- [OTLP quick start](./otlp-quickstart.md) — the HTTP exporter, API keys and the host
-  rule, session keys, close timing, recordings, and errors and retries.
-- [Storage and blobs](./storage-and-blobs.md) — SQLite or Postgres, migrations, upgrading
-  from 0.1.x, the correlation key, and local or S3 blob URLs.
-- [Production notes](./production.md) — one server per database, no transaction-pooling
-  proxy, a Collector in front, S3 lifecycle, readiness, and backups.
-- [Server configuration](./configuration.md) — every variable of `earshot serve` and
-  the ASGI app, before and after 0.2.0.
-- [Changelog](../CHANGELOG.md) — what changed in each release, breaking changes first.
+These guides explain how to run Earshot, send it evidence, and understand what it stores.
+Start with the [project README](../README.md) for the quick overview. The current release
+is the pre-v1 alpha, 0.3.0. See the [release notes](./release-notes-0.3.0.md) for its
+features and limits.
 
 ## Start here
 
-- [Architecture](./architecture.md) — boundaries, trust model, and repository layout.
-- [Incident bundle contract](./incident-bundle.md) — canonical protobuf envelope and
-  JSON representation.
-- [Semantic profile](./semantic-conventions.md) — `earshot.*` operations, events,
-  links, coverage, and evidence vocabulary.
-- [Privacy](./privacy.md) — Capture Presets, the producer capture policy, omissions,
-  media, call purge, retention, and erasure limits.
-- [Backend API](./backend-api.md) — project-scoped ingest, retrieval, metrics, and purge.
-- [Hosted-provider connectors](./connectors.md) — trust, replay, normalization, and
-  provider-specific evidence limits.
-- [Deterministic analysis](./analysis.md) — projection algorithm, evidence binding,
-  and current diagnosis boundary.
-- [SDK and recorder](./sdk.md) — one-line setup, recorder lifecycle, adapters, and
-  fail-open guarantees.
-- [Storage internals](./storage.md) — CAS/SQLite transaction ordering, graph
-  projections, expiry, reconciliation, and erasure limits.
-- [Conformance](./conformance.md) — required fixtures and release gates.
-- [Retained real captures](./captured-fixtures.md) — captured-adapter provenance,
-  privacy scrubbing, validation, and unavailable real-evidence gaps.
-- [Development](./development.md) — setup, regeneration, tests, and local operation.
-- [Release packaging](./release.md) — distribution identity, build verification, and
-  publication guardrails; the owner's [release checklist](./release-checklist.md).
-- [Architecture decisions](./adr/) — ADRs 0001 to 0007, including capture presets, the
-  OTLP receiver, storage, and the Call.
-- [Pipecat adapter](./adapters/pipecat.md) and
-  [LiveKit adapter](./adapters/livekit.md) — adapter contracts and limitations.
-- [TVIC runtime adapter](./adapters/tvic.md) — runtime observation mapping,
-  chronology, and loss boundaries.
-- [Pipecat provider matrix](./pipecat-provider-matrix-2026-10-20.md) — current live
-  Cartesian-product evidence and its limits.
-- [Raw provider adapters](./adapters/providers.md) — Deepgram, Cartesia, OpenAI
-  Realtime, and Sarvam event mapping for custom in-app pipelines.
+- [OTLP quick start](./otlp-quickstart.md): send spans, upload recordings, and read calls.
+- [The call view](./calls.md): explore audio, transcripts, turns, latency, and cost.
+- [Privacy](./privacy.md): choose a capture preset and understand retention, purge, and
+  erasure limits.
+- [Production notes](./production.md): plan the server, database, proxy, backups, and
+  retention.
 
-## Normative sources
+## Connect an application
 
-The machine-readable contract consists of:
+- [Python SDK and recorder](./sdk.md): record a session, use adapters, and export an
+  Incident.
+- [Browser SDK](../packages/browser/README.md): capture browser media and network
+  measurements.
+- [Node SDK](../packages/node/README.md): add a span processor and read recordings or
+  calls.
+- [Backend API](./backend-api.md): send evidence, read stored Incidents, follow live
+  sessions, and manage projects.
+- [Hosted-provider connectors](./connectors.md): understand signature checks,
+  normalization, and provider evidence limits.
+- [Pipecat adapter](./adapters/pipecat.md), [LiveKit adapter](./adapters/livekit.md),
+  and [TVIC runtime adapter](./adapters/tvic.md): see what each integration records.
+- [Raw provider adapters](./adapters/providers.md): map Deepgram, Cartesia, OpenAI
+  Realtime, and Sarvam events into an Incident.
+- [Pipecat provider matrix](./pipecat-provider-matrix-2026-10-20.md): review compatibility
+  evidence and its limits.
+
+## Understand the data
+
+- [Architecture](./architecture.md): learn the system boundaries, trust model, and
+  repository layout.
+- [Incident bundle contract](./incident-bundle.md): read the portable protobuf envelope
+  and JSON format.
+- [Semantic conventions](./semantic-conventions.md): look up operations, events, links,
+  coverage, and evidence terms.
+- [Deterministic analysis](./analysis.md): see how Earshot builds projections and
+  findings.
+- [Storage internals](./storage.md): understand indexes, blobs, cleanup, and erasure.
+- [Retained real captures](./captured-fixtures.md): review the published artifact
+  inventory and the checks used to scrub it.
+- [Conformance](./conformance.md): find the fixtures and release checks that protect
+  compatibility.
+
+## Develop and release
+
+- [Development](./development.md): set up the repository, run the application, and update
+  generated contracts.
+- [Server configuration](./configuration.md): configure `earshot serve` and the ASGI app.
+- [Storage and blobs](./storage-and-blobs.md): choose SQLite or Postgres, configure local
+  disk or S3, and upgrade an existing data directory.
+- [Release packaging](./release.md): understand package contents, build checks, and
+  publication steps.
+- [Changelog](../CHANGELOG.md): review changes by release.
+- [Release checklist](./release-checklist.md): follow the release owner's publication
+  checks.
+
+## Contract files
+
+The guides describe behavior in plain language. These files define the exact wire and
+semantic contract:
 
 - [`proto/earshot/v1alpha1/incident.proto`](../proto/earshot/v1alpha1/incident.proto)
 - [`semconv/earshot.yaml`](../semconv/earshot.yaml)
 - [`spec/incident-bundle.schema.json`](../spec/incident-bundle.schema.json)
-- [`spec/derived-analysis.schema.json`](../spec/derived-analysis.schema.json)
 - [`spec/backend-api.openapi.json`](../spec/backend-api.openapi.json)
-- shared valid/invalid fixtures under [`fixtures/`](../fixtures/)
-- deterministic fault and security-regression artifacts under
-  [`fixtures/faults/`](../fixtures/faults/)
-- privacy-scrubbed real-capture artifacts and their inventory under
-  [`fixtures/captured/`](../fixtures/captured/)
-
-If prose conflicts with a machine-readable source plus a conformance fixture, the
-machine-readable contract wins. Bundle-wide semantic invariants are defined in the
-contract document and enforced by `earshot.validation`.

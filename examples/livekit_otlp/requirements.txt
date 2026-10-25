@@ -1,0 +1,6 @@
+# Run in its own venv: livekit-agents 1.8.7+ needs openai>=3.19 and OTel 1.45.x,
+# which Earshot's shared lock (Pipecat caps openai<3) cannot take.
+livekit-agents[deepgram,groq,cartesia,silero]>=1.8.8,<1.9
+opentelemetry-exporter-otlp-proto-http>=1.45,<2
+# --upload uses earshot.client. From this repo: pip install -e . (at the repo root).
+earshot-observability>=0.3.0

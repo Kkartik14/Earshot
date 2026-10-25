@@ -49,8 +49,8 @@ def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> 
     """The analyzer identity is a storage cache key, not a decorative version.
 
     A doc naming an older one tells a reader their cached projection is current
-    when the code would recompute it. Research notes and private planning docs
-    are excluded on purpose: they are dated records of what was true then.
+    when the code would recompute it. This check scans the published guides and
+    leaves historical working notes out of scope.
     """
 
     root = Path(__file__).resolve().parents[3] / "docs"
@@ -67,7 +67,7 @@ def test_published_docs_name_the_analyzer_identity_the_code_actually_ships() -> 
 
 
 def test_the_capture_surface_evolution_is_versioned() -> None:
-    assert API_VERSION == "0.14.0"
+    assert API_VERSION == "0.15.0"
 
 
 def test_top_level_star_surface_is_the_small_supported_sdk_kernel() -> None:

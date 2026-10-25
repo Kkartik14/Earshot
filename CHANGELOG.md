@@ -4,7 +4,201 @@ Notable changes to Earshot. Versions follow the
 [alpha compatibility policy](docs/release.md#alpha-compatibility-policy). Earlier releases
 are described in their [GitHub release notes](https://github.com/Kkartik14/Earshot/releases).
 
-## 0.2.0 (Unreleased)
+## 0.3.0 (2026-10-24)
+
+Every closed Call now has a call view: its audio with a waveform, the transcript on the
+audio's time axis, per-turn latency as the framework reports it beside the audible gap at
+the agent measured from the recording, signals across the call, and its cost. The calls
+list filters on all of it and searches transcript text. LiveKit Agents 1.6 to 1.8 calls
+over OTLP get the same view as Pipecat 1.5. 0.2.0 was not published; the Breaking section
+matters only to installs from source. See the
+[0.3.0 release notes](docs/release-notes-0.3.0.md) for what the tests prove and don't.
+
+### Breaking
+
+- **A Recording with the wrong channel count gets `EARSHOT_RECORDING_CHANNEL_MISMATCH`**,
+  which replaces `EARSHOT_RECORDING_NOT_MONO`.
+- **Ogg uploads must be Ogg Opus.** Another Ogg codec gets 422
+  `EARSHOT_RECORDING_INVALID_OGG`.
+- **`metadata_only` drops LiveKit keys it does not list.** One table now classifies every
+  `lk.*` key of LiveKit 1.6 to 1.8; an unlisted `lk.*` key (for example `lk.sip.*`) is
+  dropped under `metadata_only`, where 0.2.0 kept it as metadata.
+- **In-process LiveKit bundles record content under semantic keys**, with the content
+  class instead of metadata: `lk.pii.user_transcript` and `lk.pii.input_text` become
+  `speech.text`; `lk.pii.chat_ctx` becomes `gen_ai.input`; `lk.pii.response.text` becomes
+  `gen_ai.output.messages`; `lk.pii.response.function_calls` becomes
+  `gen_ai.output.messages.function_calls`; `lk.(pii.)user_input` becomes
+  `gen_ai.input.user_message` (was `speech.text`); `lk.pii.instructions` becomes
+  `gen_ai.input.system_instruction`; `lk.pii.participant_identity` becomes
+  `participant.name`; and `lk.room_name` becomes `lk.pii.room_name`.
+
+### Added
+
+- **TVIC runtime adapter.** An in-process, metadata-only receiver for TVIC's bounded
+  runtime-observation envelope, mapped into normalized events and coverage. See
+  [the TVIC adapter](docs/adapters/tvic.md).
+- **The call view.** `GET /v1/calls/{id}` keeps every 0.2.0 field and adds
+  `projection_state` (`none`, `stale`, `current`) and `projection`: agent, framework,
+  outcome, tags, duration, turns with the framework's reported latency and the audible
+  gap at the agent (± uncertainty, or `not_measurable` with a reason; never 0 for
+  unknown), signals (talk time, overlap, barge-ins, talk-overs, long silences, dead air),
+  cost items, the transcript placed on the call's axis, and the playable media. It returns
+  an `ETag` and answers `If-None-Match` with 304. See [the call view](docs/calls.md).
+- **Call projections.** A background job recomputes each Call's projection after each
+  Revision, each analysis result and each price change, from the stored spans, the
+  Recordings' analyses and the prices. Agent, outcome and tags come from the new
+  `earshot.agent.name`, `earshot.call.outcome` and `earshot.call.tags` attributes, with
+  fallbacks. See [the call view guide](docs/calls.md).
+- **Calls list filters.** `GET /v1/calls` takes `agent`, `outcome`, `tag` (repeatable,
+  all must match), `min_/max_reported_latency_ms`, `min_/max_audible_gap_ms`,
+  `min_/max_cost_nano_usd` and `q`, a transcript substring (3 to 256 characters, `%` and
+  `_` literal, ASCII case-insensitive; 422 `EARSHOT_PRESET_FORBIDS_CONTENT_SEARCH` under
+  `metadata_only`). A filter never matches an unknown value. `max_cost_nano_usd` matches
+  complete costs only, and the page reports `excluded_incomplete`. Items carry the
+  projection's summary.
+- **`GET /v1/calls/{id}/spans/{trace_id}/{span_id}`**: one stored span, with each
+  attribute's semantic key and capture class; 404 unless its trace belongs to the Call.
+- **Recording analysis.** Each stored Recording is analysed once, by the server's
+  maintenance loop, in a child process of its own: per-channel speech runs from Silero
+  VAD with each edge refined to 10 ms and given an uncertainty, the noise floor,
+  exact-zero runs, and audiowaveform `.dat` peaks. Crashes, timeouts and out-of-memory
+  exits are retried after 1, 4 and 16 minutes, then `failed`; undecodable audio is
+  `unavailable` with a code. Recordings stored before the upgrade are queued.
+- **The `signals` extra** (numpy, onnxruntime, soundfile; the Silero VAD v6.2.3 model,
+  MIT, ships in the package). Without it the server runs, analyses are `unavailable`
+  (`EARSHOT_SIGNALS_EXTRA_REQUIRED`), and they are requeued at the next start once it is
+  installed.
+- **`GET /v1/recordings/{id}/peaks`** (`private, no-cache`, `ETag`, 304), and for a mono
+  user/agent pair on one timeline a stereo FLAC rendition at
+  `GET /v1/recordings/{id}/rendition` (Range) and `…/rendition/peaks`.
+- **Cost** in integer nano-USD: a lower bound from priced items, an estimate (STT seconds
+  from the recording or call duration), and a count of unknown items. Built-in prices are
+  regular, dated list prices with their source, never promotional ones, for Deepgram,
+  Groq, OpenAI, Cartesia and ElevenLabs models. A Project's own prices win over the
+  built-ins, and a price change reprices from stored usage. See
+  [the call view guide](docs/calls.md) for how Earshot reports call costs.
+- **Prices:** `GET /v1/prices` and `POST /v1/prices` (project-scoped, append-only,
+  effective-dated; hosted JWTs get 403), and `earshot prices add|list` (`--builtin` for
+  operators).
+- **`earshot db enable-transcript-index`**: an optional Postgres `pg_trgm` index for
+  transcript search.
+- **Stereo recordings.** `POST /v1/recordings` takes `channel_speakers`
+  (`["user","agent"]`, each at most once) with `speaker: "mixed"`; the upload's WAV, FLAC
+  or Ogg Opus header must have that many channels. FLAC and Ogg Opus uploads are
+  inspected and get a `duration_ms`. New codes: `EARSHOT_INVALID_CHANNEL_SPEAKERS`,
+  `EARSHOT_RECORDING_INVALID_FLAC`, `EARSHOT_RECORDING_INVALID_OGG`.
+- **Contract `MediaRef.channel_index`.** A Recording with a channel map becomes one audio
+  stream and one media reference per channel.
+- **LiveKit over OTLP.** The server builds Revisions of LiveKit Agents calls with the same
+  `LiveKitAdapter` that runs in process, and their turn facts match. Transcripts take user
+  lines from `user_turn` and agent lines from `agent_turn`'s played text, never from LLM
+  output, so preemptive replies LiveKit discarded never appear.
+- **`earshot.client`**: create and upload recordings, resolve and get calls, and
+  `tracer_metadata` for LiveKit's `set_tracer_provider(metadata=…)`. Standard library
+  only, with httpx when installed.
+- **`@earshot/node` 0.3.0**, a new npm package for Node voice agents (ESM-only, Node
+  22.12 or later, `@opentelemetry/api` as its one peer):
+  - `EarshotSpanProcessor` stamps `earshot.session.id` on every span, from
+    `withSessionKey(key, fn)`, `setSessionKey(context, key)` or a fixed key; a span's own
+    key wins; the key is never sent as baggage; invalid keys throw where they are set.
+  - `EarshotClient`: `createRecording` (stereo `channel_speakers` included),
+    `uploadRecording` (streamed from disk with a sha-256 `Content-Digest`),
+    `getRecording`, `resolveCall`, `getCall`; `EarshotClient.fromEnvironment()` reuses the
+    OTLP exporter's endpoint and `Authorization` header; refused requests throw
+    `EarshotError` with Earshot's stable code.
+  - `recordingIdFor` names the same Recording as Python's `recording_id_for`.
+  - Response types generated from the OpenAPI spec.
+- **Viewer: calls list** (`/calls`). Filters by agent, outcome, tags, reported latency,
+  audible gap, cost and transcript text, and pages with "load more". A call that isn't
+  projected yet shows no metrics rather than zeros, and a cost cap reports how many calls
+  it left out for incomplete cost.
+- **Viewer: call view** (`/calls/{call_id}`). A waveform player (wavesurfer.js 8) with
+  one lane per speaker, drawn from the server's peaks and streaming the recording by
+  Range (a mono pair plays as its stereo rendition); a transcript synced to playback,
+  where clicking a line seeks; per-turn reported latency beside the audible gap; signals;
+  cost (lower bound, unknown items, estimate); LLM, tool and error details loaded per
+  span. A call that isn't projected yet shows its span transcript.
+- **`@earshot/viewer-ui`:** `ObserveRoute` gains the `calls` and `call` kinds. The package
+  depends on `wavesurfer.js` ^8, which loads only with the player.
+- **Catalog revision `0005_projections`** (forward-only).
+- **`earshot.call_span_facts`**: the usage→meter table for Pipecat and LiveKit and
+  per-turn anchors; **`earshot.leased_jobs`**: a generic leased-job helper for
+  catalog-backed background jobs.
+- **Examples:** the Pipecat example uploads one stereo WAV; the LiveKit example's
+  `--upload` creates its recording at session start and uploads it from
+  `on_session_end`.
+- **`scripts/viewer_smoke.py`**: the bundled viewer and the API its call views use,
+  checked on the two replayed calls, against the source tree or an installed artifact.
+- **Docs:** [the call view](docs/calls.md), including analysis, projections, and cost,
+  plus LiveKit, `earshot.client` and Node sections in the
+  [OTLP quick start](docs/otlp-quickstart.md).
+
+### Changed
+
+- **Pipecat 1.6.** The `pipecat` and `pipecat-groq` extras require Pipecat `>=1.6,<1.7`, and
+  the OTLP example runs on it. The real-provider done-when e2e passes on a real Pipecat 1.6.0
+  call; the captured replay fixture is still a Pipecat 1.5 call.
+- **The `livekit` extra allows `livekit-agents>=1.6.5,<1.9`.** Keys are read by
+  attribute, never by version.
+- **LiveKit job-tail spans** after `session_close` (`agent_session`, `on_session_end`,
+  `session_end_upload`, `room_disconnect`, `job_shutdown`, `job_entrypoint`,
+  `shutdown_callback`) are stored with their call, but no longer reopen a closed call or
+  delay its close. The `session_close` span name is kept rather than hashed.
+- **Purge, retention and project deletion** also remove a Call's projection, tags,
+  transcript lines and analyses, and its Recordings' derived blobs (peaks, renditions);
+  project deletion also removes the Project's own prices.
+- **The container image** installs the `signals` extra (142 MB, from 94 MB), runs as
+  uid/gid 999, and sets `ORT_DISABLE_TELEMETRY=1`. The server also turns onnxruntime's
+  telemetry off before it first imports it; it makes no outbound connections of its own.
+- **Viewer media custody panel:** Recordings Earshot stores are labelled as held by
+  Earshot with an Earshot-measured digest, and are played in the call view. Media held
+  elsewhere is still a reference only.
+- **`CALL_PROJECTION_VERSION` is 6**, so every existing projection is recomputed.
+- **A mono pair is one timeline only when unambiguous.** The analysis and the projection
+  share one rule (`call_timeline.one_timeline_pairs`): a user and an agent mono Recording
+  with the same start and durations within 20 ms, and no other mono user or agent
+  Recording at that start. Otherwise there is no rendition, and the turn is
+  `not_one_timeline`.
+- **The analysis timeout is at most 1 hour**, and 15 minutes when the declared duration is
+  more than the file's bytes could hold; the lease is at most 61 minutes.
+- **The clients never follow a redirect**, so the API key goes only to the URL given. A
+  redirect was followed before.
+
+### Fixed
+
+- **Projection:**
+  - A bad value on one Call no longer stops other Calls being projected. The Call is set
+    aside with `EARSHOT_PROJECTION_INPUT_INVALID`, `EARSHOT_PROJECTION_OUT_OF_RANGE` or
+    `EARSHOT_PROJECTION_WRITE_REFUSED` and retried with backoff.
+  - A value outside the catalog's range (a time or latency in nanoseconds past signed
+    64 bits, a cost total, a producer-reported duration) is unknown, never clamped.
+  - U+0000 is never stored.
+  - A projection shows exactly its Revision's evidence: spans and Recordings stored later
+    wait for a later Revision (new `first_revision` columns in migration `0005`).
+  - Per-channel media references are made only for WAV, FLAC and Ogg Opus.
+  - The decoded duration is preferred over the header's.
+- **Analysis:**
+  - A failure outside the child (spool, reading the Recording, writing the result) is
+    retried, then ends `failed` with `EARSHOT_ANALYSIS_SPOOL_FAILED`,
+    `EARSHOT_ANALYSIS_SOURCE_UNREADABLE`, `EARSHOT_ANALYSIS_CRASHED` or
+    `EARSHOT_ANALYSIS_STORE_FAILED`; it used to leave the job `running`. A lease that
+    runs out counts as a failed attempt (`EARSHOT_ANALYSIS_LEASE_EXPIRED`).
+  - Lease tokens are unique, so a claim on a purged job cannot write to its replacement.
+  - A derived blob from a write that landed after its reservation was drained is deleted.
+  - WAV header parsing is linear in the header's size.
+- **Uploads:** an empty WAV (`data` size 0, or no whole sample) or FLAC (STREAMINFO with
+  no samples) is refused with 422 `EARSHOT_RECORDING_INVALID_WAV` or
+  `EARSHOT_RECORDING_INVALID_FLAC`.
+- **Clients:** a redirect, a non-JSON answer and an answer cut short are `EarshotError`
+  in the Python and Node clients.
+
+- Under full capture, the in-process LiveKit adapter refused LiveKit 1.6 `agent_turn` spans
+  (user input, instructions and reply) and every `tts_request` span (text plus an
+  audio-duration metric): "one record cannot mix multiple sensitive capture classes".
+- LiveKit's TTS and STT audio-duration metrics stay quality measurements and are no
+  longer copied onto the operation.
+
+## 0.2.0 (not published)
 
 Earshot now receives OpenTelemetry traces and call recordings, groups them into Calls, and
 runs on SQLite or Postgres with local or S3 storage for audio. Read the Breaking section
@@ -28,9 +222,8 @@ before upgrading a 0.1.x installation.
   Project to `metadata_only`, and its Recording uploads are refused with 422 until an
   operator runs `earshot project set-capture --preset full`. See
   [privacy](docs/privacy.md#capture-presets).
-- **Earshot now holds media bytes.** ADR 0004 supersedes the "Custody, not content" rule:
-  Recordings for `full` Projects are stored in Earshot's blob store. `MediaRef`s naming
-  other custodians keep their earlier meaning.
+- **Earshot now holds media bytes.** Recordings for `full` Projects are stored in
+  Earshot's blob store. `MediaRef`s naming other custodians keep their earlier meaning.
 - **Switch variables are strict.** `EARSHOT_BEHIND_TLS_PROXY`,
   `EARSHOT_TRUST_LOCAL_NETWORK` and `EARSHOT_PLATFORM_ADAPTER_ENABLED` accept only `1`,
   `true`, `yes`, `0`, `false`, `no` or an empty value. Any other value refuses to start;
@@ -218,16 +411,17 @@ before upgrading a 0.1.x installation.
   names: the route `{ kind: "capture-status", hostCallId, capture }` and the
   `CaptureStatus` component. Hosts that linked the unpublished source must rename
   `call-status`, `callId` and `CallCaptureStatus`.
-- **Examples and fixtures**: `examples/pipecat_otlp/`, a real Pipecat 1.5 call exported
-  over OTLP; its captured fixture `fixtures/captured/pipecat-otlp-1.5/`; and upgrade
-  fixtures written by four 0.1.x releases in `fixtures/upgrade/`. `run_call.py` fails
+- **Examples and fixtures**: `examples/pipecat_otlp/` runs a scripted Pipecat 1.5 call
+  over OTLP. Receiver tests use generated Pipecat-shaped requests; end-to-end tests also
+  replay the checked-in scripted call fixture. Upgrade fixtures in `fixtures/upgrade/`
+  were written by four 0.1.x releases. `run_call.py` fails
   when its call produced no `stt`, `llm` or `tts` span: Pipecat 1.5 only logs and retries
   when a provider refuses its key, so without the check such a call ends as if it had
   succeeded.
 - **End-to-end tests.** A replay test
   (`apps/ingest/tests/e2e/test_otlp_replay_quickstart.py`) runs the README quick start on
-  a real `earshot serve` with default settings: it replays the captured Pipecat 1.5 call
-  and uploads its two recordings, and it runs in CI. A real-provider test
+  a real `earshot serve` with default settings: it replays generated OTLP requests and
+  uploads synthetic recordings, and it runs in CI. A real-provider test
   (`apps/ingest/tests/e2e_real/test_pipecat_otlp_done_when.py`) runs one real Pipecat 1.5
   call (Deepgram, Groq, Cartesia) into Earshot on Postgres and S3. It skips without
   provider keys; `EARSHOT_REQUIRE_REAL_PROVIDERS=1` makes that a failure. Both require
@@ -235,8 +429,7 @@ before upgrading a 0.1.x installation.
   for byte, and every exported span stored.
 - **Docs**: the [OTLP quick start](docs/otlp-quickstart.md),
   [storage and blobs](docs/storage-and-blobs.md), [production notes](docs/production.md),
-  [server configuration](docs/configuration.md), and ADRs 0004 to 0007. ADR 0005
-  supersedes ADR 0003.
+  and [server configuration](docs/configuration.md).
 
 ### Changed
 
@@ -283,7 +476,7 @@ before upgrading a 0.1.x installation.
   less time.
 - CI runs the storage modules on Postgres and the blob store on MinIO, and enforces branch
   coverage on the combined results.
-- Removed the superseded M0 TypeScript prototype, `packages/schema` and `packages/analysis`.
+- Removed the superseded TypeScript prototype, `packages/schema` and `packages/analysis`.
   Neither was published.
 
 ### Fixed

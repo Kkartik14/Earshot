@@ -1,4 +1,4 @@
-"""Streaming blob storage for large evidence such as call recordings (FR-8).
+"""Streaming blob storage for large evidence such as call recordings.
 
 One interface, two backends, chosen by ``EARSHOT_BLOB_URL``
 (``server_config.parse_blob_url``):
@@ -37,7 +37,7 @@ also be a directory of another key (``a`` and ``a/b``); Earshot's keys
 (``recordings/<project>/<attempt>``) never nest that way.
 
 ``put_stream`` streams an iterable of chunks into a key and verifies an optional
-``Content-Digest`` (RFC 9530) ``sha-256`` value before committing (AC8.3).
+``Content-Digest`` (RFC 9530) ``sha-256`` value before committing.
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ class BlobWriter(Protocol):
 
 
 class BlobStore(Protocol):
-    """The FR-8 interface, implemented by ``LocalBlobStore`` and ``S3BlobStore``."""
+    """The blob storage interface, implemented by ``LocalBlobStore`` and ``S3BlobStore``."""
 
     def begin_put(self, key: str) -> BlobWriter: ...
 
@@ -582,7 +582,7 @@ class S3BlobStore:
 class _S3Writer(_Writer):
     # One part buffer per writer, filled in place and sent without a copy. Growing
     # a bytearray and copying it out per part made macOS RSS climb about 1 MiB per
-    # MiB uploaded (freed realloc blocks stay resident), which AC8.1 forbids.
+    # MiB uploaded (freed realloc blocks stay resident), which the bounded-memory path avoids.
     def __init__(self, store: S3BlobStore, name: str) -> None:
         super().__init__()
         self._store = store
