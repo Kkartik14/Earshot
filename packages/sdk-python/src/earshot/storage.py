@@ -142,6 +142,10 @@ class ProjectInactiveError(StorageError):
     """A project lifecycle fence rejected a new or late write."""
 
 
+class ProjectConflictError(StorageError):
+    """A project already exists with other terms than the ones asked for."""
+
+
 class ArtifactCorruptionError(StorageError):
     pass
 
@@ -2493,6 +2497,48 @@ class IncidentStore:
             connection.commit()
         return ProjectRecord(project_id, display_name, str(created_at))
 
+    def provision_project(
+        self, project_id: str, *, display_name: str, capture_preset: str
+    ) -> tuple[ProjectRecord, bool]:
+        """Create a project on these terms, or confirm one that already has them.
+
+        Returns the project and whether this call created it. A project with other terms
+        raises ``ProjectConflictError``: its preset or name is never changed this way. A
+        deleting or deleted project raises ``ProjectInactiveError``: it is never brought
+        back. Concurrent first calls create it once.
+        """
+
+        if not _PROJECT_ID_PATTERN.fullmatch(project_id):
+            raise ValueError("project_id must be a lowercase portable identifier")
+        if not display_name or len(display_name) > 128:
+            raise ValueError("display_name must contain between 1 and 128 characters")
+        if capture_preset not in CAPTURE_PRESETS:
+            raise ValueError(f"capture_preset must be one of {', '.join(CAPTURE_PRESETS)}")
+        with self._mutation("provision_project"), self._connect() as connection:
+            inserted = connection.execute(
+                """
+                INSERT INTO projects(project_id, display_name, created_at_unix_nano, capture_preset)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (project_id) DO NOTHING
+                """,
+                (project_id, display_name, time.time_ns(), capture_preset),
+            ).rowcount
+            row = connection.execute(
+                """
+                SELECT project_id, display_name, created_at_unix_nano, capture_preset,
+                       lifecycle_state
+                FROM projects WHERE project_id = ?
+                """,
+                (project_id,),
+            ).fetchone()
+            connection.commit()
+        project = _project_record(row)
+        if project.lifecycle_state != "active":
+            raise ProjectInactiveError("project is not accepting requests")
+        if (project.display_name, project.capture_preset) != (display_name, capture_preset):
+            raise ProjectConflictError("project exists with other terms")
+        return project, inserted == 1
+
     def get_project(self, project_id: str) -> ProjectRecord | None:
         """Return a project's record, or ``None`` if it was never provisioned."""
 
@@ -2506,6 +2552,16 @@ class IncidentStore:
                 (project_id,),
             ).fetchone()
         return None if row is None else _project_record(row)
+
+    def is_call_revision(self, bundle_id: str, *, project_id: str) -> bool:
+        """Whether this project's incident ``bundle_id`` is the revision of a call."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM call_revisions WHERE project_id = ? AND bundle_id = ?",
+                (project_id, bundle_id),
+            ).fetchone()
+        return row is not None
 
     def set_capture_preset(self, project_id: str, preset: str) -> ProjectRecord:
         """Choose what the OTLP receiver keeps of this project's future evidence.
@@ -3247,7 +3303,11 @@ class IncidentStore:
         limit: int = 50,
         cursor: str | None = None,
         destination: str | None = None,
+        include_call_revisions: bool = True,
     ) -> IncidentPage:
+        """A page of the project's incidents, newest first. ``include_call_revisions=False``
+        leaves out the revisions of calls, for a reader that may not read calls."""
+
         if limit < 1 or limit > 100:
             raise ValueError("limit must be between 1 and 100")
         if destination not in {None, "local_api", "local_cli"}:
@@ -3269,6 +3329,8 @@ class IncidentStore:
             cursor_time, cursor_bundle_id = decode_page_cursor(cursor)
             clauses.append("(ingested_at_unix_nano, bundle_id) < (?, ?)")
             parameters.extend((cursor_time, cursor_bundle_id))
+        if not include_call_revisions:
+            clauses.append(f"NOT {_CALL_REVISION_SQL}")
         now = str(time.time_ns())
         clauses.append(_not_expired_sql("expires_at_unix_nano"))
         parameters.extend((len(now), len(now), now))
@@ -3363,6 +3425,7 @@ class IncidentStore:
         *,
         project_id: str = DEFAULT_PROJECT_ID,
         group_by: str = "framework",
+        include_call_revisions: bool = True,
     ) -> TurnMetricFleetSummary:
         """Aggregate one turn metric across a project's *final* incidents only.
 
@@ -3466,6 +3529,11 @@ class IncidentStore:
             limitation_column,
         ) = metric_columns[metric]
         group_column = group_columns[group_by]
+        # A call counts once (its latest revision), or not at all for a reader that may not
+        # read calls.
+        revisions_left_out = (
+            _SUPERSEDED_REVISION_SQL if include_call_revisions else _CALL_REVISION_SQL
+        )
         query = f"""
             WITH final_turns AS (
                 SELECT turn_metrics.*
@@ -3474,7 +3542,7 @@ class IncidentStore:
                     AND incidents.project_id = turn_metrics.project_id
                 WHERE turn_metrics.project_id = ?
                   AND incidents.finality = 'final'
-                  AND NOT {_SUPERSEDED_REVISION_SQL}
+                  AND NOT {revisions_left_out}
                   AND {_not_expired_sql("incidents.expires_at_unix_nano")}
             ), totals AS (
                 SELECT COALESCE({group_column}, 'unknown') AS group_value,
@@ -3555,7 +3623,7 @@ class IncidentStore:
             JOIN incidents ON incidents.bundle_id = turn_metrics.bundle_id
                 AND incidents.project_id = turn_metrics.project_id
             WHERE turn_metrics.project_id = ?
-              AND NOT {_SUPERSEDED_REVISION_SQL}
+              AND NOT {revisions_left_out}
               AND {_not_expired_sql("incidents.expires_at_unix_nano")}
         """
         with self._mutation("summarize_turn_metric_fleet"):
