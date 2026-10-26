@@ -264,9 +264,10 @@ def test_hosted_jwt_uses_signed_project_and_operation_scope(tmp_path, issuer) ->
     assert unprovisioned.json()["error"]["code"] == "EARSHOT_PROJECT_NOT_PROVISIONED"
 
 
-# Operator-only call surfaces: no hosted scope is defined for any method, so
-# a hosted JWT that grants every scope still gets the existing 403.
-_OPERATOR_ONLY_PATHS = (
+# The call surfaces. The generic incident scopes reach none of them, for any method: a call
+# operation needs its own ``earshot:calls:*`` scope, and the rest stay closed
+# (``test_hosted_calls.py`` covers which is which).
+_CALL_SURFACE_PATHS = (
     "/v1/traces",
     "/v1/calls",
     "/v1/calls/call_0123456789abcdef0123456789abcdef",
@@ -283,35 +284,35 @@ _OPERATOR_ONLY_PATHS = (
 _METHODS = ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE")
 
 
-def test_hosted_jwts_get_operation_unavailable_on_every_call_route_and_method(
-    tmp_path, issuer
-) -> None:
+def test_the_generic_incident_scopes_reach_no_call_route_for_any_method(tmp_path, issuer) -> None:
     from otlp_support import request, serve
 
     store = make_store(tmp_path)
     store.create_project("project-a", display_name="Project A")
-    every_scope = "earshot:read earshot:write earshot:delete"
-    token = _token(issuer, project_id="project-a", scope=every_scope)
+    every_generic_scope = (
+        "earshot:read earshot:write earshot:delete earshot:artifact:delete "
+        "earshot:summary:read earshot:project:delete"
+    )
+    token = _token(issuer, project_id="project-a", scope=every_generic_scope)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/x-protobuf"}
 
     with serve(create_app(store=store, config=_hosted_config(issuer))) as port:
         control = request(port, "GET", "/v1/incidents", headers=headers)
-        hosted_contract = request(port, "GET", "/openapi.json").json()["paths"]
         replies = {
             (method, path): request(port, method, path, b"", headers=headers)
-            for path in _OPERATOR_ONLY_PATHS
+            for path in _CALL_SURFACE_PATHS
             for method in _METHODS
         }
 
     assert control.status == 200
-    # The hosted contract does not list operations it always refuses.
-    assert not set(_OPERATOR_ONLY_PATHS) & set(hosted_contract)
-    assert "/v1/incidents" in hosted_contract
-    assert len(replies) == len(_OPERATOR_ONLY_PATHS) * len(_METHODS)
+    assert len(replies) == len(_CALL_SURFACE_PATHS) * len(_METHODS)
     for (method, path), reply in replies.items():
         assert reply.status == 403, (method, path, reply.status, reply.body)
         if method != "HEAD":
-            assert reply.problem_code() == "EARSHOT_OPERATION_UNAVAILABLE", (method, path)
+            assert reply.problem_code() in (
+                "EARSHOT_SCOPE_REQUIRED",
+                "EARSHOT_OPERATION_UNAVAILABLE",
+            ), (method, path)
 
 
 def test_hosted_capture_rejects_free_text_coverage_and_hmacs_client_ids(tmp_path, issuer) -> None:
