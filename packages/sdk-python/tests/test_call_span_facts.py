@@ -341,3 +341,131 @@ def test_a_reported_time_is_known_exactly_when_its_nanoseconds_fit_signed_64_bit
 
     assert _turn_reporting(largest).reported_latency_ms == largest * 1000
     assert _turn_reporting(smallest_over).reported_latency_ms is None
+
+
+# --- the host profile -------------------------------------------------------------------------
+
+
+def _host(*turns, preset: str = "full"):
+    from host_profile_support import host_request
+
+    return _stored(spans_from_request(host_request(turns)), preset)
+
+
+SECOND = 1_000_000_000
+T0 = 1_800_000_000 * SECOND
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_host_anchors_are_the_speech_spans_and_the_hosts_own_latency(preset) -> None:
+    from host_profile_support import HostTurn
+
+    turn = HostTurn(
+        "turn-1",
+        T0,
+        T0 + 6 * SECOND,
+        user_speech=((T0, T0 + SECOND), (T0 + 2 * SECOND, T0 + 3 * SECOND)),
+        agent_speech=(T0 + 4 * SECOND, T0 + 6 * SECOND),
+        reported_latency_ms=812.5,
+        timeline_continuous=False,
+    )
+
+    [anchors] = turn_anchors(_host(turn, preset=preset))
+
+    assert anchors.framework == "host"
+    assert anchors.turn_span_id == (0x100).to_bytes(8, "big").hex()
+    assert anchors.turn_start_unix_nano == T0
+    assert anchors.user_on_unix_nano == (T0, T0 + 2 * SECOND)
+    assert anchors.user_off_unix_nano == T0 + 3 * SECOND
+    assert anchors.agent_on_unix_nano == T0 + 4 * SECOND
+    assert anchors.reported_latency_ms == 812.5
+    assert anchors.timeline_continuous is False
+
+
+def test_a_host_turn_without_speech_spans_has_unknown_anchors_never_zero() -> None:
+    from host_profile_support import HostTurn
+
+    [anchors] = turn_anchors(_host(HostTurn("turn-1", T0, T0 + SECOND)))
+
+    assert anchors.user_on_unix_nano == ()
+    assert (anchors.user_off_unix_nano, anchors.agent_on_unix_nano) == (None, None)
+    assert (anchors.reported_latency_ms, anchors.timeline_continuous) == (None, None)
+
+
+@pytest.mark.parametrize("latency", [7_635_833, 812.5, 0.001, 0])
+def test_a_host_latency_is_kept_exactly_as_the_host_sent_it(latency) -> None:
+    from host_profile_support import HostTurn
+
+    turn = HostTurn("turn-1", T0, T0 + SECOND, reported_latency_ms=float(latency))
+
+    assert turn_anchors(_host(turn))[0].reported_latency_ms == latency
+
+
+@pytest.mark.parametrize("latency", [-1.0, float("inf"), "812", True])
+def test_a_host_latency_that_is_not_a_finite_non_negative_number_is_unknown(latency) -> None:
+    from host_profile_support import HostTurn
+
+    turn = HostTurn(
+        "turn-1", T0, T0 + SECOND, attributes={"earshot.turn.reported_latency_ms": latency}
+    )
+
+    assert turn_anchors(_host(turn))[0].reported_latency_ms is None
+
+
+def test_speech_spans_of_another_scope_are_not_host_anchors() -> None:
+    from host_profile_support import HostTurn
+
+    spans = _host(
+        HostTurn("turn-1", T0, T0 + 3 * SECOND, agent_speech=(T0 + SECOND, T0 + 2 * SECOND))
+    )
+    for span in spans:
+        if span.span.name == "agent_speech":
+            span.scope.name = "pipecat"
+
+    assert turn_anchors(spans)[0].agent_on_unix_nano is None
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_host_stages_bill_like_the_frameworks_and_unknown_counts_are_not_reported(preset) -> None:
+    from host_profile_support import HostStage, HostTurn
+
+    turn = HostTurn(
+        "turn-1",
+        T0,
+        T0 + 4 * SECOND,
+        stages=(
+            HostStage(
+                "stt",
+                T0,
+                T0 + SECOND,
+                {"gen_ai.provider.name": "deepgram", "gen_ai.request.model": "nova-3"},
+            ),
+            HostStage(
+                "llm",
+                T0 + SECOND,
+                T0 + 2 * SECOND,
+                {
+                    "gen_ai.provider.name": "openai",
+                    "gen_ai.request.model": "gpt-4o-mini",
+                    "gen_ai.usage.input_tokens": 120,
+                    "gen_ai.usage.output_tokens": 30,
+                },
+            ),
+            HostStage(
+                "tts", T0 + 2 * SECOND, T0 + 3 * SECOND, {"gen_ai.provider.name": "cartesia"}
+            ),
+        ),
+    )
+
+    items = usage_items(_host(turn, preset=preset))
+
+    assert {item.framework for item in items} == {"host"}
+    assert _quantities(items, "llm", "input_token") == [120]
+    assert _quantities(items, "llm", "output_token") == [30]
+    assert _quantities(items, "tts", "character") == [None]
+    assert _quantities(items, "stt", "audio_second") == [None]
+    assert {(item.operation, item.provider, item.model) for item in items} == {
+        ("stt", "deepgram", "nova-3"),
+        ("llm", "openai", "gpt-4o-mini"),
+        ("tts", "cartesia", None),
+    }

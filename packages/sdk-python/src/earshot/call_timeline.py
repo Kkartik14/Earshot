@@ -37,6 +37,11 @@ Two mono recordings of one speaker at one start are ambiguous: neither pairs.
    Pipecat turn without them is measured on the ``continuous_timeline_assumed``
    basis, since comparing a run onset with the user-off anchor compares the heard
    gap with the reported latency, not two offsets.
+5. *Declared discontinuity* (host profile): a turn whose producer declares its
+   recording timeline was not continuous across it (``declared_discontinuity``) is
+   ``not_measurable / recorder_timeline_discontinuity`` whatever it measured (a
+   talk-over too), with no value, bound, basis or speech edges, which would give the
+   gap back; the turn's offset and paired agent run stay, for placement.
 
 A value is never fabricated: every other case is ``not_measurable`` with its reason.
 
@@ -60,7 +65,7 @@ import math
 import statistics
 from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import pairwise
 
 # One recorder timeline.
@@ -211,6 +216,23 @@ class Gap:
 
 def not_measurable(reason: str) -> Gap:
     return Gap(status="not_measurable", reason=reason)
+
+
+def declared_discontinuity(gap: Gap) -> Gap:
+    """The gap of a turn whose producer declared its recording timeline not continuous
+    across it (module docstring)."""
+
+    return replace(
+        gap,
+        status="not_measurable",
+        value_ms=None,
+        uncertainty_ms=None,
+        bound_ms=None,
+        reason="recorder_timeline_discontinuity",
+        basis=None,
+        user_end_ms=None,
+        agent_start_ms=None,
+    )
 
 
 def _uncertainty(user: Run, agent: Run) -> float:
