@@ -113,9 +113,10 @@ and `EARSHOT_BEHIND_TLS_PROXY` set, the `EARSHOT_TRUST_LOCAL_NETWORK` rows apply
 
 The rule and its exemption are the same on every `/v1` route, not only `/v1/traces`.
 Connector webhooks under `/hooks/v1/` keep the check without the exemption. In
-`hosted_jwt` mode there is no Host check, and `/v1/traces`, `/v1/recordings*`,
-`/v1/calls*` and `/v1/otlp/stats` answer 403 `EARSHOT_OPERATION_UNAVAILABLE` for every
-method; the hosted `/openapi.json` does not list them.
+`hosted_jwt` mode there is no Host check; `/v1/traces` and the other Call operations need
+the `earshot:calls:*` scopes, and `/v1/otlp/stats` answers 403
+`EARSHOT_OPERATION_UNAVAILABLE` for every method (see
+[hosted mode in the Calls guide](./calls.md#hosted-mode)).
 
 ## Session keys
 
