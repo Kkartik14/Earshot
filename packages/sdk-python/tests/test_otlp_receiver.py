@@ -1,7 +1,7 @@
 """The OTLP/HTTP receiver's pure half: negotiation, decoding, per-span checks, replies.
 
-Driven by the real Pipecat 1.5 capture (``fixtures/captured/pipecat-otlp-1.5``) and
-by spans built with the generated OTLP messages. Error bodies are decoded with the
+Driven by deterministic synthetic Pipecat-shaped OTLP requests and spans built
+with the generated OTLP messages. Error bodies are decoded with the
 reference ``google.rpc.Status`` message, not with Earshot's own encoder.
 """
 
@@ -20,7 +20,6 @@ from opentelemetry.proto.common.v1.common_pb2 import InstrumentationScope, KeyVa
 from opentelemetry.proto.resource.v1.resource_pb2 import Resource
 from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans, Span
 
-from captured_otlp import captured_requests
 from earshot.call_capture import spans_from_request
 from earshot.otlp_receiver import (
     JSON_MEDIA_TYPE,
@@ -58,6 +57,7 @@ from otlp_support import (
     with_links,
 )
 from otlp_support import Reply as _Reply
+from synthetic_otlp import synthetic_requests
 
 pytestmark = pytest.mark.unit
 
@@ -130,7 +130,7 @@ def _base64_ids(json_body: bytes) -> bytes:
 
 
 def test_protobuf_and_json_decode_the_real_capture_to_identical_bytes_links_included() -> None:
-    requests = with_links(captured_requests())
+    requests = with_links(synthetic_requests())
     assert sum(len(span.span.links) for r in requests for span in spans_from_request(r)) == 16
 
     for request in requests:
@@ -265,7 +265,7 @@ def test_an_empty_request_decodes_to_no_spans(media_type, body) -> None:
     assert spans_from_request(decode_export_request(body, media_type)) == []
 
 
-# --- per-span checks (AC5.3, AC5.4) -------------------------------------------------------
+# --- Per-span checks -------------------------------------------------------
 
 
 def _one(**changes) -> object:
@@ -339,7 +339,7 @@ LONG_KEY = "k" * (MAX_ATTRIBUTE_KEY_BYTES + 1)
     ],
 )
 def test_an_attribute_key_longer_than_its_bound_rejects_its_span(where, key, reason) -> None:
-    """Tribunal round 2, Linus N-2: keys are chosen by senders, and nothing bounded them."""
+    """Attribute keys are chosen by senders and must have a size limit."""
 
     span = make_span(1, 1)
     request = make_request([span])
@@ -429,14 +429,14 @@ def _resource(size: int, schema_url: str = "") -> dict[str, object]:
     ],
 )
 def test_a_scope_or_resource_past_its_size_bound_rejects_its_spans(context, reason) -> None:
-    """Tribunal round 3, N3-1b and N3-1c: a span's row stores its scope name, and the
+    """A span's row stores its scope name, and the
     resource is stored again with every scope under it, so each is bounded."""
 
     assert span_rejection(_under(**context)) == reason
 
 
 def test_a_request_keeps_the_spans_of_its_first_256_distinct_scopes() -> None:
-    """Tribunal round 3, N3-1c. A scope takes one of the request's slots when one of
+    """A scope takes one of the request's slots when one of
     its spans is accepted; equal scopes take one slot wherever they are, under any
     resource; a schema URL makes another scope."""
 
@@ -480,7 +480,7 @@ def test_a_request_keeps_the_spans_of_its_first_256_distinct_scopes() -> None:
 
 
 def test_a_request_stores_at_most_its_budget_of_repeated_resource_and_scope_bytes() -> None:
-    """Tribunal round 3b: within the per-resource and per-scope bounds, a resource
+    """Within the per-resource and per-scope bounds, a resource
     is still stored once per distinct scope under it, so a 32 MiB request could store
     6.6 GiB. A request's accepted spans now store at most ``MAX_REQUEST_SHARED_BYTES``
     more than once; a span past it is rejected, and a later span whose resource and
@@ -535,7 +535,7 @@ def test_a_scope_name_counts_against_the_budget_once_per_span() -> None:
 def test_spans_sharing_a_large_resource_and_scope_are_checked_in_time_linear_in_the_request(
     scope_per_span, reason
 ) -> None:
-    """Tribunal round 3, Bellard N3-1: the resource and scope were re-checked for
+    """The resource and scope were re-checked for
     every span under them, so a request of thousands of spans under a resource of
     tens of thousands of attributes held a worker for seconds to hours. Such a
     resource and scope are now past their bounds (round 3b): every check still runs
@@ -580,7 +580,7 @@ def test_equal_large_scopes_and_schema_urls_cost_nothing_per_span_to_check() -> 
 
 
 def test_spans_under_a_long_scope_name_are_checked_in_time_linear_in_the_request() -> None:
-    """Tribunal round 3b: every span read its scope's name to look for U+0000, and
+    """Every span read its scope's name to look for U+0000, and
     reading a name copies it, so spans x name length: tens of thousands of spans
     under a megabyte name (a 2 MB request, far less gzipped) took seconds."""
 

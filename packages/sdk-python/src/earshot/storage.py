@@ -2930,11 +2930,7 @@ class IncidentStore:
                             )
 
                     if not self._catalog_artifacts:
-                        # Persist project provenance before publishing the CAS object.
-                        # If the process stops between the filesystem link and index
-                        # commit, deletion/reconciliation can still erase the orphan.
-                        # A Postgres artifact is a row in the incident's own
-                        # transaction, so it can never be orphaned.
+                        # Persist provenance first so reconciliation can remove crash orphans.
                         connection.execute(
                             """
                             INSERT INTO pending_ingests(

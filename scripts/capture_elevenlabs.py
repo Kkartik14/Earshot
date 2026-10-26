@@ -50,7 +50,7 @@ from provider_capture import (
 API = "https://api.elevenlabs.io"
 RAW = RAW_ROOT / "elevenlabs"
 CALLER_CACHE = ROOT / ".earshot" / "pipecat_otlp"
-AGENT_NAME = "earshot-ws0-capture"
+AGENT_NAME = "earshot-fixture-agent"
 AGENT_PROMPT = (
     "You are a restaurant booking line used for an automated test. Reply in one short "
     "sentence of at most twelve words. Never ask for names, phone numbers or emails."
@@ -136,7 +136,7 @@ def _caller_lines() -> list[bytes]:
 def _create_agent(key: str) -> str:
     payload = {
         "name": AGENT_NAME,
-        "tags": ["earshot-ws0"],
+        "tags": ["earshot-fixture"],
         "conversation_config": {
             "agent": {
                 "first_message": FIRST_MESSAGE,

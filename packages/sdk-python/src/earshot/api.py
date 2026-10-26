@@ -1564,13 +1564,8 @@ class IncidentExportResponse(ApiModel):
 
 
 #
-# The request body is the ``CapturePayload`` the @earshot/browser capture kernel
-# drains (see ``packages/browser/src/types.ts``), so its envelope keys are the
-# browser's camelCase names while the response stays in this API's snake_case.
-#
-# The wire format carries its OWN version (``captureVersion``) independently of
-# the ``/v1`` path so the client and server can evolve the payload without a new
-# route; an unsupported version is a specific, clean client error.
+# Capture requests use camelCase; responses keep this API's snake_case.
+# ``captureVersion`` versions the body independently of ``/v1``.
 
 CAPTURE_PROTOCOL_VERSION = 1
 # ``captureVersion: 2`` opts a client into continuous capture: one journal-backed
@@ -1584,12 +1579,7 @@ SUPPORTED_CAPTURE_VERSIONS = (CAPTURE_PROTOCOL_VERSION, CONTINUOUS_CAPTURE_VERSI
 # ClockDomain, never rebased onto the server clock.
 _CAPTURE_CLOCK_KIND = "browser_monotonic"
 
-# A capture batch is a partial observation of a session still in progress: the
-# browser drained telemetry mid-call and never observed the call close. The
-# incident says so through the recovery declaration rather than the journal one
-# it never had -- ``method`` names the reconstruction source, ``reason`` becomes
-# the ``recorder.session_close`` coverage reason, and the session status is not
-# ``completed`` so it cannot pass as a finished call.
+# Browser batches stay provisional because they do not observe call close.
 _CAPTURE_RECOVERY_METHOD = "browser_capture_batch"
 _CAPTURE_RECOVERY_REASON = "capture_batch_flushed_before_close"
 _CAPTURE_SESSION_STATUS = "in_progress"
@@ -1601,11 +1591,7 @@ _MAX_CAPTURE_TIMESTAMP_MS = 1e10  # ~115 days of monotonic browser uptime
 _MAX_CAPTURE_WALL_ORIGIN_MS = 1e13  # ~year 2286 in Unix milliseconds
 _MAX_CAPTURE_UNCERTAINTY_MS = 1e6
 
-# Identifiers and labels the payload may carry. Everything the payload can place
-# in the stored incident is constrained to one of these shapes. (The per-stat and
-# per-event allowlists, and the shapes for opaque stat ids and device/sink
-# hashes, moved to ``earshot.capture.sanitize`` so the HTTP path and an in-process
-# capture source enforce byte-for-byte the same allowlist.)
+# Payload labels and IDs are bounded here; stat/event allowlists live in shared sanitizers.
 _CAPTURE_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$"
 _CAPTURE_LABEL_PATTERN = r"^[a-z][a-z0-9_.-]{0,63}$"
 _CAPTURE_TRACEPARENT_PATTERN = r"^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
@@ -1909,12 +1895,7 @@ _AUDIO_BINARY = {"schema": {"type": "string", "format": "binary"}}
 _MEDIA_FORMAT_NAMES = {"wav": "WAV", "flac": "FLAC", "ogg": "Ogg Opus"}
 # A recording upload reaches the blob store in writes of about this size.
 _RECORDING_WRITE_BYTES = 1024 * 1024
-# A recording upload that receives no body bytes for this long is ended with 408
-# ``EARSHOT_UPLOAD_IDLE_TIMEOUT``: an upload in flight holds its call, so a client
-# whose connection died without a FIN must not hold it forever. However it trickles,
-# an upload still running the upload hold cap after it started
-# (``CallTimings.upload_hold_seconds``) is ended with 408
-# ``EARSHOT_UPLOAD_DEADLINE_EXCEEDED``.
+# Idle uploads and hold-cap violations receive distinct 408 errors.
 UPLOAD_IDLE_TIMEOUT_SECONDS = 60.0
 _RECORDING_UPLOAD_REQUEST = {
     "parameters": [
@@ -2789,16 +2770,9 @@ def _hosted_capture_projection(
     )
 
 
-# -- browser capture: independent server-side enforcement ----------------------
-#
-# The per-stat / per-member / per-event allowlists and their pure sanitizers live
-# in ``earshot.capture.sanitize`` so the HTTP path and an in-process capture
-# source enforce byte-for-byte the same server-side allowlist. The functions
-# below are the request-shaped iterators over the Pydantic bodies: they apply the
-# batch size limit and count the drops the pure sanitizers refuse, then surface
-# those counts as coverage. A member the client sends that is not on the allowlist
-# -- a `base64Certificate`, a DTLS `fingerprint`, a candidate `address`/`ip`/`url`,
-# a device label -- is dropped BEFORE an engine sees it, never stored.
+# -- browser capture: server-side enforcement ----------------------------------
+# Shared sanitizers enforce the same allowlists for HTTP and in-process capture.
+# Iterators enforce request limits and report rejected fields as coverage.
 
 
 def _sanitize_capture_snapshots(
@@ -3460,17 +3434,7 @@ def create_app(
         == Path(live.journal_dir).expanduser().resolve()
     ):
         raise ValueError("capture journal directory must differ from the checkpoint directory")
-    # Continuous browser calls (``captureVersion: 2``) accumulate through this,
-    # onto the same live sessions the checkpoint surface uses. Bounded per project
-    # to the same budget a project's live sessions run under, so capture cannot
-    # spend more of the machine than any other producer.
-    #
-    # With a durable journal directory configured, each in-flight call is written
-    # to disk, so a backend restart does not lose it: ``rebuild_from_disk`` replays
-    # every surviving call's journal back into a provisional live session, and a
-    # client that continues a call resumes cleanly rather than getting an unknown
-    # session. Without one, calls stay in memory and a restart drops them, exactly
-    # as it drops any other live session.
+    # Version 2 calls share the live-session budget; journals enable restart recovery.
     capture_calls = CaptureCallRegistry(
         live,
         journal_dir=capture_journal_dir,
@@ -3973,13 +3937,7 @@ def create_app(
                 },
                 status_code=503,
             )
-        # The Host check stops DNS rebinding against a server that answers without
-        # a credential: a loopback listener with no token, or a trusted local
-        # network. Behind a TLS proxy every request needs a credential and the
-        # proxy forwards the public Host, so the check does not apply there. It
-        # guards ``/v1`` only: a connector hook carries its own provider credential,
-        # which a rebinding page cannot send, and a tunnel to a laptop forwards the
-        # public Host (rewriting it would expose ``/v1`` instead).
+        # Protect unauthenticated local ``/v1`` requests from DNS rebinding.
         local_only_host_boundary = settings.auth_mode != "hosted_jwt" and (
             settings.trust_local_network
             or (

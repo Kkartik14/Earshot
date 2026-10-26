@@ -1,4 +1,4 @@
-"""AC8.1 end to end: a 1 GiB recording upload through a real server process stays small.
+"""A 1 GiB recording upload through a real server process stays small.
 
 The server is ``uvicorn`` serving ``apps.ingest.app:app`` in a subprocess, through
 the whole HTTP path: the authentication ``BaseHTTPMiddleware``, the recordings

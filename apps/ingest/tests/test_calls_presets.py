@@ -1,4 +1,4 @@
-"""FR-3: every project has a capture preset; 0.1.x upgrades keep their privacy posture.
+"""Every project has a capture preset; 0.1.x upgrades keep their privacy posture.
 
 ``projects.capture_preset`` (revision ``0004_calls``) is ``full`` or
 ``metadata_only``. Every catalog 0.2.0 creates, on SQLite or Postgres, starts

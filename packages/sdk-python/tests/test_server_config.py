@@ -1,4 +1,4 @@
-"""One configuration parser for ``earshot serve`` and ``apps/ingest/app.py`` (AC11.1).
+"""One configuration parser for ``earshot serve`` and ``apps/ingest/app.py``.
 
 The parser reads environment variables (and, for ``serve``, flags that override
 them) into one ``ServerSettings``. Invalid values refuse to start with a message
@@ -129,8 +129,8 @@ CALL_TIMINGS = (
 @pytest.mark.parametrize("name", CALL_TIMINGS)
 @pytest.mark.parametrize("value", ["1e10", "1e300", "315360001", "1e-12"])
 def test_a_call_timing_outside_its_bounds_is_refused_at_startup(name: str, value: str) -> None:
-    """Tribunal round 1, B-4: a timing that cannot be added to a nanosecond time
-    (int64) or is under a nanosecond is refused here, not on the first request."""
+    """Reject timings that exceed the nanosecond range or are shorter than one
+    nanosecond when the server starts, rather than on the first request."""
 
     with pytest.raises(ConfigurationError) as refused:
         load_server_settings({name: value})

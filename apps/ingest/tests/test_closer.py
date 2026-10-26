@@ -3,9 +3,9 @@
 ``Closer.claim()``, ``materialize()`` and ``finish()`` are the three steps the
 server's maintenance loop composes (``close_next``); tests call them one by one,
 so an interleaving (a span arriving between claim and finish) is real and needs
-no barrier. Every test runs on a real catalog (both dialects), the real Pipecat
-1.5 capture replayed through ``CallStore.record_spans`` as the receiver does, and
-the store's injected clock.
+no barrier. Every test runs on a real catalog (both dialects), synthetic
+Pipecat-shaped OTLP requests replayed through ``CallStore.record_spans`` as the
+receiver does, and the store's injected clock (§7 seam 1).
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from pathlib import Path
 
 import pytest
 
-from captured_otlp import CAPTURED_SESSION_KEY, captured_requests
 from earshot.blobstore import LocalBlobStore
 from earshot.call_capture import spans_from_request
 from earshot.clock import ManualClock
@@ -26,6 +25,7 @@ from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_recordings import RecordingStore
 from otlp_support import make_request, make_span, string_attribute
 from store_support import catalog, catalog_rows, make_store
+from synthetic_otlp import SYNTHETIC_SESSION_KEY, synthetic_requests
 
 pytestmark = pytest.mark.integration
 
@@ -36,7 +36,7 @@ LONG_QUIET = TIMINGS.long_quiet_nano
 END_GRACE = TIMINGS.end_grace_nano
 LATE_DEBOUNCE = TIMINGS.late_debounce_nano
 LEASE = 60 * SECOND
-# The real capture's seven requests arrive 5 s apart: the end marker (request 7)
+# The seven synthetic requests arrive 5 s apart: the end marker (request 7)
 # at START + 30 s, so the call is due END_GRACE later.
 END_SIGNAL = START + 30 * SECOND
 DUE = END_SIGNAL + END_GRACE
@@ -64,10 +64,10 @@ def _world(tmp_path: Path) -> World:
 
 
 def _replay(world: World, requests=None) -> str:
-    """Record the requests 5 s apart, as the real exporter sent them; the call's ID."""
+    """Record synthetic requests 5 s apart and return the call's ID."""
 
     call_ids: set[str] = set()
-    for request in captured_requests() if requests is None else requests:
+    for request in synthetic_requests() if requests is None else requests:
         call_ids.update(world.calls.record_spans("default", spans_from_request(request)).call_ids)
         world.clock.advance(5 * SECOND)
     [call_id] = call_ids
@@ -123,7 +123,7 @@ def _bundle(world: World, bundle_id: str):
 def _late_span(world: World, span: int, *, name: str = "llm") -> None:
     """One more span of the call's trace (unkeyed: it joins through its trace)."""
 
-    trace = int.from_bytes(spans_from_request(captured_requests()[0])[0].span.trace_id, "big")
+    trace = int.from_bytes(spans_from_request(synthetic_requests()[0])[0].span.trace_id, "big")
     world.calls.record_spans(
         "default",
         spans_from_request(make_request([make_span(trace, span, name=name, start=END_SIGNAL)])),
@@ -287,7 +287,7 @@ def _manifest(speaker: str, started_at: int = START):
 
     return RecordingManifest(
         recording_id=f"conv-1.{speaker}",
-        session_key=CAPTURED_SESSION_KEY,
+        session_key=SYNTHETIC_SESSION_KEY,
         speaker=speaker,
         content_type="audio/wav",
         started_at_unix_nano=str(started_at),
@@ -341,7 +341,7 @@ def test_a_pending_recording_holds_a_call_that_runs_far_longer_than_the_hold(tmp
     world = _world(tmp_path)
     world.recordings.create("default", _manifest("user"))
     world.recordings.create("default", _manifest("agent"))
-    requests = captured_requests()
+    requests = synthetic_requests()
     _replay(world, requests[:6])
     for minute in range(1, 20):
         _at(world, START + minute * 60 * SECOND)
@@ -421,7 +421,7 @@ def test_a_call_whose_only_recording_failed_closes_without_a_revision(tmp_path) 
 
 
 def _with_mixed_classes(requests):
-    """The real capture with one malformed stt span: a transcript and an LLM output on one
+    """Synthetic requests with one malformed stt span: a transcript and an LLM output on one
     record, which the recorder refuses (one sensitive capture class per record)."""
 
     for request in requests:
@@ -440,7 +440,7 @@ def test_a_failing_materialization_backs_off_exponentially_with_a_stable_code(
     tmp_path, caplog
 ) -> None:
     world = _world(tmp_path)
-    call_id = _replay(world, _with_mixed_classes(captured_requests()))
+    call_id = _replay(world, _with_mixed_classes(synthetic_requests()))
     _at(world, DUE)
 
     outcome = world.closer.close_next()
@@ -678,7 +678,7 @@ def _padded(world: World) -> None:
     """A 4 MiB span on the call's trace: its snapshot fills any pipe buffer, so a
     child that stops reading blocks the parent's send."""
 
-    trace = int.from_bytes(spans_from_request(captured_requests()[0])[0].span.trace_id, "big")
+    trace = int.from_bytes(spans_from_request(synthetic_requests()[0])[0].span.trace_id, "big")
     padding = [string_attribute("padding", "x" * (4 << 20))]
     world.calls.record_spans(
         "default",
@@ -1088,7 +1088,7 @@ def test_a_call_gets_at_most_sixteen_revisions_plus_its_first_end_signal_close(t
 
 
 def _three_revisions(world: World) -> str:
-    """The real call closed by its end marker, then two late spans: r1, r2, r3."""
+    """The synthetic call closed by its end marker, then two late spans: r1, r2, r3."""
 
     call_id = _replay(world)
     _at(world, DUE)

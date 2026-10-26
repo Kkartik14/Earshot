@@ -259,11 +259,7 @@ class InProcessMaterializer:
         pass
 
 
-# The worker protocol. Parent to child: the snapshot (pickled, without spans),
-# then each span as two raw frames (its resource digest, its payload), then an
-# empty frame, then ``_BUILD`` or ``_ABORT``; ``None`` instead of a snapshot stops
-# the child. Child to parent: ``_READY`` once, then per build ``(_BUILT,
-# PreparedIncident)`` or ``(_REFUSED, exception type name)``.
+# Parent streams a snapshot and spans; child returns readiness and build status.
 _READY = "ready"
 _BUILD = "build"
 _ABORT = "abort"

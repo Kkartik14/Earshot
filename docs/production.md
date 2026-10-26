@@ -168,8 +168,8 @@ which ships inside the package):
 pip install 'earshot-observability[server,postgres,s3,signals]'
 ```
 
-The container image includes it. It is 142 MB with the extra, against 94 MB for the
-0.2.0 image without it. Without the extra the server runs, and every analysis is
+The container image includes it. It is 142 MB with the extra, against 94 MB without
+it. Without the extra the server runs, and every analysis is
 `unavailable` with `EARSHOT_SIGNALS_EXTRA_REQUIRED`: Calls keep their transcript and
 reported latency, and no turn's audible gap is measured. A server started with the extra
 requeues those analyses.

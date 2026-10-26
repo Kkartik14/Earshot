@@ -1,14 +1,4 @@
-/**
- * Mocked W3C APIs for the capture-kernel tests.
- *
- * Because the kernel consumes only structural interfaces (see `../types.ts`),
- * these fakes are tiny hand-written stand-ins for `RTCPeerConnection`,
- * `RTCStatsReport`, `AudioContext`, `MediaDevices`, Permissions and friends —
- * no jsdom, no real browser. Each fake exposes a `dispatch`/`set*` helper so a
- * test can drive lifecycle transitions deterministically.
- *
- * Excluded from the built package (see `tsconfig.build.json`).
- */
+/** Structural W3C API fakes for deterministic tests; excluded from the built package. */
 
 import type { CaptureRequestInit, FetchLike } from "../transport.js";
 import type {
@@ -115,11 +105,7 @@ export class FakePeerConnection implements PeerConnectionLike {
   }
 }
 
-/**
- * A `RTCPeerConnection` whose `getStats()` stays pending until `resolveNext()`
- * is called, letting a test hold a sample in flight and prove the recorder skips
- * an overlapping one instead of running two concurrently.
- */
+/** A peer connection fake whose pending stats call lets tests verify overlap handling. */
 export class ControllablePeerConnection implements PeerConnectionLike {
   getStatsCalls = 0;
   private readonly resolvers: Array<(report: RTCStatsReportLike) => void> = [];
@@ -327,11 +313,7 @@ export interface RecordedRequest {
   init: CaptureRequestInit;
 }
 
-/**
- * A scripted `fetch`: each entry is either an HTTP status to answer with or
- * `"throw"` to model a transport-level failure. The last entry repeats once the
- * script runs out, so a test can drive "always failing" without a long list.
- */
+/** Scripted fetch responses, with the final response repeated after the script ends. */
 export class FakeFetch {
   readonly requests: RecordedRequest[] = [];
 

@@ -1,8 +1,8 @@
 """Measure what a long call costs the server: its close, and its detail read. Not run in CI.
 
-The call is the WS7 closer bench's synthetic Pipecat call (Carmack's tribunal
-probes): ``--turns`` turns, each a ``turn`` span (``pipecat.turn``) and its
-``stt``, ``llm`` and ``tts`` spans (``pipecat``), where every ``llm`` span carries
+The generated call exercises the closer with synthetic Pipecat-shaped spans: each
+of the ``--turns`` turns has a ``turn`` span (``pipecat.turn``) and its ``stt``,
+``llm`` and ``tts`` spans (``pipecat``). Every ``llm`` span carries
 the whole conversation so far as its ``input``, as Pipecat exports it. A
 1000-turn call is 4001 spans and about 237 MiB of stored span payload.
 

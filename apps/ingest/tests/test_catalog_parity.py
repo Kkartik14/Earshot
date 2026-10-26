@@ -161,11 +161,7 @@ def test_postgres_columns_have_the_portable_widths(tmp_path) -> None:
     integer_nano = {key for key, (kind, _) in nano.items() if kind != "text"}
     decimal_nano = {key for key, (kind, _) in nano.items() if kind == "text"}
 
-    # v19: 17 and 13. Revision 0004 adds 16 integer columns (calls 6, call_traces 2,
-    # spans 3, recordings 2, call_revisions, pending_blob_deletions, call_tombstones)
-    # and one decimal column (recordings.started_at_unix_nano). Revision 0005 adds 7
-    # integer ones (audio_analysis 3, call_projections 2, prices 2), and revision 0006
-    # 5 (recording_fetches).
+    # These expected counts cover the baseline plus columns added by revisions 0004 through 0006.
     assert (len(integer_nano), len(decimal_nano)) == (45, 14)
     assert {nano[key][0] for key in integer_nano} == {"bigint"}
     assert {nano[key][1] for key in decimal_nano} == {"C"}

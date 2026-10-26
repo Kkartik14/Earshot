@@ -15,11 +15,7 @@ COVERAGE_LOSS_COUNT_MIN_CONTRACT_VERSION = "0.2.0"
 API_VERSION = "0.16.0"
 ANALYZER_VERSION = "0.6.0"
 TURN_FACT_PROJECTION_VERSION = "0.1.0"
-# Stored per incident (``incidents.projection_version``). Bump it whenever an
-# incident's projected rows would change for the same artifact: the graph or
-# turn-fact projection, ``ANALYZER_VERSION`` or ``TURN_FACT_PROJECTION_VERSION``,
-# or the expiry and export columns. Older rows are then re-projected in the
-# background after the server starts.
+# Bump when projection output changes so startup rebuilds stale incident rows.
 INCIDENT_PROJECTION_VERSION = 1
 PIPELINE_ADAPTER_VERSION = "0.3.0"
 LIVEKIT_ADAPTER_VERSION = "0.1.0"

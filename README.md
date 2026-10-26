@@ -74,11 +74,12 @@ curl -X PUT http://127.0.0.1:4319/v1/recordings/call-123-user/content \
   -H 'Content-Type: audio/wav' --data-binary @user.wav
 ```
 
-A created Recording holds its Call open until it is uploaded, for up to 10 minutes after
-the call ends (`EARSHOT_RECORDING_UPLOAD_HOLD_SECONDS`), so the Call's first Revision
-includes the audio. A Recording created only after the Call has closed misses that
-Revision: its audio lands in a later `late_data` Revision, about 30 seconds after the
-upload.
+A pending Recording holds its Call for up to 10 minutes after the latest of its creation,
+the Call's latest evidence, and its end signal. If no upload is streaming by then, Earshot
+marks it failed. A PUT already in flight has a separate 10-minute deadline measured from
+upload start, so it can keep the Call open beyond the pending deadline. A Recording
+created only after the Call has closed appears in a later `late_data` Revision, about 30
+seconds after the upload.
 
 **4. See the call.**
 
@@ -86,13 +87,14 @@ upload.
 curl http://127.0.0.1:4319/v1/calls
 ```
 
-A Call is listed as soon as its first Recording is created or its first span arrives.
-Pipecat sends its `conversation` span when the call ends. About 10 seconds after Earshot
-has that span and every Recording's bytes, the Call closes and stores a Revision with its
-transcript and recordings. `GET /v1/calls/<call_id>` shows them. Open
-http://127.0.0.1:4319/calls for the calls list and each call's view: the player, the
-transcript (click a line to seek), each turn's reported latency and audible gap, and the
-cost. See [the call view](docs/calls.md).
+A Call is listed as soon as its first Recording is created or Earshot receives a span that
+resolves a session key.
+Pipecat sends its `conversation` span as an end signal. Earshot creates a final Revision
+after a 10-second grace period and any active recording uploads finish or reach their
+deadline. Without an end signal, five quiet minutes make a provisional Revision due, but
+a pending Recording can hold it until the deadlines above. `GET /v1/calls/<call_id>` shows
+the Call and its Revisions. Open http://127.0.0.1:4319/calls to see the calls list and
+each call's player, transcript, turn latency, audible gap, and cost. See [the call view](docs/calls.md).
 
 The [OTLP quick start](docs/otlp-quickstart.md) covers API keys, containers, session keys,
 close timing, recordings and error handling. [`examples/pipecat_otlp`](examples/pipecat_otlp/)

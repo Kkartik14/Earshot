@@ -1,4 +1,4 @@
-"""API-key authentication cost and revocation (FR-2).
+"""API-key authentication cost and revocation.
 
 A request with an API key costs one indexed, lock-free SELECT of the key's row
 (revoked or not, project active or not) every time. The memory-hard scrypt check

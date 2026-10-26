@@ -7,9 +7,7 @@ and its cost. The calls list filters on all of these and searches transcript tex
 
 The bundled viewer shows them at `/calls` and `/calls/<call_id>`. This page describes
 what the server computes and the API the viewer reads; the
-[OTLP quick start](./otlp-quickstart.md) shows how to send a call. The design is in
-[ADR 0008](./adr/0008-recording-analysis-and-call-projections.md) (analysis and
-projections) and [ADR 0009](./adr/0009-cost-model.md) (cost). The exact schemas are in
+[OTLP quick start](./otlp-quickstart.md) shows how to send a call. The exact API schemas are in
 [`spec/backend-api.openapi.json`](../spec/backend-api.openapi.json).
 
 ## What a call needs
@@ -197,8 +195,7 @@ times are both present for `measured`, start only for `start_only`, and both nul
 ones; `unknown_items` counts the rest. A cost is `complete` when it has a lower bound and
 no unknown item. The viewer shows `$0.0090` for a complete cost, else
 `≥ $0.0046 · 2 unknown`, and the estimate apart as `+ ~$0.0042 (estimated)`. Money is
-integer nano-USD (10⁻⁹ USD). [ADR 0009](./adr/0009-cost-model.md) lists which spans
-bill and why.
+integer nano-USD (10⁻⁹ USD). The rules below describe which spans are billed and why.
 
 ## The host span profile
 

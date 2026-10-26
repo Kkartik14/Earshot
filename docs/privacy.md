@@ -68,8 +68,9 @@ keys. It does not catch:
 
 A producer that sends such attributes must remove them itself, or not send them to a
 `metadata_only` Project. Protobuf fields outside the OTLP schema are discarded. The test
-suite replays a real Pipecat call and a real LiveKit call under `metadata_only` and
-searches the stored bytes for the raw key, identity and content values.
+suite replays the scripted Pipecat and LiveKit samples under `metadata_only`, then
+searches stored bytes for session keys, identities, and content that the preset should
+drop.
 
 `redacted` is reserved. Asking for it is refused with `EARSHOT_PRESET_UNAVAILABLE`. There
 is no redaction engine, and a regex masker would give a false sense of safety. A Project
@@ -79,7 +80,7 @@ that needs masking must use `metadata_only` until one exists.
 
 - **New installs.** Every database created by 0.2.0 or later, SQLite or Postgres, starts
   with the `default` Project set to `full`. Every Project created later is `full` too.
-- **Upgrades.** A 0.1.x data directory opened by 0.2.0 sets **every existing Project to
+- **Upgrades.** A 0.1.x data directory opened by 0.2.0 or later sets **every existing Project to
   `metadata_only`**, in the same transaction as the upgrade, and logs
   `EARSHOT_LEGACY_CAPTURE_PRESET` with the count. This includes a data directory with no
   Incidents. An upgrade never widens what an installation stores. Until an operator opts a
@@ -202,8 +203,7 @@ values. Application logging must follow the same rule.
 ## Media
 
 Since 0.2.0, Earshot holds audio for Projects whose preset is `full`. Before 0.2.0 it
-never stored media bytes; that rule is superseded by
-[ADR 0004](./adr/0004-capture-presets-and-media-custody.md).
+never stored media bytes. The current retention and erasure rules are described here.
 
 ### Recordings held by Earshot
 
@@ -260,8 +260,8 @@ Because Earshot never reads those bytes, it cannot honestly assert a digest over
 
 Either shape may also declare `consent`, `retention`, a covered `time_range`, and the
 media's own `clock_domain_id`. Alignment to the incident timeline is an ordinary
-`ClockRelation` between that domain and the session's — there is no separate media
-synchronization model. Media no declared calibration reaches stays honestly unaligned
+`ClockRelation` between that domain and the session's. There is no separate media
+synchronization model. Without a declared calibration, media remains unaligned
 (`EARSHOT_MEDIA_UNALIGNED`, a warning): unalignable custody is still legitimate custody,
 it simply cannot be overlaid.
 

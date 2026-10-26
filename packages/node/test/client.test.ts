@@ -1,9 +1,4 @@
-/**
- * The recordings and calls client against a real `earshot serve` (test/server.ts),
- * with a real project API key and the real LiveKit 1.8 stereo Ogg Opus recording
- * from fixtures/captured. What an Earshot server never answers (a redirect, a
- * proxy's page) comes from real local `node:http` servers.
- */
+/** Exercise the client against a real server and recording, with local HTTP servers for redirect and proxy failures. */
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {

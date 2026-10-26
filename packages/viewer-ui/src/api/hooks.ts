@@ -176,11 +176,7 @@ export function useContradictions(bundleId: string | undefined) {
   });
 }
 
-/** The explicit "what the evidence does NOT tell us" for one incident: coverage
- * gaps, analysis/turn limitations, and policy omissions, each with its reason.
- * Kept as its own query so an unavailable or stale-analysis projection surfaces
- * as its coded state, and an empty answer reads as an examined "no gaps found"
- * — never silently collapses into "nothing is missing". */
+/** Evidence gaps and policy omissions, queried separately so unavailable analysis stays distinct from an empty finding. */
 export function useNotObserved(bundleId: string | undefined) {
   const scope = useViewerQueryScope();
   return useQuery({
@@ -231,14 +227,7 @@ export function useExplanation(bundleId: string | undefined) {
   });
 }
 
-/** A structured diff of this incident against a chosen known-good incident.
- *
- * Lazily enabled: it runs only once a baseline is picked, and never against the
- * incident itself. The baseline side keeps its own stable error codes
- * (`EARSHOT_KNOWN_GOOD_*`) so a failure names which incident is missing rather
- * than blanking the whole diff; those, and a stale-analysis conflict
- * (`EARSHOT_ANALYSIS_BINDING_MISMATCH`), surface as the code the viewer renders
- * as an explicit state. */
+/** Lazily compare this incident with a selected baseline, preserving backend error codes for explicit UI states. */
 export function useComparison(
   bundleId: string | undefined,
   knownGoodBundleId: string | null,
@@ -261,12 +250,7 @@ export function useComparison(
   });
 }
 
-/** Project this incident through a registered exporter, by name.
- *
- * Lazily enabled: it runs only once a format is requested. A policy refusal
- * (`EARSHOT_EXPORT_DENIED`) or an unregistered name
- * (`EARSHOT_UNKNOWN_EXPORT_FORMAT`) arrives as its stable code, which the viewer
- * renders as an explicit refusal rather than an empty or fabricated document. */
+/** Run an exporter on demand and preserve refusal codes for explicit UI states. */
 export function useExport(bundleId: string | undefined, format: ExportFormat | null) {
   const scope = useViewerQueryScope();
   return useQuery({

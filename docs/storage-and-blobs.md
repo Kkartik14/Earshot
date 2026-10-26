@@ -108,13 +108,13 @@ always migrates on start.
 
 ## Upgrading from 0.1.x
 
-0.2.0 upgrades SQLite data directories written by 0.1.x. It is tested against real
+0.2.0 and later upgrade SQLite data directories written by 0.1.x. This is tested against real
 catalogs written by 0.1.0 (schema v10) through the last 0.1.x commit (schema v19): row
 counts and artifact digests survive, and the result matches a fresh install.
 
 1. Stop every Earshot process that uses the data directory.
 2. Back it up as one unit, as in [the backup procedure](./storage.md#backup-and-restore-procedure).
-3. Install 0.2.0 with the server extra.
+3. Install the current release with the server extra.
 4. Check the state, then upgrade:
 
    ```bash

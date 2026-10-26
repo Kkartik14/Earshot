@@ -3,10 +3,9 @@
 For each backend, a real server (the app on uvicorn, in this process) receives
 ``--requests`` OTLP/HTTP protobuf exports of ``--spans`` spans each, authenticated
 by a project API key whose verdict is already cached (a warm-up runs first). Each
-request is new evidence: the real Pipecat 1.5 capture's spans (attributes, LLM
-input history and all) under fresh trace and span IDs. The ack time is from the
-first byte sent to the last byte of the 200 read, on one keep-alive connection
-per client.
+request uses generated Pipecat-shaped spans with synthetic text and identifiers.
+The acknowledgement time runs from the first byte sent until the last byte of
+the 200 response is read, over one keep-alive connection per client.
 
 The batch shape is the one a voice worker's ``BatchSpanProcessor`` sends:
 ``--traces N`` spreads each request's spans over N traces (N calls), each keyed by
@@ -43,6 +42,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "sdk-python" / "src"))
+sys.path.insert(0, str(ROOT / "packages" / "sdk-python" / "tests"))
 
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (  # noqa: E402
     ExportTraceServiceRequest,
@@ -50,19 +50,15 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (  # noqa: 
 
 from earshot.api import create_app  # noqa: E402
 from earshot.storage import IncidentStore  # noqa: E402
+from synthetic_otlp import synthetic_requests  # noqa: E402
 
-FIXTURE = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5"
 DEFAULT_POSTGRES_URL = "postgresql://earshot:earshot@127.0.0.1:55460/earshot"
 
 
-def _captured_spans() -> tuple[ExportTraceServiceRequest, list]:
-    manifest = json.loads((FIXTURE / "manifest.json").read_text())
-    requests = [
-        ExportTraceServiceRequest.FromString((FIXTURE / entry["file"]).read_bytes())
-        for entry in manifest["requests"]
-    ]
+def _synthetic_spans() -> tuple[ExportTraceServiceRequest, list]:
+    requests = synthetic_requests()
     spans = [
-        span
+        (scope_spans.scope.name, span)
         for request in requests
         for resource_spans in request.resource_spans
         for scope_spans in resource_spans.scope_spans
@@ -79,13 +75,13 @@ def _payloads(
     follow_on: bool = False,
     client: int = 0,
 ) -> list[bytes]:
-    """``count`` requests of ``spans_per_request`` captured spans under new IDs,
+    """``count`` requests of ``spans_per_request`` synthetic spans under new IDs,
     spread over ``traces`` traces each (``follow_on``: the same traces every time,
     keyed in the first request only)."""
 
     if not 1 <= traces <= spans_per_request:
         raise SystemExit("--traces must be between 1 and --spans")
-    template, spans = _captured_spans()
+    template, spans = _synthetic_spans()
     resource = template.resource_spans[0].resource
     per_trace = spans_per_request // traces
     bound = [secrets.token_bytes(16) for _ in range(traces)]
@@ -94,15 +90,20 @@ def _payloads(
         request = ExportTraceServiceRequest()
         resource_spans = request.resource_spans.add()
         resource_spans.resource.CopyFrom(resource)
-        scope_spans = resource_spans.scope_spans.add()
-        scope_spans.scope.name = "pipecat"
+        scopes: dict[str, Any] = {}
         for trace in range(traces):
             trace_id = bound[trace] if follow_on else secrets.token_bytes(16)
             keyed = number == 0 if follow_on else True
             for index in range(per_trace):
                 position = (number if follow_on else 0) * per_trace + index
+                scope_name, span_template = spans[position % len(spans)]
+                scope_spans = scopes.get(scope_name)
+                if scope_spans is None:
+                    scope_spans = resource_spans.scope_spans.add()
+                    scope_spans.scope.name = scope_name
+                    scopes[scope_name] = scope_spans
                 span = scope_spans.spans.add()
-                span.CopyFrom(spans[position % len(spans)])
+                span.CopyFrom(span_template)
                 span.trace_id = trace_id
                 span.span_id = (position + 1).to_bytes(8, "big")
                 span.parent_span_id = b""

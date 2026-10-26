@@ -1,8 +1,8 @@
-"""The closer in real server processes: both entry points, and crash recovery (AC6.1, AC6.4).
+"""The closer in real server processes: both entry points and crash recovery.
 
 Real ``earshot serve`` and ``uvicorn apps.ingest.app:app`` processes, configured
-only through the environment, receive the real Pipecat 1.5 capture over HTTP; the
-closer in their maintenance loop turns it into revision 1. Short call timings
+only through the environment, receive synthetic Pipecat-shaped OTLP requests
+over HTTP; the closer in their maintenance loop turns them into revision 1. Short call timings
 (``EARSHOT_CALL_*_SECONDS``) keep each wait under a few seconds.
 
 The crash tests arm one of the closer's crash points (``after_claim_commit``,
@@ -22,10 +22,10 @@ from pathlib import Path
 
 import pytest
 
-from captured_otlp import captured_requests
 from otlp_support import make_request, make_span, post_otlp, serve, string_attribute
 from server_process import ServerProcess
 from store_support import catalog_rows, make_store
+from synthetic_otlp import synthetic_requests
 
 pytestmark = pytest.mark.e2e
 
@@ -45,7 +45,7 @@ def _wait_for(check: Callable[[], bool], what: str, timeout: float = 20.0) -> No
 
 
 def _replay(port: int) -> None:
-    for request in captured_requests():
+    for request in synthetic_requests():
         reply = post_otlp(port, request.SerializeToString())
         assert reply.status == 200, reply.body
 
@@ -173,7 +173,7 @@ def test_a_crash_after_the_catalog_commit_leaves_one_revision_and_no_conflict(tm
             1,
             ("closed", 0, None, 1, True, 0, None),
         )
-        trace = captured_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
+        trace = synthetic_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
         late = make_request([make_span(int.from_bytes(trace, "big"), 900)])
         assert post_otlp(server.port, late.SerializeToString()).status == 200
         _wait_for(lambda: len(_revisions(tmp_path)) == 2, "revision 2 from late data")
@@ -212,8 +212,8 @@ def test_the_apps_lifespan_starts_its_materializer_and_stops_it_at_shutdown(tmp_
 
 @pytest.mark.parametrize("entry_point", ["serve", "uvicorn"])
 def test_a_server_whose_materializer_cannot_start_refuses_to_start(tmp_path, entry_point) -> None:
-    # Carmack CR2-5: the docs promised this, and the server instead served without a
-    # closer (every call stayed open). The materializer child dies before it is ready
+    # The earlier server served without a closer, so every call stayed open.
+    # The materializer child dies before it is ready
     # (the env-gated crash point ``materializer_starting``).
     make_store(tmp_path).close()
     log = tmp_path / f"no-materializer-{entry_point}.log"
@@ -260,9 +260,8 @@ def test_the_closer_crash_points_are_inert_without_test_mode(tmp_path, crash_at)
 def test_a_server_whose_materializer_stopped_reading_still_stops_when_asked(
     tmp_path, entry_point
 ) -> None:
-    # Lamport LAM2-2: a materializer child that is alive but reads nothing blocked the
-    # closer in a send; the shutdown waited for that build, so SIGTERM never stopped
-    # the server. The env-gated stall point stops the real child mid-snapshot.
+    # A materializer child that is alive but reads nothing must not block shutdown.
+    # The env-gated stall point stops the real child mid-snapshot.
     make_store(tmp_path).close()
     server = _start(
         tmp_path,
@@ -273,7 +272,7 @@ def test_a_server_whose_materializer_stopped_reading_still_stops_when_asked(
     )
     try:
         _replay(server.port)
-        trace = captured_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
+        trace = synthetic_requests()[0].resource_spans[0].scope_spans[0].spans[0].trace_id
         padding = [string_attribute("padding", "x" * (4 << 20))]  # past any pipe buffer
         padded = make_request([make_span(int.from_bytes(trace, "big"), 950, attributes=padding)])
         assert post_otlp(server.port, padded.SerializeToString()).status == 200

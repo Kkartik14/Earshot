@@ -57,7 +57,7 @@ One tag publishes four things:
 ## After publishing
 
 ```bash
-version=0.2.0   # the released version
+version=0.3.0   # the released version
 npm view "@earshot/viewer-ui@$version" dist.attestations --json
 npm view "@earshot/browser@$version" dist.attestations --json
 npm view "@earshot/node@$version" dist.attestations --json

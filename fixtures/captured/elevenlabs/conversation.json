@@ -1,6 +1,6 @@
 {
   "agent_id": "agent_0000000000000000000000000001",
-  "agent_name": "earshot-ws0-capture",
+  "agent_name": "earshot-fixture-agent",
   "conversation_product": "agent",
   "status": "done",
   "user_id": null,

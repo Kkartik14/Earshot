@@ -6,7 +6,7 @@ a second server or worker on the same data directory is refused with
 writer still works while the server runs: it takes the per-mutation store lock,
 never the server lock.
 
-The last test is the tribunal's overlap scenario (round 1, LAM-1): a second server
+The last test covers two overlapping server processes: a second server
 started beside a busy first one used to drain the first one's journaled upload
 keys and sweep its spool files, losing acknowledged recordings. It must now be
 refused, and every acknowledged upload must read back.
@@ -248,8 +248,8 @@ def _call(
 
 
 def test_a_restart_overlap_is_refused_and_loses_no_acknowledged_upload(tmp_path, servers) -> None:
-    """Lamport's ``x2_overlap.py``: server B starts on A's data directory while
-    clients upload through A. B must be refused, and every 200 must read back."""
+    """Server B cannot open A's data directory while A holds the lifetime lock.
+    Every upload acknowledged by A must still be readable afterward."""
 
     data_dir = tmp_path / "data"
     port = _free_port()

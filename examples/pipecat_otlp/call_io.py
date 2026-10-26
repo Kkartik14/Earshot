@@ -8,13 +8,12 @@ frame the input transport produced: the recorder writes its first frame without 
 gap fill and packs frames that were held up (behind a service's StartFrame
 handling, say) contiguously. So the input stamps ``started_at_unix_nano`` as it
 produces its first frame. A stamp taken where frames reach the recorder is late
-by that hold (0.257 s in the WS0b capture).
+by that hold. The call projection accounts for recording time relative to span time.
 
 **Known Pipecat behaviour, not corrected here.** When frames reach the recorder
 more than 200 ms late and then in a burst, ``AudioBufferProcessor`` pads the gap
 with silence and still appends the burst, so the tracks gain time from that point
-on (0.627 s once in the WS0b capture). Earshot measures and corrects that offset
-from the audio in Month 2.
+on. Earshot measures recording and span timing when it builds the call projection.
 """
 
 from __future__ import annotations

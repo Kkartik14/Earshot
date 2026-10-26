@@ -81,13 +81,7 @@ const SEQUENCED: ReadonlySet<string> = new Set([
   "finalize",
 ]);
 
-/** Subscribe to one live session.
- *
- *  The transport is `EventSource`, and therefore an ordinary same-origin `GET`:
- *  it carries the viewer's HttpOnly session cookie, it is subject to the
- *  same-origin policy, and it resumes with `Last-Event-ID` without this code
- *  tracking a cursor. Nothing here interprets the facts — that is `liveStore`'s
- *  job — and nothing here computes one. */
+/** Subscribe to a live session with same-origin `EventSource` and automatic `Last-Event-ID` resumption. */
 export function openSessionTail(sessionId: string, options: TailOptions): TailHandle {
   const staleAfterMs = options.staleAfterMs ?? 30_000;
   const maxErrors = options.maxErrors ?? 5;

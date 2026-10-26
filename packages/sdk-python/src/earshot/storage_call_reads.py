@@ -576,11 +576,7 @@ class CallReads:
         )
 
 
-# The optional trigram index on transcript text (Postgres ``pg_trgm``). It is outside
-# the migration chain (``earshot db enable-transcript-index``): an extension the
-# server's role may not be allowed to create must never stop a migration, and
-# catalog parity ignores every ``earshot_opt_*`` index. Without it, ``q`` is a plain
-# ``ILIKE`` scan of the project's transcript lines.
+# Optional ``pg_trgm`` index; keep it out of migrations when server roles lack extension privileges.
 TRANSCRIPT_INDEX = "earshot_opt_call_transcripts_text_trgm"
 
 

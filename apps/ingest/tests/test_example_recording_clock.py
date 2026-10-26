@@ -2,10 +2,9 @@
 
 ``AudioBufferProcessor``'s sample 0 is the first audio frame the recorder receives,
 which is the first frame the input transport produced: the recorder writes its
-first frame without a gap fill and packs a delayed burst contiguously (Month 2
-research, ``call-view-and-audio-signals.md`` §3.2). A service's slow StartFrame
-handling (a websocket connect) holds the frames on their way down, so a stamp
-taken where frames *reach* the recorder is late by that hold. This runs a real
+first frame without a gap fill and packs a delayed burst contiguously. A service's
+slow StartFrame handling (a websocket connect) holds the frames on their way down,
+so a stamp taken where frames *reach* the recorder is late by that hold. This runs a real
 Pipecat pipeline, without providers, whose middle processor holds the StartFrame
 for 0.3 s, as a connect does, and checks the example's stamp against the
 production time of the frame that became sample 0.
