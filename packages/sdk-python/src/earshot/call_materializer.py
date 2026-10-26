@@ -32,7 +32,8 @@ evidence (first start to last end; never the server clock), bundle ID
 ``<call_id>.r<n>``, session ID ``call_id``, clock domain ``otlp-<call_id>``, and
 a manual trace ID derived from the bundle ID, so one snapshot always gives the
 same bytes. Spans go in ``(start, trace_id, span_id)`` order to the adapter their
-instrumentation scope names (``_ADAPTERS_BY_SCOPE``: Pipecat and LiveKit), as the
+instrumentation scope names (``_ADAPTERS_BY_SCOPE``: Pipecat, LiveKit and the host
+profile), as the
 dict ``adapter_span`` converts them to; spans of other scopes stay in the catalog
 and are declared, not bundled.
 
@@ -63,11 +64,13 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .adapters.host import HostAdapter
 from .adapters.livekit import LiveKitAdapter
 from .adapters.pipecat import PipecatAdapter, native_attribute_name
 from .call_capture import (
     CAPTURE_PRESET_FULL,
     CAPTURE_PRESET_METADATA_ONLY,
+    HOST_SCOPE,
     LIVEKIT_SCOPE,
     NOT_GIVEN,
     OtlpSpan,
@@ -568,10 +571,10 @@ def _pipecat_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any]
     return converted
 
 
-def _livekit_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any]:
-    """The span as the LiveKit adapter consumes it, keeping only attributes the
-    adapter records (under their semantic key, ``call_capture.ATTRIBUTE_KEYS``) in the
-    class the receiver gives them, and no LLM input history (the rest declared)."""
+def _semantic_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any]:
+    """The span as the LiveKit and host adapters consume it, keeping only attributes
+    the adapter records (under their semantic key, ``call_capture.ATTRIBUTE_KEYS``) in
+    the class the receiver gives them, and no LLM input history (the rest declared)."""
 
     converted = adapter_span(span)
     kept: dict[str, Any] = {}
@@ -589,7 +592,8 @@ def _livekit_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any]
 # Which adapter consumes a scope's spans, and the input it takes. A plain mapping.
 _ADAPTERS_BY_SCOPE: dict[str, tuple[type, Callable[[IncidentRecorder, OtlpSpan], Any]]] = {
     **dict.fromkeys(PIPECAT_SCOPES, (PipecatAdapter, _pipecat_input)),
-    LIVEKIT_SCOPE: (LiveKitAdapter, _livekit_input),
+    LIVEKIT_SCOPE: (LiveKitAdapter, _semantic_input),
+    HOST_SCOPE: (HostAdapter, _semantic_input),
 }
 
 
