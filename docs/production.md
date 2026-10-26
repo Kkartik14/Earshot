@@ -275,7 +275,8 @@ measured yet.
 | `GET /readyz`  | Readiness. 200 `{"status": "ready", "projections_pending": N}`, or 503 `{"status": "unavailable"}` when the catalog or artifact store cannot be read. |
 
 Both are unauthenticated and return no Project data. The container image's health check
-uses `/readyz`.
+uses `/readyz`. [`GET /version`](./backend-api.md#get-version) is unauthenticated too: it
+reports the server's versions and capabilities for a host's compatibility check.
 
 `projections_pending` counts Incidents whose read models (graph rows, Turn Facts,
 retention and export columns) were built by an older release. After an upgrade every
