@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.responses import JSONResponse
 
+from ...auth import sees_call_revisions
 from ...storage import IncidentStore, InvalidCursorError
 from ...summary import summarize_project
 
@@ -95,7 +96,14 @@ def create_platform_router(store: IncidentStore) -> APIRouter:
                 "Platform project assertion must match the signed project",
             )
         try:
-            summary = summarize_project(store, project_id=project_id, session_id=record_id)
+            summary = summarize_project(
+                store,
+                project_id=project_id,
+                session_id=record_id,
+                include_call_revisions=sees_call_revisions(
+                    getattr(request.state, "hosted_principal", None)
+                ),
+            )
         except InvalidCursorError:
             return _problem(400, "EARSHOT_INVALID_CURSOR", "invalid incident pagination cursor")
 
