@@ -34,8 +34,10 @@ def summarize_project(
     *,
     project_id: str,
     session_id: str | None = None,
+    include_call_revisions: bool = True,
 ) -> ProjectSummary:
-    """Read bounded catalog metadata; never load artifact bytes or derived content."""
+    """Read bounded catalog metadata; never load artifact bytes or derived content.
+    ``include_call_revisions=False`` leaves out calls, for a reader that may not read them."""
 
     items: list[ProjectSummaryItem] = []
     seen_session_ids: set[str] = set()
@@ -49,6 +51,7 @@ def summarize_project(
             limit=_PAGE_SIZE,
             cursor=cursor,
             destination="local_api",
+            include_call_revisions=include_call_revisions,
         )
         scanned += len(page.items)
         for item in page.items:

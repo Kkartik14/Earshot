@@ -4,6 +4,53 @@ Notable changes to Earshot. Versions follow the
 [alpha compatibility policy](docs/release.md#alpha-compatibility-policy). Earlier releases
 are described in their [GitHub release notes](https://github.com/Kkartik14/Earshot/releases).
 
+## Unreleased
+
+### Changed
+
+- **API version 0.16.0.** Hosted authorization is a closed table, and the hosted
+  Calls, project provisioning and `GET /version` routes are added. Regenerate clients
+  from `spec/backend-api.openapi.json`.
+- **`CALL_PROJECTION_VERSION` is 7**, so every stored projection reads as stale until
+  the server recomputes it.
+- **`earshot.call.ended` is safe metadata in a revision.** It was recorded as extension
+  payload under `full` and left out under `metadata_only`; it is now metadata under both.
+
+### Breaking
+
+- **Hosted authorization is a closed table.** In `hosted_jwt` mode an operation not in the
+  table answers 403 `EARSHOT_OPERATION_UNAVAILABLE` whatever the token grants; before, an
+  unlisted method or path fell back to `earshot:read`, `earshot:write` or `earshot:delete`
+  by its HTTP method.
+
+### Added
+
+- **Hosted Calls.** A hosted JWT reaches the Calls under three scopes of their own:
+  `earshot:calls:write` (OTLP spans and Recordings), `earshot:calls:read` (call list and
+  detail, Session Key resolution, dashboard) and `earshot:calls:delete` (call purge). The
+  generic incident scopes never grant them. A span's raw attributes, Earshot's copy of the
+  audio, transcript upload, prices and the receiver's counters stay closed in hosted mode.
+- **Hosted project provisioning.** `PUT /v1/projects/{project_id}` under
+  `earshot:project:provision` creates the signed project with an explicit
+  `display_name` and `capture_preset` (201), confirms it on the same terms (200), and
+  answers other terms 409 `EARSHOT_PROJECT_CONFLICT` without changing them. A deleted
+  project answers 410 and is never brought back. It is the one operation a hosted JWT
+  reaches before its project exists.
+- **`GET /version`.** A public process check, like `/healthz`, that reports the package,
+  API, contract, semantic-profile and call-projection versions, and whether the server
+  runs hosted JWTs and has the `signals` extra.
+- **The host span profile (0.1.0).** A host that runs its own pipeline exports its calls'
+  turns under the `earshot.host` scope: `turn` spans with `user_speech`, `agent_speech`
+  and `stt`/`llm`/`tts` children, the host's own `earshot.turn.reported_latency_ms`, and
+  `earshot.turn.timeline_continuous`. Its calls get turns, audible gaps on the
+  continuous-timeline basis, stage spans and usage like Pipecat and LiveKit calls, with
+  no transcript; their revisions record the spans under the `earshot.host` adapter.
+  `GET /version` reports `host_profile_version`. See
+  [the host span profile](docs/calls.md#the-host-span-profile).
+- **A call's revisions are hidden from a hosted token that may not read calls.** Without
+  `earshot:calls:read`, incident list, turn metrics and summaries leave them out, and an
+  incident route that names one answers 404 `EARSHOT_INCIDENT_NOT_FOUND`.
+
 ## 0.3.0 (2026-10-24)
 
 Every closed Call now has a call view: its audio with a waveform, the transcript on the

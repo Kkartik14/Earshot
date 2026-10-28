@@ -16,6 +16,9 @@ attribute used is metadata, so both work under the ``metadata_only`` preset.
 | LiveKit | ``llm_request`` | llm | as Pipecat ``llm`` |
 | LiveKit | ``tts_request`` | tts | ``character``; ``input_token``/``output_token`` if reported |
 | LiveKit | ``user_turn`` | stt | ``audio_second`` (never reported) |
+| Host | ``llm`` | llm | as Pipecat ``llm`` |
+| Host | ``tts`` | tts | ``character`` (not reported in profile 0.1.0) |
+| Host | ``stt`` | stt | ``audio_second`` (never reported) |
 
 LiveKit's ``llm_node``, ``agent_turn``, ``tts_node``, ``*_run`` and
 ``llm_fallback_adapter`` spans repeat a request's usage and never bill. Every
@@ -68,7 +71,35 @@ GenAI registry is lower-cased. The model is ``gen_ai.request.model``, else
   generation, so its transcript line (whose span ID is ``turn_span_id``) is placed
   at its agent on.
 
+- **Host** (a ``turn`` span of the host profile, below): user on = the starts of its
+  ``user_speech`` children; user off = the latest of their ends; agent on = the
+  earliest start of its ``agent_speech`` children; the reported latency is the
+  host's own ``earshot.turn.reported_latency_ms``.
+
 A missing anchor is ``None`` (an empty tuple for user on), never 0.
+
+**The host span profile** (``HOST_SCOPE``, version ``HOST_PROFILE_VERSION``) is for a
+host that runs its own pipeline and exports its calls' turns itself. Every span is
+under the instrumentation scope ``earshot.host``; times are the host's wall clock,
+the clock its recordings' ``started_at_unix_nano`` is on:
+
+- ``turn``: one per turn, carrying ``earshot.turn.id`` (the host's turn ID),
+  optionally ``earshot.turn.index``, ``earshot.turn.reported_latency_ms`` (the host's
+  own measure of the turn's latency, in milliseconds: absent when it has none,
+  never 0) and ``earshot.turn.timeline_continuous`` (``false`` when the host's
+  recording timeline was not continuous across the turn: frames were dropped or
+  placed late, so the turn's audible gap is not measurable).
+- ``user_speech``, ``agent_speech``: children of a ``turn``, one per stretch of the
+  caller's and of the agent's speech, by its window.
+- ``stt``, ``llm``, ``tts``: children of a ``turn``, one per stage request by its
+  window, carrying ``gen_ai.provider.name``, ``gen_ai.request.model`` and, for
+  ``llm``, the ``gen_ai.usage.*`` counts. A stage the host did not time has no span.
+
+Any span may carry the call attributes the receiver reads (``earshot.call.ended``,
+``earshot.agent.name``, ``earshot.call.outcome``, ``earshot.call.tags``). The profile
+carries no transcript text and no content, so a ``metadata_only`` project keeps all
+of it. Its recordings are placed by the host's wall clock, so its gaps are measured
+on the ``continuous_timeline_assumed`` basis.
 """
 
 from __future__ import annotations
@@ -80,10 +111,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .call_capture import LIVEKIT_SCOPE, NOT_GIVEN, OtlpSpan, any_value
+from .call_capture import HOST_SCOPE, LIVEKIT_SCOPE, NOT_GIVEN, OtlpSpan, any_value
 
 FRAMEWORK_PIPECAT = "pipecat"
 FRAMEWORK_LIVEKIT = "livekit"
+FRAMEWORK_HOST = "host"
 _PIPECAT_SCOPES = ("pipecat", "pipecat.turn")
 
 # Meters, as the price table's units name them.
@@ -101,6 +133,7 @@ USAGE_SPANS: dict[tuple[str, str], tuple[str, str]] = {
     (LIVEKIT_SCOPE, "llm_request"): (FRAMEWORK_LIVEKIT, "llm"),
     (LIVEKIT_SCOPE, "tts_request"): (FRAMEWORK_LIVEKIT, "tts"),
     (LIVEKIT_SCOPE, "user_turn"): (FRAMEWORK_LIVEKIT, "stt"),
+    **{(HOST_SCOPE, name): (FRAMEWORK_HOST, name) for name in ("llm", "tts", "stt")},
 }
 # The JSON attribute each operation's LiveKit metrics travel in.
 _METRICS_ATTRIBUTE = {"llm": "lk.llm_metrics", "tts": "lk.tts_metrics"}
@@ -127,6 +160,8 @@ _USAGE_KEYS = frozenset(
 
 _PIPECAT_ANCHOR_KEYS = ("metrics.ttfb", "turn.user_bot_latency_seconds")
 _LIVEKIT_ANCHOR_KEYS = ("lk.e2e_latency",)
+_HOST_LATENCY = "earshot.turn.reported_latency_ms"
+_HOST_CONTINUITY = "earshot.turn.timeline_continuous"
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +193,9 @@ class TurnAnchors:
     agent_on_unix_nano: int | None
     # The framework's own latency for the turn.
     reported_latency_ms: float | None
+    # Whether the producer vouches its recording timeline was continuous across the
+    # turn (host profile only; ``None``: not declared).
+    timeline_continuous: bool | None = None
 
 
 def _order(span: OtlpSpan) -> tuple[int, bytes, bytes]:
@@ -457,13 +495,59 @@ def _livekit_anchors(spans: Sequence[OtlpSpan], children: dict) -> list[TurnAnch
     return anchors
 
 
+def _host_anchors(spans: Sequence[OtlpSpan], children: dict) -> list[TurnAnchors]:
+    anchors = []
+    for turn in _named(spans, (HOST_SCOPE,), "turn"):
+        kids = children.get((turn.span.trace_id, turn.span.span_id), [])
+        user = _named(kids, (HOST_SCOPE,), "user_speech")
+        agent = _named(kids, (HOST_SCOPE,), "agent_speech")
+        attributes = _values(turn, (_HOST_LATENCY, _HOST_CONTINUITY))
+        latency = _milliseconds(attributes.get(_HOST_LATENCY))
+        continuous = attributes.get(_HOST_CONTINUITY)
+        anchors.append(
+            TurnAnchors(
+                framework=FRAMEWORK_HOST,
+                trace_id=turn.span.trace_id.hex(),
+                turn_span_id=turn.span.span_id.hex(),
+                turn_start_unix_nano=turn.span.start_time_unix_nano,
+                user_on_unix_nano=tuple(span.span.start_time_unix_nano for span in user),
+                user_off_unix_nano=max(
+                    (span.span.end_time_unix_nano for span in user), default=None
+                ),
+                agent_on_unix_nano=min(
+                    (span.span.start_time_unix_nano for span in agent), default=None
+                ),
+                reported_latency_ms=latency,
+                timeline_continuous=continuous if isinstance(continuous, bool) else None,
+            )
+        )
+    return anchors
+
+
+def _milliseconds(value: object) -> float | None:
+    """A producer-reported duration in milliseconds, kept as sent, or ``None`` on the
+    rule ``_seconds`` applies: not a number, negative or non-finite, or nanoseconds
+    outside ``[0, 2**63 - 1]``."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    nanoseconds = float(value) * 1_000_000
+    if not math.isfinite(nanoseconds) or not 0 <= nanoseconds <= _MAX_INT64:
+        return None
+    return float(value)
+
+
 def turn_anchors(spans: Iterable[OtlpSpan]) -> list[TurnAnchors]:
-    """Each framework turn's anchors, in turn start order (Pipecat ``turn`` and LiveKit
-    ``agent_turn`` spans)."""
+    """Each framework turn's anchors, in turn start order (Pipecat ``turn``, LiveKit
+    ``agent_turn`` and host ``turn`` spans)."""
 
     ordered = sorted(spans, key=_order)
     children = _children(ordered)
-    anchors = _pipecat_anchors(ordered, children) + _livekit_anchors(ordered, children)
+    anchors = (
+        _pipecat_anchors(ordered, children)
+        + _livekit_anchors(ordered, children)
+        + _host_anchors(ordered, children)
+    )
     return sorted(
         anchors, key=lambda item: (item.turn_start_unix_nano, item.trace_id, item.turn_span_id)
     )

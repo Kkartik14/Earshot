@@ -641,7 +641,11 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put?: never;
+        /**
+         * Create the signed project, or confirm it exists on the same terms
+         * @description Requires the earshot:project:provision scope and a hosted JWT signed for this project. 201 means the project was created; 200 means it already exists on the same terms. Other terms are a 409 conflict and change nothing. A deleted project is never brought back.
+         */
+        put: operations["provision_project_endpoint_v1_projects__project_id__put"];
         post?: never;
         /**
          * Delete all retained data and authorization state for a project
@@ -831,6 +835,26 @@ export interface paths {
          * @description OTLP/HTTP trace export (protobuf or JSON). Spans are stored into Calls in one transaction; the reply is sent after it commits. Errors this route raises are google.rpc.Status bodies; host and authentication errors keep Earshot's problem JSON.
          */
         post: operations["otlp_traces_endpoint_v1_traces_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the versions and capabilities this server speaks
+         * @description A public process check like /healthz: no credential, no project and no project data. A host compares it with the versions it was built against.
+         */
+        get: operations["version_version_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -3933,6 +3957,28 @@ export interface components {
              */
             state: "deleting" | "deleted";
         };
+        /** ProjectProvisionRequest */
+        ProjectProvisionRequest: {
+            /**
+             * Capture Preset
+             * @enum {string}
+             */
+            capture_preset: "full" | "metadata_only";
+            /** Display Name */
+            display_name: string;
+        };
+        /** ProjectProvisionResponse */
+        ProjectProvisionResponse: {
+            /**
+             * Capture Preset
+             * @enum {string}
+             */
+            capture_preset: "full" | "metadata_only";
+            /** Display Name */
+            display_name: string;
+            /** Project Id */
+            project_id: string;
+        };
         /** ProjectSummaryItemResponse */
         ProjectSummaryItemResponse: {
             /** Created At Unix Nano */
@@ -4631,6 +4677,29 @@ export interface components {
             valid: boolean;
             /** Warnings */
             warnings: components["schemas"]["ApiIssue"][];
+        };
+        /** VersionCapabilities */
+        VersionCapabilities: {
+            /** Hosted Jwt */
+            hosted_jwt: boolean;
+            /** Signals */
+            signals: boolean;
+        };
+        /** VersionResponse */
+        VersionResponse: {
+            /** Api Version */
+            api_version: string;
+            /** Call Projection Version */
+            call_projection_version: number;
+            capabilities: components["schemas"]["VersionCapabilities"];
+            /** Contract Version */
+            contract_version: string;
+            /** Host Profile Version */
+            host_profile_version: string;
+            /** Package Version */
+            package_version: string;
+            /** Semantic Profile Version */
+            semantic_profile_version: string;
         };
     };
     responses: never;
@@ -9199,6 +9268,149 @@ export interface operations {
             };
         };
     };
+    provision_project_endpoint_v1_projects__project_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectProvisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectProvisionResponse"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectProvisionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
     delete_project_endpoint_v1_projects__project_id__delete: {
         parameters: {
             query?: never;
@@ -10720,6 +10932,26 @@ export interface operations {
                         message?: string;
                     };
                     "application/x-protobuf": string;
+                };
+            };
+        };
+    };
+    version_version_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionResponse"];
                 };
             };
         };

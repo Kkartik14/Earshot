@@ -680,3 +680,74 @@ def test_a_full_capture_declares_its_transcript_and_content_classes() -> None:
     assert {"transcript", "model_payload"} <= captured
     [coverage] = [item for item in bundle.profile.coverage if item.signal == "call.transcript"]
     assert coverage.availability == "available"
+
+
+# --- the host profile --------------------------------------------------------------------------
+
+
+def _host_call_spans(**turn_fields):
+    from host_profile_support import HostStage, HostTurn, host_request
+
+    start = 1_800_000_000_000_000_000
+    second = 1_000_000_000
+    turn = HostTurn(
+        "turn-1",
+        start,
+        start + 4 * second,
+        user_speech=((start, start + second),),
+        agent_speech=(start + 2 * second, start + 4 * second),
+        stages=(
+            HostStage(
+                "llm",
+                start + second,
+                start + 2 * second,
+                {"gen_ai.provider.name": "openai", "gen_ai.usage.input_tokens": 120},
+            ),
+        ),
+        reported_latency_ms=950.0,
+        timeline_continuous=True,
+        **turn_fields,
+    )
+    return spans_from_request(host_request([turn]))
+
+
+def test_host_spans_are_recognized_and_each_becomes_an_operation_of_its_turn() -> None:
+    spans = _host_call_spans()
+    bundle = _materialize(_snapshot(spans))
+    profile = bundle.profile
+
+    assert [adapter.name for adapter in profile.manifest.adapters] == ["earshot.host"]
+    assert not [item for item in profile.coverage if item.signal == "call.spans"]
+    assert {(op.trace_id, op.span_id) for op in profile.operations} == {
+        (span.span.trace_id.hex(), span.span.span_id.hex()) for span in spans
+    }
+    by_name = {op.operation_name: op for op in profile.operations}
+    assert set(by_name) == {"call", "turn", "user_speech", "agent_speech", "llm"}
+    assert {by_name[name].turn_id for name in ("turn", "user_speech", "agent_speech", "llm")} == {
+        "turn-1"
+    }
+    assert by_name["turn"].attributes["earshot.turn.reported_latency_ms"] == 950.0
+    assert by_name["turn"].attributes["earshot.turn.timeline_continuous"] is True
+    assert by_name["llm"].attributes["gen_ai.usage.input_tokens"] == 120
+    assert profile.manifest.completeness == "complete"
+
+
+def test_a_host_call_is_a_valid_deterministic_metadata_only_revision_under_both_presets() -> None:
+    from earshot.call_capture import apply_capture_preset
+
+    for preset in ("full", "metadata_only"):
+        stored = [apply_capture_preset(preset, span) for span in _host_call_spans()]
+        snapshot = _snapshot(stored, preset=preset)
+        # The profile carries nothing a revision leaves out, so nothing is omitted.
+        bundle = assert_capture_conforms(
+            lambda snapshot=snapshot: _materialize(snapshot), require_omission=False
+        )
+        captured = {
+            policy.capture_class
+            for policy in bundle.profile.privacy.capture_classes
+            if policy.captured
+        }
+        assert captured == {"metadata"}, preset
+        [coverage] = [item for item in bundle.profile.coverage if item.signal == "call.transcript"]
+        expected = "not_observed" if preset == "full" else "unavailable"
+        assert coverage.availability == expected, preset

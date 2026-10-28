@@ -196,6 +196,11 @@ _SAFE_EXACT = {
     "earshot.stream.id",
     "earshot.turn.id",
     "earshot.turn.index",
+    # The receiver's end-of-call signal, and the host span profile's latency and
+    # continuity (``call_span_facts``).
+    "earshot.call.ended",
+    "earshot.turn.reported_latency_ms",
+    "earshot.turn.timeline_continuous",
     "earshot.tts.voice",
     "earshot.link.type",
     "earshot.link.target_scope",
@@ -291,6 +296,8 @@ _DIGEST_METADATA_KEYS = frozenset(
 _BOOLEAN_METADATA_KEYS = frozenset(
     {
         "lk.interrupted",
+        "earshot.call.ended",
+        "earshot.turn.timeline_continuous",
         "turn.ended_by_conversation_end",
         "turn.was_interrupted",
         "earshot.metric.connection.reused",
@@ -320,6 +327,7 @@ _NUMERIC_METADATA_KEYS = frozenset(
         "lk.eou.transcription_delay",
         "lk.end_of_turn_delay",
         "lk.e2e_latency",
+        "earshot.turn.reported_latency_ms",
         "lk.transcript_confidence",
         "lk.transcription_delay",
         "turn.duration_seconds",

@@ -7952,6 +7952,60 @@
         "title": "ProjectDeletionResponse",
         "type": "object"
       },
+      "ProjectProvisionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "capture_preset": {
+            "enum": [
+              "full",
+              "metadata_only"
+            ],
+            "title": "Capture Preset",
+            "type": "string"
+          },
+          "display_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00]*$",
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name",
+          "capture_preset"
+        ],
+        "title": "ProjectProvisionRequest",
+        "type": "object"
+      },
+      "ProjectProvisionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "capture_preset": {
+            "enum": [
+              "full",
+              "metadata_only"
+            ],
+            "title": "Capture Preset",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "display_name",
+          "capture_preset"
+        ],
+        "title": "ProjectProvisionResponse",
+        "type": "object"
+      },
       "ProjectSummaryItemResponse": {
         "additionalProperties": false,
         "properties": {
@@ -9709,6 +9763,68 @@
         ],
         "title": "ValidateResponse",
         "type": "object"
+      },
+      "VersionCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "hosted_jwt": {
+            "title": "Hosted Jwt",
+            "type": "boolean"
+          },
+          "signals": {
+            "title": "Signals",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hosted_jwt",
+          "signals"
+        ],
+        "title": "VersionCapabilities",
+        "type": "object"
+      },
+      "VersionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "api_version": {
+            "title": "Api Version",
+            "type": "string"
+          },
+          "call_projection_version": {
+            "title": "Call Projection Version",
+            "type": "integer"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/VersionCapabilities"
+          },
+          "contract_version": {
+            "title": "Contract Version",
+            "type": "string"
+          },
+          "host_profile_version": {
+            "title": "Host Profile Version",
+            "type": "string"
+          },
+          "package_version": {
+            "title": "Package Version",
+            "type": "string"
+          },
+          "semantic_profile_version": {
+            "title": "Semantic Profile Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package_version",
+          "api_version",
+          "contract_version",
+          "semantic_profile_version",
+          "call_projection_version",
+          "host_profile_version",
+          "capabilities"
+        ],
+        "title": "VersionResponse",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -9731,7 +9847,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.15.0"
+    "version": "0.16.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -15997,6 +16113,183 @@
           {}
         ],
         "summary": "Delete all retained data and authorization state for a project"
+      },
+      "put": {
+        "description": "Requires the earshot:project:provision scope and a hosted JWT signed for this project. 201 means the project was created; 200 means it already exists on the same terms. Other terms are a 409 conflict and change nothing. A deleted project is never brought back.",
+        "operationId": "provision_project_endpoint_v1_projects__project_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectProvisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectProvisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectProvisionResponse"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Create the signed project, or confirm it exists on the same terms"
       }
     },
     "/v1/projects/{project_id}/summary": {
@@ -17835,6 +18128,25 @@
           {}
         ],
         "summary": "Otlp Traces Endpoint"
+      }
+    },
+    "/version": {
+      "get": {
+        "description": "A public process check like /healthz: no credential, no project and no project data. A host compares it with the versions it was built against.",
+        "operationId": "version_version_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read the versions and capabilities this server speaks"
       }
     }
   }

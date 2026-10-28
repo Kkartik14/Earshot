@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import os
+import re
 import tempfile
 import time
 import uuid
@@ -42,9 +43,20 @@ from starlette.requests import ClientDisconnect
 
 from . import otlp_receiver
 from . import recordings as recording_media
+from . import signals as signal_analysis
 from . import transcripts as transcript_upload
 from .analysis import ANALYZER_VERSION
-from .auth import HostedJwksUnavailable, HostedJwtVerifier, InvalidHostedToken, validate_jwks_url
+from .auth import (
+    CALLS_DELETE_SCOPE,
+    CALLS_READ_SCOPE,
+    CALLS_WRITE_SCOPE,
+    PROJECT_PROVISION_SCOPE,
+    HostedJwksUnavailable,
+    HostedJwtVerifier,
+    InvalidHostedToken,
+    sees_call_revisions,
+    validate_jwks_url,
+)
 from .blobstore import (
     BlobNotFoundError,
     BlobStore,
@@ -62,6 +74,7 @@ from .call_capture import (
     spans_from_request,
     valid_session_key,
 )
+from .call_projection import CALL_PROJECTION_VERSION
 from .capture import (
     CAPTURE_CALL_ID_PREFIX,
     CaptureCallCapacityError,
@@ -162,6 +175,7 @@ from .storage import (
     IncidentPurgedError,
     IncidentStore,
     InvalidCursorError,
+    ProjectConflictError,
     ProjectInactiveError,
     StorageBusyError,
     StorageError,
@@ -216,7 +230,13 @@ from .validation import (
     validate_derived_analysis,
     validate_incident,
 )
-from .versions import API_VERSION, PACKAGE_VERSION
+from .versions import (
+    API_VERSION,
+    CONTRACT_VERSION,
+    HOST_PROFILE_VERSION,
+    PACKAGE_VERSION,
+    SEMANTIC_PROFILE_VERSION,
+)
 
 Analyzer = Callable[..., DerivedAnalysis]
 _VIEWER_SESSION_COOKIE = "earshot_session"
@@ -259,6 +279,23 @@ class ConnectorProblemResponse(ApiModel):
 
 class HealthResponse(ApiModel):
     status: str
+
+
+class VersionCapabilities(ApiModel):
+    # Hosted JWT authorization is this server's mode.
+    hosted_jwt: bool
+    # The ``signals`` extra is installed, so recordings are analysed.
+    signals: bool
+
+
+class VersionResponse(ApiModel):
+    package_version: str
+    api_version: str
+    contract_version: str
+    semantic_profile_version: str
+    call_projection_version: int
+    host_profile_version: str
+    capabilities: VersionCapabilities
 
 
 class ReadinessResponse(ApiModel):
@@ -1118,6 +1155,17 @@ class ProjectSummaryItemResponse(ApiModel):
 class ProjectSummaryResponse(ApiModel):
     project_id: str
     items: list[ProjectSummaryItemResponse] = Field(max_length=50)
+
+
+class ProjectProvisionRequest(ApiModel):
+    display_name: Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=_NO_NUL)]
+    capture_preset: Literal["full", "metadata_only"]
+
+
+class ProjectProvisionResponse(ApiModel):
+    project_id: str
+    display_name: str
+    capture_preset: Literal["full", "metadata_only"]
 
 
 class ProjectDeletionResponse(ApiModel):
@@ -2239,37 +2287,73 @@ def _authentication_required(settings: ApiConfig) -> bool:
     )
 
 
-_HOSTED_SCOPE_BY_METHOD: dict[str, str] = {
-    "GET": "earshot:read",
-    "HEAD": "earshot:read",
-    "OPTIONS": "earshot:read",
-    "POST": "earshot:write",
-    "PUT": "earshot:write",
-    "PATCH": "earshot:write",
-    "DELETE": "earshot:delete",
-}
+# Hosted authorization is one closed table: each operation a hosted JWT may perform, as
+# (method, route template), and the one scope that grants it. Anything not listed answers
+# 403 ``EARSHOT_OPERATION_UNAVAILABLE``, including the Call surfaces a host does not need: a
+# span's raw attributes, Earshot's copy of the audio, transcript upload, prices and the
+# receiver's counters. HEAD and OPTIONS take the scope of the same route's GET. The OpenAPI
+# document reads the same table, so the contract lists exactly what is open.
+_HOSTED_OPERATION_SCOPES: tuple[tuple[str, str, str], ...] = (
+    ("GET", "/v1/incidents", "earshot:read"),
+    ("POST", "/v1/incidents", "earshot:write"),
+    ("POST", "/v1/incidents/validate", "earshot:write"),
+    ("GET", "/v1/incidents/{bundle_id}", "earshot:read"),
+    ("DELETE", "/v1/incidents/{bundle_id}", "earshot:artifact:delete"),
+    ("GET", "/v1/incidents/{bundle_id}/analysis", "earshot:read"),
+    ("GET", "/v1/incidents/{bundle_id}/comparison", "earshot:read"),
+    ("GET", "/v1/incidents/{bundle_id}/contradictions", "earshot:read"),
+    ("GET", "/v1/incidents/{bundle_id}/evidence/not_observed", "earshot:read"),
+    ("GET", "/v1/incidents/{bundle_id}/evidence/summary", "earshot:read"),
+    ("GET", "/v1/incidents/{bundle_id}/explanation", "earshot:read"),
+    ("GET", "/v1/incidents/{bundle_id}/export", "earshot:read"),
+    ("GET", "/v1/incidents/{bundle_id}/references", "earshot:read"),
+    ("PUT", "/v1/incidents/{bundle_id}/references/{namespace}/{record_type}", "earshot:write"),
+    ("DELETE", "/v1/incidents/{bundle_id}/references/{namespace}/{record_type}", "earshot:delete"),
+    ("POST", "/v1/capture", "earshot:write"),
+    ("GET", "/v1/live/sessions", "earshot:read"),
+    ("POST", "/v1/live/sessions/{session_id}/checkpoints", "earshot:write"),
+    ("POST", "/v1/live/sessions/{session_id}/seal", "earshot:write"),
+    ("GET", "/v1/live/sessions/{session_id}/tail", "earshot:read"),
+    ("GET", "/v1/metrics/turns", "earshot:read"),
+    ("GET", "/v1/projects/{project_id}/summary", "earshot:summary:read"),
+    ("GET", "/v1/platform/projects/{project_id}/observe/summary", "earshot:summary:read"),
+    ("PUT", "/v1/projects/{project_id}", PROJECT_PROVISION_SCOPE),
+    ("DELETE", "/v1/projects/{project_id}", "earshot:project:delete"),
+    ("POST", "/v1/traces", CALLS_WRITE_SCOPE),
+    ("POST", "/v1/recordings", CALLS_WRITE_SCOPE),
+    ("PUT", "/v1/recordings/{recording_id}/content", CALLS_WRITE_SCOPE),
+    ("GET", "/v1/calls", CALLS_READ_SCOPE),
+    ("GET", "/v1/calls/{call_id}", CALLS_READ_SCOPE),
+    ("POST", "/v1/calls:resolve", CALLS_READ_SCOPE),
+    ("GET", "/v1/dashboard", CALLS_READ_SCOPE),
+    ("DELETE", "/v1/calls/{call_id}", CALLS_DELETE_SCOPE),
+)
+_HOSTED_OPERATION_PATTERNS: tuple[tuple[str, re.Pattern[str], str], ...] = tuple(
+    (method, re.compile(re.sub(r"\\\{[^/]+?\\\}", "[^/]+", re.escape(template))), scope)
+    for method, template, scope in _HOSTED_OPERATION_SCOPES
+)
 
 
-# Operator-only call surfaces: OTLP export, calls, recordings, prices, the dashboard
-# over calls, and the receiver's stats. No hosted scope is defined for them yet, for
-# any method, so a hosted JWT gets 403 ``EARSHOT_OPERATION_UNAVAILABLE``.
-_HOSTED_UNAVAILABLE_PATHS = ("/v1/traces", "/v1/otlp/stats", "/v1/dashboard")
-_HOSTED_UNAVAILABLE_PREFIXES = ("/v1/calls", "/v1/recordings", "/v1/prices")
+# An incident path (``/v1/incidents/{bundle_id}`` and everything under it) and the
+# bundle ID it names.
+_INCIDENT_PATH = re.compile(r"/v1/incidents/([^/]+)(?:/.*)?")
+
+
+def _request_sees_call_revisions(request: Request) -> bool:
+    """``auth.sees_call_revisions`` for this request's hosted principal, if any."""
+
+    return sees_call_revisions(getattr(request.state, "hosted_principal", None))
 
 
 def _hosted_required_scope(method: str, path: str) -> str | None:
-    """Return the least-privilege scope for one hosted project-data operation."""
-    if path.startswith("/v1/auth/"):
-        return None
-    if path in _HOSTED_UNAVAILABLE_PATHS or path.startswith(_HOSTED_UNAVAILABLE_PREFIXES):
-        return None
-    if method.upper() == "DELETE" and path.startswith("/v1/incidents/") and path.count("/") == 3:
-        return "earshot:artifact:delete"
-    if path.endswith("/summary") and path.startswith(("/v1/projects/", "/v1/platform/projects/")):
-        return "earshot:summary:read"
-    if path.startswith("/v1/projects/") and method.upper() == "DELETE":
-        return "earshot:project:delete"
-    return _HOSTED_SCOPE_BY_METHOD.get(method.upper())
+    """The one scope that grants a hosted JWT this operation, or ``None`` when it is closed."""
+
+    method = method.upper()
+    looked_up = "GET" if method in ("HEAD", "OPTIONS") else method
+    for allowed_method, pattern, scope in _HOSTED_OPERATION_PATTERNS:
+        if allowed_method == looked_up and pattern.fullmatch(path):
+            return scope
+    return None
 
 
 def _bearer_credential(authorization: str) -> str:
@@ -3593,14 +3677,16 @@ def create_app(
             "bearerFormat": "JWT",
         }
         if settings.auth_mode == "hosted_jwt":
-            # Operator-only operations always answer 403 to a hosted JWT; the hosted
-            # contract does not list them.
+            # An operation outside the hosted table always answers 403 to a hosted JWT;
+            # the hosted contract does not list it.
             paths = schema.get("paths", {})
             for path in list(paths):
-                if path.startswith("/v1/") and (
-                    path in _HOSTED_UNAVAILABLE_PATHS
-                    or path.startswith(_HOSTED_UNAVAILABLE_PREFIXES)
-                ):
+                if not path.startswith("/v1/") or path.startswith("/v1/auth/"):
+                    continue
+                for method in list(paths[path]):
+                    if _hosted_required_scope(method, path) is None:
+                        del paths[path][method]
+                if not paths[path]:
                     del paths[path]
         for path, path_item in schema.get("paths", {}).items():
             if not path.startswith("/v1/"):
@@ -3805,6 +3891,25 @@ def create_app(
     for storage_system_error in (*DATABASE_ERRORS, OSError):
         app.add_exception_handler(storage_system_error, handle_storage_system_error)
 
+    def _names_hidden_call_revision(request: Request, principal: object) -> bool:
+        """Whether a hosted request's incident path names a call's revision that its
+        token may not read.
+
+        A call's revisions are incidents, and they carry the call's evidence. A token
+        without ``earshot:calls:read`` gets exactly what a missing incident answers for
+        any incident path that names one, so it learns nothing of the call. A comparison
+        baseline that names one is the comparison's own missing baseline
+        (``resolve_known_good_analysis``).
+        """
+
+        if sees_call_revisions(principal):  # type: ignore[arg-type]
+            return False
+        match = _INCIDENT_PATH.fullmatch(request.url.path)
+        if match is None:
+            return False
+        project_id = principal.project_id  # type: ignore[attr-defined]
+        return repository.is_call_revision(match.group(1), project_id=project_id)
+
     @app.middleware("http")
     async def authenticate(request: Request, call_next: Callable[..., Any]) -> Response:
         runtime_server = request.scope.get("server")
@@ -3909,7 +4014,13 @@ def create_app(
                     repository.project_lifecycle,
                     hosted_principal.project_id,
                 )
-                if project_state is None:
+                # Provisioning the signed project itself is the one operation that
+                # reaches Earshot before the project exists; it still needs its scope.
+                provisioning_request = (
+                    request.method == "PUT"
+                    and request.url.path == f"/v1/projects/{hosted_principal.project_id}"
+                )
+                if project_state is None and not provisioning_request:
                     return JSONResponse(
                         {
                             "error": {
@@ -3924,7 +4035,7 @@ def create_app(
                     and request.url.path.startswith("/v1/projects/")
                     and request.url.path.count("/") == 3
                 )
-                if project_state != "active" and not project_delete_request:
+                if project_state not in (None, "active") and not project_delete_request:
                     return JSONResponse(
                         {
                             "error": {
@@ -3981,7 +4092,24 @@ def create_app(
                 request.state.auth_key_id = None
                 request.state.browser_session = None
                 request.state.browser_session_token = ""
-                return await call_next(request)
+                hidden = JSONResponse(
+                    {
+                        "error": {
+                            "code": "EARSHOT_INCIDENT_NOT_FOUND",
+                            "message": "incident not found",
+                        }
+                    },
+                    status_code=404,
+                )
+                if await run_in_threadpool(_names_hidden_call_revision, request, hosted_principal):
+                    return hidden
+                response = await call_next(request)
+                # Asked again after the route: a revision committed while it ran may be
+                # what it read, and a revision stays one until it is purged.
+                if await run_in_threadpool(_names_hidden_call_revision, request, hosted_principal):
+                    await response.body_iterator.aclose()  # type: ignore[attr-defined]
+                    return hidden
+                return response
             authorization = request.headers.get("authorization", "")
             supplied = _bearer_credential(authorization)
             browser_session = None
@@ -4163,6 +4291,29 @@ def create_app(
     @app.get("/healthz", response_model=HealthResponse)
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get(
+        "/version",
+        response_model=VersionResponse,
+        summary="Read the versions and capabilities this server speaks",
+        description=(
+            "A public process check like /healthz: no credential, no project and no "
+            "project data. A host compares it with the versions it was built against."
+        ),
+    )
+    def version() -> VersionResponse:
+        return VersionResponse(
+            package_version=PACKAGE_VERSION,
+            api_version=API_VERSION,
+            contract_version=CONTRACT_VERSION,
+            semantic_profile_version=SEMANTIC_PROFILE_VERSION,
+            call_projection_version=CALL_PROJECTION_VERSION,
+            host_profile_version=HOST_PROFILE_VERSION,
+            capabilities=VersionCapabilities(
+                hosted_jwt=settings.auth_mode == "hosted_jwt",
+                signals=signal_analysis.extra_available(),
+            ),
+        )
 
     @app.get(
         "/readyz",
@@ -5204,6 +5355,7 @@ def create_app(
             metric,
             project_id=request.state.project_id,
             group_by=group_by,
+            include_call_revisions=_request_sees_call_revisions(request),
         )
         return JSONResponse(
             {
@@ -6007,6 +6159,56 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.put(
+        "/v1/projects/{project_id}",
+        response_model=ProjectProvisionResponse,
+        responses={201: {"model": ProjectProvisionResponse}, **_ERROR_RESPONSES},
+        summary="Create the signed project, or confirm it exists on the same terms",
+        description=(
+            "Requires the earshot:project:provision scope and a hosted JWT signed for this "
+            "project. 201 means the project was created; 200 means it already exists on the "
+            "same terms. Other terms are a 409 conflict and change nothing. A deleted project "
+            "is never brought back."
+        ),
+    )
+    async def provision_project_endpoint(
+        project_id: str, terms: ProjectProvisionRequest, request: Request
+    ) -> JSONResponse:
+        if request.state.auth_method != "hosted_jwt":
+            raise ApiProblem(
+                403,
+                "EARSHOT_HOSTED_AUTH_REQUIRED",
+                "project provisioning requires a hosted project-scoped JWT",
+            )
+        if project_id != request.state.project_id:
+            raise ApiProblem(
+                403,
+                "EARSHOT_PROJECT_MISMATCH",
+                "requested project does not match the signed project",
+            )
+        try:
+            project, created = await run_in_threadpool(
+                repository.provision_project,
+                project_id,
+                display_name=terms.display_name,
+                capture_preset=terms.capture_preset,
+            )
+        except ProjectConflictError as error:
+            raise ApiProblem(
+                409,
+                "EARSHOT_PROJECT_CONFLICT",
+                "project already exists with other terms",
+            ) from error
+        return JSONResponse(
+            ProjectProvisionResponse(
+                project_id=project.project_id,
+                display_name=project.display_name,
+                capture_preset=project.capture_preset,
+            ).model_dump(),
+            status_code=201 if created else 200,
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.delete(
         "/v1/projects/{project_id}",
         response_model=ProjectDeletionResponse,
@@ -6110,7 +6312,11 @@ def create_app(
                 "requested project does not match the authenticated project",
             )
         try:
-            summary = summarize_project(repository, project_id=project_id)
+            summary = summarize_project(
+                repository,
+                project_id=project_id,
+                include_call_revisions=_request_sees_call_revisions(request),
+            )
         except InvalidCursorError as error:
             raise ApiProblem(
                 400,
@@ -6149,6 +6355,7 @@ def create_app(
                 limit=limit,
                 cursor=cursor,
                 destination="local_api",
+                include_call_revisions=_request_sees_call_revisions(request),
             )
         except InvalidCursorError as error:
             raise ApiProblem(
@@ -6478,15 +6685,35 @@ def create_app(
         )
 
     def resolve_known_good_analysis(
-        bundle_id: str, *, project_id: str
+        bundle_id: str, *, project_id: str, hide_call_revisions: bool = False
     ) -> tuple[IncidentBundle, StoredAnalysis, DerivedAnalysis]:
         """Resolve the comparison baseline, naming *which* side is unavailable.
 
         A comparison names two incidents, so the generic incident errors would leave
         the caller unable to tell which one is missing, purged, or unanalysed. The
         baseline keeps its own stable codes; the same non-reflective messages apply.
+        With ``hide_call_revisions`` a call's revision is a missing baseline, whatever
+        resolving it answered. It is asked after the read: a revision's incident and its
+        ``call_revisions`` row commit together, so a read that found the one is followed
+        by a check that finds the other.
         """
 
+        missing = ApiProblem(404, "EARSHOT_KNOWN_GOOD_NOT_FOUND", "known-good incident not found")
+        try:
+            resolved = _resolve_known_good(bundle_id, project_id=project_id)
+        except ApiProblem as error:
+            if hide_call_revisions and repository.is_call_revision(
+                bundle_id, project_id=project_id
+            ):
+                raise missing from error
+            raise
+        if hide_call_revisions and repository.is_call_revision(bundle_id, project_id=project_id):
+            raise missing
+        return resolved
+
+    def _resolve_known_good(
+        bundle_id: str, *, project_id: str
+    ) -> tuple[IncidentBundle, StoredAnalysis, DerivedAnalysis]:
         try:
             return resolve_analysis(bundle_id, project_id=project_id)
         except IncidentNotFoundError as error:
@@ -6525,6 +6752,7 @@ def create_app(
         known_good, known_good_stored, known_good_analysis = resolve_known_good_analysis(
             known_good_bundle_id,
             project_id=project_id,
+            hide_call_revisions=not _request_sees_call_revisions(request),
         )
         comparison = _derived_projection(
             lambda: compare_incidents(

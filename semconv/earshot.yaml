@@ -40,6 +40,14 @@ groups:
         type: int
         requirement_level: opt_in
         brief: Producer-observed presentation order for a turn projection.
+      - id: earshot.turn.reported_latency_ms
+        type: double
+        requirement_level: opt_in
+        brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; absent when the host has none, never 0. A value that is not a finite, non-negative number is unknown."
+      - id: earshot.turn.timeline_continuous
+        type: boolean
+        requirement_level: opt_in
+        brief: "Host span profile: false when the host's recording timeline was not continuous across the turn (frames dropped or placed late), so its audible gap is not measurable; true or absent, the timeline is taken as continuous."
       - id: earshot.operation.name
         type: string
         requirement_level: required
@@ -557,3 +565,28 @@ groups:
       - ref: earshot.upload.format
       - ref: earshot.upload.line_count
       - ref: earshot.upload.sha256
+
+  - id: span.earshot.host.turn
+    type: span
+    span_kind: internal
+    brief: "Host span profile: one turn of a call a host runs on its own pipeline, under the earshot.host instrumentation scope, times on the clock of the host's recordings. Its children are its speech and stage spans. It carries no transcript text."
+    attributes:
+      - ref: earshot.turn.id
+        requirement_level: required
+      - ref: earshot.turn.index
+      - ref: earshot.turn.reported_latency_ms
+      - ref: earshot.turn.timeline_continuous
+
+  - id: span.earshot.host.speech
+    type: span
+    span_kind: internal
+    brief: "Host span profile: a user_speech or agent_speech span, a child of its turn, by the window of one stretch of the caller's or the agent's speech. User on is the starts of a turn's user_speech spans, user off the latest of their ends, agent on the earliest start of its agent_speech spans."
+    attributes:
+      - ref: earshot.turn.id
+
+  - id: span.earshot.host.stage
+    type: span
+    span_kind: internal
+    brief: "Host span profile: an stt, llm or tts span, a child of its turn, by the window of one stage request. It names the provider and model with gen_ai.provider.name and gen_ai.request.model; an llm span reports its gen_ai.usage.* counts. A stage the host did not time has no span."
+    attributes:
+      - ref: earshot.turn.id

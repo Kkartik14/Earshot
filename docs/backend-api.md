@@ -109,6 +109,31 @@ Incidents whose derived projections (graph rows, Turn Facts, retention and expor
 columns) are from an older release and are still being re-projected in the background;
 it never makes the server unready.
 
+### `GET /version`
+
+The versions and capabilities this server speaks, for a host's compatibility check.
+Like `/healthz` it needs no credential and returns no project data, in every
+authorization mode:
+
+```json
+{
+  "package_version": "0.3.0",
+  "api_version": "0.16.0",
+  "contract_version": "0.2.0",
+  "semantic_profile_version": "0.2.0",
+  "call_projection_version": 7,
+  "host_profile_version": "0.1.0",
+  "capabilities": { "hosted_jwt": true, "signals": true }
+}
+```
+
+`capabilities.hosted_jwt` is true when the server runs in `hosted_jwt` mode;
+`capabilities.signals` is true when the `signals` extra is installed, so recordings are
+analysed. `host_profile_version` is the version of the
+[host span profile](./calls.md#the-host-span-profile) the server reads. The values come
+from `earshot.versions` and the call projection; a host
+compares them with the versions it was built against before it sends anything.
+
 ### `POST /v1/auth/session`
 
 Exchanges a valid bearer credential (project API key or the legacy token) for an
@@ -356,14 +381,23 @@ and adds no Platform dependency to the generic summary service.
 In `hosted_jwt` mode, every project-data route requires the scope shown here. This
 literal vocabulary is implemented by Earshot but still needs token-issuer acceptance.
 
-| Operation                                                                  | Required scope            |
-| -------------------------------------------------------------------------- | ------------------------- |
-| List/read incidents, references, analyses, exports, live sessions, and SSE | `earshot:read`            |
-| Ingest incidents/captures/checkpoints and write references                 | `earshot:write`           |
-| Delete a reference                                                         | `earshot:delete`          |
-| Delete an immutable incident artifact                                      | `earshot:artifact:delete` |
-| Read either summary endpoint                                               | `earshot:summary:read`    |
-| Delete a project                                                           | `earshot:project:delete`  |
+| Operation                                                                  | Required scope              |
+| -------------------------------------------------------------------------- | --------------------------- |
+| List/read incidents, references, analyses, exports, live sessions, and SSE | `earshot:read`              |
+| Ingest incidents/captures/checkpoints and write references                 | `earshot:write`             |
+| Delete a reference                                                         | `earshot:delete`            |
+| Delete an immutable incident artifact                                      | `earshot:artifact:delete`   |
+| Read either summary endpoint                                               | `earshot:summary:read`      |
+| Create the signed project, or confirm it                                   | `earshot:project:provision` |
+| Delete a project                                                           | `earshot:project:delete`    |
+| Send OTLP spans and Recordings of Calls                                    | `earshot:calls:write`       |
+| List and read Calls, resolve a Session Key, read the dashboard             | `earshot:calls:read`        |
+| Purge a Call                                                               | `earshot:calls:delete`      |
+
+The table is closed: any other operation answers 403 `EARSHOT_OPERATION_UNAVAILABLE` to a
+hosted JWT, whatever it grants. See [hosted mode in the Calls guide](./calls.md#hosted-mode)
+for the Call surfaces that stay closed, and for how a call's revisions are hidden from a
+token without `earshot:calls:read`.
 
 ### Hosted detail and live APIs
 
@@ -389,6 +423,25 @@ JavaScript. Mount `ObserveFeature` inside one shared React Query client and prov
 Change the auth context whenever the effective grant changes, including a user change
 within the same project. Query keys and live stores are scoped to both values, and
 cleanup removes only Earshot-owned cache entries.
+
+### Project provisioning
+
+`PUT /v1/projects/{project_id}` is available only in hosted JWT mode. It requires
+`earshot:project:provision` and an exact match with the signed project claim; it is the
+one operation a hosted JWT reaches before its project exists, and every other operation
+on a missing project still answers 403 `EARSHOT_PROJECT_NOT_PROVISIONED`. The body states
+the terms explicitly; there is no default preset:
+
+```json
+{ "display_name": "Support line", "capture_preset": "metadata_only" }
+```
+
+`display_name` holds 1 to 128 characters, none of them U+0000, and `capture_preset` is `full` or
+`metadata_only`. `201` means the project was created; `200` means it already exists on
+the same terms. Both return `{project_id, display_name, capture_preset}`. Other terms
+answer 409 `EARSHOT_PROJECT_CONFLICT` and change nothing: a preset is never changed this
+way. A deleting or deleted project answers 410 `EARSHOT_PROJECT_DELETING`; provisioning
+never brings it back. Concurrent first requests create the project once.
 
 ### Project deletion
 

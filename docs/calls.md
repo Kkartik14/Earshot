@@ -12,8 +12,10 @@ what the server computes and the API the viewer reads; the
 
 ## What a call needs
 
-- **Spans** from Pipecat 1.5 or LiveKit Agents 1.6 to 1.8, keyed by a Session Key. They
-  give the turns, the reported latency, the transcript and the usage.
+- **Spans** from Pipecat 1.5 or LiveKit Agents 1.6 to 1.8, or in the
+  [host span profile](#the-host-span-profile) from a host that runs its own pipeline,
+  keyed by a Session Key. They give the turns, the reported latency, the transcript and
+  the usage.
 - **A Recording on one timeline**, for the audible gap and the signals: one stereo
   Recording with `channel_speakers: ["user", "agent"]` (WAV, FLAC or Ogg Opus), or a
   `user` and an `agent` mono Recording with the same `started_at_unix_nano`,
@@ -126,19 +128,19 @@ caller heard over a network.
 | `not_measurable` | null       | the raw gap, for a discontinuity only | `≤ 3.08 s`, else `—`, with the reason               |
 | `talk_over`      | null       | null                                  | "talk-over": the agent started while the user spoke |
 
-| `reason`                          | Meaning                                                                                                                       |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `recorder_timeline_discontinuity` | The recorder inserted time inside the gap (Pipecat's recorder only ever inserts time), so the raw gap is only an upper bound. |
-| `no_agent_audio`                  | No agent speech near the framework's agent-on point.                                                                          |
-| `no_clear_pairing`                | No user speech ends before the agent's, or other agent speech lies between.                                                   |
-| `not_one_timeline`                | The Recordings are not on one timeline (different starts, durations over 20 ms apart, or an ambiguous mono pair).             |
-| `no_recording`                    | The Revision has no Recording.                                                                                                |
-| `analysis_not_stored`             | The analysis is pending, failed or unavailable; `analysis_state` says which.                                                  |
-| `boundary_uncertainty_too_high`   | The combined speech-edge uncertainty exceeds 100 ms, so the gap is withheld.                                                  |
+| `reason`                          | Meaning                                                                                                                                                                                                                                                           |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `recorder_timeline_discontinuity` | The recorder inserted time inside the gap (Pipecat's recorder only ever inserts time), so the raw gap is only an upper bound; or a host declared its recording timeline not continuous across the turn (`earshot.turn.timeline_continuous=false`), with no bound. |
+| `no_agent_audio`                  | No agent speech near the framework's agent-on point.                                                                                                                                                                                                              |
+| `no_clear_pairing`                | No user speech ends before the agent's, or other agent speech lies between.                                                                                                                                                                                       |
+| `not_one_timeline`                | The Recordings are not on one timeline (different starts, durations over 20 ms apart, or an ambiguous mono pair).                                                                                                                                                 |
+| `no_recording`                    | The Revision has no Recording.                                                                                                                                                                                                                                    |
+| `analysis_not_stored`             | The analysis is pending, failed or unavailable; `analysis_state` says which.                                                                                                                                                                                      |
+| `boundary_uncertainty_too_high`   | The combined speech-edge uncertainty exceeds 100 ms, so the gap is withheld.                                                                                                                                                                                      |
 
 `basis` is `anchors_checked` (Pipecat: the turn's span anchors were checked against the
 audio for a discontinuity) or `continuous_timeline_assumed` (LiveKit, whose recorder
-places frames by wall clock). `user_end_ms` and `agent_start_ms` are the paired speech
+places frames by wall clock, and the host span profile). `user_end_ms` and `agent_start_ms` are the paired speech
 edges on the axis.
 
 The speech edges come from Silero VAD, refined to 10 ms energy frames; each edge's σ is
@@ -194,6 +196,55 @@ ones; `unknown_items` counts the rest. A cost is `complete` when it has a lower 
 no unknown item. The viewer shows `$0.0090` for a complete cost, else
 `≥ $0.0046 · 2 unknown`, and the estimate apart as `+ ~$0.0042 (estimated)`. Money is
 integer nano-USD (10⁻⁹ USD). The rules below describe which spans are billed and why.
+
+## The host span profile
+
+For a host that runs its own pipeline rather than Pipecat or LiveKit, and exports its
+calls' turns itself. Every span is under the instrumentation scope `earshot.host`, with
+times on the host's wall clock: the clock its Recordings' `started_at_unix_nano` is on.
+The profile's version is `host_profile_version` in [`GET /version`](./backend-api.md#get-version);
+this is 0.1.0. The attributes are registered in
+[`semconv/earshot.yaml`](../semconv/earshot.yaml).
+
+| Span                          | Parent | Carries                                                                                                                                                                                                                                                                               |
+| ----------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `turn`                        | any    | `earshot.turn.id` (the host's turn ID); optionally `earshot.turn.index`, `earshot.turn.reported_latency_ms` (the host's own measure of the turn's latency, in milliseconds) and `earshot.turn.timeline_continuous` (`false` when frames were dropped or placed late during the turn). |
+| `user_speech`, `agent_speech` | `turn` | `earshot.turn.id`. Its window is one stretch of the caller's or the agent's speech.                                                                                                                                                                                                   |
+| `stt`, `llm`, `tts`           | `turn` | `earshot.turn.id`, `gen_ai.provider.name`, `gen_ai.request.model`; on `llm`, the `gen_ai.usage.*` counts. Its window is one stage request.                                                                                                                                            |
+
+- **Turns.** One per `turn` span. User on is the starts of its `user_speech` spans, user
+  off the latest of their ends, and agent on the earliest start of its `agent_speech`
+  spans. The reported latency is `earshot.turn.reported_latency_ms`; absent, or not a
+  finite non-negative number, it is unknown, never 0.
+- **The audible gap** is measured on the `continuous_timeline_assumed` basis, since the
+  host places its Recording's frames by its wall clock. A turn with
+  `earshot.turn.timeline_continuous=false` is `not_measurable` with
+  `recorder_timeline_discontinuity`, whatever was measured (a talk-over too), with no
+  value, bound or speech edges, which would give the gap back. The call's signals (talk-overs,
+  dead air, long silences) come from the audio and still count that turn, as they do for
+  Pipecat's detected discontinuity.
+- **Stages.** The stage spans are listed on their turn (`turns[].spans`, by role). A
+  stage the host did not time has no span: its time is unknown, never 0.
+- **Usage.** `llm` spans bill like Pipecat's `llm` (input, cached and output tokens).
+  `tts` and `stt` spans name their provider and model; their quantities are not reported
+  in 0.1.0, so their cost is unknown, or estimated from the audio for STT where a price
+  exists.
+- **No transcript.** The profile defines no text, so a host call has no transcript lines
+  (`not_observed`) and nothing of its own that a `metadata_only` project would drop. A
+  host sends its
+  Recording with `POST /v1/recordings` as any producer does.
+- **The end.** Any span with `earshot.call.ended=true` ends the call, as for any producer;
+  the call attributes above (`earshot.agent.name`, `earshot.call.outcome`,
+  `earshot.call.tags`) apply.
+
+Give spans fixed IDs per call and turn, so a retried export writes the same spans. A
+span is immutable: a re-sent span with other values keeps the first one and counts as
+a conflict, so send each span once its values are final.
+
+The profile is a convention, not an allowlist: Earshot keeps whatever else a host adds
+to its spans as it does for any producer, under `full` as sent (declared by capture
+class in the Revision) and under `metadata_only` without content keys. A host that
+must not export text keeps it off its spans.
 
 ## The calls list: `GET /v1/calls`
 
@@ -267,5 +318,23 @@ new row reprices the affected calls in the background.
 
 ## Hosted mode
 
-In `hosted_jwt` mode every `/v1/calls*`, `/v1/recordings*` and `/v1/prices*` route
-answers 403 `EARSHOT_OPERATION_UNAVAILABLE`, and the hosted OpenAPI omits them.
+In `hosted_jwt` mode a host reaches the Calls with three scopes of their own, which the
+generic incident scopes never grant:
+
+| Scope                  | Operations                                                                                |
+| ---------------------- | ----------------------------------------------------------------------------------------- |
+| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`     |
+| `earshot:calls:read`   | `GET /v1/calls`, `GET /v1/calls/{call_id}`, `POST /v1/calls:resolve`, `GET /v1/dashboard` |
+| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                              |
+
+Every other Call surface stays closed in hosted mode and answers 403
+`EARSHOT_OPERATION_UNAVAILABLE` for every method: a span's raw attributes
+(`/v1/calls/{call_id}/spans/*`), Earshot's copy of the audio (every `GET /v1/recordings*`),
+transcript upload, `/v1/prices*` and `/v1/otlp/stats`. The hosted OpenAPI lists exactly
+the open operations. Hosted authorization is one closed table of (method, route) and scope:
+an operation not in it is refused, whatever the token grants.
+
+A call's revisions are incidents. A hosted token without `earshot:calls:read` never sees
+one: incident list, turn metrics and summaries leave them out, and any incident route that
+names one (including a comparison's `known_good_bundle_id`) answers exactly what a missing
+incident answers, 404 `EARSHOT_INCIDENT_NOT_FOUND`.

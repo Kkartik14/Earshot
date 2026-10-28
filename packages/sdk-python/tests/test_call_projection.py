@@ -861,3 +861,89 @@ def test_tags_are_the_union_of_every_spans_tags() -> None:
     )
 
     assert compute_projection(_source(spans, []), PRICES).tags == ("refund", "vip")
+
+
+# --- the host profile ------------------------------------------------------------------------
+
+
+def _host_turns_at_livekits_anchors(overrides=None):
+    """LiveKit's three turns, as a host exports them in the host profile: the same
+    anchors on the same clock, with stage spans and the host's own latency."""
+
+    from host_profile_support import HostStage, HostTurn
+
+    turns = []
+    for number, anchor in enumerate(turn_anchors(livekit_spans()), start=1):
+        user_on = min(anchor.user_on_unix_nano)
+        turns.append(
+            HostTurn(
+                f"turn-{number}",
+                user_on,
+                anchor.agent_on_unix_nano + 1_000_000_000,
+                user_speech=((user_on, anchor.user_off_unix_nano),),
+                agent_speech=(anchor.agent_on_unix_nano, anchor.agent_on_unix_nano + 900_000_000),
+                stages=(
+                    HostStage("stt", user_on, anchor.user_off_unix_nano),
+                    HostStage("llm", anchor.user_off_unix_nano, anchor.agent_on_unix_nano),
+                ),
+                reported_latency_ms=anchor.reported_latency_ms,
+                **(overrides or {}).get(number, {}),
+            )
+        )
+    return turns
+
+
+def _host(turns):
+    from host_profile_support import host_request
+
+    audio = livekit_manifest()["audio"]
+    recording = _recording(
+        "host.stereo",
+        ("user", "agent"),
+        LIVEKIT_AUDIO,
+        content_type="audio/ogg",
+        started_at_unix_nano=int(audio["started_at_unix_nano"]),
+        duration_ms=LIVEKIT_HEADER_DURATION_MS,
+    )
+    return compute_projection(_source(spans_from_request(host_request(turns)), [recording]), PRICES)
+
+
+def test_host_turns_measure_the_gaps_livekit_measures_on_the_same_audio() -> None:
+    host = _host(_host_turns_at_livekits_anchors())
+    livekit = _livekit()
+
+    assert host.columns["framework"] == "host"
+    assert _gaps(host) == _gaps(livekit)
+    assert {gap["basis"] for gap in _gaps(host)} == {"continuous_timeline_assumed"}
+    assert [turn["turn_id"] for turn in host.detail["turns"]] == ["turn-1", "turn-2", "turn-3"]
+    assert [turn["reported_latency_ms"] for turn in host.detail["turns"]] == [
+        turn["reported_latency_ms"] for turn in livekit.detail["turns"]
+    ]
+    assert host.columns["measurable_turns"] == 3
+
+
+def test_a_turn_the_host_declares_discontinuous_is_not_measurable() -> None:
+    projection = _host(_host_turns_at_livekits_anchors({2: {"timeline_continuous": False}}))
+    measured = _gaps(_livekit())
+
+    first, second, third = _gaps(projection)
+    assert (first, third) == (measured[0], measured[2])
+    assert second["status"] == "not_measurable"
+    assert second["reason"] == "recorder_timeline_discontinuity"
+    assert (second["value_ms"], second["uncertainty_ms"], second["bound_ms"]) == (None, None, None)
+    # Nor the speech edges, which would give the gap back.
+    assert (second["user_end_ms"], second["agent_start_ms"]) == (None, None)
+    assert second["basis"] is None
+    assert projection.columns["measurable_turns"] == 2
+
+
+def test_host_stage_spans_are_listed_on_their_turn_and_the_call_has_no_transcript() -> None:
+    projection = _host(_host_turns_at_livekits_anchors())
+
+    for turn in projection.detail["turns"]:
+        assert [(span["name"], span["role"]) for span in turn["spans"]] == [
+            ("stt", "stt"),
+            ("llm", "llm"),
+        ]
+    assert projection.detail["transcript"] == []
+    assert projection.transcript == ()

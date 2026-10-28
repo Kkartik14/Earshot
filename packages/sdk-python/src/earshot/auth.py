@@ -41,6 +41,24 @@ class HostedPrincipal:
     token_id: str
 
 
+# The Call scopes. The generic incident scopes never grant a Call operation: a call carries
+# its audio, turns and timing, which a token minted for incident metadata must not reach.
+CALLS_READ_SCOPE = "earshot:calls:read"
+CALLS_WRITE_SCOPE = "earshot:calls:write"
+CALLS_DELETE_SCOPE = "earshot:calls:delete"
+# Creates the signed project itself: the one operation a hosted JWT may perform before its
+# project exists in Earshot.
+PROJECT_PROVISION_SCOPE = "earshot:project:provision"
+
+
+def sees_call_revisions(principal: HostedPrincipal | None) -> bool:
+    """Whether a request may read calls' revisions as incidents: always, except under a
+    hosted JWT without ``earshot:calls:read`` (``principal`` is ``None`` outside hosted
+    authorization)."""
+
+    return principal is None or CALLS_READ_SCOPE in principal.scopes
+
+
 class HostedJwtVerifier:
     """Verify RS256/ES256 tokens against one configured issuer and JWKS URI.
 

@@ -136,23 +136,37 @@ during rotation so instances can refresh before tokens rely on the new key.
 Every resource path must match the verified `project_id` claim. The optional
 `X-Earshot-Project-Id` and `x-platform-project-id` headers only assert the same
 project; neither grants access. Earshot project rows must exist before data
-requests. Provision service-side rows with the operator CLI
-`earshot project create <project_id> --display-name ...`; there is no public
-project-creation API. Platform's canonical project UUID can be the Earshot
-project ID directly; no `platform_...` rewrite is used.
+requests. The host creates its project with `PUT /v1/projects/{project_id}` under
+`earshot:project:provision`, stating `display_name` and `capture_preset` explicitly;
+see [project provisioning](./backend-api.md#project-provisioning). A repeat with the
+same terms answers 200, other terms 409, and a deleted project 410. The operator CLI
+`earshot project create <project_id> --display-name ...` still works. Platform's
+canonical project UUID can be the Earshot project ID directly; no `platform_...`
+rewrite is used.
+
+A cold JWKS cache answers concurrent requests 503 `EARSHOT_AUTHORITY_UNAVAILABLE` with
+`Retry-After: 3` while one refresh runs. A host retries those after the delay.
 
 The receiver currently enforces these least-privilege scopes. The exact literal
 names are Earshot's contract proposal and still require agreement from the
 Platform token issuer before hosted acceptance.
 
-| Scope                     | Earshot operations                                                                 |
-| ------------------------- | ---------------------------------------------------------------------------------- |
-| `earshot:read`            | Incident list/detail, analysis, explanation, export, references, live list and SSE |
-| `earshot:write`           | Incident/capture/checkpoint ingest and reference writes                            |
-| `earshot:delete`          | Reference removal                                                                  |
-| `earshot:artifact:delete` | Immutable incident artifact deletion                                               |
-| `earshot:summary:read`    | Generic and optional Platform summary                                              |
-| `earshot:project:delete`  | Project erasure                                                                    |
+| Scope                       | Earshot operations                                                                 |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `earshot:read`              | Incident list/detail, analysis, explanation, export, references, live list and SSE |
+| `earshot:write`             | Incident/capture/checkpoint ingest and reference writes                            |
+| `earshot:delete`            | Reference removal                                                                  |
+| `earshot:artifact:delete`   | Immutable incident artifact deletion                                               |
+| `earshot:summary:read`      | Generic and optional Platform summary                                              |
+| `earshot:project:provision` | Creating the signed project, or confirming it on the same terms                    |
+| `earshot:project:delete`    | Project erasure                                                                    |
+| `earshot:calls:write`       | OTLP spans and Recordings of Calls                                                 |
+| `earshot:calls:read`        | Call list and detail, Session Key resolution, dashboard                            |
+| `earshot:calls:delete`      | Call purge                                                                         |
+
+The generic scopes never grant a Call operation, and the table is closed: anything not in
+it answers 403 `EARSHOT_OPERATION_UNAVAILABLE`. See
+[hosted mode in the Calls guide](./calls.md#hosted-mode).
 
 ## Generic and Platform summaries
 
@@ -245,8 +259,10 @@ removing data, fencing subsequent reads, writes, and retries. The built-in
 `default` project cannot be deleted. Cleanup removes Earshot incidents,
 references, analyses/projections, connector retry receipts and configuration,
 API keys, capture-call journals, and queued content objects attributable to those
-incidents. Project-attributed, interrupted ingest intents are also removed with their
-uncommitted CAS objects. CAS objects with no durable owner record stay preserved for
+incidents. It removes every Call with all its evidence: spans, Recordings with their
+analyses, peaks and renditions, projections, Revisions and the blobs they name; see
+[project deletion](./backend-api.md#project-deletion). Project-attributed, interrupted
+ingest intents are also removed with their uncommitted CAS objects. CAS objects with no durable owner record stay preserved for
 explicit maintenance. Hashed bundle-ID tombstones remain to prevent ID reuse.
 
 Project deletion revokes each active live-tail subscription's replay backlog and
@@ -293,8 +309,9 @@ The proposed runtime mapping is metadata-only by default. Transcript text,
 audio, tool inputs/results, model prompts/responses, provider secrets,
 diagnostic payloads, raw OTLP, and unconstrained attribute maps are excluded.
 Expanding capture requires explicit policy, purpose, and retention terms.
-In hosted mode Earshot does not ingest or serve audio bytes: the Recordings routes
-answer 403 there in 0.2.0. Artifact retention governs
+In hosted mode a host may send a call's Recording under `earshot:calls:write`, and the
+project's capture preset decides what is kept; Earshot never serves audio bytes to a hosted
+token (every `GET /v1/recordings*` stays closed). Artifact retention governs
 evidence lifetime; purge removes the immutable artifact, analyses, projections,
 and external references. The viewer surfaces the privacy manifest and recorded
 omissions alongside evidence.

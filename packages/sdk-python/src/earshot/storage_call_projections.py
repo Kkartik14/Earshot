@@ -432,7 +432,8 @@ class CallProjector:
     def write(
         self, snapshot: Snapshot, computed: Computed, *, budget_s: float | None = None
     ) -> bool:
-        """Store the projection if the call is still as the snapshot read it."""
+        """Store the projection if the call is still as the snapshot read it and its
+        project is not deleting."""
 
         now = self.store._clock.unix_nano()
         stamps = {
@@ -449,9 +450,11 @@ class CallProjector:
             self.store._connect() as connection,
         ):
             connection.begin_write()
+            # A project deleting since the snapshot gets no projection.
             call = connection.execute(
-                "SELECT projection_seq, latest_revision FROM calls "
-                "WHERE project_id = ? AND call_id = ?",
+                "SELECT c.projection_seq, c.latest_revision FROM calls c "
+                "JOIN projects p ON p.project_id = c.project_id "
+                "WHERE c.project_id = ? AND c.call_id = ? AND p.lifecycle_state = 'active'",
                 scope,
             ).fetchone()
             if (

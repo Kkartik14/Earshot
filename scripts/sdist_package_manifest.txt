@@ -1,6 +1,7 @@
 packages/sdk-python/src/earshot/__init__.py
 packages/sdk-python/src/earshot/adapters/__init__.py
 packages/sdk-python/src/earshot/adapters/base.py
+packages/sdk-python/src/earshot/adapters/host.py
 packages/sdk-python/src/earshot/adapters/livekit.py
 packages/sdk-python/src/earshot/adapters/pipecat.py
 packages/sdk-python/src/earshot/adapters/providers/__init__.py

@@ -109,6 +109,8 @@ SESSION_SPANS = frozenset(
 )
 
 LIVEKIT_SCOPE = "livekit-agents"
+# The host span profile (``call_span_facts``).
+HOST_SCOPE = "earshot.host"
 LIVEKIT_KEY_PREFIX = "lk."
 # Post-call LiveKit job/session spans are stored but cannot dirty or extend a closed call.
 # ``agent_session`` remains an end marker for versions without ``session_close``.

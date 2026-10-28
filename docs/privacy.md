@@ -109,11 +109,14 @@ the Project's calls can no longer be searched by text (see
 
 ### Hosted mode
 
-In `hosted_jwt` mode, `/v1/traces`, `/v1/recordings*`, `/v1/calls*`, `/v1/prices*` and
-`/v1/otlp/stats` answer 403 `EARSHOT_OPERATION_UNAVAILABLE` for every method, so a hosted
-deployment receives no OTLP spans, call transcripts or Recordings in 0.3.0.
-Hosted Incident ingest keeps its closed metadata-only profile, which rejects media and raw
-OTLP; see [the backend API](./backend-api.md).
+In `hosted_jwt` mode a host sends and reads Calls only under the `earshot:calls:*` scopes
+(see [hosted mode in the Calls guide](./calls.md#hosted-mode)); the generic incident scopes
+never reach them, and a token without `earshot:calls:read` never sees a call's revisions as
+incidents. The project's capture preset applies to hosted Calls exactly as to any other:
+under `metadata_only` no transcript text or Recording is kept. A span's raw attributes,
+Earshot's copy of the audio and transcript upload stay closed in hosted mode, so a host
+reads back only the call view's JSON. Hosted Incident ingest keeps its closed metadata-only
+profile, which rejects media and raw OTLP; see [the backend API](./backend-api.md).
 
 ## Producer capture policy
 
@@ -394,7 +397,10 @@ the Project, with every projection, transcript line, analysis, peaks and renditi
 its Calls, and the Project's own prices. Built-in prices are not the Project's and
 stay. Incident tombstones (`SHA-256(bundle_id)`), including those of Revisions, stay, so
 bundle IDs are never reused. Blobs are deleted after the catalog commit; deletion
-answers 202 until they are gone.
+answers 202 until they are gone. An upload streaming when deletion starts is refused when
+it finishes, and an analysis that finishes after it stores no result; the objects either
+wrote are deleted before deletion answers 200. The projection job writes nothing for a
+deleting Project.
 
 ### Erasure limits
 

@@ -710,3 +710,128 @@ def test_a_projection_row_records_the_versions_it_was_computed_from(tmp_path) ->
         "estimate",
         "not_reported",
     }
+
+
+# --- the host profile --------------------------------------------------------------------------
+
+
+def _host_turns(**stage_attributes):
+    """LiveKit's three turns at their own anchors, as a host exports them."""
+
+    from earshot.call_span_facts import turn_anchors
+    from host_profile_support import HostStage, HostTurn
+
+    turns = []
+    livekit = [span for item in livekit_requests() for span in spans_from_request(item)]
+    for number, anchor in enumerate(turn_anchors(livekit), start=1):
+        user_on = min(anchor.user_on_unix_nano)
+        turns.append(
+            HostTurn(
+                f"turn-{number}",
+                user_on,
+                anchor.agent_on_unix_nano + SECOND,
+                user_speech=((user_on, anchor.user_off_unix_nano),),
+                agent_speech=(anchor.agent_on_unix_nano, anchor.agent_on_unix_nano + SECOND),
+                stages=(
+                    HostStage(
+                        "llm",
+                        anchor.user_off_unix_nano,
+                        anchor.agent_on_unix_nano,
+                        {"gen_ai.provider.name": "openai", **stage_attributes},
+                    ),
+                ),
+                reported_latency_ms=anchor.reported_latency_ms,
+            )
+        )
+    return turns
+
+
+def test_a_host_call_with_its_stereo_recording_is_projected_with_measured_turns(tmp_path) -> None:
+    from host_profile_support import HOST_SESSION_KEY, host_request
+
+    world = World(tmp_path)
+    call_id = world.replay([host_request(_host_turns())])
+    audio = livekit_manifest()["audio"]
+    world.store_recording(
+        "host.stereo",
+        LIVEKIT_AUDIO.read_bytes(),
+        {
+            "session_key": HOST_SESSION_KEY,
+            "speaker": "mixed",
+            "channel_speakers": ("user", "agent"),
+            "content_type": "audio/ogg",
+            "started_at_unix_nano": audio["started_at_unix_nano"],
+        },
+        duration_ms=34_004,
+    )
+    world.close()
+    world.analyse()
+    world.project()
+
+    # The gaps the LiveKit call measures from the same audio and the same anchors.
+    assert _gaps(world, call_id) == [
+        ("measured", 1290, None),
+        ("measured", 1660, None),
+        ("measured", 1250, None),
+    ]
+    projection = world.projection(call_id)
+    assert projection["state"] == "current"
+    assert projection["summary"].framework == "host"
+    assert [turn["turn_id"] for turn in projection["detail"]["turns"]] == [
+        "turn-1",
+        "turn-2",
+        "turn-3",
+    ]
+    assert projection["detail"]["transcript"] == []
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM call_transcripts") == [(0,)]
+    [(finality, completeness)] = catalog_rows(
+        tmp_path, "SELECT finality, completeness FROM incidents"
+    )
+    assert (finality, completeness) == ("final", "complete")
+
+
+def test_a_host_call_delivered_twice_is_the_same_call_with_the_same_projection(tmp_path) -> None:
+    from host_profile_support import host_request
+
+    once, twice = World(tmp_path / "once"), World(tmp_path / "twice")
+    first = once.replay([host_request(_host_turns())])
+    second = twice.replay([host_request(_host_turns()), host_request(_host_turns())])
+    for world in (once, twice):
+        world.close()
+        world.project()
+
+    def projected(world: World, call_id: str) -> dict:
+        detail = world.projection(call_id)["detail"]
+        return {key: detail[key] for key in ("turns", "signals", "cost_items", "transcript")}
+
+    assert projected(twice, second) == projected(once, first)
+    for world in (once, twice):
+        assert catalog_rows(world.path, "SELECT count(*) FROM calls") == [(1,)]
+        assert catalog_rows(world.path, "SELECT count(*) FROM call_revisions") == [(1,)]
+    assert catalog_rows(twice.path, "SELECT count(*) FROM spans") == catalog_rows(
+        once.path, "SELECT count(*) FROM spans"
+    )
+
+
+# Content a host must not send, on host spans: under metadata_only none of it, and not
+# the session key, is stored anywhere.
+_STRAY_REPLY = "A reply the agent spoke, which a host must not export"
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_metadata_only_stores_no_stray_content_from_host_spans(tmp_path, preset) -> None:
+    from host_profile_support import HOST_SESSION_KEY, host_request
+
+    world = World(tmp_path)
+    world.store.set_capture_preset("default", preset)
+    world.replay([host_request(_host_turns(**{"gen_ai.output.messages": _STRAY_REPLY}))])
+    world.close()
+    world.project()
+    world.store.close()
+
+    needles = [HOST_SESSION_KEY.encode(), _STRAY_REPLY.encode()]
+    found = stored_needles(tmp_path, needles)
+    if preset == "metadata_only":
+        assert found == set()
+    else:  # the control: the same search finds both when they are stored
+        assert found == set(needles)

@@ -39,8 +39,9 @@ attributes), and the bundle hashes some of them.
   else from the earliest span's start.
 - **Turns:** one per framework turn (``call_span_facts.turn_anchors``), with the
   framework's reported latency and the audible gap at the agent
-  (``call_timeline``). Each turn's spans (its descendants) are listed for the lazy
-  span route.
+  (``call_timeline``); a turn whose producer declares its recording timeline not
+  continuous is ``not_measurable`` (``call_timeline.declared_discontinuity``). Each
+  turn's spans (its descendants) are listed for the lazy span route.
 - **Bounds:** the catalog keeps times and durations in signed 64-bit columns. An
   anchor time outside ``[0, 2^63 - 1]`` ns, and a reported latency longer than
   ``MAX_TIME_MS`` (whose nanoseconds would not fit), are unknown: the latency is null
@@ -70,6 +71,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from .call_capture import (
+    HOST_SCOPE,
     LIVEKIT_SCOPE,
     NOT_GIVEN,
     any_value,
@@ -87,6 +89,7 @@ from .call_timeline import (
     Track,
     TurnAnchorsMs,
     audible_gap,
+    declared_discontinuity,
     not_measurable,
     one_timeline_pairs,
     signals,
@@ -100,7 +103,7 @@ if TYPE_CHECKING:
 
 # Bumped when the projection's computation or shape changes: every stored
 # projection then reads as stale until the job recomputes it.
-CALL_PROJECTION_VERSION = 6
+CALL_PROJECTION_VERSION = 7
 PROJECTION_STATES = ("none", "stale", "current")
 
 
@@ -397,6 +400,8 @@ def call_framework(spans: Sequence[OtlpSpan]) -> str | None:
         return "pipecat"
     if LIVEKIT_SCOPE in scopes:
         return "livekit"
+    if HOST_SCOPE in scopes:
+        return "host"
     return None
 
 
@@ -697,6 +702,8 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
             if timeline is not None
             else not_measurable(choice.reason or "no_recording")
         )
+        if timeline is not None and anchor.timeline_continuous is False:
+            gap = declared_discontinuity(gap)
         gaps.append(gap)
         turn_span = by_id.get((anchor.trace_id, anchor.turn_span_id))
         children = (
