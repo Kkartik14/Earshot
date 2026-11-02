@@ -72,7 +72,7 @@ backward-tolerance coverage. Regenerating it on a clean tree is therefore a no-o
 
 ```bash
 pytest
-COVERAGE_RCFILE=pyproject.toml pytest --cov=earshot --cov-report=term-missing
+COVERAGE_RCFILE="$PWD/pyproject.toml" pytest --cov=earshot --cov-report=term-missing
 ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples
 pnpm test
 pnpm typecheck

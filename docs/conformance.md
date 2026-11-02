@@ -197,7 +197,7 @@ pytest
 pytest -m unit
 pytest -m integration
 pytest -m e2e
-COVERAGE_RCFILE=pyproject.toml pytest --cov=earshot --cov-report=term-missing
+COVERAGE_RCFILE="$PWD/pyproject.toml" pytest --cov=earshot --cov-report=term-missing
 ruff check .
 python scripts/generate_fault_fixtures.py
 python scripts/generate_fault_fixtures.py --check

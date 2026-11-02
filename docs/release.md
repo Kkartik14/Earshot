@@ -60,7 +60,7 @@ python scripts/generate_fault_fixtures.py --check
 python scripts/check_semconv.py
 ruff check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples conftest.py
 ruff format --check packages/sdk-python/src packages/sdk-python/tests apps/ingest scripts examples conftest.py
-COVERAGE_RCFILE=pyproject.toml COVERAGE_FILE=.coverage.sqlite \
+COVERAGE_RCFILE="$PWD/pyproject.toml" COVERAGE_FILE=.coverage.sqlite \
   pytest --cov=earshot --cov-report= --cov-fail-under=0 -q
 pnpm test
 pnpm typecheck
@@ -76,10 +76,10 @@ with `--db postgresql`, then the blob-store suite, then enforce the coverage flo
 combined data:
 
 ```bash
-COVERAGE_RCFILE=pyproject.toml COVERAGE_FILE=.coverage.postgres \
+COVERAGE_RCFILE="$PWD/pyproject.toml" COVERAGE_FILE=.coverage.postgres \
   pytest -q --db postgresql \
   --cov=earshot --cov-report= --cov-fail-under=0 <the modules in ci.yml>
-COVERAGE_RCFILE=pyproject.toml COVERAGE_FILE=.coverage.postgres \
+COVERAGE_RCFILE="$PWD/pyproject.toml" COVERAGE_FILE=.coverage.postgres \
   pytest -q \
   --cov=earshot --cov-append --cov-report= --cov-fail-under=0 apps/ingest/tests/test_blobstore.py
 python -m coverage combine .coverage.sqlite .coverage.postgres
