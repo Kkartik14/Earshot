@@ -189,11 +189,10 @@ repository, workflow, or environment is renamed, update PyPI and npm before the 
 release.
 
 [`release-checklist.md`](./release-checklist.md) is the owner's step-by-step list: the
-one-time npm and GitHub environment setup, the five package-version declarations and generated
-`uv.lock` entry to align, the
-`CHANGELOG.md` entry, and the checks after publishing. Prepare a release on `main`, update
-every intentionally coupled version, and let CI pass, including the `coverage` job. Then
-create and push the matching tag:
+one-time npm and GitHub environment setup, the five package-version declarations, the
+generated `uv.lock` entry, the `CHANGELOG.md` entry, and the checks after publishing.
+Prepare a release on `main`, update every intentionally coupled version, and let CI pass,
+including the `coverage` job. Then create and push the matching tag:
 
 ```bash
 git switch main
