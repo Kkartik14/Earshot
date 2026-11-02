@@ -4,7 +4,9 @@ Notable changes to Earshot. Versions follow the
 [alpha compatibility policy](docs/release.md#alpha-compatibility-policy). Earlier releases
 are described in their [GitHub release notes](https://github.com/Kkartik14/Earshot/releases).
 
-## Unreleased
+## 0.4.0 (unreleased)
+
+See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility details.
 
 ### Changed
 

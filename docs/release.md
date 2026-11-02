@@ -141,27 +141,29 @@ analyses recordings for the call view. It carries OCI labels, with the version f
 `EARSHOT_VERSION` build argument:
 
 ```bash
-docker build -t earshot:local --build-arg EARSHOT_VERSION=0.2.0-local .
+docker build -t earshot:local --build-arg EARSHOT_VERSION=0.4.0-local .
 sh scripts/smoke-container.sh
 ```
 
 ## Automated release
 
-`.github/workflows/release.yml` is the only publication path. A manual workflow run is a
-dry run: it builds and inspects the Python distributions and the npm tarballs but cannot
-publish. A tag push publishes only when all of these identities agree:
+`.github/workflows/release.yml` is the only publication path. A manual workflow run
+dispatched on a branch (for example, `main`) builds and inspects the Python distributions
+and npm tarballs but cannot publish. Dispatching the workflow on a tag runs the publishing
+jobs, just like pushing that tag; never use a tag dispatch as a dry run. A tag publishes
+only when all of these identities agree:
 
 - the tag is exactly `v<project.version>`;
 - the tagged commit is contained in the repository's default branch;
 - the Python distribution is `earshot-observability`;
-- both npm packages have the tag's version; and
+- all three npm packages have the tag's version; and
 - the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
 
 | Job                 | Runs on        | Does                                                                                                                                                  |
 | ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `validate`          | tag and manual | Checks the tag, version and image identity, and that the tag is on the default branch.                                                                |
 | `build-python`      | tag and manual | Builds the viewer, wheel and sdist, and runs the wheel, sdist and smoke checks.                                                                       |
-| `build-npm`         | tag and manual | Checks both package versions, builds and packs them with pnpm, and inspects the tarballs.                                                             |
+| `build-npm`         | tag and manual | Checks all three package versions, builds and packs them with pnpm, inspects the tarballs, and runs npm's publish dry run.                            |
 | `publish-container` | tag            | Builds the Linux AMD64 image, pushes it to `ghcr.io/kkartik14/earshot` with SBOM and provenance (`mode=max`), and attests it.                         |
 | `publish-pypi`      | tag            | Publishes the inspected wheel and sdist to PyPI with OIDC, after the image.                                                                           |
 | `publish-npm`       | tag            | Publishes the inspected tarballs with `npm publish --provenance --access public`, after the image. A version containing `-` gets the `next` dist-tag. |
@@ -187,7 +189,8 @@ repository, workflow, or environment is renamed, update PyPI and npm before the 
 release.
 
 [`release-checklist.md`](./release-checklist.md) is the owner's step-by-step list: the
-one-time npm and GitHub environment setup, the four version fields to set, the
+one-time npm and GitHub environment setup, the five package-version declarations and generated
+`uv.lock` entry to align, the
 `CHANGELOG.md` entry, and the checks after publishing. Prepare a release on `main`, update
 every intentionally coupled version, and let CI pass, including the `coverage` job. Then
 create and push the matching tag:
@@ -195,9 +198,9 @@ create and push the matching tag:
 ```bash
 git switch main
 git pull --ff-only
-python scripts/check_release.py --tag v0.3.0 --repository Kkartik14/Earshot
-git tag -a v0.3.0 -m "Earshot 0.3.0"
-git push origin v0.3.0
+python scripts/check_release.py --tag v0.4.0 --repository Kkartik14/Earshot
+git tag -a v0.4.0 -m "Earshot 0.4.0"
+git push origin v0.4.0
 ```
 
 The first GHCR package may require one visibility check in the package settings. It must
