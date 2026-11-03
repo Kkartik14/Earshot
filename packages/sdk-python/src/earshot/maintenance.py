@@ -30,6 +30,7 @@ import contextlib
 import logging
 import os
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
@@ -54,14 +55,35 @@ FAILED_REPROJECTION_RETRY_SECONDS = 60.0
 MaintenanceJob = Callable[[int], Awaitable[float | None]]
 
 
+class MaintenanceMetrics(Protocol):
+    """The bounded measurements the maintenance loop can record."""
+
+    def maintenance_job(
+        self,
+        job_name: str,
+        duration_seconds: float,
+        outcome: str,
+        error_type: str | None = None,
+    ) -> None: ...
+
+    def maintenance_delay(self, job_name: str, delay_seconds: float) -> None: ...
+
+
 class MaintenanceLoop:
     """Run registered jobs once per tick until stopped."""
 
-    def __init__(self, *, clock: Clock | None = None, tick_seconds: float = TICK_SECONDS) -> None:
+    def __init__(
+        self,
+        *,
+        clock: Clock | None = None,
+        tick_seconds: float = TICK_SECONDS,
+        metrics: MaintenanceMetrics | None = None,
+    ) -> None:
         if tick_seconds <= 0:
             raise ValueError("the maintenance tick must be positive")
         self.clock = clock or SystemClock()
         self.tick_seconds = tick_seconds
+        self._metrics = metrics
         self._jobs: list[tuple[str, MaintenanceJob]] = []
         self._closed = False
 
@@ -117,21 +139,68 @@ class MaintenanceLoop:
                 _LOGGER.error("maintenance job %s failed to close (%s)", name, type(error).__name__)
 
     async def _run_job_until(self, stop: asyncio.Event, name: str, job: MaintenanceJob) -> None:
+        scheduled_at = self.clock.monotonic_nano()
         while not stop.is_set():
-            delay = await self._run_job(name, job, self.clock.unix_nano())
-            timeout = self.tick_seconds if delay is None else max(0.0, delay)
+            wakeup_delay_seconds = (
+                max(0, self.clock.monotonic_nano() - scheduled_at) / 1_000_000_000
+            )
+            self._record_maintenance_delay(name, wakeup_delay_seconds)
+            next_delay = await self._run_job(name, job, self.clock.unix_nano())
+            timeout = self.tick_seconds if next_delay is None else max(0.0, next_delay)
+            scheduled_at = self.clock.monotonic_nano() + int(timeout * 1_000_000_000)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=timeout)
 
-    @staticmethod
-    async def _run_job(name: str, job: MaintenanceJob, now_unix_nano: int) -> float | None:
+    async def _run_job(self, name: str, job: MaintenanceJob, now_unix_nano: int) -> float | None:
+        started = time.monotonic()
         try:
-            return await job(now_unix_nano)
+            result = await job(now_unix_nano)
         except asyncio.CancelledError:
             raise
         except Exception as error:
             _LOGGER.error("maintenance job %s failed (%s)", name, type(error).__name__)
+            self._record_job_metrics(
+                name,
+                time.monotonic() - started,
+                "failure",
+                self._error_category(error),
+            )
             return None
+        self._record_job_metrics(name, time.monotonic() - started, "success")
+        return result
+
+    def _record_job_metrics(
+        self,
+        name: str,
+        duration_seconds: float,
+        outcome: str,
+        error_type: str | None = None,
+    ) -> None:
+        if self._metrics is None:
+            return
+        try:
+            self._metrics.maintenance_job(name, duration_seconds, outcome, error_type)
+        except Exception as error:
+            # A metrics backend must not break storage maintenance.
+            _LOGGER.debug("maintenance metrics failed (%s)", type(error).__name__)
+
+    def _record_maintenance_delay(self, name: str, delay_seconds: float) -> None:
+        if self._metrics is None:
+            return
+        try:
+            self._metrics.maintenance_delay(name, delay_seconds)
+        except Exception as error:
+            _LOGGER.debug("maintenance scheduler metrics failed (%s)", type(error).__name__)
+
+    @staticmethod
+    def _error_category(error: Exception) -> str:
+        if isinstance(error, TimeoutError):
+            return "timeout"
+        if isinstance(error, OSError):
+            return "io"
+        if type(error).__module__.startswith("earshot.storage"):
+            return "storage"
+        return "other"
 
 
 class ServerLock(Protocol):

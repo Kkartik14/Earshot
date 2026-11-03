@@ -103,11 +103,39 @@ Process liveness. It does not imply storage is writable.
 
 ### `GET /readyz`
 
-Checks catalog and artifact-store readiness. Returns 503 `{"status": "unavailable"}` when
-unavailable, otherwise 200 `{"status": "ready", "projections_pending": N}`. `N` counts
-Incidents whose derived projections (graph rows, Turn Facts, retention and export
-columns) are from an older release and are still being re-projected in the background;
-it never makes the server unready.
+Reports the catalog, configured recording blob store and materializer process using fixed,
+non-sensitive component states. When the catalog is unavailable, it returns HTTP 503 and
+`status: "unavailable"`. Otherwise, any component state other than `ready` (including
+`unknown` or `disabled`) yields HTTP 200 with `status: "degraded"`; when every component
+is `ready`, it returns HTTP 200 with `status: "ready"`. A degraded response keeps durable
+ingest available during partial outages.
+
+```json
+{
+  "status": "ready",
+  "components": {
+    "catalog": "ready",
+    "blob_store": "ready",
+    "materializer": "ready"
+  },
+  "projections_pending": 0
+}
+```
+
+`blob_store` is `disabled` when no store is configured and `unknown` before the first
+remote-store probe or when its latest result is older than 90 seconds. It is `unavailable`
+when the latest check failed. Local filesystem checks run directly. Remote S3-compatible
+checks are cached from a read-only `ListObjectsV2` request scheduled every 30 seconds after
+the previous probe completes, and expire after 90 seconds. This
+only checks listing access to the configured namespace; it does not prove object read,
+write, or delete permissions. `materializer: "ready"` reports that the managed worker
+process is alive, not that a test revision was built. No error text, object key, URL,
+credential, or project identifier is returned.
+
+`projections_pending` is included when the catalog can be read. It counts Incidents whose
+derived projections (graph rows, Turn Facts, retention and export columns) are from an
+older release and are still being re-projected in the background; it never makes the
+server unavailable.
 
 ### `GET /version`
 

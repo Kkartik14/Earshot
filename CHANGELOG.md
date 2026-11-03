@@ -52,6 +52,12 @@ See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility det
 - **A call's revisions are hidden from a hosted token that may not read calls.** Without
   `earshot:calls:read`, incident list, turn metrics and summaries leave them out, and an
   incident route that names one answers 404 `EARSHOT_INCIDENT_NOT_FOUND`.
+- **Component readiness and server metrics.** `GET /readyz` reports catalog, blob-store
+  and materializer status; OpenTelemetry instruments expose maintenance, durable queue,
+  call-closing and blob-deletion measurements when the host configures an SDK/exporter.
+- **Postgres and S3 restart verification.** The server-process integration check uploads a
+  Recording, kills Earshot, restarts against the same isolated catalog and object store,
+  and verifies the bytes and digest.
 
 ## 0.3.0 (2026-10-24)
 

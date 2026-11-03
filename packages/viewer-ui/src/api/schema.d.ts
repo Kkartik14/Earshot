@@ -4088,12 +4088,34 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ReadinessComponents */
+        ReadinessComponents: {
+            /**
+             * Blob Store
+             * @enum {string}
+             */
+            blob_store: "ready" | "unavailable" | "unknown" | "disabled";
+            /**
+             * Catalog
+             * @enum {string}
+             */
+            catalog: "ready" | "unavailable";
+            /**
+             * Materializer
+             * @enum {string}
+             */
+            materializer: "ready" | "unavailable";
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
+            components: components["schemas"]["ReadinessComponents"];
             /** Projections Pending */
             projections_pending?: number | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "degraded" | "unavailable";
         };
         /**
          * RecordingCreateRequest

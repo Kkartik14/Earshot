@@ -14,6 +14,7 @@ import math
 import os
 import re
 import tempfile
+import threading
 import time
 import uuid
 import zlib
@@ -161,6 +162,7 @@ from .privacy import (
     assert_hosted_metadata_only,
 )
 from .query import EvidenceQuery, compare_incidents, detect_contradictions
+from .server_metrics import ServerMetrics
 from .signals import peaks as signal_peaks
 from .storage import (
     DATABASE_ERRORS,
@@ -298,12 +300,64 @@ class VersionResponse(ApiModel):
     capabilities: VersionCapabilities
 
 
+class ReadinessComponents(ApiModel):
+    catalog: Literal["ready", "unavailable"]
+    blob_store: Literal["ready", "unavailable", "unknown", "disabled"]
+    materializer: Literal["ready", "unavailable"]
+
+
 class ReadinessResponse(ApiModel):
-    status: str
+    status: Literal["ready", "degraded", "unavailable"]
+    components: ReadinessComponents
     # Incidents whose read models (graph rows, turn facts, expiry and export
     # columns) are still from an older release; they converge in the background
-    # and never make the server unready. Absent when the store is unavailable.
+    # and never make the server unavailable. Absent when the catalog cannot be read.
     projections_pending: int | None = None
+
+
+class _BlobStoreReadiness:
+    """A cached, non-mutating health check for a non-filesystem BlobStore."""
+
+    _INTERVAL_SECONDS = 30.0
+    _MAX_AGE_SECONDS = 90.0
+
+    def __init__(self, blobs: BlobStore | None) -> None:
+        self._blobs = blobs
+        self._lock = threading.Lock()
+        self._state = "unknown"
+        self._checked_at: float | None = None
+
+    def status(self) -> Literal["ready", "unavailable", "unknown", "disabled"]:
+        if self._blobs is None:
+            return "disabled"
+        if isinstance(self._blobs, LocalBlobStore):
+            try:
+                self._blobs.health_check()
+            except Exception:
+                return "unavailable"
+            return "ready"
+        with self._lock:
+            if (
+                self._checked_at is None
+                or time.monotonic() - self._checked_at > self._MAX_AGE_SECONDS
+            ):
+                return "unknown"
+            return self._state  # type: ignore[return-value]
+
+    async def probe(self, _now_unix_nano: int) -> float:
+        if self._blobs is None:
+            return self._INTERVAL_SECONDS
+        try:
+            await asyncio.to_thread(self._blobs.health_check)
+        except Exception as error:
+            state = "unavailable"
+            _LOGGER.warning("EARSHOT_BLOB_HEALTHCHECK_FAILED (%s)", type(error).__name__)
+        else:
+            state = "ready"
+        with self._lock:
+            self._state = state
+            self._checked_at = time.monotonic()
+        return self._INTERVAL_SECONDS
 
 
 class OtlpStatsResponse(ApiModel):
@@ -3387,6 +3441,7 @@ def create_app(
     server_lock: ServerLock | None = None,
     call_timings: CallTimings | None = None,
     blob_store: BlobStore | None = None,
+    server_metrics: ServerMetrics | None = None,
     upload_idle_timeout_seconds: float = UPLOAD_IDLE_TIMEOUT_SECONDS,
 ) -> FastAPI:
     """Build the API around ``store`` (or a SQLite store in ``data_dir``).
@@ -3404,6 +3459,7 @@ def create_app(
     """
 
     settings = config or ApiConfig()
+    metrics_sink = server_metrics if server_metrics is not None else ServerMetrics()
     if not upload_idle_timeout_seconds > 0:
         raise ValueError("upload_idle_timeout_seconds must be positive")
     repository = store or IncidentStore(data_dir)
@@ -3476,19 +3532,28 @@ def create_app(
     dashboard = DashboardReads(repository)
     if blob_store is None and repository.data_dir is not None:
         blob_store = LocalBlobStore(repository.data_dir / "blobs")
-    recordings = RecordingStore(repository, calls=calls, blobs=blob_store)
+    blob_readiness = _BlobStoreReadiness(blob_store)
+    recordings = RecordingStore(repository, calls=calls, blobs=blob_store, metrics=metrics_sink)
     # A recording upload is ended (408) once it has run as long as a pending
     # recording may hold its call.
     upload_deadline_seconds = calls.timings.upload_hold_seconds
     call_purger = CallPurger(repository, calls=calls, recordings=recordings)
 
-    maintenance = MaintenanceLoop()
+    maintenance = MaintenanceLoop(metrics=metrics_sink)
     if server_lock is not None:
         maintenance.add_job("database-server-lock", database_lock_watchdog(server_lock))
     # Opening the store never re-projects; incidents whose projections predate
     # this release converge here, after the server is serving.
     maintenance.add_job("incident-reprojection", reprojection_job(repository))
+
+    async def snapshot_queue_depths(_now_unix_nano: int) -> float:
+        depths = await asyncio.to_thread(repository.operational_queue_depths)
+        metrics_sink.set_queue_depths(depths)
+        return 30.0
+
+    maintenance.add_job("queue-depth-snapshot", snapshot_queue_depths)
     if blob_store is not None:
+        maintenance.add_job("blob-store-health", blob_readiness.probe)
         # At startup: what crashed uploads left (spool files, multipart uploads).
         maintenance.add_job("blob-spool-sweep", blob_sweep_job(blob_store))
         maintenance.add_job("blob-deletions", blob_deletion_job(recordings))
@@ -3516,13 +3581,15 @@ def create_app(
     closer = Closer(
         repository, calls=calls, recordings=recordings, materializer=MaterializerProcess()
     )
-    maintenance.add_job("call-closer", call_closer_job(closer))
+    maintenance.add_job("call-closer", call_closer_job(closer, metrics=metrics_sink))
     maintenance.add_job("parked-trace-collection", parked_trace_job(calls))
     # A call whose latest revision expired goes whole, never revision by revision.
     maintenance.add_job("call-retention", call_retention_job(call_purger))
     # Each call's projection (list columns, call view) follows its revisions, its
     # analyses and the prices; the built-in prices are seeded at start.
     maintenance.add_job("call-projection", projection_job(CallProjector(repository)))
+
+    materializer_started = False
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -3533,6 +3600,7 @@ def create_app(
         (``EARSHOT_MATERIALIZER_START_FAILED``; uvicorn exits with status 3).
         """
 
+        nonlocal materializer_started
         live.start()
         retention_stop = asyncio.Event()
         maintenance_stop = asyncio.Event()
@@ -3540,6 +3608,7 @@ def create_app(
         maintenance_task: asyncio.Task[None] | None = None
         try:
             await asyncio.to_thread(closer.start)
+            materializer_started = True
             retention_task = asyncio.create_task(
                 _run_retention_cleanup(repository, settings, retention_stop),
                 name="earshot-retention-cleanup",
@@ -3567,6 +3636,7 @@ def create_app(
                     finally:
                         if server_lock is not None:
                             server_lock.release()
+                materializer_started = False
 
     app = FastAPI(
         title="Earshot local ingest",
@@ -4321,14 +4391,30 @@ def create_app(
         responses={503: {"model": ReadinessResponse}},
     )
     def ready() -> JSONResponse:
-        if repository.ready():
+        catalog_ready = repository.ready()
+        pending: int | None = None
+        if catalog_ready:
             try:
                 pending = repository.projections_pending()
             except (StorageError, *DATABASE_ERRORS, OSError):
-                pass
-            else:
-                return JSONResponse({"status": "ready", "projections_pending": pending})
-        return JSONResponse({"status": "unavailable"}, status_code=503)
+                catalog_ready = False
+        blob_status = blob_readiness.status()
+        materializer_ready = not materializer_started or closer.materializer.pid is not None
+        components = {
+            "catalog": "ready" if catalog_ready else "unavailable",
+            "blob_store": blob_status,
+            "materializer": "ready" if materializer_ready else "unavailable",
+        }
+        if not catalog_ready:
+            status, status_code = "unavailable", 503
+        elif any(value != "ready" for value in components.values()):
+            status, status_code = "degraded", 200
+        else:
+            status, status_code = "ready", 200
+        body: dict[str, Any] = {"status": status, "components": components}
+        if pending is not None:
+            body["projections_pending"] = pending
+        return JSONResponse(body, status_code=status_code)
 
     def otlp_status(status_code: int, message: str, media_type: str) -> Response:
         """An OTLP handler error: a ``google.rpc.Status`` in the request's encoding.

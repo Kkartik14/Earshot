@@ -130,6 +130,9 @@ class BlobWriter(Protocol):
 class BlobStore(Protocol):
     """The blob storage interface, implemented by ``LocalBlobStore`` and ``S3BlobStore``."""
 
+    def health_check(self) -> None:
+        """Raise when this backend cannot read its configured storage namespace."""
+
     def begin_put(self, key: str) -> BlobWriter: ...
 
     def open_range(self, key: str, start: int, end: int) -> BlobReader: ...
@@ -337,6 +340,17 @@ class LocalBlobStore:
         self._lock = threading.Lock()
         self._live_spool_files: set[str] = set()
 
+    def health_check(self) -> None:
+        """Check that the blob root and its upload spool remain accessible."""
+
+        if not (
+            self.root.is_dir()
+            and self.spool.is_dir()
+            and os.access(self.root, os.W_OK | os.X_OK)
+            and os.access(self.spool, os.W_OK | os.X_OK)
+        ):
+            raise BlobStoreError("the local blob store is unavailable")
+
     def begin_put(self, key: str) -> BlobWriter:
         _check_key(key)
         return _LocalWriter(self, self.root / key)
@@ -470,7 +484,8 @@ class S3BlobStore:
             ) from None
         self.bucket = location.bucket
         self._prefix = f"{location.prefix}/" if location.prefix else ""
-        self._client = boto3.session.Session().client(
+        session = boto3.session.Session()
+        self._client = session.client(
             "s3",
             endpoint_url=location.endpoint,
             region_name=location.region,
@@ -484,8 +499,29 @@ class S3BlobStore:
                 retries={"mode": "standard"},
             ),
         )
+        self._health_client = session.client(
+            "s3",
+            endpoint_url=location.endpoint,
+            region_name=location.region,
+            config=Config(
+                signature_version="s3v4",
+                s3={"addressing_style": "path" if location.path_style else "auto"},
+                connect_timeout=2,
+                read_timeout=2,
+                retries={"mode": "standard", "total_max_attempts": 1},
+            ),
+        )
         self._lock = threading.Lock()
         self._live_uploads: set[str] = set()
+
+    def health_check(self) -> None:
+        """Check listing access under this store's namespace without reading keys."""
+
+        self._health_client.list_objects_v2(
+            Bucket=self.bucket,
+            Prefix=self._prefix,
+            MaxKeys=1,
+        )
 
     def begin_put(self, key: str) -> BlobWriter:
         _check_key(key)

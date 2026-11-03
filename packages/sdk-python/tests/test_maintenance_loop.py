@@ -80,6 +80,100 @@ def test_run_ticks_until_stopped() -> None:
     assert len(ticks) == 3
 
 
+def test_instrumented_loop_exports_bounded_job_failure_and_schedule_metrics() -> None:
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from earshot.server_metrics import ServerMetrics
+
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    metrics = ServerMetrics(meter=provider.get_meter("earshot.server.test"))
+    loop = MaintenanceLoop(clock=ManualClock(), tick_seconds=0.001, metrics=metrics)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        runs = 0
+
+        async def broken(_now: int) -> None:
+            nonlocal runs
+            runs += 1
+            if runs == 2:
+                stop.set()
+            raise RuntimeError("sensitive exception details")
+
+        loop.add_job("call-closer", broken)
+        await asyncio.wait_for(loop.run(stop), timeout=5)
+
+    asyncio.run(scenario())
+    data = reader.get_metrics_data()
+    observed = {
+        metric.name: metric.data.data_points
+        for resource in data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+    }
+
+    failure_points = observed["earshot.maintenance.job.failures"]
+    assert sum(point.value for point in failure_points) == 2
+    assert {tuple(sorted(point.attributes.items())) for point in failure_points} == {
+        (("error.type", "other"), ("job.name", "call-closer"))
+    }
+    assert sum(point.count for point in observed["earshot.maintenance.job.duration"]) == 2
+    assert sum(point.count for point in observed["earshot.maintenance.scheduler.wakeup_delay"]) >= 2
+    assert all(
+        "sensitive exception details" not in str(point.attributes) for point in failure_points
+    )
+    provider.shutdown()
+
+
+def test_scheduler_wakeup_delay_measures_lateness_against_completion_relative_deadline() -> None:
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from earshot.server_metrics import ServerMetrics
+
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    metrics = ServerMetrics(meter=provider.get_meter("earshot.server.scheduler-test"))
+    clock = ManualClock()
+    loop = MaintenanceLoop(clock=clock, tick_seconds=0.01, metrics=metrics)
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        runs = 0
+
+        async def job(_now: int) -> None:
+            nonlocal runs
+            runs += 1
+            if runs == 2:
+                stop.set()
+
+        async def advance_clock_after_the_first_deadline_is_scheduled() -> None:
+            await asyncio.sleep(0.001)
+            clock.advance(100_000_000)
+
+        loop.add_job("call-closer", job)
+        advance_clock_task = asyncio.create_task(
+            advance_clock_after_the_first_deadline_is_scheduled()
+        )
+        await asyncio.wait_for(loop.run(stop), timeout=5)
+        await advance_clock_task
+
+    asyncio.run(scenario())
+    data = reader.get_metrics_data()
+    points = [
+        point
+        for resource in data.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        if metric.name == "earshot.maintenance.scheduler.wakeup_delay"
+        for point in metric.data.data_points
+    ]
+    assert sum(point.sum for point in points) >= 0.08
+    provider.shutdown()
+
+
 def test_job_names_are_unique_and_the_tick_is_positive() -> None:
     loop = MaintenanceLoop()
 

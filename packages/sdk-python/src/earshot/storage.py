@@ -1764,6 +1764,39 @@ class IncidentStore:
             ).fetchone()
         return int(row[0])
 
+    def operational_queue_depths(self) -> dict[str, int]:
+        """Return counts for the durable work queues used by the server.
+
+        Leased and backed-off jobs remain outstanding. Parked traces include both
+        quiet traces due for collection and traces still receiving spans. Completed
+        analysis/fetches are excluded, as are dirty calls that have already been
+        finalized. Reprojection counts incidents whose read models predate this
+        release. The counts share one query, but large tables can still take time.
+        """
+
+        self._ensure_process_ownership()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT "
+                "((SELECT COUNT(*) FROM calls WHERE pending_revision IS NOT NULL) + "
+                "(SELECT COUNT(*) FROM calls WHERE dirty = 1 AND pending_revision IS NULL)), "
+                "(SELECT COUNT(*) FROM audio_analysis WHERE state IN ('pending', 'running')), "
+                "(SELECT COUNT(*) FROM recording_fetches WHERE state IN ('pending', 'running')), "
+                "(SELECT COUNT(*) FROM pending_blob_deletions), "
+                "(SELECT COUNT(*) FROM incidents "
+                "WHERE projection_version IS NULL OR projection_version < ?), "
+                "(SELECT COUNT(*) FROM call_traces WHERE call_id IS NULL)",
+                (INCIDENT_PROJECTION_VERSION,),
+            ).fetchone()
+        return {
+            "call_closer": int(row[0]),
+            "recording_analysis": int(row[1]),
+            "recording_fetch": int(row[2]),
+            "blob_deletions": int(row[3]),
+            "incident_reprojection": int(row[4]),
+            "parked_traces": int(row[5]),
+        }
+
     def reproject_stale(
         self,
         *,

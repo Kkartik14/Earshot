@@ -58,7 +58,7 @@ import threading
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .call_capture import CAPTURE_PRESET_FULL
 from .call_materializer import MAX_REVISION_RECORDINGS
@@ -90,6 +90,12 @@ _COLUMNS = (
     "state, blob_key, size, sha256, duration_ms, created_unix_nano, stored_unix_nano, "
     "channel_speakers_json"
 )
+
+
+class BlobDeletionMetrics(Protocol):
+    """The bounded failure counter for journaled blob deletion attempts."""
+
+    def blob_deletion_failure(self, count: int = 1) -> None: ...
 
 
 class RecordingError(Exception):
@@ -272,10 +278,18 @@ def channel_speakers_json(channel_speakers: tuple[str, ...] | None) -> str | Non
 class RecordingStore:
     """Recording storage operations on one ``IncidentStore`` and one ``BlobStore``."""
 
-    def __init__(self, store: IncidentStore, *, calls: CallStore, blobs: BlobStore | None) -> None:
+    def __init__(
+        self,
+        store: IncidentStore,
+        *,
+        calls: CallStore,
+        blobs: BlobStore | None,
+        metrics: BlobDeletionMetrics | None = None,
+    ) -> None:
         self.store = store
         self.calls = calls
         self.blobs = blobs
+        self.metrics = metrics
         self._uploads_lock = threading.Lock()
         # ``(project_id, blob_key)`` of each attempt in flight -> its recording and call.
         self._uploads_in_flight: dict[tuple[str, str], tuple[str, str]] = {}
@@ -748,7 +762,13 @@ class RecordingStore:
                     deleted,
                 )
                 connection.commit()
-        return BlobDeletions(deleted=len(deleted), failed=len(claimed) - len(deleted))
+        failed = len(claimed) - len(deleted)
+        if failed and self.metrics is not None:
+            try:
+                self.metrics.blob_deletion_failure(failed)
+            except Exception as error:
+                _LOGGER.debug("blob deletion metrics failed (%s)", type(error).__name__)
+        return BlobDeletions(deleted=len(deleted), failed=failed)
 
     def _claim_deletions(
         self, due: Iterable[tuple[str, str]], now: int, budget_s: float | None

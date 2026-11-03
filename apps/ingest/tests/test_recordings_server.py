@@ -74,6 +74,7 @@ def test_each_entry_point_sweeps_its_blob_store_at_startup_and_stores_recordings
             ).encode(),
             headers={"Content-Type": "application/json"},
         )
+        assert created.status == 201, created.body
         uploaded = request(
             server.port,
             "PUT",
@@ -95,3 +96,68 @@ def test_each_entry_point_sweeps_its_blob_store_at_startup_and_stores_recordings
     assert read.body == body
     (key,) = blob_backend.objects("recordings/")  # the server's analysis may add peaks
     assert key.startswith("recordings/default/") and uuid.UUID(key.rsplit("/", 1)[1])
+
+
+@pytest.mark.parametrize("entry_point", ["serve", "uvicorn"])
+def test_completed_recording_survives_server_process_restart_after_sigkill(
+    tmp_path, blob_backend, entry_point
+) -> None:
+    make_store(tmp_path).close()
+    body = _wav(0.75)
+    digest = hashlib.sha256(body).hexdigest()
+    log = tmp_path / f"{entry_point}-restart.log"
+    server = ServerProcess.start(
+        tmp_path,
+        log,
+        entry_point=entry_point,
+        EARSHOT_BLOB_URL=blob_backend.url,
+    )
+    restarted = None
+    try:
+        created = request(
+            server.port,
+            "POST",
+            "/v1/recordings",
+            json.dumps(
+                {
+                    "recording_id": "call-restart.user",
+                    "session_key": "call-restart",
+                    "speaker": "user",
+                    "content_type": "audio/wav",
+                    "started_at_unix_nano": "1800000000000000000",
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        uploaded = request(
+            server.port,
+            "PUT",
+            created.json()["upload_path"],
+            body,
+            headers={"Content-Type": "audio/wav"},
+        )
+        assert uploaded.status == 200, uploaded.body
+        assert uploaded.json()["sha256"] == digest
+
+        server.kill()
+        restarted = ServerProcess.start(
+            tmp_path,
+            log,
+            entry_point=entry_point,
+            EARSHOT_BLOB_URL=blob_backend.url,
+        )
+        read = request(
+            restarted.port,
+            "GET",
+            "/v1/recordings/call-restart.user/content",
+        )
+        assert read.status == 200, read.body
+        assert read.body == body
+        assert hashlib.sha256(read.body).hexdigest() == digest
+        (key,) = blob_backend.objects("recordings/")
+        assert key.startswith("recordings/default/") and uuid.UUID(key.rsplit("/", 1)[1])
+    finally:
+        if restarted is not None:
+            restarted.stop()
+        elif server.process.poll() is None:
+            server.stop()

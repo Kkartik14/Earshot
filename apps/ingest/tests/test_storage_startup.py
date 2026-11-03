@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
 import socket
 import threading
 import time
@@ -24,6 +25,7 @@ from fastapi.testclient import TestClient
 
 from bulk_ingest import ingest_in_parallel
 from earshot.api import create_app
+from earshot.blobstore import LocalBlobStore
 from earshot.cli import main
 from earshot.contract import ExportPolicy, RetentionPolicy
 from earshot.maintenance import FAILED_REPROJECTION_RETRY_SECONDS, reprojection_job
@@ -213,7 +215,104 @@ def test_readiness_reports_pending_projections_without_failing_on_them(tmp_path)
     response = TestClient(create_app(store=store)).get("/readyz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "projections_pending": 2}
+    assert response.json() == {
+        "status": "ready",
+        "components": {
+            "catalog": "ready",
+            "blob_store": "ready",
+            "materializer": "ready",
+        },
+        "projections_pending": 2,
+    }
+
+
+def test_readiness_reports_blob_failure_as_degraded_while_catalog_is_ready(tmp_path) -> None:
+    store = make_store(tmp_path / "catalog")
+    blob_root = tmp_path / "blobs"
+    blobs = LocalBlobStore(blob_root)
+    moved_root = tmp_path / "blobs-moved"
+    blob_root.rename(moved_root)
+    blob_root.write_text("not a directory")
+
+    response = TestClient(create_app(store=store, blob_store=blobs)).get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "degraded",
+        "components": {
+            "catalog": "ready",
+            "blob_store": "unavailable",
+            "materializer": "ready",
+        },
+        "projections_pending": 0,
+    }
+
+
+@pytest.mark.parametrize("fails", [False, True], ids=["ready", "unavailable"])
+def test_remote_blob_readiness_is_cached_and_hides_provider_errors(tmp_path, fails: bool) -> None:
+    class RemoteBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.checked = threading.Event()
+
+        def health_check(self) -> None:
+            self.calls += 1
+            self.checked.set()
+            if fails:
+                raise RuntimeError("private endpoint and credential details")
+
+        def sweep(self) -> int:
+            return 0
+
+        def delete(self, _key: str) -> None:
+            return None
+
+    store = make_store(tmp_path / "catalog")
+    blobs = RemoteBlobs()
+    app = create_app(store=store, blob_store=blobs)
+
+    # A remote store has no result until the background probe has run.
+    initial = TestClient(app).get("/readyz")
+    assert initial.status_code == 200
+    assert initial.json()["components"]["blob_store"] == "unknown"
+
+    with TestClient(app) as client:
+        assert blobs.checked.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            response = client.get("/readyz")
+            if response.json()["components"]["blob_store"] != "unknown":
+                break
+            time.sleep(0.01)
+
+        assert response.status_code == 200
+        expected_component = "unavailable" if fails else "ready"
+        assert response.json()["status"] == ("degraded" if fails else "ready")
+        assert response.json()["components"]["blob_store"] == expected_component
+        if fails:
+            assert "private endpoint" not in response.text
+        assert blobs.calls == 1
+
+
+def test_readiness_reports_a_killed_materializer_as_degraded(tmp_path) -> None:
+    store = make_store(tmp_path / "catalog")
+    app = create_app(store=store, blob_store=LocalBlobStore(tmp_path / "blobs"))
+
+    with TestClient(app) as client:
+        assert client.get("/readyz").json()["components"]["materializer"] == "ready"
+        (worker,) = [
+            process
+            for process in multiprocessing.active_children()
+            if process.name == "earshot-materializer"
+        ]
+        worker.kill()
+        worker.join(timeout=5)
+
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+    assert response.json()["components"]["materializer"] == "unavailable"
 
 
 def test_the_background_job_drains_stale_projections_batch_by_batch(tmp_path) -> None:

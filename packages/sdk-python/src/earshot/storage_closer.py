@@ -244,6 +244,12 @@ class RevisionMaterializer(Protocol):
     def close(self) -> None: ...
 
 
+class CallCloserMetrics(Protocol):
+    """The bounded failure counter used at the server maintenance boundary."""
+
+    def closer_failure(self, failure_code: str | None) -> None: ...
+
+
 class InProcessMaterializer:
     """Revisions built in the calling thread (a closer used outside the server)."""
 
@@ -951,8 +957,9 @@ class Closer:
 class _CloserJob:
     """``call_closer_job``'s job: a maintenance job the loop also closes."""
 
-    def __init__(self, closer: Closer) -> None:
+    def __init__(self, closer: Closer, metrics: CallCloserMetrics | None = None) -> None:
         self.closer = closer
+        self.metrics = metrics
         self._started = False
 
     async def __call__(self, now_unix_nano: int) -> float | None:
@@ -977,13 +984,18 @@ class _CloserJob:
             # Busy: the next tick tries again. Closed: the server is stopping, and a
             # claim left leased is released when the next server starts.
             return None
+        if outcome is not None and outcome.result == "failed" and self.metrics is not None:
+            try:
+                self.metrics.closer_failure(outcome.error)
+            except Exception as error:
+                _LOGGER.debug("call closer metrics failed (%s)", type(error).__name__)
         return None if outcome is None else 0.0
 
     async def aclose(self) -> None:
         await asyncio.to_thread(self.closer.close)
 
 
-def call_closer_job(closer: Closer) -> MaintenanceJob:
+def call_closer_job(closer: Closer, *, metrics: CallCloserMetrics | None = None) -> MaintenanceJob:
     """A maintenance job: close due calls one at a time, at the tick's time.
 
     Its first run releases the leases a previous server process left and starts
@@ -993,4 +1005,4 @@ def call_closer_job(closer: Closer) -> MaintenanceJob:
     and its own ingest, so no mutation batches several revisions.
     """
 
-    return _CloserJob(closer)
+    return _CloserJob(closer, metrics=metrics)

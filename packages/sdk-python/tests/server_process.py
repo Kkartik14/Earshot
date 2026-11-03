@@ -12,12 +12,14 @@ pipe that could fill up.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import IO
 
@@ -84,7 +86,12 @@ class ServerProcess:
             else [*command, str(self.port)]
         )
         self.process = subprocess.Popen(
-            argv, cwd=ROOT, env=child, stdout=self._handle, stderr=subprocess.STDOUT
+            argv,
+            cwd=ROOT,
+            env=child,
+            stdout=self._handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=(os.name == "posix"),
         )
 
     @classmethod
@@ -122,7 +129,13 @@ class ServerProcess:
         return False
 
     def kill(self) -> None:
-        self.process.kill()  # SIGKILL: no cleanup, no flush, no shutdown
+        if os.name == "posix":
+            # Model a container or process-group kill so spawned workers cannot
+            # briefly outlive the server PID and overlap its restart.
+            with suppress(ProcessLookupError):
+                os.killpg(self.process.pid, signal.SIGKILL)
+        else:
+            self.process.kill()
         self.process.wait(timeout=10)
         self._handle.close()
 

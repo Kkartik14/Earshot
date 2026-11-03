@@ -1,19 +1,48 @@
 # Production notes
 
-These are the operational rules for running Earshot 0.3.0 for a team: Postgres for the
-catalog, S3 for recordings, and a Collector in front. [Storage and blobs](./storage-and-blobs.md)
-explains the backends, and [server configuration](./configuration.md) lists every
-variable.
+These are the operational rules for running Earshot 0.4.0 for a team: Postgres for the
+catalog, S3-compatible storage for recordings and derived analysis artifacts, and a
+Collector in front. [Storage and blobs](./storage-and-blobs.md) explains the backends, and
+[server configuration](./configuration.md) lists every variable.
 
 ```text
 voice agents ──OTLP/HTTP──▶ Collector (persistent queue) ──▶ earshot serve ──▶ Postgres
       └──────── recordings (POST, PUT) ─────────────────────────┘      └──────▶ S3
 ```
 
+## Configure hosted authentication
+
+When a host application authenticates users and proxies project traffic to Earshot, run
+the server in `hosted_jwt` mode. The host's token issuer must mint short-lived Earshot
+audience tokens with the signed project claim and the scopes needed for each operation.
+Tokens may live for at most five minutes.
+Hosted mode rejects project API keys, the operator token, and browser-cookie exchange;
+health and readiness endpoints remain unauthenticated. See the [hosted API contract](./backend-api.md#hosted-scope-proposal)
+for token claims and the current scope vocabulary.
+
+Configure these values in the service environment. Keep database, blob-store and
+correlation-key credentials in the platform's secret manager.
+
+| Setting                                                     | Hosted configuration                                                                                                                 |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `EARSHOT_AUTH_MODE`                                         | `hosted_jwt`                                                                                                                         |
+| `EARSHOT_JWT_ISSUER`                                        | Exact issuer configured by the token provider.                                                                                       |
+| `EARSHOT_JWT_AUDIENCE`                                      | The Earshot audience configured by the token provider.                                                                               |
+| `EARSHOT_JWKS_URL`                                          | HTTPS URL for the issuer's public signing keys. `EARSHOT_JWKS_CA_FILE` is optional for a private CA.                                 |
+| `EARSHOT_DATABASE_URL`                                      | Postgres connection URL. Use a session connection or session-mode proxy; see below.                                                  |
+| `EARSHOT_CORRELATION_KEY` or `EARSHOT_CORRELATION_KEY_FILE` | Required with Postgres. Preserve and back up the same key with the database.                                                         |
+| `EARSHOT_BLOB_URL`                                          | S3-compatible URL with a prefix dedicated to this Earshot server. Include the provider endpoint and region when needed.              |
+| `EARSHOT_HOST`                                              | Bind on a private service interface. `0.0.0.0` is common inside a container only when network policy keeps the port private.         |
+| `EARSHOT_BEHIND_TLS_PROXY`                                  | Set `true` when a trusted proxy terminates external TLS and forwards traffic to Earshot. Restrict direct access to the service port. |
+
+The token issuer must agree with Earshot's required claims and route scopes before
+production traffic is sent. Hosted mode is distinct from operator mode; do not configure
+`EARSHOT_TOKEN` or pass an Earshot project API key to a hosted-JWT server.
+
 ## One server, one worker
 
 Run exactly one Earshot server per database, with one worker. Multiple replicas and
-multiple workers are not supported in 0.3.0.
+multiple workers are not supported.
 
 - On Postgres the server takes a session advisory lock at start. On SQLite it takes an
   exclusive file lock on `<data-dir>/.server.lock` and holds it until it exits. A second
@@ -58,9 +87,13 @@ For an orchestrator this means:
 - **Restart on failure.** Use a restart policy (`restart: unless-stopped` in Compose,
   `Restart=on-failure` in systemd, the default in Kubernetes). The restarted server takes
   the lock again, or exits with `EARSHOT_DATABASE_IN_USE` while another server holds it.
-- **In-flight requests are dropped.** A request gets its 200 only after its transaction
-  commits, so a dropped request was not stored and the client's retry is safe. This is why
-  the Collector below matters.
+- **A lost response has an ambiguous outcome.** Earshot sends success only after its
+  transaction commits, but the process or network can fail after commit and before the
+  client receives that response. Retry OTLP with the same trace and span IDs and the
+  unchanged payload. For a Recording, retry with the same explicit recording ID, identical
+  manifest and identical bytes; do not generate a new ID for the retry.
+  `EarshotClient.upload_recording` does not retry automatically. The persistent Collector
+  queue below protects OTLP batches while Earshot restarts.
 - **Detection time.** A terminated session is detected within about a second. A silent
   network partition takes up to about 10 seconds (TCP keepalives).
 
@@ -75,6 +108,12 @@ write, Earshot logs `EARSHOT_WRITE_LOCK_LOST` and the write finishes without the
 next write reconnects. This is a known 0.3.0 limitation.
 
 ## Put a Collector in front
+
+The Collector example below uses `operator` mode and a Project API key. In `hosted_jwt`
+mode, Earshot rejects that key; the Collector must send an unexpired token from the
+configured issuer with the appropriate project claim and `earshot:calls:write` scope.
+Tokens expire, so the host integration must provide a renewal path for queued retries;
+do not store a short-lived JWT as a permanent static exporter header.
 
 The Python OTLP exporter retries a failed batch for about 10 seconds and then drops it. It
 ignores `Retry-After`. Earshot answers 503 with `Retry-After: 3` when it is busy, and it is
@@ -123,6 +162,54 @@ spans of a call: Earshot needs every span of a trace, including the end marker.
 
 Recordings do not go through the Collector. Agents upload them to Earshot directly.
 
+## Export Earshot server metrics
+
+Earshot records server measurements through the OpenTelemetry API. The server does not
+create a `MeterProvider`, exporter, or Prometheus endpoint. Without an SDK configured by
+the host, these instruments are no-ops. To export them from the CLI through an OTLP
+Collector, install the OpenTelemetry Distro separately and wrap the server command:
+
+```bash
+pip install 'earshot-observability[server,postgres,s3,signals]' 'opentelemetry-distro[otlp]'
+
+OTEL_SERVICE_NAME=earshot-server \
+OTEL_METRICS_EXPORTER=otlp \
+OTEL_TRACES_EXPORTER=none \
+OTEL_LOGS_EXPORTER=none \
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318 \
+opentelemetry-instrument earshot serve --host 0.0.0.0 --port 4319
+```
+
+Configure the Collector's metrics pipeline to forward those metrics to your telemetry
+backend. The generic OTLP/HTTP endpoint above sends metrics to the Collector's
+`/v1/metrics` receiver; it is separate from Earshot's trace-ingest endpoint. Configure
+TLS and Collector authentication for your deployment. Any OTel exporter headers belong
+to that telemetry connection; they are not an Earshot API key. The Earshot key shown in
+the trace pipeline above is only for the Collector's export of agent traces to Earshot.
+
+The instruments are:
+
+| Instrument                                   | Type and unit             | Meaning and bounded attributes                                                                                                 |
+| -------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `earshot.maintenance.job.duration`           | Histogram, seconds        | Runtime per maintenance job; `job.name`, plus `error.type` on uncaught failure.                                                |
+| `earshot.maintenance.job.failures`           | Counter, count            | Uncaught maintenance exceptions; `job.name`, `error.type` (`io`, `storage`, `timeout`, `other`).                               |
+| `earshot.maintenance.scheduler.wakeup_delay` | Histogram, seconds        | How late a job starts after its completion-relative deadline; `job.name`.                                                      |
+| `earshot.call_closer.failures`               | Counter, count            | Failed call-closing/materialization attempts; stable `failure.code`.                                                           |
+| `earshot.materializer.failures`              | Counter, count            | The materializer-related subset of closer failures; stable `failure.code`.                                                     |
+| `earshot.blob_deletion.failures`             | Counter, failed items     | Journaled blob deletion items that failed and will be retried.                                                                 |
+| `earshot.storage.queue.depth`                | Observable gauge, items   | Outstanding call closer, analysis, recording fetch, blob deletion, incident reprojection, and parked-trace work; `queue.name`. |
+| `earshot.storage.queue.snapshot.age`         | Observable gauge, seconds | Age of the last successful durable queue snapshot.                                                                             |
+
+Queue depths are sampled every 30 seconds. They include leased or backed-off analysis,
+fetch and deletion work; parked traces include traces still receiving spans as well as
+those due for collection. The queue-depth observations expire after 90 seconds without a
+fresh snapshot, while the snapshot-age gauge continues to increase. A failed database
+snapshot is also counted as a maintenance-job failure. The maintenance and failure
+counters are process-local and reset at restart; durable queue gauges are sampled again
+after restart. Labels use fixed job, queue and error-code sets and never include IDs,
+object keys, URLs, credentials, or exception text.
+
 ## S3 lifecycle rule
 
 Earshot aborts multipart uploads it gives up on, and removes unfinished ones under its
@@ -136,7 +223,7 @@ uploads:
     {
       "ID": "earshot-abort-incomplete-uploads",
       "Status": "Enabled",
-      "Filter": { "Prefix": "earshot/" },
+      "Filter": { "Prefix": "<configured-prefix>/" },
       "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
     }
   ]
@@ -148,13 +235,16 @@ aws s3api put-bucket-lifecycle-configuration \
   --bucket <bucket> --lifecycle-configuration file://lifecycle.json
 ```
 
-Use the same prefix as `EARSHOT_BLOB_URL`. Do not add expiration rules for Earshot's
+Replace `<configured-prefix>` with the complete path prefix in `EARSHOT_BLOB_URL` (omit
+the slash when the URL has no prefix). Do not add expiration rules for Earshot's
 objects: Earshot deletes recordings, and the peaks and renditions derived from them,
 itself when a Call is purged or its Project is deleted (in 0.3.0 no Call expires; see
 [retention](./privacy.md#calls)). If bucket
 versioning is on, a deletion leaves a noncurrent version behind; add a
 `NoncurrentVersionExpiration` rule, or turn versioning off, to bound how long deleted
-recordings survive. See [privacy](./privacy.md#erasure-limits).
+recordings survive. For an S3-compatible endpoint, add
+`--endpoint-url <endpoint>` to this command and use the endpoint from
+`EARSHOT_BLOB_URL`. See [privacy](./privacy.md#erasure-limits).
 
 ## Recording analysis and the `signals` extra
 
@@ -269,14 +359,44 @@ measured yet.
 
 ## Readiness and `projections_pending`
 
-| Endpoint       | Use                                                                                                                                                   |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /healthz` | Liveness. 200 `{"status": "ok"}` while the process runs. It does not check storage.                                                                   |
-| `GET /readyz`  | Readiness. 200 `{"status": "ready", "projections_pending": N}`, or 503 `{"status": "unavailable"}` when the catalog or artifact store cannot be read. |
+| Endpoint       | Use                                                                                                                                      |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /healthz` | Liveness. 200 `{"status": "ok"}` while the process runs. It does not check storage.                                                      |
+| `GET /readyz`  | Reports catalog, blob-store and materializer states. 503 only when the catalog is unavailable; otherwise 200 with `ready` or `degraded`. |
 
-Both are unauthenticated and return no Project data. The container image's health check
-uses `/readyz`. [`GET /version`](./backend-api.md#get-version) is unauthenticated too: it
-reports the server's versions and capabilities for a host's compatibility check.
+Both are unauthenticated and return no Project data. [`GET /version`](./backend-api.md#get-version)
+is unauthenticated too: it reports the server's versions and capabilities for a host's
+compatibility check.
+
+Example of a healthy response:
+
+```json
+{
+  "status": "ready",
+  "components": { "catalog": "ready", "blob_store": "ready", "materializer": "ready" },
+  "projections_pending": 0
+}
+```
+
+When the catalog is unavailable, `/readyz` returns HTTP 503 and `status: "unavailable"`.
+Otherwise, any component state other than `ready` (including `unknown` or `disabled`)
+returns HTTP 200 and `status: "degraded"`; all components ready returns HTTP 200 and
+`status: "ready"`. This keeps durable ingest routed during a partial outage. The remote
+blob-store component begins as `unknown`, becomes `ready` or `unavailable` after a
+read-only, cached `ListObjectsV2` check of the configured namespace, is scheduled every
+30 seconds after the previous probe completes, and expires after 90 seconds. It confirms
+listing access only, not object CRUD.
+The materializer state confirms that its managed worker process is alive; it does not run
+a test build. See the [API contract](./backend-api.md#get-readyz) for the complete state
+set and response behavior.
+
+The image's Docker `HEALTHCHECK` calls `/readyz`, which treats HTTP 200 `degraded` as
+healthy. Docker health status does not restart a container; a restart policy acts when
+the process exits. Kubernetes HTTP probes also use the status code, so use `/healthz` for
+liveness and alert on the fixed component states in `/readyz`. If a deployment must stop
+routing on partial degradation, configure a custom readiness check that inspects the JSON
+body; `/readyz` intentionally preserves access to a healthy catalog during an S3 or
+materializer outage.
 
 `projections_pending` counts Incidents whose read models (graph rows, Turn Facts,
 retention and export columns) were built by an older release. After an upgrade every
@@ -301,14 +421,23 @@ For Postgres:
 
 ```bash
 pg_dump --format=custom --file earshot.dump "$EARSHOT_DATABASE_URL"
-aws s3 sync s3://<bucket>/earshot/ ./earshot-blobs/
+aws s3 sync s3://<bucket>/<configured-prefix>/ ./earshot-blobs/
 ```
+
+Use the bucket and complete prefix from `EARSHOT_BLOB_URL`; the copy must include both
+`recordings/` and `analysis/` objects. If the URL has no prefix, sync the bucket root.
+For an S3-compatible endpoint, add `--endpoint-url <endpoint>` to the `aws s3 sync`
+command and use the endpoint from `EARSHOT_BLOB_URL`.
+Use a fresh empty destination directory for each backup; `aws s3 sync` does not remove
+files that were deleted from the source bucket.
 
 `pg_dump` is consistent on its own, so the database can be dumped while Earshot runs.
 Take the dump first and copy the blobs second. Each upload writes a new object before its
 Recording row commits, and objects are never overwritten, so every stored Recording in the
-dump has its object in the later copy. A Call purged between the two steps comes back
-from the dump without its audio.
+dump has its object in the later copy unless its Call is purged between the two steps.
+The purge journals both the recording and derived analysis keys for deletion; if those
+deletions complete before the blob copy, the restored database contains the Call metadata
+without those objects.
 
 To restore: create an empty database, `pg_restore --no-owner --dbname "$EARSHOT_DATABASE_URL"
 earshot.dump`, copy the blobs back to the same `EARSHOT_BLOB_URL`, set the same correlation
@@ -337,9 +466,11 @@ changes every existing Project's Capture Preset to `metadata_only`; see
 
 ## Exposure and limits
 
-- Off loopback, use API keys and a TLS proxy (`EARSHOT_BEHIND_TLS_PROXY=true`). The
-  [host rule](./otlp-quickstart.md#api-keys-and-the-host-rule) shows what each setting
-  accepts. Never set `EARSHOT_TRUST_LOCAL_NETWORK` on a public interface.
+- In `operator` mode, off loopback, use Project API keys and a TLS proxy
+  (`EARSHOT_BEHIND_TLS_PROXY=true`). The [host rule](./otlp-quickstart.md#api-keys-and-the-host-rule)
+  shows what each setting accepts. For hosted products, use the `hosted_jwt` setup above;
+  API keys are rejected in that mode. Never set `EARSHOT_TRUST_LOCAL_NETWORK` on a public
+  interface.
 - Request limits: `EARSHOT_MAX_BODY_BYTES` bounds a compressed request (16 MiB by
   default); a decompressed OTLP request is bounded at 32 MiB (protobuf) or 4 MiB (JSON);
   a Recording at 512 MiB. Streaming a 1 GiB Recording grows the server's memory by at most
