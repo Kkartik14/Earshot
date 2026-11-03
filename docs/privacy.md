@@ -466,7 +466,7 @@ on SQLite and local disk, to nothing at all. In particular:
 - **The bundled viewer** loads its scripts, styles, audio and data from the server that
   serves it.
 
-The SDK and the clients (`earshot.client`, `@earshot/node`, the browser package) connect
+The SDK and the clients (`earshot.client`, `earshot-observability`, the browser package) connect
 only to the Earshot server they are given.
 
 ## Conformance secret sentinel

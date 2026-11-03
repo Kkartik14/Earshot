@@ -111,9 +111,9 @@ is a complete, real Pipecat call.
 | Any OTLP/HTTP producer                      | Spans are stored and grouped into Calls by session key. Call Revisions include Pipecat, LiveKit and `earshot.host` profile spans; other instrumentation is declared as omitted.                                 |
 | LiveKit Agents over OTLP/HTTP               | Supported for 1.6 to 1.8: Calls with timing, the played-text transcript, LiveKit's stereo recording and the call view. Tested against a real headless LiveKit 1.8.8 call (no LiveKit server or room).           |
 | Earshot Python SDK                          | Supported: Pipecat 1.6 and LiveKit 1.6 to 1.8 adapters, and Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, recorded as portable Incident bundles, and `earshot.client` for recordings and calls. |
-| Node (`@earshot/node`)                      | A span processor that keys a call's spans, and a recordings and calls client.                                                                                                                                   |
+| Node (`earshot-observability`)              | A span processor that keys a call's spans, and a recordings and calls client.                                                                                                                                   |
 | ElevenLabs, Vapi, Retell, Ringg             | Signed webhook Connectors for finalized deliveries. Synthetic conformance only.                                                                                                                                 |
-| Browser (`@earshot/browser`, `/v1/capture`) | Validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                                                        |
+| Browser capture workspace (`/v1/capture`)   | Not published on npm; validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                                  |
 
 gRPC is not in 0.4.0. Each closed
 Call's Revision is an ordinary Incident, so the bundled viewer and the analysis APIs can
@@ -128,7 +128,7 @@ stores them.
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `full`          | Timing, transcripts, model and tool payloads, the session key, and recordings. The default for every Project in a new install.                                          |
 | `metadata_only` | Timing and structure only. Content, identity and the session-key attributes are removed before storage, and recordings are refused. Upgraded 0.1.x Projects start here. |
-| `redacted`      | Not available in 0.3.0.                                                                                                                                                 |
+| `redacted`      | Not available in 0.4.0.                                                                                                                                                 |
 
 ```bash
 earshot project set-capture --project default --preset metadata_only
@@ -178,7 +178,8 @@ beyond localhost, drop that line, set `EARSHOT_TOKEN` or issue API keys, set
 - **Deterministic analysis** of each Incident: generated, sent, received and rendered
   audio timing, cross-clock uncertainty and evidence-linked diagnoses. Earshot never
   claims a person heard the audio.
-- **A viewer** served by `earshot serve`, and `@earshot/viewer-ui` for hosts that embed it.
+- **A viewer** served by `earshot serve`; host integrations use the unpublished
+  `@earshot/viewer-ui` workspace source.
 - **Hosted mode** with short-lived, project-scoped JWTs (`EARSHOT_AUTH_MODE=hosted_jwt`).
   In 0.4.0, OTLP spans and Recording uploads use `earshot:calls:write`; Call reads and
   purge use `earshot:calls:read` and `earshot:calls:delete`. Audio retrieval, price routes,

@@ -6,13 +6,13 @@ is version 0.16.0.
 
 ## Compatibility versions
 
-| Surface                              | Version |
-| ------------------------------------ | ------- |
-| Python distribution and npm packages | 0.4.0   |
-| Backend API                          | 0.16.0  |
-| Contract and semantic profile        | 0.2.0   |
-| Host span profile                    | 0.1.0   |
-| Call projection                      | 7       |
+| Surface                                  | Version |
+| ---------------------------------------- | ------- |
+| Python distribution and Node npm package | 0.4.0   |
+| Backend API                              | 0.16.0  |
+| Contract and semantic profile            | 0.2.0   |
+| Host span profile                        | 0.1.0   |
+| Call projection                          | 7       |
 
 These version numbers describe separate compatibility surfaces. The server rebuilds
 stored Call projections after the projection version changes.

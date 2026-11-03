@@ -6,33 +6,33 @@ nothing here uploads from a workstation.
 
 One tag publishes four things:
 
-| Registry | Artifact                                                  | Job                 | Credential                                 |
-| -------- | --------------------------------------------------------- | ------------------- | ------------------------------------------ |
-| PyPI     | `earshot-observability` wheel and sdist                   | `publish-pypi`      | OIDC trusted publisher, environment `pypi` |
-| GHCR     | `ghcr.io/kkartik14/earshot:<version>`                     | `publish-container` | `GITHUB_TOKEN` (`packages: write`)         |
-| npm      | `@earshot/browser`, `@earshot/viewer-ui`, `@earshot/node` | `publish-npm`       | npm trusted publishing, environment `npm`  |
-| GitHub   | Release with the Python files and notes                   | `github-release`    | `GITHUB_TOKEN`                             |
+| Registry | Artifact                                | Job                 | Credential                                 |
+| -------- | --------------------------------------- | ------------------- | ------------------------------------------ |
+| PyPI     | `earshot-observability` wheel and sdist | `publish-pypi`      | OIDC trusted publisher, environment `pypi` |
+| GHCR     | `ghcr.io/kkartik14/earshot:<version>`   | `publish-container` | `GITHUB_TOKEN` (`packages: write`)         |
+| npm      | `earshot-observability`                 | `publish-npm`       | npm trusted publishing, environment `npm`  |
+| GitHub   | Release with the Python files and notes | `github-release`    | `GITHUB_TOKEN`                             |
 
 ## Once, before the first release
 
 - **PyPI:** create the pending trusted publisher described in `release.md`.
-- **npm:** own the `@earshot` scope. Add a trusted publisher to each package with
-  repository `Kkartik14/Earshot`, workflow `release.yml` and environment `npm`. If npm
-  only allows that after a package exists, store a short-lived granular token with
-  publish rights as the `NPM_TOKEN` secret for the first release. Configure trusted
-  publishing afterwards and delete the secret.
+- **npm:** configure Trusted Publishing for `earshot-observability` with owner
+  `Kkartik14`, repository `Earshot`, workflow `release.yml` and environment `npm`. Enable
+  direct publishing for the publisher. Use two-factor authentication and do not create a
+  publishing token for GitHub Actions.
 - **GitHub environments:** give `pypi` and `npm` a required reviewer, and allow only
-  `v*` tags to deploy to them.
+  `v*` tags to deploy to them. Set the `npm` environment URL to
+  `https://www.npmjs.com/package/earshot-observability`.
 - **GHCR:** after the first push, link the package to the repository and make it
   public before documenting anonymous `docker pull`.
 
 ## Every release
 
-1. Set the same version in `pyproject.toml`, `packages/sdk-python/src/earshot/versions.py`,
+1. Set the release version in `pyproject.toml`, `packages/sdk-python/src/earshot/versions.py`,
    `packages/browser/package.json`, `packages/viewer-ui/package.json` and
    `packages/node/package.json`, regenerate `uv.lock` so its root package entry stays
-   aligned, and add the `CHANGELOG.md` entry. The `validate` job rejects a tag that differs
-   from `pyproject.toml`, and `build-npm` rejects any package that differs from it.
+   aligned, and add the `CHANGELOG.md` entry. Only `earshot-observability` is published to
+   npm; its name and version are checked against the Python project version.
 2. Wait for the comprehensive CI run on `main` to pass. Then start the `ci` workflow
    manually on `main` and wait for its `coverage` job to enforce the combined SQLite
    and Postgres branch-coverage floor.
@@ -51,8 +51,8 @@ One tag publishes four things:
      playback starts, a transcript click seeks within 100 ms and the highlight follows
      playback. The LiveKit call checks Safari with Ogg Opus.
 4. Optional dry run: dispatch the `release` workflow on a branch such as `main`. It builds
-   and inspects the wheel, sdist and npm tarballs, and publishes nothing. Dispatching on a
-   tag runs the publishing jobs, so never use a tag dispatch as a dry run.
+   and inspects the wheel, sdist and Node npm tarball, and publishes nothing. Dispatching
+   on a tag runs the publishing jobs, so never use a tag dispatch as a dry run.
 5. Tag and push, as in `release.md`. Approve the `pypi` and `npm` deployments when
    asked. A version containing `-` is published to npm under the `next` dist-tag.
 
@@ -60,9 +60,7 @@ One tag publishes four things:
 
 ```bash
 version=0.4.0   # replace with the released version
-npm view "@earshot/viewer-ui@$version" dist.attestations --json
-npm view "@earshot/browser@$version" dist.attestations --json
-npm view "@earshot/node@$version" dist.attestations --json
+npm view "earshot-observability@$version" dist.attestations --json
 gh attestation verify "oci://ghcr.io/kkartik14/earshot:$version" --repo Kkartik14/Earshot
 docker run --rm -p 127.0.0.1:4319:4319 -e EARSHOT_HOST=0.0.0.0 \
   -e EARSHOT_TRUST_LOCAL_NETWORK=true "ghcr.io/kkartik14/earshot:$version"

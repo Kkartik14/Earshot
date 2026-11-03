@@ -1,4 +1,4 @@
-# @earshot/node
+# earshot-observability
 
 Earshot for Node voice agents. A Node voice server, such as a Twilio Media Streams
 handler or a LiveKit Agents JS worker, uses it to:
@@ -16,7 +16,7 @@ The package is ESM-only and needs Node 22.12 or later. Its one runtime peer is
 OpenAPI spec.
 
 ```sh
-npm install @earshot/node @opentelemetry/api @opentelemetry/sdk-trace-node \
+npm install earshot-observability @opentelemetry/api @opentelemetry/sdk-trace-node \
   @opentelemetry/exporter-trace-otlp-proto
 ```
 
@@ -33,7 +33,7 @@ export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20<project API key>"
 ```ts
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { EarshotSpanProcessor, withSessionKey } from "@earshot/node";
+import { EarshotSpanProcessor, withSessionKey } from "earshot-observability";
 
 const provider = new NodeTracerProvider({
   spanProcessors: [
@@ -71,7 +71,7 @@ only to choose its own key.
 ## Upload the recording and read the call
 
 ```ts
-import { EarshotClient, recordingIdFor } from "@earshot/node";
+import { EarshotClient, recordingIdFor } from "earshot-observability";
 
 const earshot = EarshotClient.fromEnvironment();
 

@@ -35,6 +35,8 @@ See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility det
 
 ### Added
 
+- **Node npm package:** the Node SDK's first npm release uses the unscoped name
+  `earshot-observability`, matching the Python distribution.
 - **Hosted Calls.** A hosted JWT reaches the Calls under three scopes of their own:
   `earshot:calls:write` (OTLP spans and Recordings), `earshot:calls:read` (call list and
   detail, Session Key resolution, dashboard) and `earshot:calls:delete` (call purge). The
@@ -153,8 +155,9 @@ matters only to installs from source. See the
 - **`earshot.client`**: create and upload recordings, resolve and get calls, and
   `tracer_metadata` for LiveKit's `set_tracer_provider(metadata=…)`. Standard library
   only, with httpx when installed.
-- **`@earshot/node` 0.3.0**, a new npm package for Node voice agents (ESM-only, Node
-  22.12 or later, `@opentelemetry/api` as its one peer):
+- **The Node client** for Node voice agents (ESM-only, Node 22.12 or later,
+  `@opentelemetry/api` as its one peer; its first npm release is 0.4.0 as
+  `earshot-observability`):
   - `EarshotSpanProcessor` stamps `earshot.session.id` on every span, from
     `withSessionKey(key, fn)`, `setSessionKey(context, key)` or a fixed key; a span's own
     key wins; the key is never sent as baggage; invalid keys throw where they are set.
@@ -462,12 +465,13 @@ before upgrading a 0.1.x installation.
   cannot get a store whose every write overflows.
 - **Semantic conventions**: `earshot.session.id` and `earshot.call.ended` are registered.
   This reverses the earlier note that reused `session.id` instead.
-- **Packaging**: `@earshot/browser` and `@earshot/viewer-ui` are publish-ready at 0.2.0. The
-  container image includes the `server`, `postgres` and `s3` extras and OCI labels. Before
-  its first publish, `@earshot/viewer-ui`'s host-reported status view takes host-neutral
-  names: the route `{ kind: "capture-status", hostCallId, capture }` and the
-  `CaptureStatus` component. Hosts that linked the unpublished source must rename
-  `call-status`, `callId` and `CallCaptureStatus`.
+- **Packaging**: the browser capture and viewer React workspace packages were prepared at
+  0.2.0 but have not been published to npm. The container image includes the `server`,
+  `postgres` and `s3` extras and OCI labels. Before either package is named for npm,
+  `@earshot/viewer-ui`'s host-reported status view takes host-neutral names: the route
+  `{ kind: "capture-status", hostCallId, capture }` and the `CaptureStatus` component.
+  Hosts that linked the unpublished source must rename `call-status`, `callId` and
+  `CallCaptureStatus`.
 - **Examples and fixtures**: `examples/pipecat_otlp/` runs a scripted Pipecat 1.5 call
   over OTLP. Receiver tests use generated Pipecat-shaped requests; end-to-end tests also
   replay the checked-in scripted call fixture. Upgrade fixtures in `fixtures/upgrade/`
