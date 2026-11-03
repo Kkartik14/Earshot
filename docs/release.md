@@ -160,15 +160,15 @@ only when all of these identities agree:
 - the npm package is `earshot-observability` and has the tag's version; and
 - the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
 
-| Job                 | Runs on        | Does                                                                                                                                                  |
-| ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `validate`          | tag and manual | Checks the tag, version and image identity, and that the tag is on the default branch.                                                                |
-| `build-python`      | tag and manual | Builds the viewer, wheel and sdist, and runs the wheel, sdist and smoke checks.                                                                       |
-| `build-npm`         | tag and manual | Checks the Node package name and version, builds and packs it with pnpm, inspects the tarball, and runs npm's publish dry run.                        |
-| `publish-container` | tag            | Builds the Linux AMD64 image, pushes it to `ghcr.io/kkartik14/earshot` with SBOM and provenance (`mode=max`), and attests it.                         |
-| `publish-pypi`      | tag            | Publishes the inspected wheel and sdist to PyPI with OIDC, after the image.                                                                           |
-| `publish-npm`       | tag            | Publishes the inspected tarballs with `npm publish --provenance --access public`, after the image. A version containing `-` gets the `next` dist-tag. |
-| `github-release`    | tag            | Attests the Python files and creates a GitHub Release with generated notes.                                                                           |
+| Job                 | Runs on        | Does                                                                                                                                                      |
+| ------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validate`          | tag and manual | Checks the tag, version and image identity, and that the tag is on the default branch.                                                                    |
+| `build-python`      | tag and manual | Builds the viewer, wheel and sdist, and runs the wheel, sdist and smoke checks.                                                                           |
+| `build-npm`         | tag and manual | Checks the Node package name and version, builds and packs it with pnpm, inspects the tarball, and runs npm's publish dry run.                            |
+| `publish-container` | tag            | Builds the Linux AMD64 image, pushes it to `ghcr.io/kkartik14/earshot` with SBOM and provenance (`mode=max`), and attests it.                             |
+| `publish-pypi`      | tag            | Publishes the inspected wheel and sdist to PyPI with OIDC, after the image.                                                                               |
+| `publish-npm`       | tag            | Publishes the inspected Node tarball with `npm publish --provenance --access public`, after the image. A version containing `-` gets the `next` dist-tag. |
+| `github-release`    | tag            | Attests the Python files and creates a GitHub Release with generated notes.                                                                               |
 
 No long-lived publishing credential is stored in GitHub. npm uses Trusted Publishing
 (OIDC) for `earshot-observability`.

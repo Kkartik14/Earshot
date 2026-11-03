@@ -19,7 +19,9 @@ One tag publishes four things:
 - **npm:** configure Trusted Publishing for `earshot-observability` with owner
   `Kkartik14`, repository `Earshot`, workflow `release.yml` and environment `npm`. Enable
   direct publishing for the publisher. Use two-factor authentication and do not create a
-  publishing token for GitHub Actions.
+  publishing token for GitHub Actions. Complete the first trusted publish within two days
+  of configuring the publisher; then enable npm's “Require two-factor authentication and
+  disallow tokens” package setting.
 - **GitHub environments:** give `pypi` and `npm` a required reviewer, and allow only
   `v*` tags to deploy to them. Set the `npm` environment URL to
   `https://www.npmjs.com/package/earshot-observability`.
