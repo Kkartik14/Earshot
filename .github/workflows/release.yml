@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       image: ${{ steps.release.outputs.image }}
+      npm_package: ${{ steps.release.outputs.npm_package }}
       prerelease: ${{ steps.release.outputs.prerelease }}
       version: ${{ steps.release.outputs.version }}
     steps:
@@ -87,7 +88,7 @@ jobs:
           retention-days: 7
 
   build-npm:
-    name: Build and inspect npm packages
+    name: Build and inspect Node npm package
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -98,26 +99,28 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Require the release version in every package
+      - name: Require the release identity in the Node package
         env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for package in packages/browser packages/viewer-ui packages/node; do
-            version="$(node -p "require('./$package/package.json').version")"
-            if [[ "$version" != "$RELEASE_VERSION" ]]; then
-              echo "$package is version $version; the release is $RELEASE_VERSION" >&2
-              exit 1
-            fi
-          done
-      - name: Build and pack the packages
-        # pnpm pack applies publishConfig (viewer-ui's dist entry points) and
-        # would replace workspace: ranges; npm pack does neither.
+          package=packages/node/package.json
+          name="$(node -p "require('./$package').name")"
+          version="$(node -p "require('./$package').version")"
+          if [[ "$name" != "$RELEASE_PACKAGE" || "$version" != "$RELEASE_VERSION" ]]; then
+            echo "$package is $name@$version; expected $RELEASE_PACKAGE@$RELEASE_VERSION" >&2
+            exit 1
+          fi
+      - name: Build and pack the Node package
+        # pnpm pack applies the Node package's publishConfig entry points.
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node build
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node pack \
-            --pack-destination "$PWD/npm-dist"
-      - name: Inspect the tarballs
+          pnpm --filter earshot-observability build
+          pnpm --filter earshot-observability pack --pack-destination "$PWD/npm-dist"
+      - name: Inspect the Node tarball
+        env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
           for tarball in npm-dist/*.tgz; do
             unexpected="$(tar -tzf "$tarball" \
@@ -134,6 +137,11 @@ jobs:
               import { join } from "node:path";
               const root = process.argv[1];
               const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+              if (manifest.name !== process.env.RELEASE_PACKAGE ||
+                  manifest.version !== process.env.RELEASE_VERSION) {
+                console.error("unexpected package identity", manifest.name, manifest.version);
+                process.exit(1);
+              }
               const targets = [];
               const collect = (value) =>
                 typeof value === "string"
@@ -163,7 +171,7 @@ jobs:
       - name: Upload immutable release inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: npm-packages
+          name: node-npm-package
           path: npm-dist/*.tgz
           if-no-files-found: error
           retention-days: 7
@@ -250,31 +258,28 @@ jobs:
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
   publish-npm:
-    name: Publish npm packages with provenance
+    name: Publish Node package with Trusted Publishing
     if: github.ref_type == 'tag'
     needs: [validate, build-npm, publish-container]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: npm
-      url: https://www.npmjs.com/org/earshot
+      url: https://www.npmjs.com/package/earshot-observability
     permissions:
       id-token: write
     steps:
-      - name: Download the inspected packages
+      - name: Download the inspected Node tarball
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          name: npm-packages
+          name: node-npm-package
           path: npm-dist
-      # Node 24 bundles npm 11, which publishes through npm trusted publishing
-      # (OIDC) when it is configured and falls back to the NPM_TOKEN secret.
+      # Node 24 bundles npm 11, which supports npm Trusted Publishing through OIDC.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24"
-          registry-url: https://registry.npmjs.org
-      - name: Publish the packages
+      - name: Publish the Node package
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
           dist_tag=latest
