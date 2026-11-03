@@ -2,8 +2,8 @@
 
 These guides explain how to run Earshot, send it evidence, and understand what it stores.
 Start with the [project README](../README.md) for the quick overview. The current release
-is the pre-v1 alpha, 0.3.0. See the [release notes](./release-notes-0.3.0.md) for its
-features and limits.
+is the pre-v1 alpha, 0.4.0. See the [release notes](./release-notes-0.4.0.md) for its
+features and compatibility details.
 
 ## Start here
 
