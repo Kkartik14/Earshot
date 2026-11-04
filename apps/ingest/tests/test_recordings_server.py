@@ -206,10 +206,27 @@ def test_pending_recording_upload_can_retry_after_server_kill_mid_upload(
         connection.endheaders()
         connection.send(body[: PART_SIZE + 1])
 
-        deadline = time.monotonic() + 15
-        while not blob_backend.leftovers() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert blob_backend.leftovers(), "the partial body never reached the blob writer"
+        deadline = time.monotonic() + 45
+        in_flight_bytes = 0
+        while in_flight_bytes < PART_SIZE and time.monotonic() < deadline:
+            in_flight_bytes = blob_backend.in_flight_bytes()
+            if in_flight_bytes < PART_SIZE:
+                time.sleep(0.25)
+        if in_flight_bytes < PART_SIZE:
+            uploads = (
+                blob_backend._server.uploads_in_progress("")
+                if blob_backend._server is not None
+                else []
+            )
+            parts = (
+                blob_backend._server.parts_in_progress("")
+                if blob_backend._server is not None
+                else []
+            )
+            pytest.fail(
+                f"the blob store staged only {in_flight_bytes} bytes before the server kill; "
+                f"S3 uploads: {uploads!r}; uploaded parts: {parts!r}"
+            )
 
         server.kill()
         connection.close()

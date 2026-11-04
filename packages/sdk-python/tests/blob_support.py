@@ -112,7 +112,21 @@ class S3TestServer:
     def uploads_in_progress(self, prefix: str) -> list[str]:
         """Object names under ``prefix/`` with an in-progress multipart upload."""
 
-        return sorted(name for name, _ in self._uploads() if name.startswith(f"{prefix}/"))
+        key_prefix = f"{prefix}/" if prefix else ""
+        return sorted(name for name, _ in self._uploads() if name.startswith(key_prefix))
+
+    def parts_in_progress(self, prefix: str) -> list[tuple[str, int, int]]:
+        """Uploaded S3 parts under ``prefix/`` as ``(key, number, size)``."""
+        key_prefix = f"{prefix}/" if prefix else ""
+        parts = []
+        for key, upload_id in self._uploads():
+            if not key.startswith(key_prefix):
+                continue
+            response = self.admin.list_parts(Bucket=self.bucket, Key=key, UploadId=upload_id)
+            parts.extend(
+                (key, part["PartNumber"], part["Size"]) for part in response.get("Parts", [])
+            )
+        return sorted(parts)
 
     def object_names(self, prefix: str = "") -> list[str]:
         """Committed object names, under ``prefix/`` when one is given."""
@@ -226,6 +240,18 @@ class BlobBackend:
         assert self._root is not None
         spool = self._root / ".tmp"
         return sorted(path.name for path in spool.iterdir()) if spool.is_dir() else []
+
+    def in_flight_bytes(self) -> int:
+        """Bytes already staged in a local spool or uploaded as S3 parts."""
+        if self._server is not None:
+            return sum(size for _, _, size in self._server.parts_in_progress(self._prefix))
+        assert self._root is not None
+        spool = self._root / ".tmp"
+        return (
+            sum(path.stat().st_size for path in spool.iterdir() if path.is_file())
+            if spool.is_dir()
+            else 0
+        )
 
 
 @pytest.fixture(params=["local", "s3"])
