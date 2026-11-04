@@ -6,8 +6,8 @@ IDs to Earshot Calls. Earshot receives and retains telemetry, builds call views,
 serves project-scoped API responses. The services communicate over HTTP; they do not
 share a database.
 
-The host renders its own call experience from Earshot's API. It does not embed
-`@earshot/viewer-ui` or grant a browser an Earshot service token. For the exact request
+The host renders its own call experience from Earshot's API and keeps the Earshot
+service token on the server. Never send that token to browser code. For the exact request
 and response schemas, see the [Backend API](./backend-api.md) and
 [Calls guide](./calls.md).
 
