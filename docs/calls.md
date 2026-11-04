@@ -150,6 +150,11 @@ JSON fields. Hosts can poll every two seconds. The
 target is at most 1 s p95 from accepted span to route visibility and at most 5 s p95
 from runtime turn end to the host UI at that polling interval.
 
+The bundled viewer polls this route every two seconds while `state` is `open`. When it
+becomes `closed`, the viewer stops live polling and refreshes Call detail. It keeps
+showing these Revision turns while detail's projection is absent or stale, then switches
+to the durable detail projection when `projection_state` is `current`.
+
 ### The audible gap at the agent
 
 For each turn, the gap from the end of the user's speech to the start of the agent's
