@@ -308,7 +308,7 @@ jobs:
           -k 's3 and (test_a_mono_wav_is_created_uploaded_and_read_back or
           test_ranges_are_answered_from_the_blob_store_with_206_and_416)'
           apps/ingest/tests/test_recordings_api.py
-      - name: Verify recording durability after a server process kill on Postgres and MinIO
+      - name: Verify recording durability across entry points and local/S3 stores
         if: github.event_name != 'workflow_dispatch'
         run: pytest -q --db postgresql apps/ingest/tests/test_recordings_server.py
       - name: Test the blob store on S3 (MinIO) contract suite
