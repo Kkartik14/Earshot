@@ -68,7 +68,7 @@ from make_caller_audio import (
     CALLER_SCRIPT,
     DEFAULT_CARTESIA_MODEL,
     SAMPLE_RATE,
-    load_caller_wav_snapshot,
+    load_caller_wav_and_metadata,
 )
 
 SERVICE_NAME = "earshot-livekit-otlp-example"
@@ -368,7 +368,7 @@ def main() -> int:
 
     if args.out.exists():
         shutil.rmtree(args.out)
-    caller_wav, caller_metadata = load_caller_wav_snapshot()
+    caller_wav, caller_metadata = load_caller_wav_and_metadata()
     earshot = None
     if args.upload is not None:
         base_url = args.upload or os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]

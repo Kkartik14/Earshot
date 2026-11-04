@@ -8,4 +8,4 @@ One real Pipecat 1.6 call (scripted WAV caller → Silero VAD → Deepgram → G
 4. `--out` gets `user.wav`, `agent.wav` (16 kHz mono), `call.wav` (both as one stereo file: channel 0 user, channel 1 agent) and `manifest.json`; `started_at_unix_nano` is the input's first audio frame, sample 0 of every track. `--upload [BASE_URL]` (Earshot ≥0.3.0, `earshot.client`; default: the OTLP endpoint; key from `EARSHOT_API_KEY` or the OTLP headers) creates the stereo recording (`channel_speakers: ["user", "agent"]`) at first audio and uploads `call.wav` after the call.
 5. Known Pipecat behaviour: when audio frames reach `AudioBufferProcessor` more than 200 ms late and then in a burst, it pads the gap with silence, so both tracks drift later from that point. Earshot corrects for it when it projects a call.
 
-The caller WAV generator caches audio and its timeline sidecar by script and Cartesia settings. A per-path lock serializes concurrent runs, and both examples read the audio and timeline as one snapshot. Pass `--force` to synthesize it again.
+The caller WAV generator caches audio and its timeline sidecar by script and Cartesia settings. Pass `--force` to synthesize it again.

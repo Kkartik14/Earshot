@@ -41,7 +41,7 @@ from make_caller_audio import (
     CALLER_SCRIPT,
     DEFAULT_CARTESIA_MODEL,
     SAMPLE_RATE,
-    load_caller_wav_snapshot,
+    load_caller_wav_and_metadata,
 )
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -126,7 +126,7 @@ def _redacting_log_sink(message: str) -> None:
 
 
 async def run_call(out: Path, conversation_id: str, upload_url: str | None = None) -> dict:
-    caller_wav, _caller_metadata = load_caller_wav_snapshot()
+    caller_wav, _caller_metadata = load_caller_wav_and_metadata()
     caller_pcm = _read_pcm(caller_wav)
     setup_tracing(service_name="earshot-pipecat-otlp-example", exporter=OTLPSpanExporter())
     provider = trace.get_tracer_provider()

@@ -6,7 +6,6 @@ Each scripted sentence is followed by a silence long enough for the bot to answe
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import math
@@ -14,8 +13,6 @@ import os
 import tempfile
 import urllib.request
 import wave
-from collections.abc import Iterator
-from contextlib import contextmanager
 from pathlib import Path
 
 CALLER_SCRIPT = (
@@ -145,20 +142,7 @@ def _cache_output_path(path: Path | None, digest: str) -> Path:
     return path
 
 
-@contextmanager
-def _cache_lock(path: Path) -> Iterator[None]:
-    """Serialize cache users across processes while keeping each pair in sync."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_name(f"{path.name}.lock")
-    with lock_path.open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-
-def _ensure_caller_wav_unlocked(path: Path, metadata_path: Path, digest: str, force: bool) -> Path:
+def _ensure_caller_wav(path: Path, metadata_path: Path, digest: str, force: bool) -> Path:
     if (
         not force
         and path.is_file()
@@ -227,20 +211,18 @@ def ensure_caller_wav(path: Path | None = None, *, force: bool = False) -> Path:
     digest = _cache_digest()
     wav_path = _cache_output_path(path, digest)
     metadata_path = caller_wav_metadata_path(wav_path)
-    with _cache_lock(wav_path):
-        return _ensure_caller_wav_unlocked(wav_path, metadata_path, digest, force)
+    return _ensure_caller_wav(wav_path, metadata_path, digest, force)
 
 
-def load_caller_wav_snapshot(
+def load_caller_wav_and_metadata(
     path: Path | None = None, *, force: bool = False
 ) -> tuple[bytes, dict[str, object]]:
-    """Return audio bytes and timeline metadata from one locked cache generation."""
+    """Return the cached caller audio and its timeline metadata."""
     digest = _cache_digest()
     wav_path = _cache_output_path(path, digest)
     metadata_path = caller_wav_metadata_path(wav_path)
-    with _cache_lock(wav_path):
-        _ensure_caller_wav_unlocked(wav_path, metadata_path, digest, force)
-        return wav_path.read_bytes(), json.loads(metadata_path.read_text())
+    _ensure_caller_wav(wav_path, metadata_path, digest, force)
+    return wav_path.read_bytes(), json.loads(metadata_path.read_text())
 
 
 if __name__ == "__main__":
