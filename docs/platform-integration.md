@@ -36,7 +36,7 @@ exchange. See [hosted authorization](./backend-api.md#hosted-detail-and-live-api
 [production configuration](./configuration.md).
 
 The current Earshot scope vocabulary is documented in the
-[Backend API](./backend-api.md#hosted-scope-proposal). Confirm that the token issuer
+[Backend API](./backend-api.md#hosted-scopes). Confirm that the token issuer
 grants the matching scopes before accepting a hosted deployment. Generic incident
 scopes do not grant access to Calls.
 

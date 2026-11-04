@@ -418,10 +418,12 @@ same-origin `/observe?sessionId=...` link. Its hosted scope is also
 [`earshot.integrations.platform`](../packages/sdk-python/src/earshot/integrations/platform/adapter.py)
 and adds no Platform dependency to the generic summary service.
 
-### Hosted scope proposal
+### Hosted scopes
 
 In `hosted_jwt` mode, every project-data route requires the scope shown here. This
-literal vocabulary is implemented by Earshot but still needs token-issuer acceptance.
+literal vocabulary is implemented by Earshot. The hosted product's token issuer mints
+the Calls and project-management scopes shown here; another host's issuer must grant the
+scopes that host uses.
 
 | Operation                                                                  | Required scope              |
 | -------------------------------------------------------------------------- | --------------------------- |
@@ -443,28 +445,20 @@ token without `earshot:calls:read`.
 
 ### Hosted detail and live APIs
 
-The BFF obtains the user and project from its authenticated Platform session, mints a
-short-lived Earshot-audience token, and proxies only the routes authorized for that
-project. Earshot detail is `GET /v1/incidents/{bundle_id}`; analysis and explanation
+The host's backend authenticates its users, derives the project from its own session,
+mints a short-lived Earshot-audience token, and proxies only the routes authorized for
+that project. Earshot detail is `GET /v1/incidents/{bundle_id}`; analysis and explanation
 are separate `GET` routes below that artifact. `GET /v1/live/sessions` lists active
-sessions, and `GET /v1/live/sessions/{session_id}/tail` is an SSE stream. The BFF must
+sessions, and `GET /v1/live/sessions/{session_id}/tail` is an SSE stream. The host must
 forward `Last-Event-ID`, preserve the event stream without buffering, and cancel the
 upstream request when the browser disconnects. These routes all check the signed
 project and use `earshot:read`.
 
 Live producers can submit bounded checkpoint frames with
 `POST /v1/live/sessions/{session_id}/checkpoints` using `earshot:write`. This accepts
-Earshot's checkpoint framing contract; it is not a generic TVIC webhook or permission
-for the TVIC SDK to call Earshot directly. A stable session ID is project-scoped, and
-cross-project lookup remains indistinguishable from a missing session.
-
-The viewer package makes same-origin API requests and uses `EventSource` for SSE. A
-host must proxy both through its authenticated BFF; no service JWT belongs in browser
-JavaScript. Mount `ObserveFeature` inside one shared React Query client and provide
-`ViewerQueryScopeProvider` with the current `projectId` and an opaque `authContextId`.
-Change the auth context whenever the effective grant changes, including a user change
-within the same project. Query keys and live stores are scoped to both values, and
-cleanup removes only Earshot-owned cache entries.
+Earshot's checkpoint framing contract; it is not a generic webhook format or permission
+for a browser client to call Earshot directly. A stable session ID is project-scoped,
+and cross-project lookup remains indistinguishable from a missing session.
 
 ### Project provisioning
 
