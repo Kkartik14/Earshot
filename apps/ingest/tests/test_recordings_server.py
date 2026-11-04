@@ -21,6 +21,7 @@ import wave
 
 import pytest
 
+from earshot.api import _RECORDING_WRITE_BYTES
 from earshot.blobstore import PART_SIZE
 from otlp_support import request
 from server_process import ServerProcess
@@ -169,9 +170,9 @@ def test_pending_recording_upload_can_retry_after_server_kill_mid_upload(
     tmp_path, blob_backend, entry_point
 ) -> None:
     make_store(tmp_path).close()
-    # Cross the S3 part threshold so both backends expose durable in-flight work
-    # before the server is killed.
-    body = _wav((PART_SIZE + 4_096) / 16_000)
+    # recording_chunks buffers up to _RECORDING_WRITE_BYTES before it writes. Send
+    # one full buffer beyond the S3 part threshold, but leave the request incomplete.
+    body = _wav((PART_SIZE + 2 * _RECORDING_WRITE_BYTES + 4_096) / 16_000)
     digest = hashlib.sha256(body).hexdigest()
     server = ServerProcess.start(
         tmp_path,
@@ -204,7 +205,7 @@ def test_pending_recording_upload_can_retry_after_server_kill_mid_upload(
         connection.putheader("Content-Type", "audio/wav")
         connection.putheader("Content-Length", str(len(body)))
         connection.endheaders()
-        connection.send(body[: PART_SIZE + 1])
+        connection.send(body[: PART_SIZE + _RECORDING_WRITE_BYTES + 1])
 
         deadline = time.monotonic() + 45
         in_flight_bytes = 0
@@ -225,12 +226,16 @@ def test_pending_recording_upload_can_retry_after_server_kill_mid_upload(
             )
             pytest.fail(
                 f"the blob store staged only {in_flight_bytes} bytes before the server kill; "
-                f"S3 uploads: {uploads!r}; uploaded parts: {parts!r}"
+                f"S3 uploads: {uploads!r}; uploaded parts: {parts!r}; "
+                f"server exit code: {server.process.poll()}"
             )
 
         server.kill()
         connection.close()
         connection = None
+
+        leftovers_at_kill = blob_backend.leftovers()
+        assert leftovers_at_kill, "SIGKILL left no in-flight upload for the restart sweep"
 
         restarted = ServerProcess.start(
             tmp_path,
