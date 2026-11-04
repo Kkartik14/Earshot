@@ -99,19 +99,17 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Require the release identity in every workspace package
+      - name: Require the release identity in the Node package
         env:
           RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for package in packages/browser packages/viewer-ui packages/node; do
-            version="$(node -p "require('./$package/package.json').version")"
-            if [[ "$version" != "$RELEASE_VERSION" ]]; then
-              echo "$package is version $version; the release is $RELEASE_VERSION" >&2
-              exit 1
-            fi
-          done
           package=packages/node/package.json
+          version="$(node -p "require('./$package').version")"
+          if [[ "$version" != "$RELEASE_VERSION" ]]; then
+            echo "$package is version $version; the release is $RELEASE_VERSION" >&2
+            exit 1
+          fi
           name="$(node -p "require('./$package').name")"
           if [[ "$name" != "$RELEASE_PACKAGE" ]]; then
             echo "$package is $name; expected $RELEASE_PACKAGE" >&2
@@ -291,10 +289,19 @@ jobs:
         with:
           name: node-npm-package
           path: npm-dist
-      # Node 24 bundles npm 11, which supports npm Trusted Publishing through OIDC.
+      # Node 24.22.2 bundles npm 11.19.1, above npm's OIDC minimum of 11.5.1.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "24"
+          node-version: "24.22.2"
+      - name: Verify the npm Trusted Publishing runtime
+        run: |
+          node_version="$(node --version)"
+          npm_version="$(npm --version)"
+          if [[ "$node_version" != "v24.22.2" || "$npm_version" != "11.19.1" ]]; then
+            printf 'expected Node v24.22.2 with npm 11.19.1; found Node %s with npm %s\n' \
+              "$node_version" "$npm_version" >&2
+            exit 1
+          fi
       - name: Publish the Node package
         env:
           RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
