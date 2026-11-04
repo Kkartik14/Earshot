@@ -8,7 +8,8 @@ logged and does not stop the loop or the other jobs.
 Each job keeps its own cadence. A job that returns a number of seconds runs again
 after that delay instead of the tick, so a long task can work through bounded
 batches back to back (returning ``0``) while a slow batch never delays another
-job's tick.
+job's tick. Jobs may set ``failure_backoff_seconds`` when their failed work should
+wait longer than the normal tick before retrying.
 
 A job that holds something for the server's lifetime (the call closer's
 materializer process) has an async ``aclose()``; the loop calls it as soon as it
@@ -84,23 +85,36 @@ class MaintenanceLoop:
         self.clock = clock or SystemClock()
         self.tick_seconds = tick_seconds
         self._metrics = metrics
-        self._jobs: list[tuple[str, MaintenanceJob]] = []
+        self._jobs: list[tuple[str, MaintenanceJob, float | None]] = []
         self._closed = False
 
     @property
     def job_names(self) -> tuple[str, ...]:
-        return tuple(name for name, _ in self._jobs)
+        return tuple(name for name, _, _ in self._jobs)
 
-    def add_job(self, name: str, job: MaintenanceJob) -> None:
+    def add_job(
+        self,
+        name: str,
+        job: MaintenanceJob,
+        *,
+        failure_backoff_seconds: float | None = None,
+    ) -> None:
         if name in self.job_names:
             raise ValueError(f"maintenance job {name!r} is already registered")
-        self._jobs.append((name, job))
+        if failure_backoff_seconds is not None and failure_backoff_seconds <= 0:
+            raise ValueError("failure_backoff_seconds must be positive")
+        self._jobs.append((name, job, failure_backoff_seconds))
 
     async def run_once(self) -> None:
         """Run every job once, concurrently, with this tick's wall time."""
 
         now_unix_nano = self.clock.unix_nano()
-        await asyncio.gather(*(self._run_job(name, job, now_unix_nano) for name, job in self._jobs))
+        await asyncio.gather(
+            *(
+                self._run_job(name, job, now_unix_nano, failure_backoff_seconds=backoff)
+                for name, job, backoff in self._jobs
+            )
+        )
 
     async def run(self, stop: asyncio.Event) -> None:
         """Run every job on its own cadence until ``stop`` is set, then close them.
@@ -117,7 +131,10 @@ class MaintenanceLoop:
 
         try:
             await asyncio.gather(
-                *(self._run_job_until(stop, name, job) for name, job in self._jobs),
+                *(
+                    self._run_job_until(stop, name, job, failure_backoff_seconds=backoff)
+                    for name, job, backoff in self._jobs
+                ),
                 close_when_stopped(),
             )
         finally:
@@ -129,7 +146,7 @@ class MaintenanceLoop:
         if self._closed:
             return
         self._closed = True
-        for name, job in self._jobs:
+        for name, job, _ in self._jobs:
             close = getattr(job, "aclose", None)
             if close is None:
                 continue
@@ -138,20 +155,39 @@ class MaintenanceLoop:
             except Exception as error:
                 _LOGGER.error("maintenance job %s failed to close (%s)", name, type(error).__name__)
 
-    async def _run_job_until(self, stop: asyncio.Event, name: str, job: MaintenanceJob) -> None:
+    async def _run_job_until(
+        self,
+        stop: asyncio.Event,
+        name: str,
+        job: MaintenanceJob,
+        *,
+        failure_backoff_seconds: float | None = None,
+    ) -> None:
         scheduled_at = self.clock.monotonic_nano()
         while not stop.is_set():
             wakeup_delay_seconds = (
                 max(0, self.clock.monotonic_nano() - scheduled_at) / 1_000_000_000
             )
             self._record_maintenance_delay(name, wakeup_delay_seconds)
-            next_delay = await self._run_job(name, job, self.clock.unix_nano())
+            next_delay = await self._run_job(
+                name,
+                job,
+                self.clock.unix_nano(),
+                failure_backoff_seconds=failure_backoff_seconds,
+            )
             timeout = self.tick_seconds if next_delay is None else max(0.0, next_delay)
             scheduled_at = self.clock.monotonic_nano() + int(timeout * 1_000_000_000)
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=timeout)
 
-    async def _run_job(self, name: str, job: MaintenanceJob, now_unix_nano: int) -> float | None:
+    async def _run_job(
+        self,
+        name: str,
+        job: MaintenanceJob,
+        now_unix_nano: int,
+        *,
+        failure_backoff_seconds: float | None = None,
+    ) -> float | None:
         started = time.monotonic()
         try:
             result = await job(now_unix_nano)
@@ -165,7 +201,7 @@ class MaintenanceLoop:
                 "failure",
                 self._error_category(error),
             )
-            return None
+            return failure_backoff_seconds
         self._record_job_metrics(name, time.monotonic() - started, "success")
         return result
 

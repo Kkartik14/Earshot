@@ -4203,21 +4203,14 @@ export interface components {
     };
     /** ReadinessComponents */
     ReadinessComponents: {
-      /**
-       * Blob Store
-       * @enum {string}
-       */
-      blob_store: "ready" | "unavailable" | "unknown" | "disabled";
-      /**
-       * Catalog
-       * @enum {string}
-       */
-      catalog: "ready" | "unavailable";
-      /**
-       * Materializer
-       * @enum {string}
-       */
-      materializer: "ready" | "unavailable";
+      /** Blob Store */
+      blob_store: string;
+      /** Catalog */
+      catalog: string;
+      /** Materializer */
+      materializer: string;
+    } & {
+      [key: string]: unknown;
     };
     /** ReadinessResponse */
     ReadinessResponse: {

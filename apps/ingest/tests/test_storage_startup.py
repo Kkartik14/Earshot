@@ -216,13 +216,51 @@ def test_readiness_reports_pending_projections_without_failing_on_them(tmp_path)
 
     assert response.status_code == 200
     assert response.json() == {
-        "status": "ready",
+        "status": "degraded",
         "components": {
             "catalog": "ready",
             "blob_store": "ready",
-            "materializer": "ready",
+            "materializer": "unknown",
         },
         "projections_pending": 2,
+    }
+
+
+def test_readiness_only_reports_the_materializer_during_its_lifespan(tmp_path) -> None:
+    app = create_app(store=make_store(tmp_path))
+
+    before = TestClient(app).get("/readyz")
+    assert before.status_code == 200
+    assert before.json()["components"]["materializer"] == "unknown"
+
+    with TestClient(app) as client:
+        active = client.get("/readyz")
+        assert active.status_code == 200
+        assert active.json()["components"]["materializer"] == "ready"
+
+    after = TestClient(app).get("/readyz")
+    assert after.status_code == 200
+    assert after.json()["components"]["materializer"] == "unknown"
+
+
+def test_a_disabled_blob_store_does_not_degrade_readiness(tmp_path, monkeypatch) -> None:
+    from earshot import api as api_module
+
+    app = create_app(store=make_store(tmp_path))
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "status", lambda _self: "disabled")
+
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "components": {
+            "catalog": "ready",
+            "blob_store": "disabled",
+            "materializer": "ready",
+        },
+        "projections_pending": 0,
     }
 
 
@@ -242,14 +280,22 @@ def test_readiness_reports_blob_failure_as_degraded_while_catalog_is_ready(tmp_p
         "components": {
             "catalog": "ready",
             "blob_store": "unavailable",
-            "materializer": "ready",
+            "materializer": "unknown",
         },
         "projections_pending": 0,
     }
 
 
 @pytest.mark.parametrize("fails", [False, True], ids=["ready", "unavailable"])
-def test_remote_blob_readiness_is_cached_and_hides_provider_errors(tmp_path, fails: bool) -> None:
+def test_remote_blob_readiness_is_cached_and_hides_provider_errors(
+    tmp_path, monkeypatch, caplog, fails: bool
+) -> None:
+    from botocore.exceptions import ClientError
+
+    import earshot.api as api_module
+
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "_INTERVAL_SECONDS", 0.2)
+
     class RemoteBlobs:
         def __init__(self) -> None:
             self.calls = 0
@@ -259,7 +305,15 @@ def test_remote_blob_readiness_is_cached_and_hides_provider_errors(tmp_path, fai
             self.calls += 1
             self.checked.set()
             if fails:
-                raise RuntimeError("private endpoint and credential details")
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "AccessDenied",
+                            "Message": "private endpoint and credential details",
+                        }
+                    },
+                    "ListObjectsV2",
+                )
 
         def sweep(self) -> int:
             return 0
@@ -290,8 +344,91 @@ def test_remote_blob_readiness_is_cached_and_hides_provider_errors(tmp_path, fai
         assert response.json()["status"] == ("degraded" if fails else "ready")
         assert response.json()["components"]["blob_store"] == expected_component
         if fails:
-            assert "private endpoint" not in response.text
-        assert blobs.calls == 1
+            assert "private endpoint" not in response.text + caplog.text
+            assert "AccessDenied" in caplog.text
+            assert caplog.text.count("EARSHOT_BLOB_HEALTHCHECK_FAILED") == 1
+            assert blobs.calls == 2
+        else:
+            assert blobs.calls == 1
+
+
+def test_one_remote_blob_probe_failure_preserves_ready_state(tmp_path, monkeypatch, caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    import earshot.api as api_module
+
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "_INTERVAL_SECONDS", 0.05)
+
+    class FlakyBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.failed = threading.Event()
+
+        def health_check(self) -> None:
+            self.calls += 1
+            if self.calls == 2:
+                self.failed.set()
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+        def sweep(self) -> int:
+            return 0
+
+        def delete(self, _key: str) -> None:
+            return None
+
+    blobs = FlakyBlobs()
+    app = create_app(store=make_store(tmp_path / "catalog"), blob_store=blobs)
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            response = client.get("/readyz")
+            if response.json()["components"]["blob_store"] == "ready":
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("the first remote blob probe did not become ready")
+
+        assert blobs.failed.wait(timeout=5)
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json()["components"]["blob_store"] == "ready"
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED" not in caplog.text
+
+
+def test_failed_remote_blob_probe_does_not_revive_an_expired_ready_state(
+    monkeypatch, caplog
+) -> None:
+    from botocore.exceptions import ClientError
+
+    import earshot.api as api_module
+
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "_MAX_AGE_SECONDS", 0.01)
+
+    class FlakyBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def health_check(self) -> None:
+            self.calls += 1
+            if self.calls > 1:
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+    readiness = api_module._BlobStoreReadiness(FlakyBlobs())
+
+    asyncio.run(readiness.probe(0))
+    assert readiness.status() == "ready"
+
+    time.sleep(0.02)
+    assert readiness.status() == "unknown"
+
+    asyncio.run(readiness.probe(0))
+    assert readiness.status() == "unknown"
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED" not in caplog.text
+
+    asyncio.run(readiness.probe(0))
+    assert readiness.status() == "unavailable"
+    assert caplog.text.count("EARSHOT_BLOB_HEALTHCHECK_FAILED") == 1
 
 
 def test_readiness_reports_a_killed_materializer_as_degraded(tmp_path) -> None:

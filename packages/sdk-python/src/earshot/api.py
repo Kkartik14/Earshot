@@ -248,6 +248,28 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 CHECKPOINT_MEDIA_TYPE = "application/vnd.earshot.checkpoint+frames"
 SSE_MEDIA_TYPE = "text/event-stream"
 _LOGGER = logging.getLogger(__name__)
+_BLOB_STORE_ERROR_CODES = frozenset(
+    {
+        "AccessDenied",
+        "InvalidAccessKeyId",
+        "NoSuchBucket",
+        "RequestTimeout",
+        "ServiceUnavailable",
+        "SignatureDoesNotMatch",
+        "SlowDown",
+    }
+)
+
+
+def _bounded_blob_store_error_code(error: Exception) -> str:
+    response = getattr(error, "response", None)
+    if not isinstance(response, Mapping):
+        return "transport"
+    details = response.get("Error")
+    if not isinstance(details, Mapping):
+        return "other"
+    code = details.get("Code")
+    return code if isinstance(code, str) and code in _BLOB_STORE_ERROR_CODES else "other"
 
 
 class ApiModel(BaseModel):
@@ -301,9 +323,11 @@ class VersionResponse(ApiModel):
 
 
 class ReadinessComponents(ApiModel):
-    catalog: Literal["ready", "unavailable"]
-    blob_store: Literal["ready", "unavailable", "unknown", "disabled"]
-    materializer: Literal["ready", "unavailable"]
+    model_config = ConfigDict(extra="allow")
+
+    catalog: str
+    blob_store: str
+    materializer: str
 
 
 class ReadinessResponse(ApiModel):
@@ -326,6 +350,7 @@ class _BlobStoreReadiness:
         self._lock = threading.Lock()
         self._state = "unknown"
         self._checked_at: float | None = None
+        self._consecutive_failures = 0
 
     def status(self) -> Literal["ready", "unavailable", "unknown", "disabled"]:
         if self._blobs is None:
@@ -337,12 +362,12 @@ class _BlobStoreReadiness:
                 return "unavailable"
             return "ready"
         with self._lock:
-            if (
-                self._checked_at is None
-                or time.monotonic() - self._checked_at > self._MAX_AGE_SECONDS
-            ):
-                return "unknown"
-            return self._state  # type: ignore[return-value]
+            return self._reported_state(time.monotonic())  # type: ignore[return-value]
+
+    def _reported_state(self, now: float) -> str:
+        if self._checked_at is None or now - self._checked_at > self._MAX_AGE_SECONDS:
+            return "unknown"
+        return self._state
 
     async def probe(self, _now_unix_nano: int) -> float:
         if self._blobs is None:
@@ -350,13 +375,33 @@ class _BlobStoreReadiness:
         try:
             await asyncio.to_thread(self._blobs.health_check)
         except Exception as error:
-            state = "unavailable"
-            _LOGGER.warning("EARSHOT_BLOB_HEALTHCHECK_FAILED (%s)", type(error).__name__)
+            checked_at = time.monotonic()
+            with self._lock:
+                previous_state = self._reported_state(checked_at)
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= 2:
+                    self._state = "unavailable"
+                elif previous_state == "unknown":
+                    # An expired success is no longer evidence of readiness. A
+                    # failed refresh must not make that stale result look fresh.
+                    self._state = "unknown"
+                self._checked_at = checked_at
+                state = self._state
+            if previous_state != state and state == "unavailable":
+                _LOGGER.warning(
+                    "EARSHOT_BLOB_HEALTHCHECK_FAILED (%s)",
+                    _bounded_blob_store_error_code(error),
+                )
         else:
-            state = "ready"
-        with self._lock:
-            self._state = state
-            self._checked_at = time.monotonic()
+            checked_at = time.monotonic()
+            with self._lock:
+                previous_state = self._reported_state(checked_at)
+                self._consecutive_failures = 0
+                self._state = "ready"
+                self._checked_at = checked_at
+            if previous_state != "ready":
+                event = "RECOVERED" if previous_state == "unavailable" else "READY"
+                _LOGGER.info("EARSHOT_BLOB_HEALTHCHECK_%s", event)
         return self._INTERVAL_SECONDS
 
 
@@ -3547,11 +3592,15 @@ def create_app(
     maintenance.add_job("incident-reprojection", reprojection_job(repository))
 
     async def snapshot_queue_depths(_now_unix_nano: int) -> float:
-        depths = await asyncio.to_thread(repository.operational_queue_depths)
+        depths = await asyncio.to_thread(
+            repository.operational_queue_depths,
+            upload_hold_nano=calls.timings.upload_hold_nano,
+            uploading_calls=recordings.uploading_calls(),
+        )
         metrics_sink.set_queue_depths(depths)
         return 30.0
 
-    maintenance.add_job("queue-depth-snapshot", snapshot_queue_depths)
+    maintenance.add_job("queue-depth-snapshot", snapshot_queue_depths, failure_backoff_seconds=30.0)
     if blob_store is not None:
         maintenance.add_job("blob-store-health", blob_readiness.probe)
         # At startup: what crashed uploads left (spool files, multipart uploads).
@@ -3589,7 +3638,7 @@ def create_app(
     # analyses and the prices; the built-in prices are seeded at start.
     maintenance.add_job("call-projection", projection_job(CallProjector(repository)))
 
-    materializer_started = False
+    materializer_lifespan_active = False
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -3600,7 +3649,7 @@ def create_app(
         (``EARSHOT_MATERIALIZER_START_FAILED``; uvicorn exits with status 3).
         """
 
-        nonlocal materializer_started
+        nonlocal materializer_lifespan_active
         live.start()
         retention_stop = asyncio.Event()
         maintenance_stop = asyncio.Event()
@@ -3608,7 +3657,7 @@ def create_app(
         maintenance_task: asyncio.Task[None] | None = None
         try:
             await asyncio.to_thread(closer.start)
-            materializer_started = True
+            materializer_lifespan_active = True
             retention_task = asyncio.create_task(
                 _run_retention_cleanup(repository, settings, retention_stop),
                 name="earshot-retention-cleanup",
@@ -3618,6 +3667,7 @@ def create_app(
             )
             yield
         finally:
+            materializer_lifespan_active = False
             retention_stop.set()
             maintenance_stop.set()
             try:
@@ -3636,7 +3686,6 @@ def create_app(
                     finally:
                         if server_lock is not None:
                             server_lock.release()
-                materializer_started = False
 
     app = FastAPI(
         title="Earshot local ingest",
@@ -4399,15 +4448,20 @@ def create_app(
             except (StorageError, *DATABASE_ERRORS, OSError):
                 catalog_ready = False
         blob_status = blob_readiness.status()
-        materializer_ready = not materializer_started or closer.materializer.pid is not None
+        if not materializer_lifespan_active:
+            materializer_status = "unknown"
+        elif closer.materializer.pid is not None:
+            materializer_status = "ready"
+        else:
+            materializer_status = "unavailable"
         components = {
             "catalog": "ready" if catalog_ready else "unavailable",
             "blob_store": blob_status,
-            "materializer": "ready" if materializer_ready else "unavailable",
+            "materializer": materializer_status,
         }
         if not catalog_ready:
             status, status_code = "unavailable", 503
-        elif any(value != "ready" for value in components.values()):
+        elif any(value not in {"ready", "disabled"} for value in components.values()):
             status, status_code = "degraded", 200
         else:
             status, status_code = "ready", 200

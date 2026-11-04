@@ -289,6 +289,7 @@ jobs:
           apps/ingest/tests/test_catalog_parity.py
           apps/ingest/tests/test_storage_postgres.py
           apps/ingest/tests/test_postgres_server.py
+          packages/sdk-python/tests/test_server_metrics.py
       - name: Check Postgres-only application contracts
         if: github.event_name != 'workflow_dispatch'
         run: >-

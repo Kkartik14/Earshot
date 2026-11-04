@@ -69,6 +69,22 @@ _JOB_NAMES = frozenset(
         "queue-depth-snapshot",
     }
 )
+_DURATION_BUCKET_BOUNDARIES_SECONDS = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+    120.0,
+)
 
 
 class ServerMetrics:
@@ -82,6 +98,7 @@ class ServerMetrics:
             "earshot.maintenance.job.duration",
             unit="s",
             description="Time a maintenance job spent running.",
+            explicit_bucket_boundaries_advisory=_DURATION_BUCKET_BOUNDARIES_SECONDS,
         )
         self._maintenance_failures = meter.create_counter(
             "earshot.maintenance.job.failures",
@@ -94,6 +111,7 @@ class ServerMetrics:
             description=(
                 "Delay between a completion-relative maintenance deadline and the job's start."
             ),
+            explicit_bucket_boundaries_advisory=_DURATION_BUCKET_BOUNDARIES_SECONDS,
         )
         self._closer_failures = meter.create_counter(
             "earshot.call_closer.failures",
@@ -118,14 +136,14 @@ class ServerMetrics:
             callbacks=[self._observe_queue_depths],
             unit="{item}",
             description=(
-                "Outstanding durable work, including leased or backed-off items, by queue."
+                "Sampled operational work by queue; call closer estimates claim-eligible work."
             ),
         )
         meter.create_observable_gauge(
             "earshot.storage.queue.snapshot.age",
             callbacks=[self._observe_queue_snapshot_age],
             unit="s",
-            description="Age of the last successful durable queue depth snapshot.",
+            description="Age of the last successful operational queue depth snapshot.",
         )
 
     def maintenance_job(

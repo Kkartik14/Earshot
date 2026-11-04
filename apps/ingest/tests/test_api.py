@@ -89,11 +89,11 @@ def test_health_and_readiness_are_available_without_incident_auth(tmp_path) -> N
     _, client = app_client(tmp_path, config=config)
     assert client.get("/healthz").json() == {"status": "ok"}
     assert client.get("/readyz").json() == {
-        "status": "ready",
+        "status": "degraded",
         "components": {
             "catalog": "ready",
             "blob_store": "ready",
-            "materializer": "ready",
+            "materializer": "unknown",
         },
         "projections_pending": 0,
     }

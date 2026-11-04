@@ -32,6 +32,7 @@ import threading
 import time
 import uuid
 import weakref
+from collections.abc import Collection
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1764,32 +1765,103 @@ class IncidentStore:
             ).fetchone()
         return int(row[0])
 
-    def operational_queue_depths(self) -> dict[str, int]:
+    def operational_queue_depths(
+        self,
+        *,
+        upload_hold_nano: int | None = None,
+        uploading_calls: Collection[tuple[str, str]] = (),
+    ) -> dict[str, int]:
         """Return counts for the durable work queues used by the server.
 
-        Leased and backed-off jobs remain outstanding. Parked traces include both
-        quiet traces due for collection and traces still receiving spans. Completed
-        analysis/fetches are excluded, as are dirty calls that have already been
-        finalized. Reprojection counts incidents whose read models predate this
-        release. The counts share one query, but large tables can still take time.
+        ``call_closer`` estimates claimable work from due dirty calls and abandoned
+        pending revisions, excluding live leases, pending recordings still within
+        their hold, calls at the revision cap without a first end-signal close,
+        integrity errors, and calls in inactive projects. Its process-local
+        active-upload exclusion and durable rows are sampled
+        separately, so a concurrent upload start or finish can briefly make the gauge
+        differ from what the closer can claim. The closer rechecks under the mutation
+        lock before claiming. Other queue depths retain their existing outstanding-work
+        semantics. Parked traces include both quiet traces due for collection and traces
+        still receiving spans. Reprojection counts incidents whose read models predate
+        this release. Large tables can take time.
+
+        ``upload_hold_nano`` comes from the server's ``CallTimings`` when supplied;
+        the default keeps direct store callers aligned with ``CallTimings`` defaults.
+        ``uploading_calls`` is the recording store's process-local set of calls with
+        an upload in flight; these calls remain held after their durable hold expires.
         """
 
         self._ensure_process_ownership()
+        from .storage_calls import CallTimings
+        from .storage_closer import claim_candidate_queries
+
+        if upload_hold_nano is None:
+            upload_hold_nano = CallTimings().upload_hold_nano
+        if upload_hold_nano < 0:
+            raise ValueError("upload_hold_nano cannot be negative")
+
+        now = self._clock.unix_nano()
+        claimable_selects: list[str] = []
+        claimable_parameters: list[Any] = []
+        for candidate_sql, parameters in claim_candidate_queries(
+            now, now - upload_hold_nano, limit=1
+        ):
+            # Keep the closer's indexed eligibility predicates, while replacing
+            # its ordered/limited read with the unbounded count below. The closer
+            # also validates stored pending revisions after selecting a row; mirror
+            # that integrity check here so set-aside calls do not inflate the gauge.
+            candidate_select, ordered, _ = candidate_sql.partition(" ORDER BY ")
+            if not ordered:
+                raise RuntimeError("closer candidate query must have an ORDER BY clause")
+            _, where, predicate = candidate_select.partition(" WHERE ")
+            if not where:
+                raise RuntimeError("closer candidate query must have a WHERE clause")
+            predicate += (
+                " AND (c.pending_revision IS NULL OR NOT EXISTS ("
+                "SELECT 1 FROM call_revisions r WHERE r.project_id = c.project_id "
+                "AND r.call_id = c.call_id AND r.revision = c.pending_revision))"
+            )
+            claimable_selects.append(
+                f"SELECT c.project_id, c.call_id FROM calls c WHERE {predicate}"
+            )
+            # The final parameter is the closer's LIMIT; the count uses the whole
+            # eligible set and UNION deduplicates calls matching both branches.
+            claimable_parameters.extend(parameters[:-1])
+        claimable_union_sql = " UNION ".join(claimable_selects)
+        claimable_count_sql = "SELECT COUNT(*) FROM (" + claimable_union_sql + ") claimable_calls"
+        active_uploads = tuple(sorted(set(uploading_calls)))
+
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT "
-                "((SELECT COUNT(*) FROM calls WHERE pending_revision IS NOT NULL) + "
-                "(SELECT COUNT(*) FROM calls WHERE dirty = 1 AND pending_revision IS NULL)), "
+                f"({claimable_count_sql}), "
                 "(SELECT COUNT(*) FROM audio_analysis WHERE state IN ('pending', 'running')), "
                 "(SELECT COUNT(*) FROM recording_fetches WHERE state IN ('pending', 'running')), "
                 "(SELECT COUNT(*) FROM pending_blob_deletions), "
                 "(SELECT COUNT(*) FROM incidents "
                 "WHERE projection_version IS NULL OR projection_version < ?), "
                 "(SELECT COUNT(*) FROM call_traces WHERE call_id IS NULL)",
-                (INCIDENT_PROJECTION_VERSION,),
+                (*claimable_parameters, INCIDENT_PROJECTION_VERSION),
             ).fetchone()
+            active_upload_count = 0
+            batch_size = max(1, (_SQLITE_SAFE_BIND_LIMIT - len(claimable_parameters)) // 2)
+            for offset in range(0, len(active_uploads), batch_size):
+                batch = active_uploads[offset : offset + batch_size]
+                placeholders = ", ".join("(?, ?)" for _ in batch)
+                active_upload_count += int(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM ("
+                        + claimable_union_sql
+                        + ") claimable_calls WHERE (claimable_calls.project_id, "
+                        f"claimable_calls.call_id) IN ({placeholders})",
+                        (
+                            *claimable_parameters,
+                            *(value for uploading_call in batch for value in uploading_call),
+                        ),
+                    ).fetchone()[0]
+                )
         return {
-            "call_closer": int(row[0]),
+            "call_closer": int(row[0]) - active_upload_count,
             "recording_analysis": int(row[1]),
             "recording_fetch": int(row[2]),
             "blob_deletions": int(row[3]),

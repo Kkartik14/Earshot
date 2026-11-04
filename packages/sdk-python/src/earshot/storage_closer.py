@@ -10,7 +10,7 @@ or expired; no pending recording holds it (the one pending deadline,
 ``storage_recordings.pending_deadline``, checked per candidate in the claim's
 query) and no upload of its recordings is in flight
 (``RecordingStore.uploading_calls``, read under the claim's write lock); and it is
-not at the revision cap (``UNCAPPED_SQL``). The claim clears
+not at the revision cap, except for its first end-signal close (``UNCAPPED_SQL``). The claim clears
 ``dirty``, sets ``pending_revision`` to the latest revision plus one, leases the
 call for ``LEASE_SECONDS`` under a new ``lease_token``, and snapshots the call: its
 span keys and stored recordings, each marked with the revision it first belongs to
@@ -131,7 +131,8 @@ def claim_candidate_queries(
     A call is a candidate when it has a revision pending from a claim that never
     finished (the first read), or is dirty and due (the second), each by due time,
     ``limit`` rows. Its lease must be free or expired; it is not set aside
-    (``CALL_INTEGRITY``) or at the revision cap (``UNCAPPED_SQL``); its project is
+    (``CALL_INTEGRITY``) or at the revision cap, except for its first end-signal close
+    (``UNCAPPED_SQL``); its project is
     active (a project being deleted takes its calls with it, unrevised); and
     no pending recording holds it. A pending recording holds its call while ``now``
     is before its pending deadline, ``max(created, last_evidence, end_signal or 0) +
@@ -337,7 +338,15 @@ class MaterializerProcess:
         """The child's process ID while one runs."""
 
         process = self._process
-        return None if process is None or not process.is_alive() else int(process.pid)
+        try:
+            if process is None or not process.is_alive():
+                return None
+            pid = process.pid
+        except ValueError:
+            # A readiness request can observe the process just as another thread
+            # discards and closes it after the worker exits.
+            return None
+        return None if pid is None else int(pid)
 
     def start(self) -> None:
         with self._lock:
@@ -969,12 +978,12 @@ class _CloserJob:
                     self.closer.release_leases, budget_s=MAINTENANCE_LOCK_BUDGET_SECONDS
                 )
                 self._started = True
-                # The server's lifespan has started the child already (and refused to
-                # start without one). A loop a host composes itself starts it here; a
-                # child that cannot start is logged, and each build tries again under
-                # its call's backoff.
-                with contextlib.suppress(MaterializerWorkerError):
-                    await asyncio.to_thread(self.closer.start)
+            # Lifespan starts the child before serving; hosts composing the loop
+            # themselves start it here. Rechecking each tick also recovers a worker
+            # killed after a timeout or OOM, even when no call is due. A failed start
+            # is logged and retried on the next tick.
+            with contextlib.suppress(MaterializerWorkerError):
+                await asyncio.to_thread(self.closer.start)
             outcome = await asyncio.to_thread(
                 self.closer.close_next,
                 now_unix_nano=now_unix_nano,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -161,3 +162,88 @@ def test_completed_recording_survives_server_process_restart_after_sigkill(
             restarted.stop()
         elif server.process.poll() is None:
             server.stop()
+
+
+@pytest.mark.parametrize("entry_point", ["serve", "uvicorn"])
+def test_pending_recording_upload_can_retry_after_server_kill_mid_upload(
+    tmp_path, blob_backend, entry_point
+) -> None:
+    make_store(tmp_path).close()
+    # Cross the S3 part threshold so both backends expose durable in-flight work
+    # before the server is killed.
+    body = _wav((PART_SIZE + 4_096) / 16_000)
+    digest = hashlib.sha256(body).hexdigest()
+    server = ServerProcess.start(
+        tmp_path,
+        tmp_path / f"{entry_point}-mid-upload.log",
+        entry_point=entry_point,
+        EARSHOT_BLOB_URL=blob_backend.url,
+    )
+    connection: http.client.HTTPConnection | None = None
+    restarted = None
+    try:
+        created = request(
+            server.port,
+            "POST",
+            "/v1/recordings",
+            json.dumps(
+                {
+                    "recording_id": "call-mid-upload.user",
+                    "session_key": "call-mid-upload",
+                    "speaker": "user",
+                    "content_type": "audio/wav",
+                    "started_at_unix_nano": "1800000000000000000",
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        assert created.status == 201, created.body
+
+        connection = http.client.HTTPConnection("127.0.0.1", server.port, timeout=30)
+        connection.putrequest("PUT", created.json()["upload_path"])
+        connection.putheader("Content-Type", "audio/wav")
+        connection.putheader("Content-Length", str(len(body)))
+        connection.endheaders()
+        connection.send(body[: PART_SIZE + 1])
+
+        deadline = time.monotonic() + 15
+        while not blob_backend.leftovers() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert blob_backend.leftovers(), "the partial body never reached the blob writer"
+
+        server.kill()
+        connection.close()
+        connection = None
+
+        restarted = ServerProcess.start(
+            tmp_path,
+            tmp_path / f"{entry_point}-mid-upload.log",
+            entry_point=entry_point,
+            EARSHOT_BLOB_URL=blob_backend.url,
+        )
+        deadline = time.monotonic() + 15
+        while blob_backend.leftovers() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert blob_backend.leftovers() == [], "restart did not clean the interrupted upload"
+
+        uploaded = request(
+            restarted.port,
+            "PUT",
+            created.json()["upload_path"],
+            body,
+            headers={"Content-Type": "audio/wav"},
+        )
+        read = request(restarted.port, "GET", "/v1/recordings/call-mid-upload.user/content")
+    finally:
+        if connection is not None:
+            connection.close()
+        if restarted is not None:
+            restarted.stop()
+        elif server.process.poll() is None:
+            server.stop()
+
+    assert uploaded.status == 200, uploaded.body
+    assert uploaded.json()["sha256"] == digest
+    assert read.status == 200, read.body
+    assert read.body == body
+    assert hashlib.sha256(read.body).hexdigest() == digest

@@ -190,25 +190,34 @@ the trace pipeline above is only for the Collector's export of agent traces to E
 
 The instruments are:
 
-| Instrument                                   | Type and unit             | Meaning and bounded attributes                                                                                                 |
-| -------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `earshot.maintenance.job.duration`           | Histogram, seconds        | Runtime per maintenance job; `job.name`, plus `error.type` on uncaught failure.                                                |
-| `earshot.maintenance.job.failures`           | Counter, count            | Uncaught maintenance exceptions; `job.name`, `error.type` (`io`, `storage`, `timeout`, `other`).                               |
-| `earshot.maintenance.scheduler.wakeup_delay` | Histogram, seconds        | How late a job starts after its completion-relative deadline; `job.name`.                                                      |
-| `earshot.call_closer.failures`               | Counter, count            | Failed call-closing/materialization attempts; stable `failure.code`.                                                           |
-| `earshot.materializer.failures`              | Counter, count            | The materializer-related subset of closer failures; stable `failure.code`.                                                     |
-| `earshot.blob_deletion.failures`             | Counter, failed items     | Journaled blob deletion items that failed and will be retried.                                                                 |
-| `earshot.storage.queue.depth`                | Observable gauge, items   | Outstanding call closer, analysis, recording fetch, blob deletion, incident reprojection, and parked-trace work; `queue.name`. |
-| `earshot.storage.queue.snapshot.age`         | Observable gauge, seconds | Age of the last successful durable queue snapshot.                                                                             |
+| Instrument                                   | Type and unit             | Meaning and bounded attributes                                                                                                                   |
+| -------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `earshot.maintenance.job.duration`           | Histogram, seconds        | Runtime per maintenance job; `job.name`, plus `error.type` on uncaught failure.                                                                  |
+| `earshot.maintenance.job.failures`           | Counter, count            | Uncaught maintenance exceptions; `job.name`, `error.type` (`io`, `storage`, `timeout`, `other`).                                                 |
+| `earshot.maintenance.scheduler.wakeup_delay` | Histogram, seconds        | How late a job starts after its completion-relative deadline; `job.name`.                                                                        |
+| `earshot.call_closer.failures`               | Counter, count            | Failed call-closing/materialization attempts; stable `failure.code`.                                                                             |
+| `earshot.materializer.failures`              | Counter, count            | The materializer-related subset of closer failures; stable `failure.code`.                                                                       |
+| `earshot.blob_deletion.failures`             | Counter, failed items     | Journaled blob deletion items that failed and will be retried.                                                                                   |
+| `earshot.storage.queue.depth`                | Observable gauge, items   | Sampled call closer work, plus outstanding analysis, recording fetch, blob deletion, incident reprojection, and parked-trace work; `queue.name`. |
+| `earshot.storage.queue.snapshot.age`         | Observable gauge, seconds | Age of the last successful operational queue snapshot.                                                                                           |
 
-Queue depths are sampled every 30 seconds. They include leased or backed-off analysis,
-fetch and deletion work; parked traces include traces still receiving spans as well as
-those due for collection. The queue-depth observations expire after 90 seconds without a
-fresh snapshot, while the snapshot-age gauge continues to increase. A failed database
-snapshot is also counted as a maintenance-job failure. The maintenance and failure
-counters are process-local and reset at restart; durable queue gauges are sampled again
-after restart. Labels use fixed job, queue and error-code sets and never include IDs,
-object keys, URLs, credentials, or exception text.
+Queue depths are sampled every 30 seconds. Call closer depth estimates calls eligible to
+be claimed: due calls with a free or expired lease, no active upload hold, a revision below
+the cap (except for its first end-signal close), no integrity error or already-stored
+pending revision, and an active project.
+The live-upload set is process-local and sampled separately from durable queue state, so a
+concurrent upload start or finish can briefly make this gauge differ from what the closer
+can claim. The closer rechecks eligibility under the mutation lock before claiming.
+Analysis, fetch and deletion counts include leased or backed-off work; parked traces
+include traces still receiving spans as well as those due for collection.
+The queue-depth observations expire
+after 90 seconds without a fresh snapshot, while the snapshot-age gauge continues to
+increase. A failed database snapshot is counted as a maintenance-job failure and retried
+after 30 seconds. The maintenance and failure counters are process-local and reset at
+restart; queue gauges are sampled again from durable records and process-local upload
+state after restart. Labels use fixed job,
+queue and error-code sets and never include IDs, object keys, URLs, credentials, or
+exception text.
 
 ## S3 lifecycle rule
 
@@ -364,9 +373,9 @@ measured yet.
 | `GET /healthz` | Liveness. 200 `{"status": "ok"}` while the process runs. It does not check storage.                                                      |
 | `GET /readyz`  | Reports catalog, blob-store and materializer states. 503 only when the catalog is unavailable; otherwise 200 with `ready` or `degraded`. |
 
-Both are unauthenticated and return no Project data. [`GET /version`](./backend-api.md#get-version)
-is unauthenticated too: it reports the server's versions and capabilities for a host's
-compatibility check.
+All three endpoints are unauthenticated and are for host-level probes and compatibility
+checks. A hosted service must not proxy them to tenants. In particular,
+`projections_pending` is an aggregate count across every project on the server.
 
 Example of a healthy response:
 
@@ -379,16 +388,20 @@ Example of a healthy response:
 ```
 
 When the catalog is unavailable, `/readyz` returns HTTP 503 and `status: "unavailable"`.
-Otherwise, any component state other than `ready` (including `unknown` or `disabled`)
-returns HTTP 200 and `status: "degraded"`; all components ready returns HTTP 200 and
-`status: "ready"`. This keeps durable ingest routed during a partial outage. The remote
-blob-store component begins as `unknown`, becomes `ready` or `unavailable` after a
-read-only, cached `ListObjectsV2` check of the configured namespace, is scheduled every
-30 seconds after the previous probe completes, and expires after 90 seconds. It confirms
-listing access only, not object CRUD.
-The materializer state confirms that its managed worker process is alive; it does not run
-a test build. See the [API contract](./backend-api.md#get-readyz) for the complete state
-set and response behavior.
+Otherwise, a health component state other than `ready` (including `unknown`) returns
+HTTP 200 and `status: "degraded"`; `blob_store: "disabled"` is a configuration state and
+does not degrade readiness. All configured health components ready returns HTTP 200 and
+`status: "ready"`. Hosts must tolerate unrecognized component keys and state values for
+forward compatibility. This keeps durable ingest routed during a partial outage. The
+remote blob-store component begins as `unknown`, becomes `unavailable` after two
+consecutive failed checks, and is otherwise updated by a read-only, cached
+`ListObjectsV2` request with two-second connect and response timeouts. Checks run every
+30 seconds after the previous probe completes and expire after 90 seconds. State-change
+logs contain only a bounded provider error code. The probe confirms listing access only,
+not object CRUD. The materializer is `unknown` when its app lifespan is not active;
+`ready` confirms its managed worker process is alive, not that a test build ran. See the
+[API contract](./backend-api.md#get-readyz) for the complete state set and response
+behavior.
 
 The image's Docker `HEALTHCHECK` calls `/readyz`, which treats HTTP 200 `degraded` as
 healthy. Docker health status does not restart a container; a restart policy acts when
@@ -398,8 +411,8 @@ routing on partial degradation, configure a custom readiness check that inspects
 body; `/readyz` intentionally preserves access to a healthy catalog during an S3 or
 materializer outage.
 
-`projections_pending` counts Incidents whose read models (graph rows, Turn Facts,
-retention and export columns) were built by an older release. After an upgrade every
+`projections_pending` counts Incidents across all projects whose read models (graph rows,
+Turn Facts, retention and export columns) were built by an older release. After an upgrade every
 Incident is pending; the server re-projects them in the background in batches of 100, and
 the count falls to 0. It never makes the server unready, so a large upgrade does not hold
 traffic back. Until it reaches 0, Turn Facts and graph reads for older Incidents can be

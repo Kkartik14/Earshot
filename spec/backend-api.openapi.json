@@ -8296,31 +8296,17 @@
         "type": "object"
       },
       "ReadinessComponents": {
-        "additionalProperties": false,
+        "additionalProperties": true,
         "properties": {
           "blob_store": {
-            "enum": [
-              "ready",
-              "unavailable",
-              "unknown",
-              "disabled"
-            ],
             "title": "Blob Store",
             "type": "string"
           },
           "catalog": {
-            "enum": [
-              "ready",
-              "unavailable"
-            ],
             "title": "Catalog",
             "type": "string"
           },
           "materializer": {
-            "enum": [
-              "ready",
-              "unavailable"
-            ],
             "title": "Materializer",
             "type": "string"
           }
