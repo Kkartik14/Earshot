@@ -99,16 +99,22 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Require the release identity in the Node package
+      - name: Require the release identity in every workspace package
         env:
           RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
+          for package in packages/browser packages/viewer-ui packages/node; do
+            version="$(node -p "require('./$package/package.json').version")"
+            if [[ "$version" != "$RELEASE_VERSION" ]]; then
+              echo "$package is version $version; the release is $RELEASE_VERSION" >&2
+              exit 1
+            fi
+          done
           package=packages/node/package.json
           name="$(node -p "require('./$package').name")"
-          version="$(node -p "require('./$package').version")"
-          if [[ "$name" != "$RELEASE_PACKAGE" || "$version" != "$RELEASE_VERSION" ]]; then
-            echo "$package is $name@$version; expected $RELEASE_PACKAGE@$RELEASE_VERSION" >&2
+          if [[ "$name" != "$RELEASE_PACKAGE" ]]; then
+            echo "$package is $name; expected $RELEASE_PACKAGE" >&2
             exit 1
           fi
       - name: Build and pack the Node package
@@ -117,13 +123,24 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm --filter earshot-observability build
           pnpm --filter earshot-observability pack --pack-destination "$PWD/npm-dist"
-      - name: Inspect the Node tarball
+      - name: Require and inspect the only Node tarball
         env:
           RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for tarball in npm-dist/*.tgz; do
-            unexpected="$(tar -tzf "$tarball" \
+          expected="npm-dist/${RELEASE_PACKAGE}-${RELEASE_VERSION}.tgz"
+          shopt -s nullglob
+          tarballs=(npm-dist/*.tgz)
+          if [[ "${#tarballs[@]}" -ne 1 || "${tarballs[0]}" != "$expected" ]]; then
+            printf 'expected only %s; found: %s\n' "$expected" "${tarballs[*]}" >&2
+            exit 1
+          fi
+          if [[ ! -f "$expected" ]]; then
+            echo "missing expected npm tarball: $expected" >&2
+            exit 1
+          fi
+          for tarball in "${tarballs[@]}"; do
+          unexpected="$(tar -tzf "$tarball" \
               | grep -Ev '^package/((dist/.*)?|README\.md|LICENSE|package\.json)$' || true)"
             if [[ -n "$unexpected" ]]; then
               printf '%s ships unexpected files:\n%s\n' "$tarball" "$unexpected" >&2
@@ -162,17 +179,17 @@ jobs:
             ' "$unpacked/package"
           done
       - name: Dry-run the publish command
-        # The same tarball paths as publish-npm, which runs only on a tag. npm
-        # reads a bare dir/name.tgz as a GitHub repository; ./ makes it a file.
+        # The explicit file path is also used by publish-npm, which runs only on a tag.
+        env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for tarball in ./npm-dist/*.tgz; do
-            npm publish "$tarball" --dry-run --access public
-          done
+          npm publish "./npm-dist/${RELEASE_PACKAGE}-${RELEASE_VERSION}.tgz" --dry-run --access public
       - name: Upload immutable release inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: node-npm-package
-          path: npm-dist/*.tgz
+          path: npm-dist/${{ needs.validate.outputs.npm_package }}-${{ needs.validate.outputs.version }}.tgz
           if-no-files-found: error
           retention-days: 7
 
@@ -280,15 +297,31 @@ jobs:
           node-version: "24"
       - name: Publish the Node package
         env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
+          expected="./npm-dist/${RELEASE_PACKAGE}-${RELEASE_VERSION}.tgz"
+          shopt -s nullglob
+          tarballs=(npm-dist/*.tgz)
+          if [[ "${#tarballs[@]}" -ne 1 || "./${tarballs[0]}" != "$expected" ]]; then
+            printf 'expected only %s; found: %s\n' "$expected" "${tarballs[*]}" >&2
+            exit 1
+          fi
+          manifest="$(tar -xOf "$expected" package/package.json)"
+          node -e '
+            const manifest = JSON.parse(process.argv[1]);
+            const [name, version] = process.argv.slice(2);
+            if (manifest.name !== name || manifest.version !== version) {
+              console.error("unexpected package identity", manifest.name, manifest.version);
+              process.exit(1);
+            }
+          ' "$manifest" "$RELEASE_PACKAGE" "$RELEASE_VERSION"
           dist_tag=latest
           if [[ "$PRERELEASE" == "true" ]]; then
             dist_tag=next
           fi
-          for tarball in ./npm-dist/*.tgz; do
-            npm publish "$tarball" --provenance --access public --tag "$dist_tag"
-          done
+          npm publish "$expected" --provenance --access public --tag "$dist_tag"
 
   github-release:
     name: Publish GitHub Release
