@@ -10,9 +10,9 @@ runs on a laptop with SQLite and local disk, or on a team server with Postgres a
 Status: pre-v1 alpha. 0.4.0 adds hosted JWT access to Calls, scoped project provisioning,
 and a standard span profile for hosts that instrument their own voice pipeline. Hosted
 OTLP and Recording writes, Call reads and purge use the `earshot:calls:*` scopes; prices
-and audio retrieval stay closed. The 0.3.0 call view shows audio with a waveform, the
-transcript on the audio, per-turn latency beside the audible gap at the agent, and cost
-for Pipecat and LiveKit calls. Compatibility is limited to the versions documented for
+and audio retrieval stay closed. The call view shows audio with a waveform, the transcript
+on the audio, per-turn latency beside the audible gap at the agent, and cost for Pipecat and
+LiveKit calls. Compatibility is limited to the versions documented for
 each release; see the [alpha compatibility policy](docs/release.md#alpha-compatibility-policy).
 
 ## Quick start
