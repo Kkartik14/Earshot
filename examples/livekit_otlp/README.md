@@ -1,6 +1,6 @@
 # LiveKit → OTLP example
 
-One real LiveKit Agents 1.8 call, headless (scripted WAV caller → Silero VAD → Deepgram → Groq → Cartesia → a speaker that plays at real time), traced over OTLP/HTTP and recorded by LiveKit's `RecorderIO`. No LiveKit server: the entrypoint runs as an in-process job (`AgentServer.simulate_job(fake_job=True)`).
+One real LiveKit Agents 1.8 call, headless (scripted WAV caller → Silero VAD → Deepgram → Groq → Cartesia → a speaker that plays at real time), traced over OTLP/HTTP and recorded by LiveKit's `RecorderIO`. No LiveKit server: the entrypoint runs as an in-process job (`AgentServer.simulate_job(fake_job=True)`). By default it uses Groq `openai/gpt-oss-120b` and Cartesia `sonic-3.6`; set `GROQ_MODEL` or `CARTESIA_MODEL` to override either.
 
 1. In a separate venv: `pip install -r examples/livekit_otlp/requirements.txt`. Export `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `CARTESIA_API_KEY`, `CARTESIA_VOICE_ID` (optional: `GROQ_MODEL`, `CARTESIA_MODEL`); leave `LIVEKIT_URL` unset.
 2. `export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318`. No receiver yet? Run `python scripts/otlp_capture_sink.py`.

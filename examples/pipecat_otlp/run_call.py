@@ -1,4 +1,4 @@
-"""Run one real Pipecat 1.5 voice call and export its traces over OTLP/HTTP.
+"""Run one real Pipecat 1.6 voice call and export its traces over OTLP/HTTP.
 
     export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # Earshot, or any OTLP receiver
     python examples/pipecat_otlp/run_call.py --out .earshot/pipecat_otlp/run [--upload]
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import os
 import sys
@@ -36,7 +37,12 @@ from pathlib import Path
 from call_io import PacedDiscardOutput, WavCallerInput
 from call_recording import create_call_recording, stereo_wav
 from loguru import logger
-from make_caller_audio import CALLER_SCRIPT, DEFAULT_CARTESIA_MODEL, SAMPLE_RATE, ensure_caller_wav
+from make_caller_audio import (
+    CALLER_SCRIPT,
+    DEFAULT_CARTESIA_MODEL,
+    SAMPLE_RATE,
+    load_caller_wav_snapshot,
+)
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
@@ -61,7 +67,7 @@ from pipecat.workers.runner import WorkerRunner
 from earshot.client import EarshotClient, authorization_from_environment
 
 DEEPGRAM_MODEL = "nova-3-general"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 SYSTEM_PROMPT = (
     "You are the host at a small restaurant, taking a booking on the phone. "
     "Answer in one or two short spoken sentences, without lists or emojis."
@@ -80,7 +86,7 @@ SECRET_ENV = (
     "OTEL_EXPORTER_OTLP_HEADERS",
     "EARSHOT_API_KEY",
 )
-# A call where any of these never produced a span did not really run: Pipecat 1.5
+# A call where any of these never produced a span did not really run: Pipecat 1.6
 # only logs a warning and retries when, for example, Deepgram refuses the key (401).
 PROVIDER_SPANS = ("stt", "llm", "tts")
 QUIET_BEFORE_END_S = 2.0
@@ -97,6 +103,10 @@ class SpanCounter(SpanProcessor):
     def on_end(self, span: ReadableSpan) -> None:
         if span.context is not None and span.context.trace_flags.sampled:
             self.names[span.name] += 1
+
+    def force_flush(self, timeout_millis: int = 30_000) -> bool:
+        """This synchronous counter has no buffered spans to flush."""
+        return True
 
 
 def _write_wav(path: Path, pcm: bytes, sample_rate: int) -> None:
@@ -116,7 +126,8 @@ def _redacting_log_sink(message: str) -> None:
 
 
 async def run_call(out: Path, conversation_id: str, upload_url: str | None = None) -> dict:
-    caller_pcm = _read_pcm(ensure_caller_wav())
+    caller_wav, _caller_metadata = load_caller_wav_snapshot()
+    caller_pcm = _read_pcm(caller_wav)
     setup_tracing(service_name="earshot-pipecat-otlp-example", exporter=OTLPSpanExporter())
     provider = trace.get_tracer_provider()
     assert isinstance(provider, TracerProvider)
@@ -207,8 +218,16 @@ async def run_call(out: Path, conversation_id: str, upload_url: str | None = Non
     silent = [name for name in PROVIDER_SPANS if not counter.names[name]]
     if silent:
         raise RuntimeError(f"no {'/'.join(silent)} span: a provider never answered (see the log)")
-    if not flushed or caller.started_at_unix_nano is None or set(tracks) != {"user", "agent"}:
-        raise RuntimeError("call ended without a flush, a first audio frame, or both tracks")
+    missing: list[str] = []
+    if not flushed:
+        missing.append("OpenTelemetry force_flush returned false")
+    if caller.started_at_unix_nano is None:
+        missing.append("the input produced no first audio frame")
+    missing_tracks = sorted({"user", "agent"} - tracks.keys())
+    if missing_tracks:
+        missing.append(f"the recorder produced no {'/'.join(missing_tracks)} track")
+    if missing:
+        raise RuntimeError("call ended before recording was complete: " + "; ".join(missing))
     out.mkdir(parents=True, exist_ok=True)
     for name, pcm in tracks.items():
         _write_wav(out / f"{name}.wav", pcm, SAMPLE_RATE)
@@ -249,10 +268,10 @@ async def run_call(out: Path, conversation_id: str, upload_url: str | None = Non
     return manifest
 
 
-def _read_pcm(path: Path) -> bytes:
-    with wave.open(str(path), "rb") as wav:
+def _read_pcm(wav_bytes: bytes) -> bytes:
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
         if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) != (1, 2, SAMPLE_RATE):
-            raise ValueError(f"{path} must be {SAMPLE_RATE} Hz mono PCM16")
+            raise ValueError(f"caller audio must be {SAMPLE_RATE} Hz mono PCM16")
         return wav.readframes(wav.getnframes())
 
 

@@ -1,11 +1,11 @@
 """Built-in prices: dated, **regular** list prices for the first providers.
 
 Each row is the provider's published regular list price on its source page as of
-``AS_OF``, never a promotional, plan-discounted or trial price, and carries that page
-and date. A model whose price is not public (Groq's Llama models: "Contact Sales")
-has no row and prices as ``no_price``. Rows are effective from 0: they price every
-call until a later row (a project's own, or an operator's ``earshot prices add
---builtin``) replaces them.
+its recorded date (``AS_OF`` for the common snapshot), never a promotional,
+plan-discounted or trial price. A model whose price is not public (Groq's Llama
+models: "Contact Sales") has no row and prices as ``no_price``. Rows are effective
+from 0: they price every call until a later project or operator row (``earshot prices
+add --builtin``) replaces them.
 
 Provider names are the OpenTelemetry GenAI registry spellings usage is normalized to
 (``call_span_facts.provider_name``); models are the API model IDs, lower-cased, and
@@ -23,7 +23,8 @@ Choices the source pages leave open, stated in each row's note:
 - **Groq Whisper** bills at least 10 s per request; the row is the hourly rate and
   does not model the minimum.
 
-Source: the providers' public price pages (fetched 2026-10-19).
+Source: the providers' public price pages; each row records its observation date. Most
+rows use the common 2026-10-19 snapshot.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from .storage_prices import NewPrice
 
 AS_OF = "2026-10-19"
 _DEEPGRAM = "https://deepgram.com/pricing"
-_CARTESIA = "https://cartesia.ai/pricing"
+_CARTESIA = "https://www.cartesia.ai/pricing"
 _GROQ_MODELS = "https://console.groq.com/docs/models"
 _GROQ_STT = "https://console.groq.com/docs/speech-to-text"
 _OPENAI = "https://developers.openai.com/api/docs/pricing"
@@ -47,6 +48,8 @@ def _row(
     per_quantity: int,
     source_url: str,
     note: str = "",
+    *,
+    as_of: str = AS_OF,
 ) -> NewPrice:
     return NewPrice(
         provider=provider,
@@ -56,7 +59,7 @@ def _row(
         per_quantity=per_quantity,
         effective_from_unix_nano=0,
         source_url=source_url,
-        note=f"regular list price as of {AS_OF}" + (f"; {note}" if note else ""),
+        note=f"regular list price as of {as_of}" + (f"; {note}" if note else ""),
     )
 
 
@@ -109,6 +112,16 @@ BUILTIN_PRICES: tuple[NewPrice, ...] = (
         1,
         _CARTESIA,
         "Scale plan overage ($38 per 1M characters); plan-based",
+    ),
+    _row(
+        "cartesia",
+        "sonic-3.6",
+        "character",
+        38_000,
+        1,
+        _CARTESIA,
+        "Scale plan overage ($38 per 1M credits; 1 credit per character); plan-based",
+        as_of="2026-11-03",
     ),
     _row(
         "cartesia",

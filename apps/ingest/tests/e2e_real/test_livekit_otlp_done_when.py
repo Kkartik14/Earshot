@@ -19,8 +19,9 @@ Asserted:
 - the stereo Ogg Opus recording is stored: the uploaded bytes, ``mixed`` with
   ``channel_speakers`` ``["user", "agent"]``, longer than 30 s;
 - every exported span is stored, none rejected, conflicted or discarded;
-- the transcript is the played text: one agent line per ``agent_turn`` (never a
-  discarded preemptive reply), and the caller's words in the user lines;
+- the transcript is the played text: one agent line per ``agent_turn`` with at least one
+  ``agent_speaking`` child, while a discarded preemptive turn and an empty manifest
+  segment contribute no line; resumed speech remains one line, plus caller words;
 - once the server's own analysis and projection jobs have run, the call view passes
   ``assert_call_view``: the recording's analysis stored, at least one turn's audible
   gap at the agent measured within (0, 15 s) with a ± of at most 100 ms and every
@@ -242,12 +243,35 @@ def test_a_real_livekit_call_becomes_one_final_call_with_its_stereo_recording(
         assert (content.status, content.media_type, content.body) == (200, "audio/ogg", uploaded)
 
         # Every exported span is stored, and none was lost.
-        [(stored_spans, agent_turns)] = read_rows(
+        [(stored_spans, agent_turns, agent_speaking)] = read_rows(
             database_url,
-            "SELECT count(*), sum(CASE WHEN name = 'agent_turn' THEN 1 ELSE 0 END) "
+            "SELECT count(*), "
+            "sum(CASE WHEN name = 'agent_turn' AND scope_name = 'livekit-agents' "
+            "THEN 1 ELSE 0 END), "
+            "sum(CASE WHEN name = 'agent_speaking' AND scope_name = 'livekit-agents' "
+            "THEN 1 ELSE 0 END) "
             "FROM spans WHERE project_id = ?",
             project,
         )
+        played_agent_turn_ids = {
+            (bytes(trace_id).hex(), bytes(span_id).hex())
+            for trace_id, span_id in read_rows(
+                database_url,
+                "SELECT DISTINCT agent_turn_span.trace_id, agent_turn_span.span_id "
+                "FROM spans AS agent_turn_span "
+                "JOIN spans AS speaking_span ON "
+                "speaking_span.project_id = agent_turn_span.project_id "
+                "AND speaking_span.trace_id = agent_turn_span.trace_id "
+                "AND speaking_span.parent_span_id = agent_turn_span.span_id "
+                "WHERE agent_turn_span.project_id = ? "
+                "AND agent_turn_span.name = 'agent_turn' "
+                "AND agent_turn_span.scope_name = 'livekit-agents' "
+                "AND speaking_span.name = 'agent_speaking' "
+                "AND speaking_span.scope_name = 'livekit-agents'",
+                project,
+            )
+        }
+        played_agent_turns = len(played_agent_turn_ids)
         assert stored_spans == manifest["exported_span_count"] == detail["span_count"]
         stats = earshot.json("GET", "/v1/otlp/stats")
         assert {name: stats[name] for name in LOSS_COUNTERS} == dict.fromkeys(LOSS_COUNTERS, 0)
@@ -266,11 +290,20 @@ def test_a_real_livekit_call_becomes_one_final_call_with_its_stereo_recording(
     (tmp_path / "livekit_smoke_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
 
-    # The transcript is the text the call played: one agent line per agent_turn (a
-    # discarded preemptive reply is never a line), and the caller's words.
+    # `agent_turn` also covers discarded preemptive replies, and one turn may produce
+    # multiple `agent_speaking` spans when speech pauses and resumes. The manifest may
+    # also record an empty segment when buffer clearing beats the first queued frame.
     agent_lines = [line["text"] for line in detail["transcript"] if line["speaker"] == "agent"]
+    agent_line_ids = {
+        (line["trace_id"], line["span_id"])
+        for line in detail["transcript"]
+        if line["speaker"] == "agent"
+    }
     user_text = " ".join(line["text"] for line in detail["transcript"] if line["speaker"] == "user")
-    assert len(agent_lines) == agent_turns, detail["transcript"]
+    assert len(agent_lines) == played_agent_turns > 0, detail["transcript"]
+    assert agent_line_ids == played_agent_turn_ids, detail["transcript"]
+    assert agent_turns >= played_agent_turns
+    assert agent_speaking >= played_agent_turns
     assert all(text.strip() for text in agent_lines)
     heard = script_words(user_text) & script_words(" ".join(manifest["caller_script"]))
     assert len(heard) >= 2, detail["transcript"]

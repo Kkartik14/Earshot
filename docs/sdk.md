@@ -441,7 +441,7 @@ native trace identity, deduplicate callbacks, and remain fail-open. LiveKit also
 attaches metrics/interruption listeners. Neither installs a second trace root.
 
 The supported integration ranges are Pipecat `>=1.6.0,<1.7` and LiveKit Agents
-`>=1.6.5,<1.7`. When LiveKit native spans and listeners are both attached, ownership is
+`>=1.6.5,<1.9`. When LiveKit native spans and listeners are both attached, ownership is
 type-selective: native spans own LLM, TTS, and realtime operations and embedded
 metrics; EOU/EOT callbacks add quality/commit evidence; and STT, interruption, and
 avatar callbacks remain operation sources because LiveKit 1.6 does not guarantee

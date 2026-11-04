@@ -54,7 +54,7 @@ worker = PipelineWorker(
 
 Set `conversation_id` and `earshot.session.id` to the **same** value, your own ID for the
 call. That value is the Session Key: Earshot groups the call's spans by it, and the
-Recordings API takes it. Pipecat puts `conversation.id` on every `turn` span, and
+Recordings API takes it. Pipecat 1.6 puts `conversation.id` on every `turn` span, and
 those arrive first. It puts `earshot.session.id` only on the `conversation` span, which
 it sends last, and a trace keeps the first key Earshot sees in it. So if the two values
 differ, the Call is keyed by `conversation_id`, and a Recording created with the other
@@ -105,15 +105,15 @@ is a complete, real Pipecat call.
 
 ## What Earshot receives today
 
-| Source                                    | Status in 0.4.0                                                                                                                                                                                                 |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pipecat 1.6 over OTLP/HTTP                | Supported: Calls with timing, transcript, recordings and the call view. Tested against real Pipecat 1.6.0 calls.                                                                                                |
-| Any OTLP/HTTP producer                    | Spans are stored and grouped into Calls by session key. Call Revisions include Pipecat, LiveKit and `earshot.host` profile spans; other instrumentation is declared as omitted.                                 |
-| LiveKit Agents over OTLP/HTTP             | Supported for 1.6 to 1.8: Calls with timing, the played-text transcript, LiveKit's stereo recording and the call view. Tested against a real headless LiveKit 1.8.8 call (no LiveKit server or room).           |
-| Earshot Python SDK                        | Supported: Pipecat 1.6 and LiveKit 1.6 to 1.8 adapters, and Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, recorded as portable Incident bundles, and `earshot.client` for recordings and calls. |
-| Node (`earshot-observability`)            | A span processor that keys a call's spans, and a recordings and calls client.                                                                                                                                   |
-| ElevenLabs, Vapi, Retell, Ringg           | Signed webhook Connectors for finalized deliveries. Synthetic conformance only.                                                                                                                                 |
-| Browser capture workspace (`/v1/capture`) | Not published on npm; validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                                  |
+| Source                                    | Status in 0.4.0                                                                                                                                                                                            |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pipecat 1.6 over OTLP/HTTP                | Supported for `>=1.6.0,<1.7.0`: Calls with timing, transcript, recordings and the call view. Tested against a real Pipecat 1.6.0 call.                                                                       |
+| Any OTLP/HTTP producer                    | Spans are stored and grouped into Calls by session key. Revisions include Pipecat, LiveKit and `earshot.host` profile spans; other instrumentation is declared as omitted.                                   |
+| LiveKit Agents over OTLP/HTTP             | Supported for `>=1.6.5,<1.9`: Calls with timing, the played-text transcript, LiveKit's stereo recording and the call view. Tested against a real headless LiveKit 1.8.10 call (no LiveKit server or room). |
+| Earshot Python SDK                        | Supported: Pipecat 1.6 and LiveKit 1.6.5 to 1.8.x adapters, Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, portable Incident bundles, and `earshot.client` for recordings and calls.        |
+| Node (`earshot-observability`)            | A span processor that keys a call's spans, and a recordings and calls client.                                                                                                                              |
+| ElevenLabs, Vapi, Retell, Ringg           | Signed webhook Connectors for finalized deliveries. Synthetic conformance only.                                                                                                                            |
+| Browser capture workspace (`/v1/capture`) | Not published on npm; validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                             |
 
 gRPC is not in 0.4.0. Each closed
 Call's Revision is an ordinary Incident, so the bundled viewer and the analysis APIs can

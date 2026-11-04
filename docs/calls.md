@@ -12,7 +12,7 @@ what the server computes and the API the viewer reads; the
 
 ## What a call needs
 
-- **Spans** from Pipecat 1.5 or LiveKit Agents 1.6 to 1.8, or in the
+- **Spans** from Pipecat 1.6 or LiveKit Agents 1.6.5–1.8.x, or in the
   [host span profile](#the-host-span-profile) from a host that runs its own pipeline,
   keyed by a Session Key. They give the turns, the reported latency, the transcript and
   the usage.
@@ -274,7 +274,7 @@ Postgres, `earshot db enable-transcript-index` adds an optional trigram index (s
 
 One stored span of the Call, for the viewer's LLM, tool and error drawers: its name,
 times, status and events, and each attribute with its `semantic_key` and `capture_class`
-(LiveKit 1.6 to 1.8 and Pipecat keys read through one table, so `gen_ai.input.messages`
+(LiveKit 1.6.5 to 1.8.x and Pipecat keys read through one table, so `gen_ai.input.messages`
 is the LLM input whichever framework sent it). It answers 404
 `EARSHOT_SPAN_NOT_FOUND` unless the span's trace belongs to the Call. Content is what the
 preset kept when the span arrived. `Cache-Control: no-store`.
