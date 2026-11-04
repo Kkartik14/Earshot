@@ -17,7 +17,7 @@ the server in `hosted_jwt` mode. The host's token issuer must mint short-lived E
 audience tokens with the signed project claim and the scopes needed for each operation.
 Tokens may live for at most five minutes.
 Hosted mode rejects project API keys, the operator token, and browser-cookie exchange;
-health and readiness endpoints remain unauthenticated. See the [hosted API contract](./backend-api.md#hosted-scope-proposal)
+health, readiness and version endpoints remain unauthenticated. See the [hosted API contract](./backend-api.md#hosted-scope-proposal)
 for token claims and the current scope vocabulary.
 
 Configure these values in the service environment. Keep database, blob-store and
@@ -372,6 +372,7 @@ measured yet.
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /healthz` | Liveness. 200 `{"status": "ok"}` while the process runs. It does not check storage.                                                      |
 | `GET /readyz`  | Reports catalog, blob-store and materializer states. 503 only when the catalog is unavailable; otherwise 200 with `ready` or `degraded`. |
+| `GET /version` | Host compatibility metadata: package, API, contract and profile versions plus capabilities.                                              |
 
 All three endpoints are unauthenticated and are for host-level probes and compatibility
 checks. A hosted service must not proxy them to tenants. In particular,

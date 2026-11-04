@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import multiprocessing
+import os
 import socket
 import threading
 import time
@@ -429,6 +430,80 @@ def test_failed_remote_blob_probe_does_not_revive_an_expired_ready_state(
     asyncio.run(readiness.probe(0))
     assert readiness.status() == "unavailable"
     assert caplog.text.count("EARSHOT_BLOB_HEALTHCHECK_FAILED") == 1
+
+
+def test_remote_blob_readiness_probe_times_out_against_a_stalled_endpoint(monkeypatch) -> None:
+    pytest.importorskip("boto3")
+
+    from urllib.parse import urlencode
+
+    from earshot.api import _BlobStoreReadiness
+    from earshot.blobstore import open_blob_store
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_CONFIG_FILE", os.devnull)
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", os.devnull)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+    accepted = threading.Event()
+    release = threading.Event()
+
+    def stall_response() -> None:
+        try:
+            peer, _ = listener.accept()
+        except OSError:
+            return
+        accepted.set()
+        release.wait(timeout=10)
+        peer.close()
+
+    server = threading.Thread(target=stall_response, daemon=True)
+    endpoint = f"http://{host}:{port}"
+    url = "s3://readiness-test?" + urlencode(
+        {"endpoint": endpoint, "region": "us-east-1", "path_style": "1"}
+    )
+    blobs = open_blob_store(url)
+    readiness = _BlobStoreReadiness(blobs)
+    assert blobs._health_client.meta.config.connect_timeout == 2
+    assert blobs._health_client.meta.config.read_timeout == 2
+
+    result: dict[str, object] = {}
+    completed = threading.Event()
+    started_at = time.monotonic()
+
+    def run_probe() -> None:
+        try:
+            result["next_delay"] = asyncio.run(readiness.probe(0))
+        except BaseException as error:
+            result["error"] = error
+        finally:
+            result["elapsed"] = time.monotonic() - started_at
+            completed.set()
+
+    probe = threading.Thread(target=run_probe, daemon=True)
+    server.start()
+    probe.start()
+    try:
+        assert accepted.wait(timeout=3), "the S3 readiness request never reached the endpoint"
+        assert completed.wait(timeout=4.5), "the S3 readiness probe exceeded its two-second timeout"
+        assert "error" not in result
+        assert 1.5 <= result["elapsed"] < 4.5
+        assert result["next_delay"] == 30.0
+        assert readiness.status() == "unknown"
+    finally:
+        release.set()
+        listener.close()
+        server.join(timeout=1)
+        probe.join(timeout=2)
+        blobs._health_client.close()
+        blobs._client.close()
 
 
 def test_readiness_reports_a_killed_materializer_as_degraded(tmp_path) -> None:
