@@ -115,6 +115,41 @@ Every 0.2.0 field is kept. `projection` adds:
 Unknown is `null`, never `0`. The response is `Cache-Control: no-store` with a strong
 `ETag`; `If-None-Match` with it answers 304.
 
+## Live turns for an open Call: `GET /v1/calls/<call_id>/live-turns`
+
+The target is API 0.17.0 in the 0.5.0 line. This additive, read-only route requires
+`earshot:calls:read` in hosted mode; the existing detail route and its response stay
+unchanged. A 200 response contains `call_id`, `state` (`open` or `closed`), `revision`
+(null while open; the latest Revision number after close) and `turns[]`. Each turn has
+the same fields and meaning as `projection.turns[]` above. `state` describes the Call;
+there is no separate per-turn `finished` flag.
+
+While the Call is open, the route runs the existing Call projector over the Call's
+accepted, stored spans after the project's capture-preset filtering. It returns a turn
+only when its parent turn span has arrived: `turn` for Pipecat and the host profile, or
+`agent_turn` for LiveKit. It does not infer turns from child spans. The parent span is
+final when exported; later accepted children may fill in more projected fields. Until
+those children arrive, unobserved values keep the projector's existing null or
+`not_measurable` meanings. The route does not persist a provisional projection or create
+a Revision.
+
+After the Call closes, the route uses the same projector over only the evidence held by
+the latest durable Revision; it does not include evidence that the Revision did not
+capture. Once the durable projection is current, the route's `turns[]` match it field
+for field. A turn's `spans[]` contains only the existing projected summaries (IDs, name,
+role, status and times); it never includes
+raw span attributes or events. The route never includes audio, transcript or prices.
+Missing and purged Calls answer the same 404 `EARSHOT_CALL_NOT_FOUND` as the detail
+route.
+
+Responses are `Cache-Control: no-store` and carry a strong `ETag`; matching
+`If-None-Match` answers 304. The validator is tied to the same input snapshot as the
+response and changes when any span is accepted for the Call, including a later child
+that enriches an already returned turn, even if that child does not change the current
+JSON fields. Hosts can poll every two seconds. The
+target is at most 1 s p95 from accepted span to route visibility and at most 5 s p95
+from runtime turn end to the host UI at that polling interval.
+
 ### The audible gap at the agent
 
 For each turn, the gap from the end of the user's speech to the start of the agent's
@@ -334,11 +369,11 @@ new row reprices the affected calls in the background.
 In `hosted_jwt` mode a host reaches the Calls with three scopes of their own, which the
 generic incident scopes never grant:
 
-| Scope                  | Operations                                                                                |
-| ---------------------- | ----------------------------------------------------------------------------------------- |
-| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`     |
-| `earshot:calls:read`   | `GET /v1/calls`, `GET /v1/calls/{call_id}`, `POST /v1/calls:resolve`, `GET /v1/dashboard` |
-| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                              |
+| Scope                  | Operations                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`                                           |
+| `earshot:calls:read`   | `GET /v1/calls`, `GET /v1/calls/{call_id}`, `GET /v1/calls/{call_id}/live-turns`, `POST /v1/calls:resolve`, `GET /v1/dashboard` |
+| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                                                                    |
 
 Every other Call surface stays closed in hosted mode and answers 403
 `EARSHOT_OPERATION_UNAVAILABLE` for every method: a span's raw attributes
