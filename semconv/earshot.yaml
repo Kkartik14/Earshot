@@ -49,6 +49,19 @@ groups:
         type: boolean
         requirement_level: opt_in
         brief: "Host span profile: false when the host's recording timeline was not continuous across the turn (frames dropped or placed late), so its audible gap is not measurable; true or absent, the timeline is taken as continuous."
+      - id: earshot.speech.transcript.text
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: Source-provided transcript text for the speech stretch represented by a host-profile speech span.
+        note: >-
+          In host profile 0.2.0, this attribute is valid only on user_speech and
+          agent_speech spans. The span name supplies the speaker and its interval
+          supplies the transcript line's timing. Omit it when no nonblank transcript
+          was supplied; empty or whitespace-only values are invalid. Preserve the
+          supplied text; do not derive it from audio or another stage's output. This
+          is sensitive content and the host decides whether to send it. Earshot's
+          metadata_only preset removes it before storage.
       - id: earshot.operation.name
         type: string
         requirement_level: required
@@ -830,7 +843,7 @@ groups:
   - id: span.earshot.host.turn
     type: span
     span_kind: internal
-    brief: "Host span profile: one turn of a call a host runs on its own pipeline, under the earshot.host instrumentation scope, times on the clock of the host's recordings. Its children are its speech and stage spans. It carries no transcript text."
+    brief: "Host span profile: one turn of a call a host runs on its own pipeline, under the earshot.host instrumentation scope, times on the clock of the host's recordings. Its children are its speech and stage spans. Transcript text belongs on the speech span, never the turn."
     attributes:
       - ref: earshot.turn.id
         requirement_level: required
@@ -841,9 +854,11 @@ groups:
   - id: span.earshot.host.speech
     type: span
     span_kind: internal
-    brief: "Host span profile: a user_speech or agent_speech span, a child of its turn, by the window of one stretch of the caller's or the agent's speech. User on is the starts of a turn's user_speech spans, user off the latest of their ends, agent on the earliest start of its agent_speech spans."
+    brief: "Host span profile: a user_speech or agent_speech span, a child of its turn, by the window of one stretch of the caller's or the agent's speech. Profile 0.2.0 may attach that stretch's optional transcript text. User on is the starts of a turn's user_speech spans, user off the latest of their ends, agent on the earliest start of its agent_speech spans."
     attributes:
       - ref: earshot.turn.id
+      - ref: earshot.speech.transcript.text
+        requirement_level: opt_in
 
   - id: span.earshot.host.stage
     type: span
