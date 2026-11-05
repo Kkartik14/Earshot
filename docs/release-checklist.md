@@ -88,5 +88,6 @@ An npm package version cannot be reused. PyPI may accept additional files for an
 version, but the supported recovery is a same-run retry of the inspected files described
 above; do not add or replace release files manually. Version-specific GHCR tags (for
 example, `0.4.0`) must not be retargeted. The workflow's `major.minor` alias (for
-example, `0.4`) intentionally advances when a later patch release is published. If
-published version-specific bytes are wrong, fix them and release a new version.
+example, `0.4`) and `latest` tag intentionally advance on stable releases; prereleases
+do not move those aliases. If published version-specific bytes are wrong, fix them and
+release a new version.

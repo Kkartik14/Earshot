@@ -255,9 +255,9 @@ The first GHCR package may require one visibility check in the package settings.
 be linked to this public repository and public before documenting anonymous `docker pull`
 support. Released PyPI and npm versions and version-specific GHCR tags (for example,
 `0.4.0`) are immutable; never retarget those tags or delete and recreate a release
-version. The workflow's `major.minor` GHCR alias (for example, `0.4`) intentionally
-advances when a later patch release is published. Fix incorrect version-specific bytes
-and publish a new release version.
+version. The workflow's `major.minor` GHCR alias (for example, `0.4`) and `latest` tag
+intentionally advance on stable releases; prereleases do not move those aliases. Fix
+incorrect version-specific bytes and publish a new release version.
 
 ## Alpha compatibility policy
 
