@@ -253,9 +253,11 @@ git push origin v0.4.0
 
 The first GHCR package may require one visibility check in the package settings. It must
 be linked to this public repository and public before documenting anonymous `docker pull`
-support. Released PyPI and npm versions are immutable, and a pushed image tag must not be
-moved; never delete and recreate a version. Fix the problem, increment the package
-version, and publish a new release.
+support. Released PyPI and npm versions and version-specific GHCR tags (for example,
+`0.4.0`) are immutable; never retarget those tags or delete and recreate a release
+version. The workflow's `major.minor` GHCR alias (for example, `0.4`) intentionally
+advances when a later patch release is published. Fix incorrect version-specific bytes
+and publish a new release version.
 
 ## Alpha compatibility policy
 

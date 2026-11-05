@@ -86,5 +86,7 @@ curl --fail http://127.0.0.1:4319/readyz   # from a second terminal
 
 An npm package version cannot be reused. PyPI may accept additional files for an existing
 version, but the supported recovery is a same-run retry of the inspected files described
-above; do not add or replace release files manually. Never move a pushed image tag. If
-published bytes are wrong, fix them and release a new version.
+above; do not add or replace release files manually. Version-specific GHCR tags (for
+example, `0.4.0`) must not be retargeted. The workflow's `major.minor` alias (for
+example, `0.4`) intentionally advances when a later patch release is published. If
+published version-specific bytes are wrong, fix them and release a new version.
