@@ -301,11 +301,14 @@ The current implementation reports 0.1.0. Profile 0.2.0 adds optional provider-m
 STT and TTS usage attributes and optional transcript text on speech spans; Earshot
 continues to accept 0.1.0 spans. The attributes are registered in
 [`semconv/earshot.yaml`](../semconv/earshot.yaml).
+Set the `earshot.host` instrumentation scope version to the profile version emitted.
+An absent scope version retains 0.1.0 behavior; profile 0.2.0-only fields are
+interpreted only when the scope version is exactly `0.2.0`.
 
 | Span                          | Parent | Carries                                                                                                                                                                                                                                                                               |
 | ----------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `turn`                        | any    | `earshot.turn.id` (the host's turn ID); optionally `earshot.turn.index`, `earshot.turn.reported_latency_ms` (the host's own measure of the turn's latency, in milliseconds) and `earshot.turn.timeline_continuous` (`false` when frames were dropped or placed late during the turn). |
-| `user_speech`, `agent_speech` | `turn` | `earshot.turn.id`; in profile 0.2.0, optionally `earshot.speech.transcript.text`. Its window is one stretch of the caller's or the agent's speech.                                                                                                                                    |
+| `user_speech`, `agent_speech` | `turn` | `earshot.turn.id`; in profile 0.2.0, optionally `earshot.transcript.text`. Its window is one stretch of the caller's or the agent's speech.                                                                                                                                           |
 | `stt`, `llm`, `tts`           | `turn` | `earshot.turn.id`, `gen_ai.provider.name`, `gen_ai.request.model`; on `llm`, the `gen_ai.usage.*` counts; in profile 0.2.0, optional provider-metered STT seconds or TTS characters. Its window is one stage request.                                                                 |
 
 - **Turns.** One per `turn` span. User on is the starts of its `user_speech` spans, user
@@ -338,7 +341,7 @@ continues to accept 0.1.0 spans. The attributes are registered in
   missing requests unknown; it does not add a call-wide estimate over the reported
   requests. Missing TTS counts remain unknown.
 - **Transcript.** In profile 0.2.0, a host may attach one nonblank,
-  source-provided `earshot.speech.transcript.text` value to each `user_speech` or
+  source-provided `earshot.transcript.text` value to each `user_speech` or
   `agent_speech` span. The span name supplies the speaker and its interval supplies the
   transcript line's measured timing. Omit the attribute when no text was supplied; an
   empty or whitespace-only value is invalid. Earshot does not derive transcript text

@@ -45,7 +45,7 @@ through one table that names the class of every `lk.*` key of LiveKit 1.6 to 1.8
 key and its 1.7 `lk.pii.*` name share one class); an `lk.*` key the table does not list,
 such as `lk.sip.*` or a key a later release adds, is dropped under `metadata_only`. The
 string `NOT_GIVEN`, which Pipecat emits for unset values, counts as absent. The host
-profile 0.2.0 attribute `earshot.speech.transcript.text` is classified as transcript
+profile 0.2.0 attribute `earshot.transcript.text` is classified as transcript
 content and is removed before storage under `metadata_only`.
 
 The raw Session Key is stored nowhere under `metadata_only`: a Call created under it has
@@ -282,7 +282,7 @@ follow the preset **in force when the spans arrived**: a Call captured under
 `metadata_only` has no transcript content in its spans, and gets no lines. Each
 recomputation of the projection replaces its lines.
 
-In host profile 0.2.0, `earshot.speech.transcript.text` is optional content on a
+In host profile 0.2.0, `earshot.transcript.text` is optional content on a
 `user_speech` or `agent_speech` span. The host decides whether it has permission to send
 that text; Earshot stores it only when received and permitted by the Project's Capture
 Preset. When the attribute is absent, no transcript line is created. Earshot does not
