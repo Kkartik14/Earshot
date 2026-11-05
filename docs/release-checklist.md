@@ -84,5 +84,7 @@ docker run --rm -p 127.0.0.1:4319:4319 -e EARSHOT_HOST=0.0.0.0 \
 curl --fail http://127.0.0.1:4319/readyz   # from a second terminal
 ```
 
-npm and PyPI never accept a version twice, and a pushed image tag must not be moved. If
-something is wrong, fix it, increment the version and release again.
+An npm package version cannot be reused. PyPI may accept additional files for an existing
+version, but the supported recovery is a same-run retry of the inspected files described
+above; do not add or replace release files manually. Never move a pushed image tag. If
+published bytes are wrong, fix them and release a new version.
