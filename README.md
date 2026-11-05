@@ -112,7 +112,8 @@ is a complete, real Pipecat call.
 | LiveKit Agents over OTLP/HTTP             | Supported for `>=1.6.5,<1.9`: Calls with timing, the played-text transcript, LiveKit's stereo recording and the call view. Tested against a real headless LiveKit 1.8.10 call (no LiveKit server or room). |
 | Earshot Python SDK                        | Supported: Pipecat 1.6 and LiveKit 1.6.5 to 1.8.x adapters, Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, portable Incident bundles, and `earshot.client` for recordings and calls.        |
 | Node (`earshot-observability`)            | A span processor that keys a call's spans, and a recordings and calls client.                                                                                                                              |
-| ElevenLabs, Vapi, Retell, Ringg           | Signed webhook Connectors for finalized deliveries. Synthetic conformance only.                                                                                                                            |
+| ElevenLabs, Ringg                         | Signed webhook connectors with synthetic conformance coverage.                                                                                                                                             |
+| Vapi, Retell                              | Experimental adapters with synthetic fixtures only; real signed deliveries are unverified and these adapters are not production-supported.                                                                 |
 | Browser capture workspace (`/v1/capture`) | Not published on npm; validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                             |
 
 gRPC is not in 0.4.0. Each closed

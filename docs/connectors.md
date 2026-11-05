@@ -51,25 +51,31 @@ transition, then remove the previous value.
 Primary sources: [post-call webhooks](https://elevenlabs.io/docs/eleven-agents/workflows/post-call-webhooks),
 [OpenTelemetry traces](https://elevenlabs.io/docs/eleven-agents/customization/opentelemetry-traces).
 
-## Vapi
+## Vapi (not production-supported)
+
+This adapter has synthetic conformance coverage only; no real signed delivery has been
+verified. The notes below describe current parser behavior, not verified delivery support.
 
 - Accepts only `message.type=end-of-call-report` and keys the Receipt from `call.id`.
 - Trust uses either `Authorization: Bearer ...` configured through a Custom Credential or
   legacy `X-Vapi-Secret`; providing both is rejected. Vapi's configurable HMAC is not a
   universal protocol, so Earshot does not invent a signature format.
-- `artifact.performanceMetrics.turnLatencies` and interruption aggregates are retained as
-  provider-named evidence. Official schemas do not document the latency unit, so values
-  remain `provider_unit` and never feed shared millisecond projections. Association with
-  an assistant message is an explicitly inferred ordered-index join; when its
-  `secondsFromStart` is absent, the metrics remain session-scoped and author no turn.
-- Transcript, messages, recordings, variables, customer data, and call identifiers are
-  discarded or HMAC-correlated.
+- `artifact.performanceMetrics.turnLatencies` can produce indexed metric spans, but the
+  adapter does not match them to transcript messages by message ID or time offset. Any
+  ordinal association is inferred, and emitted latency units are unverified against a real
+  delivery. The adapter does not emit Vapi's interruption aggregate counters.
+- `artifact.messages` can produce transcript-line evidence under capture presets that
+  allow transcript text; metadata-only capture removes that text. Other raw request fields
+  are not retained, and call identity is HMAC-correlated.
 
 Primary sources: [server authentication](https://docs.vapi.ai/server-url/server-authentication),
 [server events](https://docs.vapi.ai/server-url/events),
 [Call artifact schema](https://docs.vapi.ai/api-reference/calls/get).
 
-## Retell
+## Retell (not production-supported)
+
+This adapter has synthetic conformance coverage only; no real signed delivery has been
+verified. The notes below describe current parser behavior, not verified delivery support.
 
 - Accepts only `event=call_analyzed` and keys the Receipt from `event + call.call_id`.
 - Trust uses `X-Retell-Signature: v={timestamp_ms},d={digest}`. The digest is HMAC-SHA256
