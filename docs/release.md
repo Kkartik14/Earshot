@@ -160,6 +160,7 @@ only when all of these identities agree:
 - the tagged commit is contained in the repository's default branch;
 - the Python distribution is `earshot-observability`;
 - the npm package is `earshot-observability` and has the tag's version; and
+- the Node package's `repository.url` matches the current GitHub owner and repository;
 - pre-release versions use the canonical SemVer forms `-alpha.N`, `-beta.N`, or `-rc.N`;
 - the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
 
@@ -176,19 +177,34 @@ only when all of these identities agree:
 No long-lived publishing credential is stored in GitHub. npm uses Trusted Publishing
 (OIDC) for `earshot-observability`.
 
-The PyPI job uploads the inspected wheel and source distribution with `skip-existing`
-disabled. The inspected Python distributions and npm tarball are both retained for 30 days.
-If a publisher fails before completing its upload, use GitHub's **Re-run failed jobs** for
-that workflow run while its artifact is retained; this reuses the original artifact bytes.
-Warehouse currently returns success for an exact filename-and-content duplicate and rejects
-a same-name upload with different contents, so Twine can continue past an accepted file and
-upload the missing one. Keep `skip-existing` disabled so conflicting bytes fail. This retry
-behavior follows Warehouse's current implementation; PyPI does not document it as an Upload
-API guarantee.
-Before the first upload for a version, confirm that PyPI has no files for that version.
-If any files are already present, compare the complete published file list with the
-release artifact and audit its provenance before continuing; this workflow does not
-inventory unexpected files already attached to a PyPI version.
+The inspected Python distributions and npm tarball are both retained for 30 days. For a
+partial PyPI upload, use GitHub's **Re-run failed jobs** on the same workflow run while its
+artifact is retained; this reuses the original wheel and sdist. The PyPI action keeps
+`skip-existing` disabled. Warehouse currently returns success for an exact
+filename-and-content duplicate and rejects a same-name upload with different contents, so
+Twine can continue past an accepted file and upload the missing one. The upload and its
+PEP 740 attestation are accepted together on the normal first attempt; Warehouse's duplicate
+response does not attach a new attestation to a file that was previously uploaded without
+one. This retry behavior follows Warehouse's current implementation; PyPI does not
+document it as an Upload API guarantee.
+
+Before the first upload for a version, confirm that PyPI has no files for that version. If
+any files are already present, compare the complete published file list with the release
+artifacts and audit each file's provenance before continuing. Stop if an expected file lacks
+its release attestation or if the version contains unexpected files; the workflow does not
+inventory or repair pre-existing files.
+
+If `npm publish` returns an error, the job checks the version already on npm before deciding
+whether the upload failed or only its success response was lost. It installs that exact
+public version in a temporary directory with lifecycle scripts and peer dependencies omitted,
+runs `npm audit signatures --json --include-attestations`, then verifies that the registry
+integrity matches the retained tarball and that both npm publish and SLSA attestations bind
+the package to this repository, workflow file, release tag, source commit, and workflow run.
+Only that exact result lets the same workflow run continue to GitHub Release. If the registry
+has not propagated the version or attestations yet, or any identity does not match, the job
+fails closed; rerun the failed jobs on the same workflow run after propagation. A version
+published by another run or with different bytes/provenance requires manual investigation;
+never publish a replacement under the same name and version.
 
 Release tags use stable SemVer or one of `-alpha.N`, `-beta.N`, and `-rc.N` for
 pre-releases. The validator rejects other prerelease spellings because PEP 440 maps
@@ -213,8 +229,12 @@ Environment:  pypi
 ```
 
 The GitHub `pypi` and `npm` environments restrict deployments to release tags and require
-a maintainer approval. If the repository, workflow, or environment is renamed, update the
-PyPI and npm publishers before the next release.
+a maintainer approval. Protect `v*` Git tags with two active repository tag rulesets: one
+restricts tag creation to the release maintainer; the other restricts updates and deletions
+with no bypass actor. Separate rulesets keep creation permission from allowing a release tag
+to be moved later. The tag ruleset controls are described in [GitHub's ruleset documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
+If the repository is renamed or transferred, update the PyPI and npm publishers and the
+Node package's `repository`, `homepage`, and `bugs` metadata before the next release.
 
 [`release-checklist.md`](./release-checklist.md) is the owner's step-by-step list: the
 one-time npm and GitHub environment setup, the release versions to set, the

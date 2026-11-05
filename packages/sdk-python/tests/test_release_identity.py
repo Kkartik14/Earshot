@@ -17,6 +17,7 @@ def write_project(
     project_name: str = "earshot-observability",
     node_name: str = "earshot-observability",
     node_version: str | None = None,
+    node_repository_url: str = "git+https://github.com/Kkartik14/Earshot.git",
 ) -> Path:
     project = path / "pyproject.toml"
     project.write_text(f'[project]\nname = "{project_name}"\nversion = "{version}"\n')
@@ -26,6 +27,7 @@ def write_project(
             {
                 "name": node_name,
                 "version": node_version or version,
+                "repository": {"type": "git", "url": node_repository_url},
             }
         )
     )
@@ -210,6 +212,21 @@ def test_release_identity_rejects_node_version_different_from_project(
 
     assert result.returncode == 2
     assert "does not match project version" in result.stderr
+
+
+def test_release_identity_rejects_node_repository_different_from_release_repository(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        "0.1.0",
+        node_repository_url="git+https://github.com/another-owner/another-repo.git",
+    )
+
+    result = check_release(project)
+
+    assert result.returncode == 2
+    assert "Node package repository URL must match" in result.stderr
 
 
 @pytest.mark.parametrize(

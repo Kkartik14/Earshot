@@ -297,6 +297,9 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24.22.2"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
       - name: Verify the npm Trusted Publishing runtime
         run: |
           node_version="$(node --version)"
@@ -311,6 +314,11 @@ jobs:
           RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
           PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           expected="./npm-dist/${RELEASE_PACKAGE}-${RELEASE_VERSION}.tgz"
           shopt -s nullglob
@@ -332,7 +340,38 @@ jobs:
           if [[ "$PRERELEASE" == "true" ]]; then
             dist_tag=next
           fi
-          npm publish "$expected" --provenance --access public --tag "$dist_tag"
+          if npm publish "$expected" --provenance --access public --tag "$dist_tag"; then
+            exit 0
+          fi
+
+          # npm versions are immutable. A lost success response makes a plain rerun
+          # fail, so accept an existing version only after npm verifies its signatures
+          # and provenance matches these exact retained bytes and this workflow run.
+          verification_dir="$(mktemp -d)"
+          trap 'rm -rf "$verification_dir"' EXIT
+          printf '{"name":"earshot-release-verification","version":"1.0.0","private":true}\n' \
+            > "$verification_dir/package.json"
+          cd "$verification_dir"
+          npm install \
+            --ignore-scripts \
+            --omit=peer \
+            --no-audit \
+            --prefer-online \
+            --cache "$verification_dir/cache" \
+            --save-exact \
+            "${RELEASE_PACKAGE}@${RELEASE_VERSION}"
+          npm audit signatures --json --include-attestations > "$verification_dir/signatures.json"
+          python "$GITHUB_WORKSPACE/scripts/verify_npm_publish.py" \
+            --artifact "$GITHUB_WORKSPACE/$expected" \
+            --audit-report "$verification_dir/signatures.json" \
+            --package "$RELEASE_PACKAGE" \
+            --version "$RELEASE_VERSION" \
+            --repository "$RELEASE_REPOSITORY" \
+            --workflow-path .github/workflows/release.yml \
+            --ref "$RELEASE_REF" \
+            --commit "$RELEASE_SHA" \
+            --run-id "$RELEASE_RUN_ID" \
+            --run-attempt "$RELEASE_RUN_ATTEMPT"
 
   github-release:
     name: Publish GitHub Release

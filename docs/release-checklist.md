@@ -25,6 +25,11 @@ One tag publishes four things:
 - **GitHub environments:** give `pypi` and `npm` a required reviewer, and allow only
   `v*` tags to deploy to them. Set the `npm` environment URL to
   `https://www.npmjs.com/package/earshot-observability`.
+- **Release tags:** create two active GitHub tag rulesets targeting `v*`. In one, restrict
+  tag creation and allow only the release maintainer to create tags. In the other, restrict
+  tag updates and deletions with no bypass actors. Do not combine these rules: a creation
+  bypass must not authorize moving or deleting an existing release tag. See
+  [GitHub's tag ruleset controls](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
 - **GHCR:** after the first push, link the package to the repository and make it
   public before documenting anonymous `docker pull`.
 
@@ -57,6 +62,9 @@ One tag publishes four things:
    on a tag runs the publishing jobs, so never use a tag dispatch as a dry run.
 5. Tag and push, as in `release.md`. Approve the `pypi` and `npm` deployments when
    asked. A version containing `-` is published to npm under the `next` dist-tag.
+   Before creating the tag, confirm the GitHub tag rulesets and both registry version
+   preflights: the `v*` tag must not already exist, and the PyPI version must have no files
+   attached.
 
 ## After publishing
 
