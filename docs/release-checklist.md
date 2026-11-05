@@ -30,8 +30,9 @@ One tag publishes four things:
   tag updates and deletions with no bypass actors. Do not combine these rules: a creation
   bypass must not authorize moving or deleting an existing release tag. See
   [GitHub's tag ruleset controls](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
-- **GHCR:** after the first push, link the package to the repository and make it
-  public before documenting anonymous `docker pull`.
+- **GHCR:** restrict package write access to release maintainers and the audited release
+  workflow. After the first push, link the package to the repository and make it public
+  before documenting anonymous `docker pull`.
 
 ## Every release
 

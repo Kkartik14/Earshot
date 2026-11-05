@@ -169,7 +169,7 @@ only when all of these identities agree:
 | `validate`          | tag and manual | Checks the tag, version and image identity, and that the tag is on the default branch.                                                                        |
 | `build-python`      | tag and manual | Builds the viewer, wheel and sdist, and runs the wheel, sdist and smoke checks.                                                                               |
 | `build-npm`         | tag and manual | Checks the Node package name and version, builds and packs it with pnpm, inspects the tarball, and runs npm's publish dry run.                                |
-| `publish-container` | tag            | Builds the Linux AMD64 image, pushes it to `ghcr.io/kkartik14/earshot` with SBOM and provenance (`mode=max`), and attests it.                                 |
+| `publish-container` | tag            | Builds and attests the OCI image with SBOM and provenance (`mode=max`).                                                                                       |
 | `publish-pypi`      | tag            | Publishes the inspected wheel and sdist to PyPI with OIDC, after the image.                                                                                   |
 | `publish-npm`       | tag            | Publishes the inspected Node tarball with `npm publish --provenance --access public`, after the image. A SemVer pre-release version gets the `next` dist-tag. |
 | `github-release`    | tag            | Attests the Python files and creates a GitHub Release with generated notes.                                                                                   |
@@ -187,6 +187,17 @@ PEP 740 attestation are accepted together on the normal first attempt; Warehouse
 response does not attach a new attestation to a file that was previously uploaded without
 one. This retry behavior follows Warehouse's current implementation; PyPI does not
 document it as an Upload API guarantee.
+
+For GHCR retries, the workflow resolves the exact version tag before building. If it
+already exists, the workflow pulls it, verifies its OCI version and source-revision labels
+against the tagged release, reuses its digest for attestation, and skips the image push.
+The workflow publishes that immutable version tag first, then promotes the SHA and stable
+aliases from the verified digest. It creates a missing SHA tag but refuses to retarget an
+existing one; `major.minor` and `latest` advance only when their OCI version label is older
+than this release. A retry can finish an interrupted alias promotion, and a retry of an
+older release leaves newer aliases in place. The GHCR publisher is serialized across
+release tags; complete each release before starting the next tag workflow. Lookup errors or
+mismatched labels stop the job; never rebuild over or retarget an existing version tag.
 
 Before the first upload for a version, confirm that PyPI has no files for that version. If
 any files are already present, compare the complete published file list with the release
@@ -254,10 +265,13 @@ git push origin v0.4.0
 The first GHCR package may require one visibility check in the package settings. It must
 be linked to this public repository and public before documenting anonymous `docker pull`
 support. Released PyPI and npm versions and version-specific GHCR tags (for example,
-`0.4.0`) are immutable; never retarget those tags or delete and recreate a release
-version. The workflow's `major.minor` GHCR alias (for example, `0.4`) and `latest` tag
-intentionally advance on stable releases; prereleases do not move those aliases. Fix
-incorrect version-specific bytes and publish a new release version.
+`0.4.0`) are treated as immutable release policy; never retarget those tags or delete and
+recreate a release version. The workflow checks existing version tags and retries by
+digest, but GHCR permits any package writer to overwrite a tag, so keep package write
+access limited to the release maintainers and audited workflow. Git tag rulesets do not
+protect GHCR tags. The workflow's `major.minor` GHCR alias (for example, `0.4`) and
+`latest` tag intentionally advance on stable releases; prereleases do not move those
+aliases. Fix incorrect version-specific bytes and publish a new release version.
 
 ## Alpha compatibility policy
 
