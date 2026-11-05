@@ -14,11 +14,12 @@ def write_project(
     path: Path,
     version: str,
     *,
+    project_name: str = "earshot-observability",
     node_name: str = "earshot-observability",
     node_version: str | None = None,
 ) -> Path:
     project = path / "pyproject.toml"
-    project.write_text(f'[project]\nname = "example"\nversion = "{version}"\n')
+    project.write_text(f'[project]\nname = "{project_name}"\nversion = "{version}"\n')
     node_package = path / "node-package.json"
     node_package.write_text(
         json.dumps(
@@ -72,6 +73,35 @@ def test_release_identity_rejects_a_tag_for_different_artifacts(tmp_path: Path) 
 
     assert result.returncode == 2
     assert "expected v0.1.0" in result.stderr
+
+
+def test_release_identity_rejects_wrong_python_distribution_name(
+    tmp_path: Path,
+) -> None:
+    project = write_project(tmp_path, "0.1.0", project_name="another-name")
+
+    result = check_release(project)
+
+    assert result.returncode == 2
+    assert "Python distribution name must be 'earshot-observability'" in result.stderr
+
+
+def test_release_identity_marks_semver_prerelease(tmp_path: Path) -> None:
+    project = write_project(tmp_path, "0.1.0-rc.1")
+
+    result = check_release(project, tag="v0.1.0-rc.1")
+
+    assert result.returncode == 0
+    assert "prerelease=true" in result.stdout.splitlines()
+
+
+def test_release_identity_rejects_semver_build_metadata(tmp_path: Path) -> None:
+    project = write_project(tmp_path, "0.1.0+build-id")
+
+    result = check_release(project, tag="v0.1.0+build-id")
+
+    assert result.returncode == 2
+    assert "build metadata is not supported for releases" in result.stderr
 
 
 def test_release_identity_rejects_unapproved_node_package_name(tmp_path: Path) -> None:

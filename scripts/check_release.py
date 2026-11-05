@@ -19,15 +19,26 @@ class ReleaseIdentityError(ValueError):
     """Raised when package, tag, or registry identities disagree."""
 
 
-NODE_PACKAGE_NAME = "earshot-observability"
+PACKAGE_NAME = "earshot-observability"
 
 
-def project_version(project_file: Path) -> str:
+def project_identity(project_file: Path) -> tuple[str, bool]:
     document = tomllib.loads(project_file.read_text())
-    version = document.get("project", {}).get("version")
-    if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
+    project = document.get("project")
+    if not isinstance(project, dict):
+        raise ReleaseIdentityError("project table must be a TOML table")
+    name = project.get("name")
+    if name != PACKAGE_NAME:
+        raise ReleaseIdentityError(
+            f"Python distribution name must be {PACKAGE_NAME!r}, got {name!r}"
+        )
+    version = project.get("version")
+    version_match = SEMVER.fullmatch(version) if isinstance(version, str) else None
+    if version_match is None:
         raise ReleaseIdentityError("project.version must be an explicit semantic version")
-    return version
+    if version_match.group(5) is not None:
+        raise ReleaseIdentityError("project.version build metadata is not supported for releases")
+    return version, version_match.group(4) is not None
 
 
 def node_package_identity(node_package_file: Path) -> tuple[str, str]:
@@ -36,8 +47,8 @@ def node_package_identity(node_package_file: Path) -> tuple[str, str]:
         raise ReleaseIdentityError("Node package manifest must contain a JSON object")
     name = document.get("name")
     version = document.get("version")
-    if name != NODE_PACKAGE_NAME:
-        raise ReleaseIdentityError(f"Node package name must be {NODE_PACKAGE_NAME!r}, got {name!r}")
+    if name != PACKAGE_NAME:
+        raise ReleaseIdentityError(f"Node package name must be {PACKAGE_NAME!r}, got {name!r}")
     if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
         raise ReleaseIdentityError("Node package version must be an explicit semantic version")
     return name, version
@@ -50,7 +61,7 @@ def release_identity(
     tag: str,
     repository: str,
 ) -> dict[str, str]:
-    version = project_version(project_file)
+    version, prerelease = project_identity(project_file)
     npm_package, npm_version = node_package_identity(node_package_file)
     if npm_version != version:
         raise ReleaseIdentityError(
@@ -65,7 +76,7 @@ def release_identity(
     return {
         "image": f"ghcr.io/{repository.lower()}",
         "npm_package": npm_package,
-        "prerelease": str("-" in version).lower(),
+        "prerelease": str(prerelease).lower(),
         "version": version,
     }
 
