@@ -86,13 +86,37 @@ def test_release_identity_rejects_wrong_python_distribution_name(
     assert "Python distribution name must be 'earshot-observability'" in result.stderr
 
 
-def test_release_identity_marks_semver_prerelease(tmp_path: Path) -> None:
-    project = write_project(tmp_path, "0.1.0-rc.1")
+@pytest.mark.parametrize("version", ["0.1.0-alpha.1", "0.1.0-beta.2", "0.1.0-rc.1"])
+def test_release_identity_marks_semver_prerelease(tmp_path: Path, version: str) -> None:
+    project = write_project(tmp_path, version)
 
-    result = check_release(project, tag="v0.1.0-rc.1")
+    result = check_release(project, tag=f"v{version}")
 
     assert result.returncode == 0
     assert "prerelease=true" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.1.0-a.1",
+        "0.1.0-alpha1",
+        "0.1.0-b.1",
+        "0.1.0-c.1",
+        "0.1.0-pre.1",
+        "0.1.0-preview.1",
+        "0.1.0-1",
+    ],
+)
+def test_release_identity_rejects_prerelease_spellings_that_alias_in_pypi(
+    tmp_path: Path, version: str
+) -> None:
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 2
+    assert "prerelease must use one of the canonical forms" in result.stderr
 
 
 def test_release_identity_rejects_semver_build_metadata(tmp_path: Path) -> None:

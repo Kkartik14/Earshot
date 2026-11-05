@@ -268,23 +268,12 @@ jobs:
         with:
           name: python-distributions
           path: dist
-      - name: Compare the release files with PyPI
-        id: prepare
-        env:
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-        run: >-
-          python scripts/prepare_pypi_upload.py
-          --version "$RELEASE_VERSION"
-          --dist-dir dist
-          --upload-dir .pypi-upload
-          --github-output "$GITHUB_OUTPUT"
-      - name: Publish the missing distributions
-        if: steps.prepare.outputs.has_uploads == 'true'
+      - name: Publish the distributions
         # v1.14.2 or later: hatchling 1.32 writes Metadata-Version 2.5, which the
         # twine bundled in earlier releases rejects.
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: .pypi-upload
+          skip-existing: false
 
   publish-npm:
     name: Publish Node package with Trusted Publishing

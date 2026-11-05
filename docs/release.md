@@ -160,6 +160,7 @@ only when all of these identities agree:
 - the tagged commit is contained in the repository's default branch;
 - the Python distribution is `earshot-observability`;
 - the npm package is `earshot-observability` and has the tag's version; and
+- pre-release versions use the canonical SemVer forms `-alpha.N`, `-beta.N`, or `-rc.N`;
 - the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
 
 | Job                 | Runs on        | Does                                                                                                                                                          |
@@ -175,14 +176,19 @@ only when all of these identities agree:
 No long-lived publishing credential is stored in GitHub. npm uses Trusted Publishing
 (OIDC) for `earshot-observability`.
 
-The PyPI job compares the downloaded wheel and source distribution with the release's
-PyPI JSON records before upload. It stages only files that are absent, and it fails if
-an existing filename has a different SHA-256 or if the release contains an unexpected
-file. This makes a partial upload recoverable without accepting a changed artifact.
-The Python distributions are retained for 30 days. If PyPI accepts only part of a
-release, rerun the failed publisher while the artifact is retained; the publisher
-checks the hashes again before sending any remaining file. An artifact hash mismatch
-means that version already contains different bytes and requires a new package version.
+The PyPI job uploads the inspected wheel and source distribution with `skip-existing`
+disabled. The Python distributions are retained for 30 days. If an upload is interrupted,
+use GitHub's **Re-run failed jobs** for that workflow run while its artifact is retained;
+this reuses the original distribution bytes. Warehouse currently returns success for a
+file with the same name and contents, and rejects a same-name file with different
+contents, so Twine can continue past an already accepted file and upload the remaining
+one. Keep `skip-existing` disabled so conflicting bytes fail. This retry behavior follows
+Warehouse's current implementation; PyPI does not document it as an Upload API guarantee.
+
+Release tags use stable SemVer or one of `-alpha.N`, `-beta.N`, and `-rc.N` for
+pre-releases. The validator rejects other prerelease spellings because PEP 440 maps
+aliases such as `-a.1` and `-alpha1` to the same PyPI version, while npm would treat them
+as distinct versions.
 
 Before the first tag, create the PyPI pending trusted publisher with these exact claims:
 
