@@ -197,6 +197,7 @@ jobs:
     needs: [validate, build-python, build-npm]
     concurrency:
       group: ghcr-release-tags-${{ github.repository }}
+      queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -236,42 +237,7 @@ jobs:
           RELEASE_IMAGE: ${{ needs.validate.outputs.image }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
           RELEASE_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          reference="${RELEASE_IMAGE}:${RELEASE_VERSION}"
-          if inspection="$(docker buildx imagetools inspect "$reference" --format '{{.Manifest.Digest}}' 2>&1)"; then
-            digest="$inspection"
-            if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-              echo "GHCR returned an invalid digest for $reference" >&2
-              exit 1
-            fi
-            docker pull --platform linux/amd64 "$reference"
-            pulled_digests="$(docker image inspect "$reference" --format '{{range .RepoDigests}}{{println .}}{{end}}')"
-            if ! grep -Fq "@$digest" <<< "$pulled_digests"; then
-              echo "$reference changed while resolving its digest; refusing to attest a different image." >&2
-              exit 1
-            fi
-            image_version="$(docker image inspect "$reference" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"
-            image_revision="$(docker image inspect "$reference" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-            if [[ "$image_version" != "$RELEASE_VERSION" || "$image_revision" != "$RELEASE_SHA" ]]; then
-              printf '%s already exists at %s but has version=%q revision=%q; expected version=%q revision=%q. Refusing to retarget it.\n' \
-                "$reference" "$digest" "$image_version" "$image_revision" "$RELEASE_VERSION" "$RELEASE_SHA" >&2
-              exit 1
-            fi
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "digest=$digest" >> "$GITHUB_OUTPUT"
-            echo "Reusing $reference at $digest; skipping image build and tag updates."
-          else
-            if [[ "$inspection" == "ERROR: $reference: not found" ]]; then
-              echo "exists=false" >> "$GITHUB_OUTPUT"
-              echo "digest=" >> "$GITHUB_OUTPUT"
-              echo "$reference does not exist; a first publication will build and push it."
-            else
-              echo "$inspection" >&2
-              echo "Could not establish whether $reference exists; refusing to publish without a safe retry decision." >&2
-              exit 1
-            fi
-          fi
+        run: python3 scripts/ghcr_image.py
       - name: Build and push the release image
         if: steps.existing.outputs.exists != 'true'
         id: push

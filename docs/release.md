@@ -189,15 +189,17 @@ one. This retry behavior follows Warehouse's current implementation; PyPI does n
 document it as an Upload API guarantee.
 
 For GHCR retries, the workflow resolves the exact version tag before building. If it
-already exists, the workflow pulls it, verifies its OCI version and source-revision labels
-against the tagged release, reuses its digest for attestation, and skips the image push.
-The workflow publishes that immutable version tag first, then promotes the SHA and stable
-aliases from the verified digest. It creates a missing SHA tag but refuses to retarget an
-existing one; `major.minor` and `latest` advance only when their OCI version label is older
-than this release. A retry can finish an interrupted alias promotion, and a retry of an
-older release leaves newer aliases in place. The GHCR publisher is serialized across
-release tags; complete each release before starting the next tag workflow. Lookup errors or
-mismatched labels stop the job; never rebuild over or retarget an existing version tag.
+already exists, the workflow inspects its manifest and image config, verifies the OCI
+version and source-revision labels against the tagged release, reuses its digest for
+attestation, and skips the image push. The workflow publishes that immutable version tag
+first, then promotes the SHA and stable aliases from the verified digest. Config metadata
+is read without downloading image layers. The workflow creates a missing SHA tag but
+refuses to retarget an existing one, and advances `major.minor` and `latest` only when
+their OCI version label is older than this release. A retry can finish an interrupted
+alias promotion, and a retry of an older release leaves newer aliases in place. The GHCR
+publisher is serialized across release tags and queues up to 100 pending image jobs in
+FIFO order. Lookup errors or mismatched labels stop the job; never rebuild over or retarget
+an existing version tag.
 
 Before the first upload for a version, confirm that PyPI has no files for that version. If
 any files are already present, compare the complete published file list with the release
