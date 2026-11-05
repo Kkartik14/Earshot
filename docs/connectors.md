@@ -65,8 +65,9 @@ verified. The notes below describe current parser behavior, not verified deliver
   ordinal association is inferred, and emitted latency units are unverified against a real
   delivery. The adapter does not emit Vapi's interruption aggregate counters.
 - `artifact.messages` can produce transcript-line evidence under capture presets that
-  allow transcript text; metadata-only capture removes that text. Other raw request fields
-  are not retained, and call identity is HMAC-correlated.
+  allow transcript text; metadata-only capture removes that text and the normalized
+  `gen_ai.agent.id`. Call identity is HMAC-correlated, and unselected request fields are
+  not retained.
 
 Primary sources: [server authentication](https://docs.vapi.ai/server-url/server-authentication),
 [server events](https://docs.vapi.ai/server-url/events),
@@ -81,12 +82,14 @@ verified. The notes below describe current parser behavior, not verified deliver
 - Trust uses `X-Retell-Signature: v={timestamp_ms},d={digest}`. The digest is HMAC-SHA256
   over `raw_body + timestamp` with the webhook API key; timestamps outside five minutes
   are rejected.
-- Agent word start/end offsets author provider-aligned speech timing without retaining
-  words. They do not prove transport playout, render, or that audio was heard.
+- Agent word start/end offsets time normalized transcript lines; raw word arrays are not
+  retained. They do not prove transport playout, render, or that audio was heard.
 - `latency.*.values` are documented milliseconds but have no stable transcript-turn join.
   They remain session-scoped provider samples and never masquerade as per-turn evidence.
-- Interruption coverage is `not_exposed`; transcript, analysis, dynamic variables,
-  recordings, public logs, phone numbers, and raw call/agent identifiers are discarded.
+- Interruption coverage is `not_exposed`. The normalizer selects transcript, analysis,
+  cost, latency, and recording evidence; the active Capture Preset governs transcript and
+  media storage. Call IDs are HMAC-correlated, and `gen_ai.agent.id` is removed by
+  `metadata_only` capture. Unselected request fields are not retained.
 
 Primary sources: [secure webhook](https://docs.retellai.com/features/secure-webhook),
 [webhook events](https://docs.retellai.com/features/webhook-overview),

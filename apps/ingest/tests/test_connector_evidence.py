@@ -142,7 +142,7 @@ def test_the_digest_covers_facts_and_locators_but_not_urls_versions_or_keys() ->
     assert other_track.digest() != base.digest()
 
 
-def test_no_url_reaches_a_span_and_metadata_only_keeps_no_text() -> None:
+def test_metadata_only_keeps_no_text_or_agent_id() -> None:
     spans = otlp_spans(_evidence(), session_key="retell:call_abc123", translator_version="1.0")
     stored = b"".join(span_payload(span.span) + resource_payload(span) for span in spans)
     assert b"CANARY" not in stored and b"storage.example" not in stored
@@ -151,7 +151,7 @@ def test_no_url_reaches_a_span_and_metadata_only_keeps_no_text() -> None:
     kept_bytes = b"".join(span_payload(span.span) + resource_payload(span) for span in kept)
     assert b"clinic" not in kept_bytes
     assert b"call_abc123" not in kept_bytes  # the session key is never kept
-    assert b"agent_1" in kept_bytes  # an agent ID is metadata
+    assert b"agent_1" not in kept_bytes
 
 
 def test_every_connector_span_kind_and_attribute_is_registered_in_semconv() -> None:

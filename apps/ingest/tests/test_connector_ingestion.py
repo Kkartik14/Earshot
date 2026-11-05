@@ -116,7 +116,13 @@ def test_metadata_only_keeps_the_spans_and_no_text_key_or_recording(tmp_path) ->
         bytes(row[0]) + (row[1] or "").encode()
         for row in world.rows("SELECT payload, text_json FROM spans")
     )
-    for secret in (b"Green Valley", b"move my visit", vapi.CALL_ID.encode(), b"CANARY"):
+    for secret in (
+        b"Green Valley",
+        b"move my visit",
+        b"asst-0001",
+        vapi.CALL_ID.encode(),
+        b"CANARY",
+    ):
         assert secret not in stored
     assert world.rows("SELECT count(*) FROM spans")[0][0] > 0
 

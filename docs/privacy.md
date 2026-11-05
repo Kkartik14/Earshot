@@ -28,7 +28,8 @@ Under `metadata_only`, the server removes before storage:
 
 - **content:** transcripts, model and tool payloads, audio, diagnostic text and any
   attribute with a `pii` segment in its key;
-- **identity:** `user_id`, `user.id`, `enduser.*`, `lk.pii.participant_identity`,
+- **identity:** `user_id`, `user.id`, `enduser.*`, `gen_ai.agent.id`,
+  `lk.cloud_agent_id`, `lk.job.agent_id`, `lk.pii.participant_identity`,
   `participant.name`, `user.email`, keys containing `phone_number` or `caller_id`, keys
   whose last segment is `phone` (`phone`, `user.phone`), and caller and SIP endpoints
   (`caller.number`, `callee.number`, `sip.from`, `sip.to`);

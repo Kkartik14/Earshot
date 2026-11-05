@@ -336,6 +336,7 @@ def test_the_real_1_8_capture_records_in_process_without_mixing_classes(preset) 
     played = "Got it—table for two at 7:30 tomorrow, near the window."
     assert (played in encoded) is (preset == "full")
     assert ("Seven thirty works for us." in encoded) is (preset == "full")
+    assert ('"lk.job.agent_id"' in encoded) is (preset == "full")
 
 
 def test_current_chat_message_metrics_are_retained_without_message_content() -> None:

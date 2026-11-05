@@ -125,11 +125,11 @@ open it.
 Each Project has a Capture Preset. The server applies it to spans and recordings before it
 stores them.
 
-| Preset          | Stores                                                                                                                                                                  |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `full`          | Timing, transcripts, model and tool payloads, the session key, and recordings. The default for every Project in a new install.                                          |
-| `metadata_only` | Timing and structure only. Content, identity and the session-key attributes are removed before storage, and recordings are refused. Upgraded 0.1.x Projects start here. |
-| `redacted`      | Not available in 0.4.0.                                                                                                                                                 |
+| Preset          | Stores                                                                                                                                                                                                                |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `full`          | Timing, transcripts, model and tool payloads, the session key, and recordings. The default for every Project in a new install.                                                                                        |
+| `metadata_only` | Timing and structure only. Known content, identity and session-key attributes are removed before storage; producer-owned opaque IDs must be pseudonymous. Recordings are refused. Upgraded 0.1.x Projects start here. |
+| `redacted`      | Not available in 0.4.0.                                                                                                                                                                                               |
 
 ```bash
 earshot project set-capture --project default --preset metadata_only
