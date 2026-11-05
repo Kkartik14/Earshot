@@ -20,8 +20,9 @@ they are not projected (the call view then shows live turns and its span transcr
 
 ``serve_calls.py`` prints one JSON line (the port and the IDs) when the server is
 ready. It accepts ``close_call`` and ``allow_projection`` commands on standard
-input for the LiveKit call's close transition. ``serve_calls.py --write-peaks DIR``
-writes the two peaks files the server generated into ``DIR`` and exits.
+input for the LiveKit call's close transition, plus ``open_host_profile_call`` and
+``emit_host_turn`` for the live-turns viewer test. ``serve_calls.py --write-peaks
+DIR`` writes the two peaks files the server generated into ``DIR`` and exits.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (  # noqa: 
     ExportTraceServiceRequest,
 )
 from opentelemetry.proto.common.v1.common_pb2 import AnyValue, KeyValue  # noqa: E402
+from opentelemetry.proto.trace.v1.trace_pb2 import ResourceSpans, ScopeSpans  # noqa: E402
 
 from captured_otlp import CAPTURED_SESSION_KEY, captured_manifest, captured_requests  # noqa: E402
 from earshot.api import create_app  # noqa: E402
@@ -54,7 +56,16 @@ from earshot.clock import ManualClock  # noqa: E402
 from earshot.storage_calls import CallStore, CallTimings  # noqa: E402
 from earshot.storage_closer import Closer  # noqa: E402
 from earshot.storage_recordings import RecordingStore  # noqa: E402
-from otlp_support import make_request, make_span, request, serve, string_attribute  # noqa: E402
+from host_profile_support import HostTurn, host_request  # noqa: E402
+from otlp_support import (  # noqa: E402
+    JSON,
+    make_request,
+    make_span,
+    post_otlp,
+    request,
+    serve,
+    string_attribute,
+)
 from store_support import catalog, make_store  # noqa: E402
 
 SECOND = 1_000_000_000
@@ -191,6 +202,40 @@ def _first_span(requests: list[Any], name: str) -> Any:
     raise AssertionError(f"the capture has no {name} span")
 
 
+def _one_host_span_payload(export: ExportTraceServiceRequest, span_index: int) -> bytes:
+    source = export.resource_spans[0]
+    scope = source.scope_spans[0]
+    return ExportTraceServiceRequest(
+        resource_spans=[
+            ResourceSpans(
+                resource=source.resource,
+                scope_spans=[ScopeSpans(scope=scope.scope, spans=[scope.spans[span_index]])],
+            )
+        ]
+    ).SerializeToString()
+
+
+def _create_host_profile_call(port: int) -> str:
+    session_key = "synthetic-host-profile-viewer"
+    seed = host_request(
+        [HostTurn("turn-1", START, START + SECOND)], ended=False, session_key=session_key
+    )
+    source = seed.resource_spans[0]
+    scope = source.scope_spans[0]
+    scope.spans[0].end_time_unix_nano = START + 180 * SECOND
+    created = post_otlp(port, _one_host_span_payload(seed, 0))
+    assert created.status == 200, (created.status, created.body[:300])
+    resolved = request(
+        port,
+        "POST",
+        "/v1/calls:resolve",
+        json.dumps({"session_key": session_key}).encode(),
+        headers={"Content-Type": JSON},
+    )
+    assert resolved.status == 200, (resolved.status, resolved.body[:300])
+    return resolved.json()["call_id"]
+
+
 def build(work: Path, *, keep_serving: bool, peaks_dir: Path | None) -> None:
     clock = ManualClock(wall=START, monotonic=START)
     store = make_store(work, clock=clock)
@@ -279,11 +324,41 @@ def build(work: Path, *, keep_serving: bool, peaks_dir: Path | None) -> None:
             "llm_span": {"trace_id": llm.trace_id.hex(), "span_id": llm.span_id.hex()},
         }
         print(json.dumps(ready), flush=True)
+        host_turns: list[HostTurn] = []
         for line in sys.stdin:
             if not line.strip():
                 continue
             command = json.loads(line)
-            if command == {"action": "close_call", "call_id": livekit_call}:
+            if command.get("action") == "open_host_profile_call":
+                call_id = _create_host_profile_call(port)
+                print(
+                    json.dumps(
+                        {"command_id": command["command_id"], "host_profile_call_id": call_id}
+                    ),
+                    flush=True,
+                )
+            elif command.get("action") == "emit_host_turn":
+                number = int(command["number"])
+                assert number == len(host_turns) + 1
+                start = START + number * 5 * SECOND
+                host_turns.append(
+                    HostTurn(
+                        f"turn-{number}",
+                        start,
+                        start + SECOND,
+                        reported_latency_ms=250.0,
+                    )
+                )
+                export = host_request(
+                    host_turns, ended=False, session_key="synthetic-host-profile-viewer"
+                )
+                accepted = post_otlp(port, _one_host_span_payload(export, number))
+                assert accepted.status == 200, (accepted.status, accepted.body[:300])
+                print(
+                    json.dumps({"command_id": command["command_id"], "accepted": True}),
+                    flush=True,
+                )
+            elif command == {"action": "close_call", "call_id": livekit_call}:
                 # Keep the other seeded open calls out of the close so the test exercises
                 # only the LiveKit Call's UI transition.
                 with catalog(work) as connection:

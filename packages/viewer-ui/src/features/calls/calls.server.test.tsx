@@ -33,6 +33,14 @@ const WAIT = { timeout: 15_000 };
 let server: ChildProcessWithoutNullStreams;
 let seed: Seed;
 let restoreGlobals: () => void;
+let commandId = 0;
+const commandWaiters = new Map<
+  number,
+  {
+    resolve: (result: Record<string, unknown>) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }
+>();
 const observedLiveTurnFetches: {
   url: string;
   requestHeaders: Headers;
@@ -63,10 +71,42 @@ function startServer(): Promise<Seed> {
   });
   return new Promise((ready, fail) => {
     const lines = createInterface({ input: server.stdout });
-    lines.once("line", (line) => ready(JSON.parse(line) as Seed));
+    let receivedSeed = false;
+    lines.on("line", (line) => {
+      const message = JSON.parse(line) as Record<string, unknown>;
+      if (!receivedSeed) {
+        receivedSeed = true;
+        ready(message as unknown as Seed);
+        return;
+      }
+      const id = message.command_id;
+      if (typeof id !== "number") return;
+      const waiter = commandWaiters.get(id);
+      if (waiter == null) return;
+      clearTimeout(waiter.timeout);
+      commandWaiters.delete(id);
+      waiter.resolve(message);
+    });
     server.once("exit", (code) =>
       fail(new Error(`serve_calls.py exited (${code}) before it was ready:\n${stderr}`)),
     );
+  });
+}
+
+function sendServerCommand<T extends Record<string, unknown>>(
+  command: Record<string, string | number>,
+): Promise<T> {
+  const id = ++commandId;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      commandWaiters.delete(id);
+      reject(new Error(`serve_calls.py did not acknowledge command ${id}`));
+    }, 10_000);
+    commandWaiters.set(id, {
+      resolve: (result) => resolve(result as T),
+      timeout,
+    });
+    server.stdin.write(`${JSON.stringify({ ...command, command_id: id })}\n`);
   });
 }
 
@@ -371,6 +411,63 @@ describe("call view on a real server", () => {
     ).toHaveLength(closedLiveFetchCount);
     expect(client.getQueryState(callKey)?.dataUpdatedAt).toBe(callUpdatedAt);
   }, 60_000);
+
+  it("renders synthetic host-profile turns within the two-second polling budget", async () => {
+    observedLiveTurnFetches.length = 0;
+    const { host_profile_call_id: callId } = await sendServerCommand<{
+      host_profile_call_id: string;
+    }>({ action: "open_host_profile_call" });
+    seed.call_count += 1;
+    const { client } = renderObserve({ kind: "call", callId }, `/calls/${callId}`);
+    const scope = { projectId: "default", authContextId: "server-test" };
+    const liveKey = viewerQueryKey(scope, ["live-call-turns", callId]);
+
+    await waitFor(() => {
+      expect(client.getQueryData<CallLiveTurnsCache>(liveKey)?.body).toMatchObject({
+        state: "open",
+        turns: [],
+      });
+    }, WAIT);
+    await waitFor(() => {
+      expect(
+        observedLiveTurnFetches.some(
+          (item) =>
+            item.url.endsWith(`/v1/calls/${callId}/live-turns`) && item.status === 200,
+        ),
+      ).toBe(true);
+    }, WAIT);
+
+    const emittedAt: number[] = [];
+    await act(async () => {
+      for (let number = 1; number <= 20; number += 1) {
+        emittedAt.push(performance.now());
+        const result = await sendServerCommand<{ accepted: boolean }>({
+          action: "emit_host_turn",
+          number,
+        });
+        expect(result.accepted).toBe(true);
+      }
+    });
+
+    await waitFor(
+      () => {
+        const table = screen.getByRole("table", { name: /reported latency/i });
+        expect(within(table).getAllByRole("row")).toHaveLength(21);
+        expect(client.getQueryData<CallLiveTurnsCache>(liveKey)?.body.turns).toHaveLength(
+          20,
+        );
+      },
+      { timeout: 5_000 },
+    );
+    const visibleAt = performance.now();
+    const visibilityMs = emittedAt.map((time) => visibleAt - time);
+    const ordered = [...visibilityMs].sort((left, right) => left - right);
+    const p95 = ordered[Math.ceil(0.95 * ordered.length) - 1];
+    console.info(
+      `E-3 synthetic React viewer: 20 host turns, 2 s polling, p95 ${p95.toFixed(2)} ms, max ${Math.max(...visibilityMs).toFixed(2)} ms`,
+    );
+    expect(p95).toBeLessThanOrEqual(5_000);
+  }, 15_000);
 
   it("says a call is not found rather than showing an empty call", async () => {
     renderObserve(
