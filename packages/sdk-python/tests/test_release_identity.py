@@ -124,11 +124,41 @@ def test_release_identity_rejects_node_version_different_from_project(
     assert "does not match project version" in result.stderr
 
 
-@pytest.mark.parametrize("version", ["latest", "1.2", "01.2.3", "1.2.3_rc1"])
+@pytest.mark.parametrize(
+    "version",
+    [
+        "latest",
+        "1.2",
+        "01.2.3",
+        "1.2.3_rc1",
+        "1.2.3-01",
+        "1.2.3-rc.01",
+        "1.\u0662.3",
+        "1.2.3-rc.\u0661",
+    ],
+)
 def test_project_version_requires_semver(tmp_path: Path, version: str) -> None:
-    project = write_project(tmp_path, version, node_version="0.1.0")
+    project = write_project(tmp_path, version, node_version=version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 2
+    assert "semantic version" in result.stderr
+
+
+def test_node_package_version_rejects_numeric_prerelease_with_leading_zero(
+    tmp_path: Path,
+) -> None:
+    project = write_project(tmp_path, "0.1.0", node_version="0.1.0-01")
 
     result = check_release(project)
 
     assert result.returncode == 2
-    assert "semantic version" in result.stderr
+    assert "Node package version must be an explicit semantic version" in result.stderr
+
+
+@pytest.mark.parametrize("package", ["packages/browser", "packages/viewer-ui"])
+def test_source_only_workspace_packages_are_private(package: str) -> None:
+    manifest = json.loads((SCRIPT.parents[1] / package / "package.json").read_text())
+
+    assert manifest["private"] is True

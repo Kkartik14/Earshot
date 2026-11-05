@@ -8,9 +8,13 @@ import re
 import tomllib
 from pathlib import Path
 
+NUMERIC_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
+ALPHANUMERIC_IDENTIFIER = r"[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*"
+PRERELEASE_IDENTIFIER = rf"(?:{NUMERIC_IDENTIFIER}|{ALPHANUMERIC_IDENTIFIER})"
+
 SEMVER = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
-    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    rf"(?:-({PRERELEASE_IDENTIFIER}(?:\.{PRERELEASE_IDENTIFIER})*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 
