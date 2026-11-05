@@ -119,6 +119,29 @@ def test_release_identity_rejects_prerelease_spellings_that_alias_in_pypi(
     assert "prerelease must use one of the canonical forms" in result.stderr
 
 
+def test_release_identity_accepts_pypi_normalized_version_at_length_limit(
+    tmp_path: Path,
+) -> None:
+    version = f"0.1.0-rc.{'1' * 121}"
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 0
+
+
+def test_release_identity_rejects_pypi_normalized_version_over_length_limit(
+    tmp_path: Path,
+) -> None:
+    version = f"0.1.0-rc.{'1' * 122}"
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 2
+    assert "exceeds PyPI's 128-character normalized version limit" in result.stderr
+
+
 def test_release_identity_rejects_semver_build_metadata(tmp_path: Path) -> None:
     project = write_project(tmp_path, "0.1.0+build-id")
 

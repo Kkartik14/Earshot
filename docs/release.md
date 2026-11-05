@@ -188,7 +188,8 @@ Warehouse's current implementation; PyPI does not document it as an Upload API g
 Release tags use stable SemVer or one of `-alpha.N`, `-beta.N`, and `-rc.N` for
 pre-releases. The validator rejects other prerelease spellings because PEP 440 maps
 aliases such as `-a.1` and `-alpha1` to the same PyPI version, while npm would treat them
-as distinct versions.
+as distinct versions. It also checks the normalized Python version against PyPI's
+128-character limit before any publishing job starts.
 
 Before the first tag, create the PyPI pending trusted publisher with these exact claims:
 

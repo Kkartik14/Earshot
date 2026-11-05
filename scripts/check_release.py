@@ -17,7 +17,9 @@ SEMVER = re.compile(
     rf"(?:-({PRERELEASE_IDENTIFIER}(?:\.{PRERELEASE_IDENTIFIER})*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
-PYPI_PRERELEASE = re.compile(r"(?:alpha|beta|rc)\.(?:0|[1-9][0-9]*)")
+PYPI_PRERELEASE = re.compile(r"(?P<label>alpha|beta|rc)\.(?P<number>0|[1-9][0-9]*)")
+PYPI_PRERELEASE_LABELS = {"alpha": "a", "beta": "b", "rc": "rc"}
+PYPI_MAX_VERSION_LENGTH = 128
 
 
 class ReleaseIdentityError(ValueError):
@@ -44,10 +46,21 @@ def project_identity(project_file: Path) -> tuple[str, bool]:
     if version_match.group(5) is not None:
         raise ReleaseIdentityError("project.version build metadata is not supported for releases")
     prerelease = version_match.group(4)
-    if prerelease is not None and PYPI_PRERELEASE.fullmatch(prerelease) is None:
+    # The supported prerelease forms map directly to PEP 440 without a runner dependency.
+    normalized_version = ".".join(version_match.group(index) for index in (1, 2, 3))
+    if prerelease is not None:
+        prerelease_match = PYPI_PRERELEASE.fullmatch(prerelease)
+        if prerelease_match is None:
+            raise ReleaseIdentityError(
+                "project.version prerelease must use one of the canonical forms "
+                "alpha.N, beta.N, or rc.N"
+            )
+        normalized_version += PYPI_PRERELEASE_LABELS[
+            prerelease_match.group("label")
+        ] + prerelease_match.group("number")
+    if len(normalized_version) > PYPI_MAX_VERSION_LENGTH:
         raise ReleaseIdentityError(
-            "project.version prerelease must use one of the canonical forms "
-            "alpha.N, beta.N, or rc.N"
+            "project.version exceeds PyPI's 128-character normalized version limit"
         )
     return version, version_match.group(4) is not None
 
