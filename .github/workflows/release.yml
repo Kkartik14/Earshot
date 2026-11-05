@@ -189,7 +189,7 @@ jobs:
           name: node-npm-package
           path: npm-dist/${{ needs.validate.outputs.npm_package }}-${{ needs.validate.outputs.version }}.tgz
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   publish-container:
     name: Publish GHCR image

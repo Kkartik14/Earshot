@@ -177,13 +177,14 @@ No long-lived publishing credential is stored in GitHub. npm uses Trusted Publis
 (OIDC) for `earshot-observability`.
 
 The PyPI job uploads the inspected wheel and source distribution with `skip-existing`
-disabled. The Python distributions are retained for 30 days. If an upload is interrupted,
-use GitHub's **Re-run failed jobs** for that workflow run while its artifact is retained;
-this reuses the original distribution bytes. Warehouse currently returns success for a
-file with the same name and contents, and rejects a same-name file with different
-contents, so Twine can continue past an already accepted file and upload the remaining
-one. Keep `skip-existing` disabled so conflicting bytes fail. This retry behavior follows
-Warehouse's current implementation; PyPI does not document it as an Upload API guarantee.
+disabled. The inspected Python distributions and npm tarball are both retained for 30 days.
+If a publisher fails before completing its upload, use GitHub's **Re-run failed jobs** for
+that workflow run while its artifact is retained; this reuses the original artifact bytes.
+Warehouse currently returns success for an exact filename-and-content duplicate and rejects
+a same-name upload with different contents, so Twine can continue past an accepted file and
+upload the missing one. Keep `skip-existing` disabled so conflicting bytes fail. This retry
+behavior follows Warehouse's current implementation; PyPI does not document it as an Upload
+API guarantee.
 Before the first upload for a version, confirm that PyPI has no files for that version.
 If any files are already present, compare the complete published file list with the
 release artifact and audit its provenance before continuing; this workflow does not
