@@ -194,7 +194,7 @@ jobs:
   publish-container:
     name: Publish GHCR image
     if: github.ref_type == 'tag'
-    needs: [validate, build-python]
+    needs: [validate, build-python, build-npm]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
