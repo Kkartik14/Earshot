@@ -286,8 +286,10 @@ jobs:
       name: npm
       url: https://www.npmjs.com/package/earshot-observability
     permissions:
+      contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Download the inspected Node tarball
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
