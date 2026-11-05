@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../api/client";
+import { useViewerQueryScope, viewerQueryKey } from "../../api/queryScope";
 import { EmptyState } from "../../components/EmptyState";
 import { formatRelativeTime } from "../../lib/format";
 import { AnchorLink, type ViewerLinkComponent } from "../../navigation";
-import { useCall, type CallDetail, type CallProjection, type TurnSpan } from "./api";
+import {
+  isRetryableCallApiError,
+  useCall,
+  useLiveCallTurns,
+  type CallDetail,
+  type CallProjection,
+  type CallTurn,
+  type TurnSpan,
+} from "./api";
 import { callAnalysisNote } from "./analysis";
 import { costReadout, formatClock, formatSeconds } from "./format";
 import type { MediaClock } from "./mediaClock";
@@ -13,6 +23,10 @@ import { SpanDrawer } from "./SpanDrawer";
 import { PlacedTranscript } from "./Transcript";
 import { TurnsTable } from "./TurnsTable";
 import styles from "./CallView.module.css";
+
+function isCallReadDenied(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
 
 /** One call: player, synced transcript, turns, signals and cost, from its
  * projection; or, until it is projected, the transcript read from its spans. */
@@ -24,7 +38,119 @@ export function CallView({
   LinkComponent?: ViewerLinkComponent;
 }) {
   const call = useCall(callId);
-  if (call.isPending) {
+  const liveTurns = useLiveCallTurns(callId, call.data?.state);
+  const queryClient = useQueryClient();
+  const scope = useViewerQueryScope();
+  const [detailRefresh, setDetailRefresh] = useState<{
+    etag: string;
+    after: number;
+  } | null>(null);
+  const lastObservedLiveEtag = useRef<string | null>(null);
+  const lastRequestedLiveEtag = useRef<string | null>(null);
+  const firstClosedLiveNeedsDetailValidation = useRef(false);
+  useEffect(() => {
+    const live = liveTurns.data;
+    if (live?.state !== "closed" || live.etag == null || liveTurns.error != null) return;
+    const previousEtag = lastObservedLiveEtag.current;
+    if (previousEtag == null) firstClosedLiveNeedsDetailValidation.current = true;
+    lastObservedLiveEtag.current = live.etag;
+    const validatorChanged = previousEtag != null && previousEtag !== live.etag;
+    const revisionMismatch =
+      call.data != null &&
+      (call.data.state !== "closed" ||
+        live.revision !== (call.data.latest_revision?.revision ?? null));
+    const firstDetailNeedsValidation =
+      firstClosedLiveNeedsDetailValidation.current &&
+      call.data != null &&
+      !call.isFetching &&
+      (!call.isError || isRetryableCallApiError(call.error));
+    const detailReadFailed = call.isError && isRetryableCallApiError(call.error);
+    if (
+      (revisionMismatch ||
+        validatorChanged ||
+        firstDetailNeedsValidation ||
+        detailReadFailed) &&
+      lastRequestedLiveEtag.current !== live.etag
+    ) {
+      firstClosedLiveNeedsDetailValidation.current = false;
+      lastRequestedLiveEtag.current = live.etag;
+      setDetailRefresh({ etag: live.etag, after: call.dataUpdatedAt });
+      void queryClient.invalidateQueries({
+        queryKey: viewerQueryKey(scope, ["call", callId]),
+        exact: true,
+      });
+    }
+  }, [
+    call.data?.state,
+    call.data?.latest_revision?.revision,
+    call.dataUpdatedAt,
+    call.error,
+    call.isError,
+    call.isFetching,
+    callId,
+    liveTurns.error,
+    liveTurns.data?.state,
+    liveTurns.data?.revision,
+    liveTurns.data?.etag,
+    queryClient,
+    scope.authContextId,
+    scope.projectId,
+  ]);
+  useEffect(() => {
+    if (
+      detailRefresh == null ||
+      !call.isError ||
+      call.isFetching ||
+      !isRetryableCallApiError(call.error)
+    ) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      void call.refetch();
+    }, 2_000);
+    return () => window.clearTimeout(timeout);
+  }, [
+    call.error,
+    call.errorUpdatedAt,
+    call.isError,
+    call.isFetching,
+    call.refetch,
+    detailRefresh,
+  ]);
+  useEffect(() => {
+    if (
+      detailRefresh != null &&
+      call.isSuccess &&
+      call.dataUpdatedAt > detailRefresh.after
+    ) {
+      setDetailRefresh(null);
+    }
+  }, [call.dataUpdatedAt, call.isSuccess, detailRefresh]);
+  const liveCallMissing =
+    liveTurns.error instanceof ApiError && liveTurns.error.status === 404;
+  const detailCallMissing = call.error instanceof ApiError && call.error.status === 404;
+  if (liveCallMissing || detailCallMissing) {
+    return (
+      <div className={styles.page}>
+        <EmptyState
+          title="Call not found"
+          hint="It does not exist, it was purged, or it belongs to another project."
+        />
+      </div>
+    );
+  }
+  if (isCallReadDenied(liveTurns.error) || isCallReadDenied(call.error)) {
+    return (
+      <div className={styles.page}>
+        <EmptyState
+          title="Call access unavailable"
+          hint="This Call cannot be read in the current access context."
+          focusTitle
+        />
+      </div>
+    );
+  }
+  if (call.data == null && call.isPending) {
     return (
       <div className={styles.page}>
         <p className={styles.loading} role="status">
@@ -33,7 +159,7 @@ export function CallView({
       </div>
     );
   }
-  if (call.isError) {
+  if (call.data == null) {
     const missing = call.error instanceof ApiError && call.error.status === 404;
     return (
       <div className={styles.page}>
@@ -42,13 +168,27 @@ export function CallView({
           hint={
             missing
               ? "It does not exist, it was purged, or it belongs to another project."
-              : call.error.message
+              : (call.error?.message ?? "The call could not be loaded.")
           }
         />
       </div>
     );
   }
-  return <CallViewBody call={call.data} LinkComponent={LinkComponent} />;
+  return (
+    <>
+      {call.isError ? (
+        <p className={styles.notice} role="status">
+          Call details could not be refreshed; showing the last loaded details.
+        </p>
+      ) : null}
+      <CallViewBody
+        call={call.data}
+        liveRevision={liveTurns.data?.revision}
+        liveTurns={liveTurns.data?.turns}
+        LinkComponent={LinkComponent}
+      />
+    </>
+  );
 }
 
 function Facts({ projection }: { projection: CallProjection }) {
@@ -153,19 +293,37 @@ function SpanTranscript({ call }: { call: CallDetail }) {
 
 export function CallViewBody({
   call,
+  liveRevision,
+  liveTurns,
   LinkComponent = AnchorLink,
 }: {
   call: CallDetail;
+  liveRevision?: number | null;
+  liveTurns?: CallTurn[];
   LinkComponent?: ViewerLinkComponent;
 }) {
   const projection = call.projection;
+  const liveTurnsAreNewer =
+    projection != null && liveRevision != null && liveRevision > projection.revision;
+  const showLiveTurns =
+    call.state === "open" ||
+    projection == null ||
+    call.projection_state !== "current" ||
+    liveTurnsAreNewer;
+  const turns = showLiveTurns
+    ? (liveTurns ?? projection?.turns ?? [])
+    : (projection?.turns ?? liveTurns ?? []);
+  const closedWithoutRevision = call.state === "closed" && call.latest_revision == null;
   const [clock, setClock] = useState<MediaClock | null>(null);
   const [openSpan, setOpenSpan] = useState<TurnSpan | null>(null);
+  const layout = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
+  const openerSpanRef = useRef<string | null>(null);
   const restoreFocus = useRef(false);
 
   const open = useCallback((span: TurnSpan, element: HTMLElement) => {
     opener.current = element;
+    openerSpanRef.current = `${span.trace_id}:${span.span_id}`;
     setOpenSpan(span);
   }, []);
   const close = useCallback(() => {
@@ -175,7 +333,14 @@ export function CallViewBody({
   useEffect(() => {
     if (openSpan == null && restoreFocus.current) {
       restoreFocus.current = false;
-      opener.current?.focus();
+      const openerElement = opener.current;
+      const replacement = Array.from(
+        layout.current?.querySelectorAll<HTMLElement>("[data-span-ref]") ?? [],
+      ).find((element) => element.dataset.spanRef === (openerSpanRef.current ?? ""));
+      (openerElement?.isConnected
+        ? openerElement
+        : (replacement ?? layout.current)
+      )?.focus();
     }
   }, [openSpan]);
 
@@ -183,7 +348,12 @@ export function CallViewBody({
   const analysisNote = projection == null ? null : callAnalysisNote(projection);
 
   return (
-    <div className={styles.layout} data-drawer={openSpan ? "open" : undefined}>
+    <div
+      ref={layout}
+      className={styles.layout}
+      data-drawer={openSpan ? "open" : undefined}
+      tabIndex={-1}
+    >
       <div className={styles.page}>
         <header className={styles.head}>
           <nav className={styles.crumbs} aria-label="Breadcrumb">
@@ -233,10 +403,25 @@ export function CallViewBody({
         {projection == null ? (
           <>
             <p className={styles.notice}>
-              This call is not projected yet, so there are no turns, audio analysis or
-              cost. Below is the transcript read from its spans
-              {call.state === "open" ? ", which grows while the call is open" : ""}.
+              {closedWithoutRevision
+                ? "This call closed without a Revision, so turns stay unavailable until one captures the accepted evidence. The transcript below is read from stored spans."
+                : `This call is not projected yet, so it has no audio analysis or cost. Below are the accepted turns and transcript from its spans${call.state === "open" ? ", which grow while the call is open" : ""}.`}
             </p>
+            {liveTurns != null ? (
+              <TurnsTable
+                turns={liveTurns}
+                clock={clock}
+                openSpanId={openSpan?.span_id ?? null}
+                onOpenSpan={open}
+                emptyMessage={
+                  call.state === "open"
+                    ? "Waiting for a parent turn span."
+                    : closedWithoutRevision
+                      ? "Turns are unavailable until a Revision captures the accepted evidence."
+                      : "No parent turn spans were captured for this call."
+                }
+              />
+            ) : null}
             <SpanTranscript call={call} />
           </>
         ) : (
@@ -257,7 +442,7 @@ export function CallViewBody({
             <div className={styles.columns}>
               <PlacedTranscript lines={projection.transcript} clock={clock} />
               <TurnsTable
-                turns={projection.turns}
+                turns={turns}
                 clock={clock}
                 openSpanId={openSpan?.span_id ?? null}
                 onOpenSpan={open}

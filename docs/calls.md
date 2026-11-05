@@ -120,27 +120,32 @@ Unknown is `null`, never `0`. The response is `Cache-Control: no-store` with a s
 The target is API 0.17.0 in the 0.5.0 line. This additive, read-only route requires
 `earshot:calls:read` in hosted mode; the existing detail route and its response stay
 unchanged. A 200 response contains `call_id`, `state` (`open` or `closed`), `revision`
-(null while open; the latest Revision number after close) and `turns[]`. Each turn has
-the same fields and meaning as `projection.turns[]` above. The response also carries
-`axis_origin_unix_nano` and `axis_origin`, which define the origin for its `*_ms` values.
-Both are null for a closed Call without a Revision, whose response has no projection. While
-a Call is open, newly stored Recordings can change which evidence defines the origin, and
-later evidence may have an earlier timestamp. Times may therefore re-base between
-responses; render each response against its own origin. `state` describes the Call; there
-is no separate per-turn `finished` flag.
+(null while open or when a closed Call has no Revision; otherwise the latest Revision
+number) and `turns[]`. Each turn has the same fields and meaning as
+`projection.turns[]` above. The response also carries `axis_origin_unix_nano` and
+`axis_origin`, which define the origin for its `*_ms` values. Both are null for a closed
+Call without a Revision, whose response has no projection. While a Call is open, newly
+stored Recordings can change which evidence defines the origin, and later evidence may
+have an earlier timestamp. Times may therefore re-base between responses; render each
+response against its own origin. `state` describes the Call; there is no separate
+per-turn `finished` flag.
 
 While the Call is open, the route runs the existing Call projector over the Call's
-accepted, stored spans after the project's capture-preset filtering. It returns a turn
-only when its parent turn span has arrived: `turn` for Pipecat and the host profile, or
+accepted, stored spans after the project's capture-preset filtering, plus any stored
+Recordings and their available analyses. Those analyses can contribute audible-gap
+fields; the route returns no recording media. It returns a turn only when its parent
+turn span has arrived: `turn` for Pipecat and the host profile, or
 `agent_turn` for LiveKit. It does not infer turns from child spans. The parent span is
 final when exported; later accepted children may fill in more projected fields. Until
 those children arrive, unobserved values keep the projector's existing null or
 `not_measurable` meanings. The route does not persist a provisional projection or create
 a Revision.
 
-After the Call closes, the route uses the same projector over only the evidence held by
-the latest durable Revision; it does not include evidence that the Revision did not
-capture. Once the durable projection is current, the route's `turns[]` match it field
+After the Call closes with a Revision, the route uses the same projector over only the
+evidence held by the latest durable Revision; it does not include evidence that the
+Revision did not capture. A Call that closes without a Revision has `revision: null` and
+no turns. Late evidence for such a Call stays out of this response until a new Revision
+captures it. Once the durable projection is current, the route's `turns[]` match it field
 for field. A turn's `spans[]` contains only the existing projected summaries (IDs, name,
 role, status and times); it never includes
 raw span attributes or events. The route never includes audio, transcript or prices.
@@ -159,7 +164,10 @@ from runtime turn end to the host UI at that polling interval.
 The bundled viewer polls this route every two seconds while `state` is `open`. When it
 becomes `closed`, the viewer stops live polling and refreshes Call detail. It keeps
 showing these Revision turns while detail's projection is absent or stale, then switches
-to the durable detail projection when `projection_state` is `current`.
+to the durable detail projection when `projection_state` is `current`. A transient detail
+refresh failure follows the host QueryClient's configured retry policy. If it still fails,
+the viewer keeps the cached view visible and retries every two seconds; permanent 4xx
+errors stop retries.
 
 ### The audible gap at the agent
 

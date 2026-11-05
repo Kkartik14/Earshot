@@ -16,11 +16,12 @@ real uvicorn server over a real SQLite catalog and a local blob store:
 The Pipecat call and the billed call are closed by the real ``Closer`` and
 projected by the server's own projection job (the script waits for
 ``projection_state: current``). The LiveKit call and the other 54 stay open, so
-they are not projected (the call view then shows the LiveKit span transcript).
+they are not projected (the call view then shows live turns and its span transcript).
 
 ``serve_calls.py`` prints one JSON line (the port and the IDs) when the server is
-ready and serves until its standard input closes. ``serve_calls.py --write-peaks
-DIR`` writes the two peaks files the server generated into ``DIR`` and exits.
+ready. It accepts ``close_call`` and ``allow_projection`` commands on standard
+input for the LiveKit call's close transition. ``serve_calls.py --write-peaks DIR``
+writes the two peaks files the server generated into ``DIR`` and exits.
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ from earshot.storage_calls import CallStore, CallTimings  # noqa: E402
 from earshot.storage_closer import Closer  # noqa: E402
 from earshot.storage_recordings import RecordingStore  # noqa: E402
 from otlp_support import make_request, make_span, request, serve, string_attribute  # noqa: E402
-from store_support import make_store  # noqa: E402
+from store_support import catalog, make_store  # noqa: E402
 
 SECOND = 1_000_000_000
 # After the wall clock, so the server's own closer and reapers act only when this
@@ -278,7 +279,37 @@ def build(work: Path, *, keep_serving: bool, peaks_dir: Path | None) -> None:
             "llm_span": {"trace_id": llm.trace_id.hex(), "span_id": llm.span_id.hex()},
         }
         print(json.dumps(ready), flush=True)
-        sys.stdin.read()
+        for line in sys.stdin:
+            if not line.strip():
+                continue
+            command = json.loads(line)
+            if command == {"action": "close_call", "call_id": livekit_call}:
+                # Keep the other seeded open calls out of the close so the test exercises
+                # only the LiveKit Call's UI transition.
+                with catalog(work) as connection:
+                    connection.execute(
+                        "UPDATE calls SET close_due_unix_nano = ? "
+                        "WHERE project_id = 'default' AND call_id <> ? AND state = 'open'",
+                        (clock.wall + CallTimings().long_quiet_nano + 1, livekit_call),
+                    )
+                    call_literal = livekit_call.replace("'", "''")
+                    connection.execute(
+                        "CREATE TRIGGER hold_livekit_projection BEFORE INSERT ON call_projections "
+                        f"WHEN NEW.call_id = '{call_literal}' "
+                        "BEGIN SELECT RAISE(ABORT, 'projection held for viewer test'); END"
+                    )
+                clock.advance(CallTimings().long_quiet_nano)
+                closer.close_next()
+            elif command == {"action": "allow_projection", "call_id": livekit_call}:
+                with catalog(work) as connection:
+                    connection.execute("DROP TRIGGER hold_livekit_projection")
+                    # A changed sequence makes the real projection job retry immediately
+                    # after the test observes the unprojected closed state.
+                    connection.execute(
+                        "UPDATE calls SET projection_seq = projection_seq + 1 "
+                        "WHERE project_id = 'default' AND call_id = ?",
+                        (livekit_call,),
+                    )
 
 
 def main(argv: list[str]) -> int:

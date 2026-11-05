@@ -35,6 +35,8 @@ captured before its preset changed, and they are not searched.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -46,8 +48,9 @@ from .call_materializer import (
     transcript_coverage,
     transcript_text_json_from_stored_span,
 )
-from .call_projection import ProjectionInputs, ProjectionStamps, projection_state
+from .call_projection import CallSource, ProjectionInputs, ProjectionStamps, projection_state
 from .storage import decode_page_cursor, encode_page_cursor
+from .storage_call_sources import read_call_source
 from .storage_calls import call_spans_sql
 from .storage_recordings import RecordingStore
 
@@ -277,6 +280,32 @@ class CallSpan:
     span: Span
 
 
+@dataclass(frozen=True, slots=True)
+class LiveTurnsSnapshot:
+    """A Call's live-turn version stamp and lazy source reader in one DB snapshot.
+
+    ``load_source`` is valid only inside ``CallReads.live_turns_snapshot``'s context.
+    Keeping it lazy lets a matching ETag return 304 without decoding span payloads.
+    """
+
+    project_id: str
+    call_id: str
+    state: str
+    revision: int | None
+    span_count: int
+    recording_count: int
+    projection_seq: int
+    capture_preset: str
+    first_evidence_unix_nano: int
+    finality: str | None
+    _source_reader: Callable[[], CallSource] = field(repr=False, compare=False)
+
+    def load_source(self) -> CallSource:
+        """Read source rows under this snapshot; call only inside its context."""
+
+        return self._source_reader()
+
+
 def _revision(row: Any, prefix: str = "") -> CallRevision:
     return CallRevision(
         revision=int(row["revision"]),
@@ -498,6 +527,67 @@ class CallReads:
             connection.begin_read()
             self.store._require_active_project(connection, project_id)
             return self._detail(connection, project_id, call_id)
+
+    @contextmanager
+    def live_turns_snapshot(
+        self, project_id: str, call_id: str
+    ) -> Iterator[LiveTurnsSnapshot | None]:
+        """Yield the Call's live-turn version and lazy source from one read snapshot.
+
+        The source is scoped to the open Call's unassigned evidence or, after close,
+        the evidence held by its latest Revision. A missing Call yields ``None`` after
+        the usual active-project check.
+        """
+
+        with self.store._listing_connection() as connection:
+            connection.begin_read()
+            self.store._require_active_project(connection, project_id)
+            row = connection.execute(
+                "SELECT c.state, c.latest_revision, c.pending_revision, "
+                "c.span_count, c.recording_count, "
+                "c.projection_seq, c.first_evidence_unix_nano, r.finality, "
+                "pr.capture_preset FROM calls c "
+                "JOIN projects pr ON pr.project_id = c.project_id "
+                "LEFT JOIN call_revisions r ON r.project_id = c.project_id "
+                "AND r.call_id = c.call_id AND r.revision = c.latest_revision "
+                "WHERE c.project_id = ? AND c.call_id = ?",
+                (project_id, call_id),
+            ).fetchone()
+            if row is None:
+                yield None
+                return
+
+            revision = None if row["latest_revision"] is None else int(row["latest_revision"])
+            open_revision = None
+            if row["state"] == "open":
+                open_revision = (
+                    int(row["pending_revision"])
+                    if row["pending_revision"] is not None
+                    else (1 if revision is None else revision + 1)
+                )
+            finality = row["finality"]
+            snapshot = LiveTurnsSnapshot(
+                project_id=project_id,
+                call_id=call_id,
+                state=row["state"],
+                revision=revision,
+                span_count=int(row["span_count"]),
+                recording_count=int(row["recording_count"]),
+                projection_seq=int(row["projection_seq"]),
+                capture_preset=row["capture_preset"],
+                first_evidence_unix_nano=int(row["first_evidence_unix_nano"]),
+                finality=finality,
+                _source_reader=lambda: read_call_source(
+                    connection,
+                    project_id=project_id,
+                    call_id=call_id,
+                    revision=revision,
+                    open_revision=open_revision,
+                    first_evidence_unix_nano=int(row["first_evidence_unix_nano"]),
+                    ended=finality == "final",
+                ),
+            )
+            yield snapshot
 
     def _detail(
         self, connection: DatabaseConnection, project_id: str, call_id: str

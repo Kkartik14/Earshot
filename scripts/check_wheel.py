@@ -31,6 +31,7 @@ def check_wheel(path: Path) -> None:
         "earshot/recordings.py",
         "earshot/storage_call_purge.py",
         "earshot/storage_call_reads.py",
+        "earshot/storage_call_sources.py",
         "earshot/storage_closer.py",
         "earshot/storage_recordings.py",
         "earshot/storage_analysis.py",

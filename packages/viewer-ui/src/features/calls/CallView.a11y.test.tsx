@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ViewerQueryScopeProvider } from "../../api/queryScope";
 import { fakeClocks } from "./__fixtures__/fakeMediaClock";
 import exampleCall from "./__fixtures__/call-detail.json";
@@ -29,7 +29,7 @@ function withProjection(changes: Partial<CallProjection>): CallDetail {
   };
 }
 
-function renderCall(call: CallDetail) {
+function renderCall(call: CallDetail, liveTurns?: CallTurn[]) {
   const { factory, clocks } = fakeClocks();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -41,7 +41,10 @@ function renderCall(call: CallDetail) {
       </ViewerQueryScopeProvider>
     </QueryClientProvider>
   );
-  return { ...render(<CallViewBody call={call} />, { wrapper }), clocks };
+  return {
+    ...render(<CallViewBody call={call} liveTurns={liveTurns} />, { wrapper }),
+    clocks,
+  };
 }
 
 async function renderWithClock(call: CallDetail) {
@@ -215,6 +218,40 @@ describe("turns table", () => {
     expect(third).not.toHaveTextContent(/0\.00 s/);
   });
 
+  it("keeps turns without framework IDs in distinct rows", async () => {
+    const turnsWithoutIds = baseProjection.turns.slice(0, 2).map((turn, index) => ({
+      ...turn,
+      index,
+      turn_id: null,
+    }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await renderWithClock(withProjection({ turns: turnsWithoutIds }));
+      expect(rows()).toHaveLength(2);
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/i);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("keeps null index keys distinct from numeric-looking framework IDs", async () => {
+    const mixedTurns = baseProjection.turns.slice(0, 2).map((turn, index) => ({
+      ...turn,
+      index,
+      turn_id: index === 0 ? null : "0",
+    }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await renderWithClock(withProjection({ turns: mixedTurns }));
+      expect(rows()).toHaveLength(2);
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/i);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("seeks to a turn from its start", async () => {
     const { clock } = await renderWithClock(withProjection({}));
     fireEvent.click(screen.getByRole("button", { name: "Play turn 2 from 0:11.8" }));
@@ -234,6 +271,62 @@ describe("turns table", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(opener).toHaveFocus();
+  });
+
+  it("restores focus after live rows shift and projection replaces their table", async () => {
+    const liveCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(liveCall, baseProjection.turns);
+    const liveOpener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    fireEvent.click(liveOpener);
+    const dialog = screen.getByRole("dialog", { name: "llm span detail" });
+
+    const earlierTurn: CallTurn = {
+      ...baseProjection.turns[0],
+      turn_id: "turn-earlier",
+      index: 0,
+      start_ms: 0,
+      spans: [],
+    };
+    const turnsWithEarlierParent = [
+      earlierTurn,
+      ...baseProjection.turns.map((turn) => ({ ...turn, index: turn.index + 1 })),
+    ];
+    rerender(<CallViewBody call={liveCall} liveTurns={turnsWithEarlierParent} />);
+    await act(async () => {});
+    rerender(<CallViewBody call={withProjection({})} liveTurns={baseProjection.turns} />);
+    await act(async () => {});
+    expect(liveOpener.isConnected).toBe(false);
+    const projectedOpener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await act(async () => {});
+
+    expect(projectedOpener).toHaveFocus();
+  });
+
+  it("does not claim that no turns were captured before a closed Call gets a Revision", () => {
+    const closedWithoutRevision: CallDetail = {
+      ...base,
+      state: "closed",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    renderCall(closedWithoutRevision, []);
+
+    expect(
+      screen.getByText(
+        "Turns are unavailable until a Revision captures the accepted evidence.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No parent turn spans were captured for this call."),
+    ).toBeNull();
   });
 });
 

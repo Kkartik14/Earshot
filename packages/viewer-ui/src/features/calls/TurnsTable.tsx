@@ -30,11 +30,13 @@ export function TurnsTable({
   clock,
   openSpanId,
   onOpenSpan,
+  emptyMessage = "The framework reported no turns for this call.",
 }: {
   turns: CallTurn[];
   clock: MediaClock | null;
   openSpanId: string | null;
   onOpenSpan: (span: TurnSpan, opener: HTMLElement) => void;
+  emptyMessage?: string;
 }) {
   const headingId = useId();
   return (
@@ -43,7 +45,7 @@ export function TurnsTable({
         Turns
       </h2>
       {turns.length === 0 ? (
-        <p className={styles.note}>The framework reported no turns for this call.</p>
+        <p className={styles.note}>{emptyMessage}</p>
       ) : (
         <div className={styles.tableWrap}>
           <table className={styles.table}>
@@ -68,7 +70,11 @@ export function TurnsTable({
                 const number = turn.index + 1;
                 const basis = turn.audible_gap.basis;
                 return (
-                  <tr key={turn.index}>
+                  <tr
+                    key={
+                      turn.turn_id == null ? `index:${turn.index}` : `id:${turn.turn_id}`
+                    }
+                  >
                     <th scope="row">{number}</th>
                     <td>
                       {turn.start_ms == null ? (
@@ -117,6 +123,7 @@ export function TurnsTable({
                             className={styles.spanButton}
                             data-role={span.role}
                             data-error={span.status === "error" ? "true" : undefined}
+                            data-span-ref={`${span.trace_id}:${span.span_id}`}
                             aria-haspopup="dialog"
                             aria-expanded={openSpanId === span.span_id}
                             onClick={(event) => onOpenSpan(span, event.currentTarget)}

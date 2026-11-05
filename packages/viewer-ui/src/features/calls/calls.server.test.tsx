@@ -4,12 +4,13 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { configureApiBasePath } from "../../api/client";
-import { ViewerQueryScopeProvider } from "../../api/queryScope";
+import { ViewerQueryScopeProvider, viewerQueryKey } from "../../api/queryScope";
 import type { ObserveRoute } from "../../navigation";
 import { ObserveFeature } from "../../ObserveFeature";
+import type { CallDetail, CallLiveTurnsCache } from "./api";
 import { fakeClocks } from "./__fixtures__/fakeMediaClock";
 import { MediaClockContext } from "./Player";
 
@@ -32,6 +33,12 @@ const WAIT = { timeout: 15_000 };
 let server: ChildProcessWithoutNullStreams;
 let seed: Seed;
 let restoreGlobals: () => void;
+const observedLiveTurnFetches: {
+  url: string;
+  requestHeaders: Headers;
+  status: number;
+  etag: string | null;
+}[] = [];
 
 /** The repo's venv (`.venv`, where the dev setup and CI install Earshot), or the
  * interpreter `EARSHOT_PYTHON` names. Turborepo's strict env mode does not pass
@@ -82,8 +89,21 @@ function browseFrom(origin: string): () => void {
     }
   }
   globalThis.Request = PageRequest as typeof Request;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-    nodeFetch(absolute(input), init)) as typeof fetch;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = absolute(input);
+    return nodeFetch(url, init).then((response) => {
+      const parsed = new URL(url instanceof Request ? url.url : url.toString());
+      if (parsed.pathname.endsWith("/live-turns")) {
+        observedLiveTurnFetches.push({
+          url: parsed.href,
+          requestHeaders: new Headers(init?.headers),
+          status: response.status,
+          etag: response.headers.get("ETag"),
+        });
+      }
+      return response;
+    });
+  }) as typeof fetch;
   // The API client captures fetch and Request when it is made: remake it.
   configureApiBasePath("");
   return () => {
@@ -122,7 +142,7 @@ function renderObserve(route: ObserveRoute, currentPath: string) {
       </ViewerQueryScopeProvider>
     </QueryClientProvider>,
   );
-  return clocks;
+  return { clocks, client };
 }
 
 const callsTable = () => screen.getByRole("table", { name: /calls, newest first/i });
@@ -213,7 +233,7 @@ describe("calls list on a real server", () => {
 
 describe("call view on a real server", () => {
   it("plays the rendition with the server's peaks, one lane per speaker", async () => {
-    const clocks = renderObserve(
+    const { clocks } = renderObserve(
       { kind: "call", callId: seed.pipecat_call_id },
       `/calls/${seed.pipecat_call_id}`,
     );
@@ -270,6 +290,87 @@ describe("call view on a real server", () => {
     );
     expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
   });
+
+  it("keeps live turns visible through close, then settles on the durable projection", async () => {
+    observedLiveTurnFetches.length = 0;
+    const { client } = renderObserve(
+      { kind: "call", callId: seed.livekit_call_id },
+      `/calls/${seed.livekit_call_id}`,
+    );
+    const scope = { projectId: "default", authContextId: "server-test" };
+    const liveKey = viewerQueryKey(scope, ["live-call-turns", seed.livekit_call_id]);
+    const callKey = viewerQueryKey(scope, ["call", seed.livekit_call_id]);
+    const table = await screen.findByRole("table", { name: /reported latency/i }, WAIT);
+    expect(within(table).getAllByRole("row").length).toBeGreaterThan(1);
+    expect(client.getQueryData<CallLiveTurnsCache>(liveKey)?.body.state).toBe("open");
+    await waitFor(() => {
+      expect(observedLiveTurnFetches.some((item) => item.status === 304)).toBe(true);
+    }, WAIT);
+    const liveTurnFetches = observedLiveTurnFetches.filter((item) =>
+      item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
+    );
+    const initial = liveTurnFetches.find((item) => item.status === 200);
+    const unchanged = liveTurnFetches.find((item) => item.status === 304);
+    expect(initial?.etag).not.toBeNull();
+    expect(unchanged?.requestHeaders.get("If-None-Match")).toBe(initial?.etag);
+
+    await act(async () => {
+      server.stdin.write(
+        `${JSON.stringify({ action: "close_call", call_id: seed.livekit_call_id })}\n`,
+      );
+      await expect
+        .poll(() => client.getQueryData<CallDetail>(callKey), { timeout: 120_000 })
+        .toMatchObject({ state: "closed", projection_state: "none" });
+    });
+    const liveTurns = client.getQueryData<CallLiveTurnsCache>(liveKey)?.body;
+    expect(liveTurns?.state).toBe("closed");
+    expect(liveTurns?.turns.length).toBeGreaterThan(0);
+    expect(
+      within(screen.getByRole("table", { name: /reported latency/i })).getAllByRole("row")
+        .length,
+    ).toBeGreaterThan(1);
+
+    const closedCache = client.getQueryData<CallLiveTurnsCache>(liveKey);
+    const closedLiveFetchCount = observedLiveTurnFetches.filter((item) =>
+      item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
+    ).length;
+    const liveUpdatedAt = client.getQueryState(liveKey)?.dataUpdatedAt;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_200));
+    });
+    expect(
+      observedLiveTurnFetches.filter((item) =>
+        item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
+      ),
+    ).toHaveLength(closedLiveFetchCount);
+    expect(client.getQueryState(liveKey)?.dataUpdatedAt).toBe(liveUpdatedAt);
+    expect(client.getQueryData<CallLiveTurnsCache>(liveKey)?.body).toEqual(
+      closedCache?.body,
+    );
+
+    await act(async () => {
+      server.stdin.write(
+        `${JSON.stringify({ action: "allow_projection", call_id: seed.livekit_call_id })}\n`,
+      );
+      await expect
+        .poll(() => client.getQueryData<CallDetail>(callKey), { timeout: 120_000 })
+        .toMatchObject({ state: "closed", projection_state: "current" });
+    });
+    const durable = client.getQueryData<CallDetail>(callKey);
+    expect(durable?.projection?.turns).toEqual(liveTurns?.turns);
+    expect(screen.getByRole("table", { name: /reported latency/i })).toBeInTheDocument();
+
+    const callUpdatedAt = client.getQueryState(callKey)?.dataUpdatedAt;
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_200));
+    });
+    expect(
+      observedLiveTurnFetches.filter((item) =>
+        item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
+      ),
+    ).toHaveLength(closedLiveFetchCount);
+    expect(client.getQueryState(callKey)?.dataUpdatedAt).toBe(callUpdatedAt);
+  }, 60_000);
 
   it("says a call is not found rather than showing an empty call", async () => {
     renderObserve(

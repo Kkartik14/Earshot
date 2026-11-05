@@ -142,6 +142,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/calls/{call_id}/live-turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Call Live Turns Endpoint
+         * @description The current framework turns for an open Call, or for its latest Revision after close (revision is null when a closed Call has no Revision). A turn appears when its parent turn span arrives; later spans may enrich it. A closed Call without a Revision returns no turns, including unassigned late evidence. Stored Recording analyses may contribute audible-gap fields. The response includes no raw span attributes, recordings, transcript or prices. It carries a strong ETag and Cache-Control: no-store.
+         */
+        get: operations["get_call_live_turns_endpoint_v1_calls__call_id__live_turns_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/calls/{call_id}/spans/{trace_id}/{span_id}": {
         parameters: {
             query?: never;
@@ -1211,6 +1231,23 @@ export interface components {
              * @enum {string}
              */
             transcript_coverage: "available" | "not_captured_by_preset" | "not_observed";
+        };
+        /**
+         * CallLiveTurnsResponse
+         * @description The current parent-span-backed turns for an open Call or latest Revision.
+         */
+        CallLiveTurnsResponse: {
+            /** Call Id */
+            call_id: string;
+            /** Revision */
+            revision: number | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "open" | "closed";
+            /** Turns */
+            turns: components["schemas"]["CallTurnResponse"][];
         };
         /**
          * CallMediaResponse
@@ -5565,6 +5602,153 @@ export interface operations {
             /** @description Successful Response */
             204: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unsupported Media Type */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProblemResponse"];
+                };
+            };
+        };
+    };
+    get_call_live_turns_endpoint_v1_calls__call_id__live_turns_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-None-Match"?: string | null;
+            };
+            path: {
+                call_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description The response is not stored by caches. */
+                    "Cache-Control"?: string;
+                    /** @description Strong validator for the current live-turn representation. */
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallLiveTurnsResponse"];
+                };
+            };
+            /** @description Not modified: the If-None-Match ETag is current. */
+            304: {
+                headers: {
+                    /** @description The response is not stored by caches. */
+                    "Cache-Control"?: string;
+                    /** @description Strong validator for the current live-turn representation. */
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content?: never;

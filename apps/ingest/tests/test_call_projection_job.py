@@ -31,6 +31,7 @@ from captured_livekit_otlp import (
 )
 from captured_otlp import CAPTURED_SESSION_KEY, captured_manifest, captured_requests
 from earshot import storage_schema
+from earshot.api import create_app
 from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
 from earshot.call_projection import CALL_PROJECTION_VERSION
@@ -51,7 +52,8 @@ from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_closer import Closer
 from earshot.storage_prices import NewPrice, PriceStore
 from earshot.storage_recordings import RecordingManifest, RecordingStore
-from otlp_support import make_request, make_span, string_attribute
+from otlp_support import make_request, make_span, serve, string_attribute
+from otlp_support import request as http_request
 from store_support import catalog, catalog_rows, current_dialect, make_store, stored_needles
 
 pytestmark = pytest.mark.integration
@@ -214,6 +216,69 @@ def test_a_closed_call_is_projected_once_its_analyses_are_stored(tmp_path) -> No
     assert catalog_rows(tmp_path, "SELECT count(*) FROM prices") == [(len(BUILTIN_PRICES),)]
     assert catalog_rows(tmp_path, "SELECT version FROM builtin_price_version") == [(1,)]
     assert world.project() == 0
+
+
+def test_live_turns_after_close_match_the_durable_projection_with_recording_analysis(
+    tmp_path,
+) -> None:
+    """The live endpoint must use the durable Revision's stored recording analyses."""
+
+    world, call_id = _pipecat_world(tmp_path)
+    world.analyse()
+    world.project()
+    rows_before = world.written()
+
+    with serve(create_app(store=world.store)) as port:
+        live = http_request(port, "GET", f"/v1/calls/{call_id}/live-turns")
+        detail = http_request(port, "GET", f"/v1/calls/{call_id}")
+        unchanged = http_request(
+            port,
+            "GET",
+            f"/v1/calls/{call_id}/live-turns",
+            headers={"If-None-Match": live.headers["etag"]},
+        )
+
+    assert live.status == detail.status == 200
+    assert live.json()["state"] == "closed"
+    assert live.json()["revision"] == detail.json()["latest_revision"]["revision"] == 1
+    assert live.json()["turns"] == detail.json()["projection"]["turns"]
+    gap = live.json()["turns"][1]["audible_gap"]
+    assert (gap["status"], gap["value_ms"], gap["uncertainty_ms"]) == (
+        "measured",
+        1510,
+        75,
+    )
+    assert (unchanged.status, unchanged.body, unchanged.headers["etag"]) == (
+        304,
+        b"",
+        live.headers["etag"],
+    )
+    assert unchanged.headers["cache-control"] == "no-store"
+    assert world.written() == rows_before
+
+
+@pytest.mark.parametrize("fixture", ["pipecat", "livekit"])
+def test_live_turns_before_close_match_each_captured_fixture_revision(
+    tmp_path, fixture: str
+) -> None:
+    world = World(tmp_path)
+    requests = captured_requests() if fixture == "pipecat" else livekit_requests()
+    call_id = world.replay(requests)
+
+    with serve(create_app(store=world.store)) as port:
+        before_close = http_request(port, "GET", f"/v1/calls/{call_id}/live-turns")
+        world.close()
+        world.project()
+        after_close = http_request(port, "GET", f"/v1/calls/{call_id}/live-turns")
+        detail = http_request(port, "GET", f"/v1/calls/{call_id}")
+
+    assert before_close.status == after_close.status == detail.status == 200
+    assert before_close.json()["state"] == "open"
+    assert before_close.json()["revision"] is None
+    assert after_close.json()["state"] == "closed"
+    assert after_close.json()["revision"] == detail.json()["latest_revision"]["revision"] == 1
+    assert before_close.json()["turns"] == after_close.json()["turns"]
+    assert after_close.json()["turns"] == detail.json()["projection"]["turns"]
 
 
 def test_a_livekit_call_with_its_stereo_ogg_is_projected_with_measured_turns(tmp_path) -> None:

@@ -75,7 +75,7 @@ from .call_capture import (
     spans_from_request,
     valid_session_key,
 )
-from .call_projection import CALL_PROJECTION_VERSION
+from .call_projection import CALL_PROJECTION_VERSION, compute_projection
 from .capture import (
     CAPTURE_CALL_ID_PREFIX,
     CaptureCallCapacityError,
@@ -686,6 +686,15 @@ class CallDetailResponse(CallSummaryResponse):
     transcript_coverage: Literal["available", "not_captured_by_preset", "not_observed"]
 
 
+class CallLiveTurnsResponse(ApiModel):
+    """The current parent-span-backed turns for an open Call or latest Revision."""
+
+    call_id: str
+    state: Literal["open", "closed"]
+    revision: int | None
+    turns: list[CallTurnResponse]
+
+
 class SpanStatusResponse(ApiModel):
     code: Literal["unset", "ok", "error"]
     message: str | None
@@ -1003,6 +1012,28 @@ def _if_none_match(header: str | None, etag: str) -> bool:
     if header.strip() == "*":
         return True
     return any(candidate.strip().removeprefix("W/") == etag for candidate in header.split(","))
+
+
+def _live_turns_etag(snapshot: Any) -> str:
+    """A strong validator for the source version read by ``CallReads``."""
+
+    source_version = [
+        "live-turns-v1",
+        API_VERSION,
+        CALL_PROJECTION_VERSION,
+        snapshot.project_id,
+        snapshot.call_id,
+        snapshot.state,
+        snapshot.revision,
+        snapshot.span_count,
+        snapshot.recording_count,
+        snapshot.projection_seq,
+        snapshot.capture_preset,
+        snapshot.first_evidence_unix_nano,
+        snapshot.finality,
+    ]
+    encoded = json.dumps(source_version, ensure_ascii=True, separators=(",", ":")).encode()
+    return f'"sha256:{hashlib.sha256(encoded).hexdigest()}"'
 
 
 def _lower_hex(value: str, length: int) -> bool:
@@ -2427,6 +2458,7 @@ _HOSTED_OPERATION_SCOPES: tuple[tuple[str, str, str], ...] = (
     ("PUT", "/v1/recordings/{recording_id}/content", CALLS_WRITE_SCOPE),
     ("GET", "/v1/calls", CALLS_READ_SCOPE),
     ("GET", "/v1/calls/{call_id}", CALLS_READ_SCOPE),
+    ("GET", "/v1/calls/{call_id}/live-turns", CALLS_READ_SCOPE),
     ("POST", "/v1/calls:resolve", CALLS_READ_SCOPE),
     ("GET", "/v1/dashboard", CALLS_READ_SCOPE),
     ("DELETE", "/v1/calls/{call_id}", CALLS_DELETE_SCOPE),
@@ -4694,6 +4726,66 @@ def create_app(
             return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "no-store"})
         response.headers["ETag"] = etag
         return response
+
+    live_turns_cache_headers = {
+        "ETag": {
+            "description": "Strong validator for the current live-turn representation.",
+            "schema": {"type": "string"},
+        },
+        "Cache-Control": {
+            "description": "The response is not stored by caches.",
+            "schema": {"type": "string"},
+        },
+    }
+
+    @app.get(
+        "/v1/calls/{call_id}/live-turns",
+        response_model=CallLiveTurnsResponse,
+        responses={
+            200: {"headers": live_turns_cache_headers},
+            304: {
+                "description": "Not modified: the If-None-Match ETag is current.",
+                "headers": live_turns_cache_headers,
+            },
+            **_ERROR_RESPONSES,
+        },
+        description=(
+            "The current framework turns for an open Call, or for its latest Revision "
+            "after close (revision is null when a closed Call has no Revision). A turn "
+            "appears when its parent turn span arrives; later spans may enrich it. A "
+            "closed Call without a Revision returns no turns, including unassigned late "
+            "evidence. Stored "
+            "Recording analyses may contribute audible-gap fields. The response includes "
+            "no raw span attributes, recordings, transcript or prices. It carries a strong "
+            "ETag and Cache-Control: no-store."
+        ),
+    )
+    def get_call_live_turns_endpoint(
+        call_id: str,
+        request: Request,
+        if_none_match: str | None = Header(default=None, alias="If-None-Match"),
+    ) -> Response:
+        with call_reads.live_turns_snapshot(request.state.project_id, call_id) as snapshot:
+            if snapshot is None:
+                raise ApiProblem(404, "EARSHOT_CALL_NOT_FOUND", "call not found")
+            etag = _live_turns_etag(snapshot)
+            headers = {"ETag": etag, "Cache-Control": "no-store"}
+            if _if_none_match(if_none_match, etag):
+                return Response(status_code=304, headers=headers)
+            state, revision = snapshot.state, snapshot.revision
+            # A Call closed without a Revision can later receive evidence, but that
+            # evidence belongs to its next durable Revision and is not yet visible.
+            source = None if state == "closed" and revision is None else snapshot.load_source()
+        turns = [] if source is None else compute_projection(source, ()).detail["turns"]
+        return JSONResponse(
+            {
+                "call_id": call_id,
+                "state": state,
+                "revision": revision,
+                "turns": turns,
+            },
+            headers=headers,
+        )
 
     @app.get(
         "/v1/calls/{call_id}/spans/{trace_id}/{span_id}",
