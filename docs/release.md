@@ -175,6 +175,15 @@ only when all of these identities agree:
 No long-lived publishing credential is stored in GitHub. npm uses Trusted Publishing
 (OIDC) for `earshot-observability`.
 
+The PyPI job compares the downloaded wheel and source distribution with the release's
+PyPI JSON records before upload. It stages only files that are absent, and it fails if
+an existing filename has a different SHA-256 or if the release contains an unexpected
+file. This makes a partial upload recoverable without accepting a changed artifact.
+The Python distributions are retained for 30 days. If PyPI accepts only part of a
+release, rerun the failed publisher while the artifact is retained; the publisher
+checks the hashes again before sending any remaining file. An artifact hash mismatch
+means that version already contains different bytes and requires a new package version.
+
 Before the first tag, create the PyPI pending trusted publisher with these exact claims:
 
 ```text

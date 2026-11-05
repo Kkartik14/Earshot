@@ -85,7 +85,7 @@ jobs:
           name: python-distributions
           path: dist/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   build-npm:
     name: Build and inspect Node npm package
@@ -262,15 +262,29 @@ jobs:
     permissions:
       id-token: write
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Download the inspected distributions
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           name: python-distributions
           path: dist
-      - name: Publish the distributions
+      - name: Compare the release files with PyPI
+        id: prepare
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: >-
+          python scripts/prepare_pypi_upload.py
+          --version "$RELEASE_VERSION"
+          --dist-dir dist
+          --upload-dir .pypi-upload
+          --github-output "$GITHUB_OUTPUT"
+      - name: Publish the missing distributions
+        if: steps.prepare.outputs.has_uploads == 'true'
         # v1.14.2 or later: hatchling 1.32 writes Metadata-Version 2.5, which the
         # twine bundled in earlier releases rejects.
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: .pypi-upload
 
   publish-npm:
     name: Publish Node package with Trusted Publishing
