@@ -146,6 +146,43 @@ def test_release_identity_rejects_oci_tag_over_length_limit(
     assert "exceeds the 128-character OCI tag limit" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "version",
+    [
+        "9007199254740991.0.0",
+        "0.9007199254740991.0",
+        "0.0.9007199254740991",
+    ],
+)
+def test_release_identity_accepts_safe_integer_semver_components(
+    tmp_path: Path, version: str
+) -> None:
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "9007199254740992.0.0",
+        "0.9007199254740992.0",
+        "0.0.9007199254740992",
+    ],
+)
+def test_release_identity_rejects_unsafe_integer_semver_components(
+    tmp_path: Path, version: str
+) -> None:
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 2
+    assert "component exceeds the OCI tag generator's safe integer limit" in result.stderr
+
+
 def test_release_identity_rejects_semver_build_metadata(tmp_path: Path) -> None:
     project = write_project(tmp_path, "0.1.0+build-id")
 

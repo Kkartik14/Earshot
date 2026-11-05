@@ -19,6 +19,7 @@ SEMVER = re.compile(
 )
 PYPI_PRERELEASE = re.compile(r"(?P<label>alpha|beta|rc)\.(?P<number>0|[1-9][0-9]*)")
 OCI_MAX_TAG_LENGTH = 128
+SEMVER_MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 class ReleaseIdentityError(ValueError):
@@ -49,6 +50,10 @@ def project_identity(project_file: Path) -> tuple[str, bool]:
         raise ReleaseIdentityError(
             "project.version prerelease must use one of the canonical forms "
             "alpha.N, beta.N, or rc.N"
+        )
+    if any(int(component) > SEMVER_MAX_SAFE_INTEGER for component in version_match.groups()[:3]):
+        raise ReleaseIdentityError(
+            "project.version component exceeds the OCI tag generator's safe integer limit"
         )
     # The image uses this raw tag; allowed PEP 440 forms normalize to an equal or shorter string.
     if len(version) > OCI_MAX_TAG_LENGTH:

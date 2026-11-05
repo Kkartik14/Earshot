@@ -184,6 +184,10 @@ file with the same name and contents, and rejects a same-name file with differen
 contents, so Twine can continue past an already accepted file and upload the remaining
 one. Keep `skip-existing` disabled so conflicting bytes fail. This retry behavior follows
 Warehouse's current implementation; PyPI does not document it as an Upload API guarantee.
+Before the first upload for a version, confirm that PyPI has no files for that version.
+If any files are already present, compare the complete published file list with the
+release artifact and audit its provenance before continuing; this workflow does not
+inventory unexpected files already attached to a PyPI version.
 
 Release tags use stable SemVer or one of `-alpha.N`, `-beta.N`, and `-rc.N` for
 pre-releases. The validator rejects other prerelease spellings because PEP 440 maps
@@ -193,6 +197,9 @@ the OCI image tag. For these canonical versions, PEP 440 normalization leaves st
 versions unchanged and shortens prerelease labels, which keeps the normalized PyPI
 version within PyPI's own 128-character limit ([PyPI version length limit](https://docs.pypi.org/project_metadata/#version-length-limit),
 [image tag rules](https://github.com/docker/metadata-action#image-name-and-tag-sanitization)).
+To keep every accepted version parseable by the pinned OCI tag generator, each major,
+minor, and patch number must also be at most `9007199254740991`; its SemVer parser rejects
+larger components when converting them to JavaScript numbers.
 
 Before the first tag, create the PyPI pending trusted publisher with these exact claims:
 

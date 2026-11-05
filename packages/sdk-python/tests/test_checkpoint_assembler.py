@@ -22,6 +22,7 @@ from earshot.checkpoint.records import (
     encode_entry,
 )
 from earshot.checkpoint.writer import DEFAULT_MAX_FRAME_BYTES
+from earshot.clock import ManualClock
 from earshot.codec import analysis_input_sha256, encode_incident_protobuf
 from earshot.contract import (
     Adapter,
@@ -211,13 +212,20 @@ SCRIPTS: dict[str, tuple[Callable[[IncidentRecorder], None], dict]] = {
 }
 
 
-def _run(name: str, directory: Path, *, key: bytes | None = None) -> tuple[bytes, Path]:
+def _run(
+    name: str,
+    directory: Path,
+    *,
+    key: bytes | None = None,
+    clock: ManualClock | None = None,
+) -> tuple[bytes, Path]:
     script, config_kwargs = SCRIPTS[name]
     writer = _writer(directory, checkpoint_key=key)
     recorder = IncidentRecorder(
         session_id=f"session-{name}",
         bundle_id=f"bundle-{name}",
         config=RecorderConfig(**config_kwargs),
+        clock=clock,
         checkpoint=writer,
     )
     script(recorder)
@@ -454,7 +462,14 @@ def test_a_torn_tail_becomes_a_declared_limitation_rather_than_silence(tmp_path:
 def test_every_truncation_of_a_real_journal_assembles_or_reports_no_header(
     tmp_path: Path,
 ) -> None:
-    _, journal = _run("turns", tmp_path)
+    # The scripted operations use synthetic wall and monotonic coordinates.
+    # Keep recorder-generated points on that same clock so slow filesystem syncs
+    # cannot make a real timestamp overtake the last synthetic operation point.
+    _, journal = _run(
+        "turns",
+        tmp_path,
+        clock=ManualClock(wall=1_800_000_000_000_000_000, monotonic=0),
+    )
     data = journal.read_bytes()
     from earshot.checkpoint.reader import JournalUnreadableError
 
