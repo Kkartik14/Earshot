@@ -13,6 +13,11 @@ from urllib.parse import quote
 
 PUBLISH_PREDICATE = "https://github.com/npm/attestation/tree/main/specs/publish/v0.1"
 SLSA_PREDICATE = "https://slsa.dev/provenance/v1"
+STATEMENT_TYPES = {
+    "https://in-toto.io/Statement/v0.1",
+    "https://in-toto.io/Statement/v1",
+}
+NPM_REGISTRY = "https://registry.npmjs.org"
 
 
 class NpmPublishVerificationError(ValueError):
@@ -21,6 +26,19 @@ class NpmPublishVerificationError(ValueError):
 
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _statement(bundle: Any, *, label: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        envelope = _dict(_dict(bundle).get("dsseEnvelope"))
+        payload = json.loads(base64.b64decode(envelope["payload"], validate=True))
+    except (KeyError, ValueError, TypeError, json.JSONDecodeError) as error:
+        raise NpmPublishVerificationError(
+            f"npm {label} attestation payload is malformed"
+        ) from error
+    if not isinstance(payload, dict):
+        raise NpmPublishVerificationError(f"npm {label} attestation payload is malformed")
+    return payload, envelope
 
 
 def verify_npm_publish(
@@ -63,9 +81,6 @@ def verify_npm_publish(
     bundles = _dict(matches[0]).get("attestationBundles")
     if not isinstance(bundles, list):
         raise NpmPublishVerificationError("npm did not return verified attestation bundles")
-    predicate_types = {
-        bundle.get("predicateType") for bundle in bundles if isinstance(bundle, dict)
-    }
     publish_bundles = [
         bundle
         for bundle in bundles
@@ -73,8 +88,6 @@ def verify_npm_publish(
     ]
     if len(publish_bundles) != 1:
         raise NpmPublishVerificationError("npm publish attestation is missing or ambiguous")
-    if SLSA_PREDICATE not in predicate_types:
-        raise NpmPublishVerificationError("npm SLSA provenance is missing")
 
     slsa_bundles = [
         bundle
@@ -85,21 +98,58 @@ def verify_npm_publish(
         raise NpmPublishVerificationError(
             "npm returned an ambiguous set of SLSA provenance bundles"
         )
-    try:
-        envelope = _dict(_dict(slsa_bundles[0].get("bundle")).get("dsseEnvelope"))
-        payload = json.loads(base64.b64decode(envelope["payload"], validate=True))
-    except (KeyError, ValueError, TypeError, json.JSONDecodeError) as error:
-        raise NpmPublishVerificationError("npm SLSA provenance payload is malformed") from error
-
-    if not isinstance(payload, dict) or payload.get("_type") != "https://in-toto.io/Statement/v1":
-        raise NpmPublishVerificationError("npm SLSA provenance has an unexpected statement type")
+    actual_digest = hashlib.sha512(artifact.read_bytes()).hexdigest()
     expected_purl = f"pkg:npm/{quote(package, safe='/')}@{version}"
+
+    publish_bundle = _dict(publish_bundles[0].get("bundle"))
+    publish_statement, publish_envelope = _statement(publish_bundle, label="publish")
+    publish_signatures = publish_envelope.get("signatures")
+    first_publish_signature = (
+        _dict(publish_signatures[0])
+        if isinstance(publish_signatures, list) and publish_signatures
+        else {}
+    )
+    if not first_publish_signature.get("keyid") or not _dict(
+        _dict(publish_bundle.get("verificationMaterial")).get("publicKey")
+    ):
+        raise NpmPublishVerificationError(
+            "npm publish attestation is not signed with an npm registry key"
+        )
+    if (
+        publish_statement.get("_type") not in STATEMENT_TYPES
+        or publish_statement.get("predicateType") != PUBLISH_PREDICATE
+    ):
+        raise NpmPublishVerificationError(
+            "npm publish attestation payload has an unexpected predicate type"
+        )
+    publish_subjects = publish_statement.get("subject")
+    publish_subject = (
+        _dict(publish_subjects[0])
+        if isinstance(publish_subjects, list) and len(publish_subjects) == 1
+        else {}
+    )
+    publish_digest = _dict(publish_subject.get("digest")).get("sha512")
+    publish_predicate = _dict(publish_statement.get("predicate"))
+    if publish_subject.get("name") != expected_purl or publish_digest != actual_digest:
+        raise NpmPublishVerificationError(
+            "npm publish attestation integrity does not match the retained tarball"
+        )
+    if (
+        publish_predicate.get("name") != package
+        or publish_predicate.get("version") != version
+        or publish_predicate.get("registry") != NPM_REGISTRY
+    ):
+        raise NpmPublishVerificationError("npm publish attestation identity is unexpected")
+
+    payload, _ = _statement(_dict(slsa_bundles[0].get("bundle")), label="SLSA provenance")
+
+    if payload.get("_type") not in STATEMENT_TYPES:
+        raise NpmPublishVerificationError("npm SLSA provenance has an unexpected statement type")
     subjects = payload.get("subject")
     if not isinstance(subjects, list) or len(subjects) != 1:
         raise NpmPublishVerificationError("npm SLSA provenance has an unexpected subject list")
     subject = _dict(subjects[0])
     subject_digest = _dict(subject.get("digest")).get("sha512")
-    actual_digest = hashlib.sha512(artifact.read_bytes()).hexdigest()
     if subject.get("name") != expected_purl or subject_digest != actual_digest:
         raise NpmPublishVerificationError(
             "npm SLSA provenance integrity does not match the retained tarball"

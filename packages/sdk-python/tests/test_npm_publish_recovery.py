@@ -10,12 +10,15 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "verify_npm_publish.py"
 PACKAGE = "earshot-observability"
 VERSION = "0.4.0"
 REPOSITORY = "Kkartik14/Earshot"
 COMMIT = "a" * 40
 RUN_ID = "123456789"
+PUBLISH_PREDICATE = "https://github.com/npm/attestation/tree/main/specs/publish/v0.1"
 
 
 def _payload(artifact: bytes, **overrides: Any) -> dict[str, Any]:
@@ -71,10 +74,26 @@ def _report(payload: dict[str, Any], *, include_publish: bool = True) -> dict[st
         }
     ]
     if include_publish:
+        publish_payload = {
+            "_type": "https://in-toto.io/Statement/v0.1",
+            "subject": payload["subject"],
+            "predicateType": PUBLISH_PREDICATE,
+            "predicate": {
+                "name": PACKAGE,
+                "version": VERSION,
+                "registry": "https://registry.npmjs.org",
+            },
+        }
         bundles.append(
             {
-                "predicateType": "https://github.com/npm/attestation/tree/main/specs/publish/v0.1",
-                "bundle": {"dsseEnvelope": {"payload": "e30="}},
+                "predicateType": PUBLISH_PREDICATE,
+                "bundle": {
+                    "verificationMaterial": {"publicKey": {"hint": "registry-key"}},
+                    "dsseEnvelope": {
+                        "payload": base64.b64encode(json.dumps(publish_payload).encode()).decode(),
+                        "signatures": [{"keyid": "SHA256:registry-key", "sig": "test"}],
+                    },
+                },
             }
         )
     return {
@@ -180,6 +199,47 @@ def test_npm_retry_requires_both_publish_and_slsa_attestations(tmp_path: Path) -
 
     assert result.returncode == 2
     assert "publish attestation" in result.stderr
+
+
+def test_npm_retry_rejects_keyless_slsa_bundle_labelled_as_publish(tmp_path: Path) -> None:
+    artifact = b"the immutable npm tarball"
+    report = _report(_payload(artifact), include_publish=False)
+    slsa_bundle = report["verified"][0]["attestationBundles"][0]["bundle"]
+    report["verified"][0]["attestationBundles"].append(
+        {"predicateType": PUBLISH_PREDICATE, "bundle": slsa_bundle}
+    )
+
+    result = _run_verifier(tmp_path, artifact, report)
+
+    assert result.returncode == 2
+    assert "npm registry key" in result.stderr
+
+
+def test_npm_retry_rejects_non_publish_statement_labelled_as_publish(tmp_path: Path) -> None:
+    artifact = b"the immutable npm tarball"
+    report = _report(_payload(artifact))
+    publish_bundle = report["verified"][0]["attestationBundles"][1]["bundle"]
+    publish_envelope = publish_bundle["dsseEnvelope"]
+    publish_payload = json.loads(base64.b64decode(publish_envelope["payload"]))
+    publish_payload["predicateType"] = "https://slsa.dev/provenance/v1"
+    publish_envelope["payload"] = base64.b64encode(json.dumps(publish_payload).encode()).decode()
+
+    result = _run_verifier(tmp_path, artifact, report)
+
+    assert result.returncode == 2
+    assert "unexpected predicate type" in result.stderr
+
+
+def test_npm_retry_requires_registry_key_on_publish_attestation(tmp_path: Path) -> None:
+    artifact = b"the immutable npm tarball"
+    report = _report(_payload(artifact))
+    publish_bundle = report["verified"][0]["attestationBundles"][1]["bundle"]
+    publish_bundle["dsseEnvelope"]["signatures"][0].pop("keyid")
+
+    result = _run_verifier(tmp_path, artifact, report)
+
+    assert result.returncode == 2
+    assert "npm registry key" in result.stderr
 
 
 def test_npm_retry_rejects_invalid_or_missing_registry_signatures(tmp_path: Path) -> None:

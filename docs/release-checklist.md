@@ -63,8 +63,9 @@ One tag publishes four things:
 5. Tag and push, as in `release.md`. Approve the `pypi` and `npm` deployments when
    asked. A version containing `-` is published to npm under the `next` dist-tag.
    Before creating the tag, confirm the GitHub tag rulesets and both registry version
-   preflights: the `v*` tag must not already exist, and the PyPI version must have no files
-   attached.
+   preflights: `npm view "earshot-observability@$version" version` must return `E404` for
+   that exact version (not a network or authentication error), and the PyPI version must
+   have no files attached. The `v*` tag must not already exist.
 
 ## After publishing
 
