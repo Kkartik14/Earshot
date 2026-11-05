@@ -509,7 +509,7 @@ jobs:
     name: macOS framework smoke
     needs: [prepare]
     if: needs.prepare.outputs.run_full_ci == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
