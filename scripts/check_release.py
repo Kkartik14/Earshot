@@ -18,8 +18,7 @@ SEMVER = re.compile(
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
 PYPI_PRERELEASE = re.compile(r"(?P<label>alpha|beta|rc)\.(?P<number>0|[1-9][0-9]*)")
-PYPI_PRERELEASE_LABELS = {"alpha": "a", "beta": "b", "rc": "rc"}
-PYPI_MAX_VERSION_LENGTH = 128
+OCI_MAX_TAG_LENGTH = 128
 
 
 class ReleaseIdentityError(ValueError):
@@ -46,22 +45,14 @@ def project_identity(project_file: Path) -> tuple[str, bool]:
     if version_match.group(5) is not None:
         raise ReleaseIdentityError("project.version build metadata is not supported for releases")
     prerelease = version_match.group(4)
-    # The supported prerelease forms map directly to PEP 440 without a runner dependency.
-    normalized_version = ".".join(version_match.group(index) for index in (1, 2, 3))
-    if prerelease is not None:
-        prerelease_match = PYPI_PRERELEASE.fullmatch(prerelease)
-        if prerelease_match is None:
-            raise ReleaseIdentityError(
-                "project.version prerelease must use one of the canonical forms "
-                "alpha.N, beta.N, or rc.N"
-            )
-        normalized_version += PYPI_PRERELEASE_LABELS[
-            prerelease_match.group("label")
-        ] + prerelease_match.group("number")
-    if len(normalized_version) > PYPI_MAX_VERSION_LENGTH:
+    if prerelease is not None and PYPI_PRERELEASE.fullmatch(prerelease) is None:
         raise ReleaseIdentityError(
-            "project.version exceeds PyPI's 128-character normalized version limit"
+            "project.version prerelease must use one of the canonical forms "
+            "alpha.N, beta.N, or rc.N"
         )
+    # The image uses this raw tag; allowed PEP 440 forms normalize to an equal or shorter string.
+    if len(version) > OCI_MAX_TAG_LENGTH:
+        raise ReleaseIdentityError("project.version exceeds the 128-character OCI tag limit")
     return version, version_match.group(4) is not None
 
 

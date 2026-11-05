@@ -119,10 +119,12 @@ def test_release_identity_rejects_prerelease_spellings_that_alias_in_pypi(
     assert "prerelease must use one of the canonical forms" in result.stderr
 
 
-def test_release_identity_accepts_pypi_normalized_version_at_length_limit(
-    tmp_path: Path,
+@pytest.mark.parametrize(("label", "serial_length"), [("alpha", 116), ("beta", 117), ("rc", 119)])
+def test_release_identity_accepts_oci_tag_at_length_limit(
+    tmp_path: Path, label: str, serial_length: int
 ) -> None:
-    version = f"0.1.0-rc.{'1' * 121}"
+    version = f"0.1.0-{label}.{'1' * serial_length}"
+    assert len(version) == 128
     project = write_project(tmp_path, version)
 
     result = check_release(project, tag=f"v{version}")
@@ -130,16 +132,18 @@ def test_release_identity_accepts_pypi_normalized_version_at_length_limit(
     assert result.returncode == 0
 
 
-def test_release_identity_rejects_pypi_normalized_version_over_length_limit(
-    tmp_path: Path,
+@pytest.mark.parametrize(("label", "serial_length"), [("alpha", 117), ("beta", 118), ("rc", 120)])
+def test_release_identity_rejects_oci_tag_over_length_limit(
+    tmp_path: Path, label: str, serial_length: int
 ) -> None:
-    version = f"0.1.0-rc.{'1' * 122}"
+    version = f"0.1.0-{label}.{'1' * serial_length}"
+    assert len(version) == 129
     project = write_project(tmp_path, version)
 
     result = check_release(project, tag=f"v{version}")
 
     assert result.returncode == 2
-    assert "exceeds PyPI's 128-character normalized version limit" in result.stderr
+    assert "exceeds the 128-character OCI tag limit" in result.stderr
 
 
 def test_release_identity_rejects_semver_build_metadata(tmp_path: Path) -> None:
