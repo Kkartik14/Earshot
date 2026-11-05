@@ -198,13 +198,14 @@ If `npm publish` returns an error, the job checks the version already on npm bef
 whether the upload failed or only its success response was lost. It installs that exact
 public version in a temporary directory with lifecycle scripts and peer dependencies omitted,
 runs `npm audit signatures --json --include-attestations`, then verifies that the registry
-integrity matches the retained tarball and that both npm publish and SLSA attestations bind
-the package to this repository, workflow file, release tag, source commit, and workflow run.
-Only that exact result lets the same workflow run continue to GitHub Release. If the registry
-has not propagated the version or attestations yet, or any identity does not match, the job
-fails closed; rerun the failed jobs on the same workflow run after propagation. A version
-published by another run or with different bytes/provenance requires manual investigation;
-never publish a replacement under the same name and version.
+integrity matches the retained tarball, and that the npm publish attestation proves the
+registry accepted that package version and digest. It also verifies that SLSA provenance for
+the same digest names this repository, workflow file, release tag, source commit, and
+workflow run. Only that exact result lets the same workflow run continue to GitHub Release.
+If the registry has not propagated the version or attestations yet, or any identity does not
+match, the job fails closed; rerun the failed jobs on the same workflow run after
+propagation. A version published by another run or with different bytes/provenance requires
+manual investigation; never publish a replacement under the same name and version.
 
 Release tags use stable SemVer or one of `-alpha.N`, `-beta.N`, and `-rc.N` for
 pre-releases. The validator rejects other prerelease spellings because PEP 440 maps
