@@ -52,7 +52,8 @@ requires `ELEVENLABS_API_KEY`, `CARTESIA_API_KEY`, and `CARTESIA_VOICE_ID` from 
 settings; it resolves the WAV and timeline through the shared cache helper. The Cartesia
 request is made only when the matching cache entry is absent or invalid. Cache writes are
 not coordinated across processes; do not concurrently generate or force-rebuild the same
-digest path, or share an explicit output path between runs.
+digest path, or share an explicit output path between runs. A capture or scrub read that
+overlaps a rebuild can fail closed; rerun it after the rebuild finishes.
 
 OpenAI Realtime and finalized-delivery connectors currently have no retained real provider
 capture. Their absence is listed in the root manifest. Synthetic tests do not replace

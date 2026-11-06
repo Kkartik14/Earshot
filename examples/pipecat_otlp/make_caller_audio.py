@@ -256,8 +256,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Generate the scripted caller WAV.",
         epilog=(
-            "Cache writes are not coordinated across processes; do not rebuild the "
-            "same path concurrently."
+            "Cache writes are not coordinated across processes. Do not rebuild the "
+            "same path while another process reads it; an overlapping load can fail closed."
         ),
     )
     parser.add_argument("--force", action="store_true", help="re-synthesize even if cached")
