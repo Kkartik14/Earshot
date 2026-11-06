@@ -183,7 +183,7 @@ def test_checker_rejects_json_number_with_extreme_exponent_without_raising() -> 
     assert "invalid_json" in {issue.code for issue in report.issues}
 
 
-@pytest.mark.parametrize("tts_value", [217.0, "217.0", "2.17e2", "+217"])
+@pytest.mark.parametrize("tts_value", [217.0, "217.0", "2.17e2", "+217", "0217"])
 def test_checker_accepts_protojson_numeric_strings_and_integral_number_forms(tts_value) -> None:
     request = _reported_request()
     turn, _, stt, tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"]

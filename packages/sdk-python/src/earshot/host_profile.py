@@ -36,7 +36,7 @@ _ATTRIBUTES_BY_SPAN = {
     _TTS_CHARACTER_COUNT: frozenset({"tts"}),
 }
 _MAX_SAFE_JSON_INTEGER = 2**53 - 1
-_PROTOJSON_NUMERIC_RE = re.compile(r"[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+_PROTOJSON_NUMERIC_RE = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 
 
 @dataclass(frozen=True, slots=True)
