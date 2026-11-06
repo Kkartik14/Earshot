@@ -8,7 +8,7 @@
     "capture_driver": "scripts/capture_elevenlabs.py",
     "capture_driver_sha256": "cee93c8af1bd8322f081abf57000e6183adf0e14b7bf2653ce5fa0731d64063f",
     "scrubber": "scripts/scrub_provider_capture.py",
-    "scrubber_sha256": "437b00ae3a368c3cf73576b5b4822aa098abd07f87964febd00991f851529333",
+    "scrubber_sha256": "c28e47fa7df790772949a92e000b81c3950c7191c858a93e9211b541fe38d75d",
     "survey": "free GET /v1/convai/agents and /v1/convai/conversations: 0 agents, 0 conversations",
     "requests": {
       "conversation.json": "GET https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}",

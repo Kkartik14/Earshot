@@ -37,6 +37,7 @@ import sys
 import tempfile
 import wave
 from array import array
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -331,11 +332,8 @@ def _el_audio_onsets(audio: bytes) -> list[tuple[float, float]] | None:
             return _segments(samples, wav.getframerate())
 
 
-def build_elevenlabs() -> None:
+def build_elevenlabs(out: Path) -> tuple[int, int]:
     raw = RAW_ROOT / "elevenlabs" / "conversation-run"
-    out = FIXTURES / "elevenlabs"
-    if out.exists():
-        shutil.rmtree(out)
     out.mkdir(parents=True)
     names = Pseudonyms()
     raw_values = _el_identifiers(raw, names)
@@ -498,7 +496,7 @@ def build_elevenlabs() -> None:
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     _prettier([out / "manifest.json"])
     _guard(out, raw_values)
-    print(f"elevenlabs: {len(names.mapping)} replacements, {len(manifest['files'])} files")
+    return len(names.mapping), len(manifest["files"])
 
 
 # ------------------------------------------------------------------------------ Twilio
@@ -679,11 +677,8 @@ def _regenerate_twilio_audio(raw: Path, out: Path) -> dict[str, Any]:
     }
 
 
-def build_twilio() -> None:
+def build_twilio(out: Path) -> tuple[int, int]:
     raw = RAW_ROOT / "twilio" / "call-run"
-    out = FIXTURES / "twilio"
-    if out.exists():
-        shutil.rmtree(out)
     out.mkdir(parents=True)
     names = Pseudonyms()
     raw_values = _twilio_identifiers(raw, names)
@@ -826,7 +821,39 @@ def build_twilio() -> None:
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     _prettier([out / "manifest.json"])
     _guard(out, raw_values)
-    print(f"twilio: {len(names.mapping)} replacements, {len(files)} files")
+    return len(names.mapping), len(files)
+
+
+def _build_fixture_atomically(provider: str, build: Callable[[Path], tuple[int, int]]) -> None:
+    """Build and guard beside the destination, then replace it with rollback protection."""
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+    destination = FIXTURES / provider
+    with tempfile.TemporaryDirectory(prefix=f".{provider}-", dir=FIXTURES) as temporary:
+        temporary_path = Path(temporary)
+        staged = temporary_path / "fixture"
+        replacements, file_count = build(staged)
+
+        previous = FIXTURES / f"{temporary_path.name}.previous"
+        had_previous = destination.exists()
+        if had_previous:
+            os.replace(destination, previous)
+        try:
+            os.replace(staged, destination)
+        except OSError:
+            if had_previous and previous.exists() and not destination.exists():
+                try:
+                    os.replace(previous, destination)
+                except OSError as rollback_error:
+                    raise RuntimeError(
+                        f"could not install {provider} fixture; previous fixture is preserved at "
+                        f"{previous}"
+                    ) from rollback_error
+            elif previous.exists() and destination.exists():
+                shutil.rmtree(previous)
+            raise
+        if previous.exists():
+            shutil.rmtree(previous)
+    print(f"{provider}: {replacements} replacements, {file_count} files")
 
 
 def main() -> None:
@@ -842,9 +869,9 @@ def main() -> None:
         missing = [name for name in caller_keys if not os.environ.get(name)]
         if missing:
             os.environ.update(load_keys(args.env, missing))
-        build_elevenlabs()
+        _build_fixture_atomically(args.provider, build_elevenlabs)
     else:
-        build_twilio()
+        _build_fixture_atomically(args.provider, build_twilio)
 
 
 if __name__ == "__main__":

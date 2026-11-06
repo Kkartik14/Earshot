@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -175,6 +174,8 @@ def test_otel_variant_derives_each_end_from_the_next_start() -> None:
     root_start, root_end = int(root["startTimeUnixNano"]), int(root["endTimeUnixNano"])
     assert re.fullmatch(r"[0-9a-f]{32}", root["traceId"])
     assert re.fullmatch(r"[0-9a-f]{16}", root["spanId"])
+    assert re.fullmatch(r"0+[1-9a-f][0-9a-f]{0,3}", root["traceId"])
+    assert re.fullmatch(r"0+[1-9a-f][0-9a-f]{0,3}", root["spanId"])
     assert root_start == conversation["metadata"]["start_time_unix_secs"] * 10**9
     turns = [s for s in scope_spans["spans"] if s is not root]
     assert len(turns) == len(conversation["transcript"])
@@ -182,6 +183,7 @@ def test_otel_variant_derives_each_end_from_the_next_start() -> None:
         turn = conversation["transcript"][index]
         assert span["traceId"] == root["traceId"]
         assert re.fullmatch(r"[0-9a-f]{16}", span["spanId"])
+        assert re.fullmatch(r"0+[1-9a-f][0-9a-f]{0,3}", span["spanId"])
         assert span["parentSpanId"] == root["spanId"]
         event = "agent_response" if turn["role"] == "agent" else "user_transcript"
         assert span["name"] == f"elevenlabs.recv.{event}"
@@ -230,7 +232,6 @@ def test_fixture_bytes_break_no_leak_rule() -> None:
 def test_fixture_bytes_contain_no_env_secret() -> None:
     rules = _leak_rules()
     secrets = rules.env_secret_values(ENV_FILES)
-    secrets.update({k: v for k, v in os.environ.items() if k.endswith("_API_KEY") and len(v) >= 8})
     if not secrets:
         pytest.skip("no env file with provider secrets on this machine")
     prefixes = rules.sha256_prefixes(secrets)

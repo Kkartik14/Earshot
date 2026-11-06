@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import sys
 from pathlib import Path
 
@@ -28,11 +29,17 @@ def test_cli_env_file_is_scanned_by_the_leak_guard(monkeypatch, tmp_path) -> Non
         "CARTESIA_API_KEY=synthetic-cartesia-value-123456\n"
         "CARTESIA_VOICE_ID=synthetic-voice-value\n"
     )
-    output = tmp_path / "fixture"
-    output.mkdir()
-    (output / "payload.json").write_text("synthetic-secret-value-123456")
+    fixtures = tmp_path / "fixtures"
+    monkeypatch.setattr(module, "FIXTURES", fixtures)
     monkeypatch.setattr(module, "ENV_FILES", [])
-    monkeypatch.setattr(module, "build_elevenlabs", lambda: module._guard(output, set()))
+
+    def build(out: Path | None = None) -> None:
+        target = out or (fixtures / "elevenlabs")
+        target.mkdir(parents=True)
+        (target / "payload.json").write_text("synthetic-secret-value-123456")
+        module._guard(target, set())
+
+    monkeypatch.setattr(module, "build_elevenlabs", build)
     monkeypatch.setattr(
         sys, "argv", ["scrub_provider_capture.py", "elevenlabs", "--env", str(env_file)]
     )
@@ -42,4 +49,108 @@ def test_cli_env_file_is_scanned_by_the_leak_guard(monkeypatch, tmp_path) -> Non
     with pytest.raises(SystemExit, match="refusing to write"):
         module.main()
 
+    assert not (fixtures / "elevenlabs").exists()
+
+
+def test_guard_scans_distinct_values_for_duplicate_env_keys(tmp_path, monkeypatch) -> None:
+    module = load_scrubber_module()
+    default_env = tmp_path / "default.env"
+    selected_env = tmp_path / "selected.env"
+    default_env.write_text("CARTESIA_API_KEY=default-env-key-12345678\n")
+    selected_env.write_text("CARTESIA_API_KEY=selected-env-key-87654321\n")
+    output = tmp_path / "fixture"
+    output.mkdir()
+    (output / "payload.json").write_text("selected-env-key-87654321")
+    monkeypatch.setattr(module, "ENV_FILES", [default_env, selected_env])
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit, match="refusing to write"):
+        module._guard(output, set())
+
     assert not output.exists()
+
+
+def test_guard_scans_process_environment_credentials(tmp_path, monkeypatch) -> None:
+    module = load_scrubber_module()
+    output = tmp_path / "fixture"
+    output.mkdir()
+    secret = "process-env-key-123456789"
+    (output / "payload.json").write_text(secret)
+    monkeypatch.setattr(module, "ENV_FILES", [])
+    monkeypatch.setenv("CARTESIA_API_KEY", secret)
+
+    with pytest.raises(SystemExit, match="refusing to write"):
+        module._guard(output, set())
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("provider", ["elevenlabs", "twilio"])
+def test_failed_fixture_build_preserves_previous_output(monkeypatch, tmp_path, provider) -> None:
+    module = load_scrubber_module()
+    fixtures = tmp_path / "fixtures"
+    previous = fixtures / provider
+    previous.mkdir(parents=True)
+    (previous / "manifest.json").write_text("complete previous fixture")
+    monkeypatch.setattr(module, "FIXTURES", fixtures)
+    monkeypatch.setattr(module, "ENV_FILES", [])
+    monkeypatch.setattr(
+        sys, "argv", ["scrub_provider_capture.py", provider, "--env", str(tmp_path / "e")]
+    )
+
+    def fail_after_partial_output(out: Path | None = None) -> None:
+        target = out or previous
+        shutil.rmtree(target, ignore_errors=True)
+        target.mkdir(parents=True)
+        (target / "partial.json").write_text("partial output")
+        raise RuntimeError("simulated caller cache failure")
+
+    if provider == "elevenlabs":
+        monkeypatch.setenv("CARTESIA_API_KEY", "synthetic-cartesia-key-123456")
+        monkeypatch.setenv("CARTESIA_VOICE_ID", "synthetic-cartesia-voice-123456")
+        monkeypatch.setattr(module, "build_elevenlabs", fail_after_partial_output)
+    else:
+        monkeypatch.setattr(module, "build_twilio", fail_after_partial_output)
+
+    with pytest.raises(RuntimeError, match="simulated caller cache failure"):
+        module.main()
+
+    assert (previous / "manifest.json").read_text() == "complete previous fixture"
+    assert not (previous / "partial.json").exists()
+    assert list(fixtures.iterdir()) == [previous]
+
+
+def test_failed_fixture_install_restores_previous_output(monkeypatch, tmp_path) -> None:
+    module = load_scrubber_module()
+    fixtures = tmp_path / "fixtures"
+    previous = fixtures / "elevenlabs"
+    previous.mkdir(parents=True)
+    (previous / "manifest.json").write_text("complete previous fixture")
+    monkeypatch.setattr(module, "FIXTURES", fixtures)
+    monkeypatch.setattr(module, "ENV_FILES", [])
+    monkeypatch.setattr(
+        sys, "argv", ["scrub_provider_capture.py", "elevenlabs", "--env", str(tmp_path / "e")]
+    )
+    monkeypatch.setenv("CARTESIA_API_KEY", "synthetic-cartesia-key-123456")
+    monkeypatch.setenv("CARTESIA_VOICE_ID", "synthetic-cartesia-voice-123456")
+
+    def build(out: Path) -> tuple[int, int]:
+        out.mkdir(parents=True)
+        (out / "manifest.json").write_text("complete new fixture")
+        return 1, 1
+
+    real_replace = module.os.replace
+
+    def fail_install(source: str | Path, destination: str | Path) -> None:
+        if Path(source).name == "fixture" and Path(destination) == previous:
+            raise OSError("simulated install failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(module, "build_elevenlabs", build)
+    monkeypatch.setattr(module.os, "replace", fail_install)
+
+    with pytest.raises(OSError, match="simulated install failure"):
+        module.main()
+
+    assert (previous / "manifest.json").read_text() == "complete previous fixture"
+    assert list(fixtures.iterdir()) == [previous]

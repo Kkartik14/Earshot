@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -144,9 +145,22 @@ def secret_variants(value: str) -> set[str]:
 
 
 def env_secret_values(env_files: list[Path]) -> dict[str, str]:
-    """Secret-bearing values from the env files: keys, tokens, SIDs, numbers, voice IDs."""
+    """Distinct secret-bearing values from env files and the process environment."""
     secret_name = re.compile(r"(_API_KEY|_TOKEN|_SID|_NUMBER|_VOICE_ID|_SECRET|_URL)$")
     values: dict[str, str] = {}
+    seen: set[str] = set()
+
+    def add(name: str, value: str) -> None:
+        if len(value) < 8 or value in seen:
+            return
+        key = name
+        suffix = 2
+        while key in values:
+            key = f"{name}#{suffix}"
+            suffix += 1
+        values[key] = value
+        seen.add(value)
+
     for env_file in env_files:
         if not env_file.is_file():
             continue
@@ -154,9 +168,10 @@ def env_secret_values(env_files: list[Path]) -> dict[str, str]:
             match = _ENV_LINE.match(line)
             if not match or not secret_name.search(match.group(1)):
                 continue
-            raw = match.group(2).strip("'\"")
-            if len(raw) >= 8:
-                values.setdefault(match.group(1), raw)
+            add(match.group(1), match.group(2).strip("'\""))
+    for name, value in os.environ.items():
+        if secret_name.search(name):
+            add(f"process:{name}", value)
     return values
 
 
