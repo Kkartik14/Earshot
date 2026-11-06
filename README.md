@@ -7,12 +7,12 @@ OpenTelemetry traces and its call recordings to Earshot. Earshot groups them int
 and keeps each Call's timing, transcript and audio in one place, on your own machines. It
 runs on a laptop with SQLite and local disk, or on a team server with Postgres and S3.
 
-Status: pre-v1 alpha. 0.4.0 adds hosted JWT access to Calls, scoped project provisioning,
-and a standard span profile for hosts that instrument their own voice pipeline. Hosted
-OTLP and Recording writes, Call reads and purge use the `earshot:calls:*` scopes; prices
-and audio retrieval stay closed. The call view shows audio with a waveform, the transcript
-on the audio, per-turn latency beside the audible gap at the agent, and cost for Pipecat and
-LiveKit calls. Compatibility is limited to the versions documented for
+Status: pre-v1 alpha. 0.5.0 adds live-turn reads and host-profile transcripts and usage,
+plus scoped hosted reads for recordings. Hosted OTLP and Recording writes, Call and audio
+reads, and purge use the `earshot:calls:*` scopes; raw span details, prices and transcript
+uploads stay closed. The call view shows audio with a waveform, the transcript on the
+audio, per-turn latency beside the audible gap at the agent, and cost for Pipecat, LiveKit
+and host-profile calls. Compatibility is limited to the versions documented for
 each release; see the [alpha compatibility policy](docs/release.md#alpha-compatibility-policy).
 
 ## Quick start
@@ -105,7 +105,7 @@ is a complete, real Pipecat call.
 
 ## What Earshot receives today
 
-| Source                                    | Status in 0.4.0                                                                                                                                                                                            |
+| Source                                    | Status in 0.5.0                                                                                                                                                                                            |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Pipecat 1.6 over OTLP/HTTP                | Supported for `>=1.6.0,<1.7.0`: Calls with timing, transcript, recordings and the call view. Tested against a real Pipecat 1.6.0 call.                                                                     |
 | Any OTLP/HTTP producer                    | Spans are stored and grouped into Calls by session key. Revisions include Pipecat, LiveKit and `earshot.host` profile spans; other instrumentation is declared as omitted.                                 |
@@ -113,10 +113,10 @@ is a complete, real Pipecat call.
 | Earshot Python SDK                        | Supported: Pipecat 1.6 and LiveKit 1.6.5 to 1.8.x adapters, Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, portable Incident bundles, and `earshot.client` for recordings and calls.        |
 | Node (`earshot-observability`)            | A span processor that keys a call's spans, and a recordings and calls client.                                                                                                                              |
 | ElevenLabs, Ringg                         | Signed webhook connectors with synthetic conformance coverage.                                                                                                                                             |
-| Vapi, Retell                              | Experimental adapters with synthetic fixtures only; real signed deliveries are unverified and these adapters are not production-supported.                                                                 |
+| Vapi, Retell                              | Unsupported in 0.5.0; only synthetic fixtures exist, and real signed deliveries are unverified.                                                                                                            |
 | Browser capture workspace (`/v1/capture`) | Not published on npm; validated on one browser only. The viewer does not render browser-captured sessions yet.                                                                                             |
 
-gRPC is not in 0.4.0. Each closed
+gRPC is not in 0.5.0. Each closed
 Call's Revision is an ordinary Incident, so the bundled viewer and the analysis APIs can
 open it.
 
@@ -129,7 +129,7 @@ stores them.
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `full`          | Timing, transcripts, model and tool payloads, the session key, and recordings. The default for every Project in a new install.                                                                                        |
 | `metadata_only` | Timing and structure only. Known content, identity and session-key attributes are removed before storage; producer-owned opaque IDs must be pseudonymous. Recordings are refused. Upgraded 0.1.x Projects start here. |
-| `redacted`      | Not available in 0.4.0.                                                                                                                                                                                               |
+| `redacted`      | Not available in 0.5.0.                                                                                                                                                                                               |
 
 ```bash
 earshot project set-capture --project default --preset metadata_only
@@ -182,9 +182,9 @@ beyond localhost, drop that line, set `EARSHOT_TOKEN` or issue API keys, set
 - **A viewer** served by `earshot serve`; host integrations use the unpublished
   `@earshot/viewer-ui` workspace source.
 - **Hosted mode** with short-lived, project-scoped JWTs (`EARSHOT_AUTH_MODE=hosted_jwt`).
-  In 0.4.0, OTLP spans and Recording uploads use `earshot:calls:write`; Call reads and
-  purge use `earshot:calls:read` and `earshot:calls:delete`. Audio retrieval, price routes,
-  transcript uploads, raw span attributes and receiver counters stay closed.
+  OTLP spans and Recording uploads use `earshot:calls:write`; Call and project-scoped
+  recording reads use `earshot:calls:read`; purge uses `earshot:calls:delete`. Price
+  routes, transcript uploads, raw span attributes and receiver counters stay closed.
 
 The Python distribution is `earshot-observability`; the import package and the CLI are
 `earshot`. The PyPI project named `earshot` is an unrelated VAD package. The base install
@@ -214,7 +214,7 @@ See [development](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 - [Production notes](docs/production.md): topology, Collector, readiness, backups.
 - [Server configuration](docs/configuration.md): every variable.
 - [The call view](docs/calls.md): the call view, cost, prices, filters and search.
-- [0.4.0 release notes](docs/release-notes-0.4.0.md): what's new and compatibility details.
+- [0.5.0 release notes](docs/release-notes-0.5.0.md): what's new and compatibility details.
 - [All documentation](docs/README.md) and the [changelog](CHANGELOG.md).
 
 ## Non-goals

@@ -6,33 +6,39 @@ are described in their [GitHub release notes](https://github.com/Kkartik14/Earsh
 
 ## 0.5.0 (2026-11-13)
 
+See the [0.5.0 release notes](docs/release-notes-0.5.0.md) for compatibility details.
+
 ### Breaking
 
 - Under `metadata_only`, Earshot now drops `lk.cloud_agent_id`, `lk.job.agent_id` and
   `gen_ai.agent.id`; spans stored before 0.5.0 still contain those attributes.
+- Pipecat 1.5 support is removed; the adapter supports Pipecat 1.6.
 
 ### Added
 
 - **Live Call turns.** `GET /v1/calls/{call_id}/live-turns` exposes provisional turns while
   a Call is open. The viewer refreshes live turns until the durable projection is current
   and aligned with the live timeline.
+- **Host profile 0.2.0.** Adds optional speech transcripts and provider-metered usage, with
+  an offline conformance checker.
+- **Project-scoped hosted Recording reads.** `earshot:calls:read` can read audio, peaks and
+  generated renditions.
 
 ### Changed
 
+- **API 0.17.0 and Call projection 10.** Stored projections are recomputed by the server.
 - **Platform Observe summary route deprecated.** Migrate to the host-neutral project
-  summary. The deprecated route links to its successor and migration guide; the 0.6.0
-  removal date is not set, so it has no `Sunset` header.
+  summary. Responses link to the successor and version-pinned migration guide; 0.6.0 has
+  no dated `Sunset` header yet.
 - **Host outcome evidence.** The host profile does not read interruption or cancellation
   events in 0.5.0, and does not carry cancellation reasons. The Call outcome is `error` if
   any span has OTel status `ERROR`; otherwise an ended cancelled Call appears `completed`.
 - **Host profile quantities.** Host-reported latency and per-request STT metering accept
   positive OTLP `doubleValue` or `intValue`; STT seconds are rounded to milliseconds per
   request before durable repricing. Older latency summaries read as `null` until rebuilt.
-- **Hosted Recording reads.** `earshot:calls:read` can stream project-scoped Recording
-  audio, peaks and generated renditions. Tokens minted for 0.4.0 gain this access; a
-  `metadata_only` preset does not retroactively remove previously stored audio.
-
-- Pipecat support starts at 1.6.0. Earshot's LiveKit range is
+- **Hosted Recording access.** Tokens minted for 0.4.0 gain `calls:read` access to audio,
+  peaks and renditions. `metadata_only` does not remove existing Recordings retroactively.
+- Cartesia `sonic-3.6` has a built-in price. The LiveKit support range is
   `livekit-agents>=1.6.5,<1.9`.
 
 ## 0.4.0 (2026-11-13)

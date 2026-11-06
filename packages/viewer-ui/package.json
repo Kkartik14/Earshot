@@ -1,6 +1,6 @@
 {
   "name": "@earshot/viewer-ui",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Earshot's React views for voice-agent calls and incidents, with a typed client for the Earshot API.",
   "keywords": [
