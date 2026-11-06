@@ -115,7 +115,9 @@ def _host_attributes(
             )
             continue
         known_values = [
-            (kind, scalar) for kind, scalar in value.items() if kind in _OTLP_ANY_VALUE_FIELDS
+            (kind, scalar)
+            for kind, scalar in value.items()
+            if kind in _OTLP_ANY_VALUE_FIELDS and scalar is not None
         ]
         if not known_values:
             _issue(

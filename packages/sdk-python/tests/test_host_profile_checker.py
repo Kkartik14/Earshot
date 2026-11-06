@@ -91,6 +91,27 @@ def test_checker_rejects_multiple_anyvalue_oneof_fields(value) -> None:
     assert "invalid_any_value" in {issue.code for issue in report.issues}
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"doubleValue": None, "stringValue": "valid transcript"},
+        {"stringValue": "valid transcript", "doubleValue": None},
+    ],
+)
+def test_checker_ignores_null_anyvalue_oneof_members(value) -> None:
+    request = _reported_request()
+    transcript = _attribute(
+        request["resourceSpans"][0]["scopeSpans"][0]["spans"][1],
+        "earshot.transcript.text",
+    )
+    transcript["value"] = value
+
+    report = check_host_profile(json.dumps(request))
+
+    assert report.valid
+    assert report.host_profile_versions == ("0.2.0",)
+
+
 def test_checker_uses_last_value_for_duplicate_anyvalue_field_name() -> None:
     payload = (
         '{"resourceSpans":[{"scopeSpans":[{"scope":{"name":"earshot.host",'
