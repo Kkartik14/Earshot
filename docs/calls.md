@@ -517,11 +517,11 @@ new row reprices the affected calls in the background.
 In `hosted_jwt` mode a host reaches the Calls with three scopes of their own, which the
 generic incident scopes never grant:
 
-| Scope                  | Operations                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`                                           |
-| `earshot:calls:read`   | Call list/detail, live turns, resolve, dashboard and the project-scoped Recording reads below.                                  |
-| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                                                                    |
+| Scope                  | Operations                                                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`          |
+| `earshot:calls:read`   | Call list/detail, live turns, resolve, dashboard and the project-scoped Recording reads below. |
+| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                                   |
 
 Every other Call surface stays closed in hosted mode and answers 403
 `EARSHOT_OPERATION_UNAVAILABLE` for every method: a span's raw attributes

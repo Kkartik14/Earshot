@@ -110,13 +110,13 @@ container image that includes it) if recordings should be analysed. The
 
 Use a server-side token with `earshot:calls:read` for:
 
-| Operation                                       | Route                     |
-| ----------------------------------------------- | ------------------------- |
-| List calls and filter summaries                 | `GET /v1/calls`           |
-| Read one Call and its current view              | `GET /v1/calls/{call_id}` |
-| Read live turns                                  | `GET /v1/calls/{call_id}/live-turns` |
-| Resolve a host Session Key to Earshot's Call ID | `POST /v1/calls:resolve`  |
-| Read the dashboard summary                      | `GET /v1/dashboard`       |
+| Operation                                       | Route                                                                                   |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------- |
+| List calls and filter summaries                 | `GET /v1/calls`                                                                         |
+| Read one Call and its current view              | `GET /v1/calls/{call_id}`                                                               |
+| Read live turns                                 | `GET /v1/calls/{call_id}/live-turns`                                                    |
+| Resolve a host Session Key to Earshot's Call ID | `POST /v1/calls:resolve`                                                                |
+| Read the dashboard summary                      | `GET /v1/dashboard`                                                                     |
 | Read a Recording and its peaks or rendition     | `GET /v1/recordings/{recording_id}/content`, `/peaks`, `/rendition`, `/rendition/peaks` |
 
 The host can use the returned call data to render its own UI. A Call's projection is
