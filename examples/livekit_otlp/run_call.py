@@ -1,6 +1,6 @@
 """Run one real LiveKit Agents 1.8 voice call headless and export its traces over OTLP/HTTP.
 
-    export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # Earshot, or any OTLP receiver
+    export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4319   # Earshot, or any OTLP receiver
     python examples/livekit_otlp/run_call.py --out .earshot/livekit_otlp/run
 
 No LiveKit server and no WebRTC. ``AgentServer.simulate_job(fake_job=True)`` runs the

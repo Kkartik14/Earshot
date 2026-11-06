@@ -13,6 +13,7 @@ import os
 import tempfile
 import urllib.request
 import wave
+from itertools import pairwise
 from pathlib import Path
 
 CALLER_SCRIPT = (
@@ -118,8 +119,16 @@ def _valid_cached_wav(path: Path, metadata_path: Path, digest: str) -> bool:
             ):
                 return False
         wav_duration = frames / SAMPLE_RATE
+        timeline_in_bounds = all(
+            line["start_s"] + line["duration_s"] <= wav_duration + tolerance for line in lines
+        )
+        timeline_ordered = all(
+            left["start_s"] <= right["start_s"] for left, right in pairwise(lines)
+        )
         return (
             math.isclose(metadata["duration_s"], wav_duration, rel_tol=0, abs_tol=tolerance)
+            and timeline_in_bounds
+            and timeline_ordered
             and hashlib.sha256(path.read_bytes()).hexdigest() == metadata["wav_sha256"]
         )
     except (EOFError, OSError, UnicodeError, ValueError, wave.Error):
@@ -214,11 +223,31 @@ def load_caller_wav_and_metadata(
     wav_path = _cache_output_path(path, digest)
     metadata_path = caller_wav_metadata_path(wav_path)
     _ensure_caller_wav(wav_path, metadata_path, digest, force)
-    return wav_path.read_bytes(), json.loads(metadata_path.read_text())
+    try:
+        audio = wav_path.read_bytes()
+        metadata = json.loads(metadata_path.read_text())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise RuntimeError(
+            "caller WAV cache changed while it was being read; rerun the operation"
+        ) from exc
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("cache_sha256") != digest
+        or not isinstance(metadata.get("wav_sha256"), str)
+        or hashlib.sha256(audio).hexdigest() != metadata["wav_sha256"]
+    ):
+        raise RuntimeError("caller WAV cache changed while it was being read; rerun the operation")
+    return audio, metadata
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate the scripted caller WAV.")
+    parser = argparse.ArgumentParser(
+        description="Generate the scripted caller WAV.",
+        epilog=(
+            "Cache writes are not coordinated across processes; do not rebuild the "
+            "same path concurrently."
+        ),
+    )
     parser.add_argument("--force", action="store_true", help="re-synthesize even if cached")
     parser.add_argument("--out", type=Path, help="WAV output path")
     args = parser.parse_args()

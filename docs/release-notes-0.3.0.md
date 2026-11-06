@@ -1,16 +1,16 @@
 # Earshot 0.3.0 release notes
 
 > **Correction (2026-11-07):** The real Pipecat call recorded for this release used
-> Pipecat 1.6.0, not 1.5. The previously stated 47–81 ms latency-accuracy range was not
-> retained with reproducible measurements and is withdrawn; this release makes no such
-> accuracy-range claim.
+> Pipecat 1.6.0, not 1.5. The earlier 47–81 ms range was not retained with reproducible
+> measurements and is withdrawn. The done-when test's 100 ms bound is the analysis's
+> uncertainty estimate, not measured accuracy against labeled audio.
 
 0.3.0 turns each closed Call into a **call view**: its audio with a waveform, the
 transcript on the audio's time axis (click a line to seek), per-turn latency as the
 framework reports it beside the **audible gap at the agent** measured from the
 recording, signals across the call, and its cost. The calls list filters on all of it
 and searches transcript text. LiveKit Agents 1.6 to 1.8 now get the same view as Pipecat
-1.5. The [CHANGELOG](../CHANGELOG.md) lists every change.
+1.6. The [CHANGELOG](../CHANGELOG.md) lists every change.
 
 ## What's new
 
@@ -58,13 +58,13 @@ only installs from source):
 
 Verified for this release, on real calls and real audio:
 
-- **One real Pipecat 1.5 call and one real LiveKit Agents 1.8 call** (Deepgram, Groq,
+- **One real Pipecat 1.6.0 call and one real LiveKit Agents 1.8.10 call** (Deepgram, Groq,
   Cartesia), each into `earshot serve` on Postgres and S3, each reach a call view with
   every Recording analysed, at least one turn's audible gap measured, every measured gap
-  between 0 and 15 s with a ± of at most 100 ms (the release's accuracy target), every
+  between 0 and 15 s with analysis uncertainty at most 100 ms, every
   other turn not measurable with its reason, a cost lower bound with an item from each
-  provider, and the transcript placed on the recording. In the release run the measured
-  ± values were 47 to 81 ms.
+  provider, and the transcript placed on the recording. No numerical accuracy range is
+  claimed; the real calls used synthesized caller speech and were not compared with labels.
 - **Both captured calls replayed without providers** give exactly the pinned values in
   CI: every gap and ± to the millisecond, every transcript line on its speaker's speech,
   and the exact cost items.
