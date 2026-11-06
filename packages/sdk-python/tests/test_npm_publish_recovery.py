@@ -159,6 +159,24 @@ def test_npm_retry_accepts_same_artifact_from_an_earlier_attempt_of_this_run(
     assert "same workflow run" in result.stdout
 
 
+def test_npm_retry_accepts_provenance_from_the_current_attempt_after_publish_error(
+    tmp_path: Path,
+) -> None:
+    artifact = b"the immutable npm tarball"
+    repo_url = f"https://github.com/{REPOSITORY}"
+    report = _report(
+        _payload(
+            artifact,
+            invocation_id=f"{repo_url}/actions/runs/{RUN_ID}/attempts/2",
+        )
+    )
+
+    result = _run_verifier(tmp_path, artifact, report)
+
+    assert result.returncode == 0
+    assert "same workflow run" in result.stdout
+
+
 def test_npm_retry_rejects_a_different_tarball(tmp_path: Path) -> None:
     artifact = b"the immutable npm tarball"
     report = _report(_payload(artifact))
@@ -213,6 +231,36 @@ def test_npm_retry_rejects_keyless_slsa_bundle_labelled_as_publish(tmp_path: Pat
 
     assert result.returncode == 2
     assert "npm registry key" in result.stderr
+
+
+def test_npm_retry_rejects_publish_attestation_for_another_registry(tmp_path: Path) -> None:
+    artifact = b"the immutable npm tarball"
+    report = _report(_payload(artifact))
+    publish_bundle = report["verified"][0]["attestationBundles"][1]["bundle"]
+    envelope = publish_bundle["dsseEnvelope"]
+    publish_payload = json.loads(base64.b64decode(envelope["payload"]))
+    publish_payload["predicate"]["registry"] = "https://registry.example"
+    envelope["payload"] = base64.b64encode(json.dumps(publish_payload).encode()).decode()
+
+    result = _run_verifier(tmp_path, artifact, report)
+
+    assert result.returncode == 2
+    assert "identity is unexpected" in result.stderr
+
+
+def test_npm_retry_rejects_a_mismatched_slsa_digest(tmp_path: Path) -> None:
+    artifact = b"the immutable npm tarball"
+    report = _report(_payload(artifact))
+    slsa_bundle = report["verified"][0]["attestationBundles"][0]["bundle"]
+    envelope = slsa_bundle["dsseEnvelope"]
+    slsa_payload = json.loads(base64.b64decode(envelope["payload"]))
+    slsa_payload["subject"][0]["digest"]["sha512"] = "0" * 128
+    envelope["payload"] = base64.b64encode(json.dumps(slsa_payload).encode()).decode()
+
+    result = _run_verifier(tmp_path, artifact, report)
+
+    assert result.returncode == 2
+    assert "SLSA provenance integrity" in result.stderr
 
 
 def test_npm_retry_rejects_non_publish_statement_labelled_as_publish(tmp_path: Path) -> None:

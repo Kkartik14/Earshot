@@ -159,7 +159,7 @@ only when all of these identities agree:
   preserve;
 - the tagged commit is contained in the repository's default branch;
 - the Python distribution is `earshot-observability`;
-- the npm package is `earshot-observability` and has the tag's version; and
+- the npm package is `earshot-observability` and has the tag's version;
 - the Node package's `repository.url` matches the current GitHub owner and repository;
 - pre-release versions use the canonical SemVer forms `-alpha.N`, `-beta.N`, or `-rc.N`;
 - the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
@@ -220,6 +220,10 @@ match, the job fails closed; rerun the failed jobs on the same workflow run afte
 propagation. A version published by another run or with different bytes/provenance requires
 manual investigation; never publish a replacement under the same name and version.
 
+Before publishing a stable npm version, the workflow reads the current `latest` dist-tag.
+It refuses to publish if that tag names a newer version, and fails closed if the registry
+lookup fails. Pre-releases use `next` and do not change `latest`.
+
 Release tags use stable SemVer or one of `-alpha.N`, `-beta.N`, and `-rc.N` for
 pre-releases. The validator rejects other prerelease spellings because PEP 440 maps
 aliases such as `-a.1` and `-alpha1` to the same PyPI version, while npm would treat them
@@ -253,15 +257,20 @@ Node package's `repository`, `homepage`, and `bugs` metadata before the next rel
 [`release-checklist.md`](./release-checklist.md) is the owner's step-by-step list: the
 one-time npm and GitHub environment setup, the release versions to set, the
 generated `uv.lock` entry, the `CHANGELOG.md` entry, and the checks after publishing.
-Prepare a release on `main`, update every intentionally coupled version, and let CI pass,
-including the `coverage` job. Then create and push the matching tag:
+The 0.4.0 release identity remains unchanged from #46 through #71, so
+`check_release.py --tag v0.4.0` must pass at every head in that range. `main` moves past
+0.4.0 as later changes merge; create its tag at the planned #57 merge commit, not at the
+current `main` head. After CI and the `coverage` job pass, set the target to the exact
+merge-commit SHA and verify it from a detached worktree at that commit:
 
 ```bash
-git switch main
-git pull --ff-only
-python scripts/check_release.py --tag v0.4.0 --repository Kkartik14/Earshot
-git tag -a v0.4.0 -m "Earshot 0.4.0"
-git push origin v0.4.0
+tag=v0.4.0
+target_sha="<the exact #57 merge-commit SHA>"
+git worktree add --detach ../earshot-release "$target_sha"
+cd ../earshot-release
+python scripts/check_release.py --tag "$tag" --repository Kkartik14/Earshot
+git tag -a "$tag" "$target_sha" -m "Earshot ${tag#v}"
+git push origin "$tag"
 ```
 
 The first GHCR package may require one visibility check in the package settings. It must

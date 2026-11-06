@@ -93,6 +93,14 @@ jobs:
           .venv/bin/python -m pip install -e '.[dev,server]'
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build, pack, and dry-run publish the Node SDK
+        run: |
+          pnpm --filter earshot-observability build
+          mkdir -p "$RUNNER_TEMP/node-sdk-pack"
+          npm pack --json --pack-destination "$RUNNER_TEMP/node-sdk-pack" \
+            > "$RUNNER_TEMP/node-sdk-pack.json"
+          npm publish --dry-run --access public
+        working-directory: packages/node
       - name: Check generated viewer and Node API types
         run: |
           pnpm --filter @earshot/viewer-ui gen:api
@@ -290,6 +298,8 @@ jobs:
           apps/ingest/tests/test_storage_postgres.py
           apps/ingest/tests/test_postgres_server.py
           packages/sdk-python/tests/test_server_metrics.py
+          apps/ingest/tests/test_hosted_jwt.py
+          apps/ingest/tests/test_hosted_calls.py
       - name: Check the remote blob readiness probe timeout
         if: github.event_name != 'workflow_dispatch'
         run: >-

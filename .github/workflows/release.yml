@@ -133,49 +133,44 @@ jobs:
             printf 'expected only %s; found: %s\n' "$expected" "${tarballs[*]}" >&2
             exit 1
           fi
-          if [[ ! -f "$expected" ]]; then
-            echo "missing expected npm tarball: $expected" >&2
+          unexpected="$(tar -tzf "$expected" \
+            | grep -Ev '^package/((dist/.*)?|README\.md|LICENSE|package\.json)$' || true)"
+          if [[ -n "$unexpected" ]]; then
+            printf '%s ships unexpected files:\n%s\n' "$expected" "$unexpected" >&2
             exit 1
           fi
-          for tarball in "${tarballs[@]}"; do
-          unexpected="$(tar -tzf "$tarball" \
-              | grep -Ev '^package/((dist/.*)?|README\.md|LICENSE|package\.json)$' || true)"
-            if [[ -n "$unexpected" ]]; then
-              printf '%s ships unexpected files:\n%s\n' "$tarball" "$unexpected" >&2
-              exit 1
-            fi
-            unpacked="$(mktemp -d)"
-            tar -xzf "$tarball" -C "$unpacked"
-            # shellcheck disable=SC2016 # a JavaScript program, not shell
-            node --input-type=module -e '
-              import { existsSync, readFileSync } from "node:fs";
-              import { join } from "node:path";
-              const root = process.argv[1];
-              const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-              if (manifest.name !== process.env.RELEASE_PACKAGE ||
-                  manifest.version !== process.env.RELEASE_VERSION) {
-                console.error("unexpected package identity", manifest.name, manifest.version);
-                process.exit(1);
-              }
-              const targets = [];
-              const collect = (value) =>
-                typeof value === "string"
-                  ? targets.push(value)
-                  : Object.values(value ?? {}).forEach(collect);
-              collect([manifest.main, manifest.types, manifest.exports]);
-              const missing = targets.filter((target) => !existsSync(join(root, target)));
-              const ranges = JSON.stringify([
-                manifest.dependencies,
-                manifest.peerDependencies,
-                manifest.optionalDependencies,
-              ]);
-              if (missing.length > 0 || ranges.includes("workspace:")) {
-                console.error(manifest.name, { missing, workspaceRanges: ranges.includes("workspace:") });
-                process.exit(1);
-              }
-              console.log(`${manifest.name}@${manifest.version}: ${targets.length} entry points present`);
-            ' "$unpacked/package"
-          done
+          unpacked="$(mktemp -d)"
+          tar -xzf "$expected" -C "$unpacked"
+          # shellcheck disable=SC2016 # a JavaScript program, not shell
+          node --input-type=module -e '
+            import { existsSync, readFileSync } from "node:fs";
+            import { join } from "node:path";
+            const root = process.argv[1];
+            const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+            if (manifest.name !== process.env.RELEASE_PACKAGE ||
+                manifest.version !== process.env.RELEASE_VERSION) {
+              console.error("unexpected package identity", manifest.name, manifest.version);
+              process.exit(1);
+            }
+            const targets = [];
+            const collect = (value) =>
+              typeof value === "string"
+                ? targets.push(value)
+                : Object.values(value ?? {}).forEach(collect);
+            collect([manifest.main, manifest.types, manifest.exports]);
+            const missing = targets.filter((target) => !existsSync(join(root, target)));
+            const ranges = JSON.stringify([
+              manifest.dependencies,
+              manifest.peerDependencies,
+              manifest.optionalDependencies,
+            ]);
+            if (missing.length > 0 || ranges.includes("workspace:")) {
+              console.error(manifest.name, { missing, workspaceRanges: ranges.includes("workspace:") });
+              process.exit(1);
+            }
+            console.log(`${manifest.name}@${manifest.version}: ${targets.length} entry points present`);
+          ' "$unpacked/package"
+          rm -rf "$unpacked"
       - name: Dry-run the publish command
         # The explicit file path is also used by publish-npm, which runs only on a tag.
         env:
@@ -295,10 +290,8 @@ jobs:
       name: pypi
       url: https://pypi.org/p/earshot-observability
     permissions:
-      contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Download the inspected distributions
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
@@ -373,10 +366,10 @@ jobs:
               process.exit(1);
             }
           ' "$manifest" "$RELEASE_PACKAGE" "$RELEASE_VERSION"
-          dist_tag=latest
-          if [[ "$PRERELEASE" == "true" ]]; then
-            dist_tag=next
-          fi
+          dist_tag="$(python "$GITHUB_WORKSPACE/scripts/npm_publish_tag.py" \
+            --package "$RELEASE_PACKAGE" \
+            --version "$RELEASE_VERSION" \
+            --prerelease "$PRERELEASE")"
           if npm publish "$expected" --provenance --access public --tag "$dist_tag"; then
             exit 0
           fi

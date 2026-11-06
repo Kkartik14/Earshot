@@ -267,3 +267,41 @@ def test_created_alias_must_resolve_to_the_requested_digest(
         promote_ghcr_tags.promote_tags(IMAGE, "0.4.0", OLD_DIGEST, [version, alias])
 
     assert registry.created == [(alias, OTHER_DIGEST)]
+
+
+def test_existing_version_tag_with_another_digest_is_rejected_without_creating_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    version = f"{IMAGE}:0.4.0"
+    release = _info("0.4.0", "a" * 40, OLD_DIGEST)
+    conflict = _info("0.4.0", "b" * 40, OTHER_DIGEST)
+    registry = RegistryState(
+        tags={version: conflict},
+        by_digest={OLD_DIGEST: release},
+    )
+    _patch_registry(monkeypatch, registry)
+
+    with pytest.raises(RuntimeError, match=r"immutable version tag .* does not resolve"):
+        promote_ghcr_tags.promote_tags(IMAGE, "0.4.0", OLD_DIGEST, [version])
+
+    assert registry.created == []
+    assert registry.tags[version].digest == OTHER_DIGEST
+
+
+def test_existing_version_tag_with_another_revision_never_reports_exists_true(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    reference = f"{IMAGE}:0.4.0"
+    monkeypatch.setattr(
+        ghcr_image,
+        "inspect_image",
+        lambda requested: _info("0.4.0", "b" * 40, OLD_DIGEST) if requested == reference else None,
+    )
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("RELEASE_IMAGE", IMAGE)
+    monkeypatch.setenv("RELEASE_VERSION", "0.4.0")
+    monkeypatch.setenv("RELEASE_SHA", "a" * 40)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+
+    assert ghcr_image.main() == 1
+    assert not output.exists() or "exists=true" not in output.read_text(encoding="utf-8")

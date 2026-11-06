@@ -15,16 +15,17 @@ One tag publishes four things:
 
 ## Once, before the first release
 
-- **PyPI:** create the pending trusted publisher described in `release.md`.
+- **GitHub environments:** protect `npm` and `pypi` with a required reviewer and allow only
+  `v*` tags to deploy. Set the `npm` environment URL to
+  `https://www.npmjs.com/package/earshot-observability` before adding the npm Trusted
+  Publisher.
 - **npm:** configure Trusted Publishing for `earshot-observability` with owner
   `Kkartik14`, repository `Earshot`, workflow `release.yml` and environment `npm`. Enable
   direct publishing for the publisher. Use two-factor authentication and do not create a
   publishing token for GitHub Actions. Complete the first trusted publish within two days
   of configuring the publisher; then enable npm's “Require two-factor authentication and
   disallow tokens” package setting.
-- **GitHub environments:** give `pypi` and `npm` a required reviewer, and allow only
-  `v*` tags to deploy to them. Set the `npm` environment URL to
-  `https://www.npmjs.com/package/earshot-observability`.
+- **PyPI:** create the pending trusted publisher described in `release.md`.
 - **Release tags:** create two active GitHub tag rulesets targeting `v*`. In one, restrict
   tag creation and allow only the release maintainer to create tags. In the other, restrict
   tag updates and deletions with no bypass actors. Do not combine these rules: a creation
@@ -61,8 +62,9 @@ One tag publishes four things:
 4. Optional dry run: dispatch the `release` workflow on a branch such as `main`. It builds
    and inspects the wheel, sdist and Node npm tarball, and publishes nothing. Dispatching
    on a tag runs the publishing jobs, so never use a tag dispatch as a dry run.
-5. Tag and push, as in `release.md`. Approve the `pypi` and `npm` deployments when
-   asked. A version containing `-` is published to npm under the `next` dist-tag.
+5. Tag and push, as in `release.md`. Approve the `npm` deployment first; after npm
+   publication succeeds, approve `pypi`. A version containing `-` is published to npm
+   under the `next` dist-tag.
    Set the shell variable `version` to the exact value from step 1. Before creating the
    tag, confirm the GitHub tag rulesets and both registry version preflights:
 
@@ -78,6 +80,10 @@ One tag publishes four things:
 
 ```bash
 version=0.4.0   # replace with the released version
+npm deprecate earshot-observability@0.0.1 \
+  "Placeholder version; use earshot-observability@0.4.0 or later."
+npm deprecate earshot-observability@0.0.0-stage \
+  "Placeholder version; use earshot-observability@0.4.0 or later."
 npm view "earshot-observability@$version" dist.attestations --json
 gh attestation verify "oci://ghcr.io/kkartik14/earshot:$version" --repo Kkartik14/Earshot
 docker run --rm -p 127.0.0.1:4319:4319 -e EARSHOT_HOST=0.0.0.0 \

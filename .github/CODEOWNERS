@@ -1,3 +1,10 @@
 # CI gates must be reviewed by the repository owner before they can change.
 /.github/workflows/ @Kkartik14
 /.github/CODEOWNERS @Kkartik14
+/scripts/verify_npm_publish.py @Kkartik14
+/scripts/ghcr_image.py @Kkartik14
+/scripts/promote_ghcr_tags.py @Kkartik14
+/scripts/check_release.py @Kkartik14
+/scripts/npm_publish_tag.py @Kkartik14
+/Dockerfile @Kkartik14
+/packages/node/package.json @Kkartik14
