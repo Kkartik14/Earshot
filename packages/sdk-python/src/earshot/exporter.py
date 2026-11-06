@@ -1267,8 +1267,9 @@ class DurableExporter:
         self._wake.set()
         while True:
             with self._lock:
+                spool_files_empty = not self._spool_files()
                 in_flight = bool(self._in_flight_files)
-            if not self._spool_files() and not in_flight:
+            if spool_files_empty and not in_flight:
                 return True
             if deadline is not None and time.monotonic() >= deadline:
                 return False

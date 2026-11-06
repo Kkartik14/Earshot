@@ -10,6 +10,8 @@ See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility det
 
 ### Changed
 
+- **Durable exporter flush waits for delivery accounting.** A successful `flush()` does not
+  return while a replayed record is still in flight, even if its spool file was removed.
 - **`/readyz` reports components and degraded service.** `components` is now required, and
   `status` can be `degraded`. When the blob store is unavailable, the endpoint answers 200
   with `degraded` instead of the 0.3.0 503 response. An application mounted without its
