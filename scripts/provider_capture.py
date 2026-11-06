@@ -35,14 +35,32 @@ def load_keys(env_file: Path, names: list[str]) -> dict[str, str]:
         match = _ENV_LINE.match(line)
         if not match or match.group(1) not in names:
             continue
-        raw = match.group(2)
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
-            raw = raw[1:-1]
+        raw = _parse_env_value(match.group(2))
         values[match.group(1)] = raw
     missing = [name for name in names if not values.get(name)]
     if missing:
         raise SystemExit(f"missing env keys: {', '.join(missing)}")
     return values
+
+
+def _parse_env_value(raw: str) -> str:
+    """Strip dotenv-style comments outside quotes and remove a matching quote pair."""
+    value = raw.strip()
+    if not value:
+        return value
+    if value[0] in "'\"":
+        quote = value[0]
+        escaped = False
+        for index in range(1, len(value)):
+            character = value[index]
+            if character == quote and not escaped:
+                suffix = value[index + 1 :].lstrip()
+                if not suffix or suffix.startswith("#"):
+                    return value[1:index]
+                break
+            escaped = quote == '"' and character == "\\" and not escaped
+        return value
+    return re.sub(r"\s+#.*$", "", value).strip()
 
 
 _REDACT = (
@@ -168,7 +186,7 @@ def env_secret_values(env_files: list[Path]) -> dict[str, str]:
             match = _ENV_LINE.match(line)
             if not match or not secret_name.search(match.group(1)):
                 continue
-            add(match.group(1), match.group(2).strip("'\""))
+            add(match.group(1), _parse_env_value(match.group(2)))
     for name, value in os.environ.items():
         if secret_name.search(name):
             add(f"process:{name}", value)

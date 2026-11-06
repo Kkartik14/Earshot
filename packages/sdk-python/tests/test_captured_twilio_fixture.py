@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import re
 import struct
 from array import array
@@ -181,7 +180,6 @@ def test_fixture_bytes_break_no_leak_rule() -> None:
 def test_fixture_bytes_contain_no_env_secret() -> None:
     rules = _leak_rules()
     secrets = rules.env_secret_values(ENV_FILES)
-    secrets.update({k: v for k, v in os.environ.items() if k.startswith("TWILIO_") and len(v) >= 8})
     if not secrets:
         pytest.skip("no env file with provider secrets on this machine")
     prefixes = rules.sha256_prefixes(secrets)

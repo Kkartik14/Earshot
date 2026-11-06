@@ -72,17 +72,56 @@ def test_guard_scans_distinct_values_for_duplicate_env_keys(tmp_path, monkeypatc
 
 def test_guard_scans_process_environment_credentials(tmp_path, monkeypatch) -> None:
     module = load_scrubber_module()
+    env_file = tmp_path / "provider.env"
+    env_file.write_text("CARTESIA_API_KEY=file-env-key-12345678\n")
     output = tmp_path / "fixture"
     output.mkdir()
     secret = "process-env-key-123456789"
     (output / "payload.json").write_text(secret)
-    monkeypatch.setattr(module, "ENV_FILES", [])
+    monkeypatch.setattr(module, "ENV_FILES", [env_file])
     monkeypatch.setenv("CARTESIA_API_KEY", secret)
 
     with pytest.raises(SystemExit, match="refusing to write"):
         module._guard(output, set())
 
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("entry", "secret"),
+    [
+        (
+            "CARTESIA_API_KEY=selected-env-key-87654321 # local note",
+            "selected-env-key-87654321",
+        ),
+        (
+            'CARTESIA_API_KEY="selected-env-key-87654321" # local note',
+            "selected-env-key-87654321",
+        ),
+        (
+            'CARTESIA_API_KEY="selected-env-key-87654321 # part of value"',
+            "selected-env-key-87654321 # part of value",
+        ),
+        ("CARTESIA_API_KEY=selected-env-key-87654321#suffix", "selected-env-key-87654321#suffix"),
+    ],
+)
+def test_guard_and_loader_share_dotenv_value_parsing(
+    tmp_path, monkeypatch, entry: str, secret: str
+) -> None:
+    module = load_scrubber_module()
+    env_file = tmp_path / "provider.env"
+    env_file.write_text(entry + "\n")
+    output = tmp_path / "fixture"
+    output.mkdir()
+    (output / "payload.json").write_text(secret)
+    monkeypatch.setattr(module, "ENV_FILES", [env_file])
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit, match="refusing to write"):
+        module._guard(output, set())
+
+    assert not output.exists()
+    assert module.load_keys(env_file, ["CARTESIA_API_KEY"]) == {"CARTESIA_API_KEY": secret}
 
 
 @pytest.mark.parametrize("provider", ["elevenlabs", "twilio"])
