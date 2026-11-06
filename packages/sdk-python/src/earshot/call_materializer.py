@@ -573,23 +573,28 @@ def _reconcile_host_transcript_capture(
     Calls keep the admitted source spans and transcript index independently of the
     revision's 64 KiB per-value and aggregate capture budgets. A full-capture
     revision must therefore stop claiming transcript availability when it could not
-    retain every opted-in host line.
+    retain every opted-in host line. Compare the original attribute, not the normalized
+    transcript line: the latter removes U+0000 for catalog text compatibility.
     """
 
     if preset != CAPTURE_PRESET_FULL:
         return bundle
     host_speech_spans = {
-        (span.span.trace_id.hex(), span.span.span_id.hex())
+        (span.span.trace_id.hex(), span.span.span_id.hex()): span
         for span in spans
         if span.scope.name == HOST_SCOPE
         and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
         and span.span.name in {"user_speech", "agent_speech"}
     }
-    expected = {
-        (line.trace_id, line.span_id): line.text
-        for line in lines
-        if (line.trace_id, line.span_id) in host_speech_spans
-    }
+    expected = {}
+    for line in lines:
+        key = (line.trace_id, line.span_id)
+        span = host_speech_spans.get(key)
+        if span is None:
+            continue
+        source_text = _attribute_value(span.span.attributes, ("earshot.transcript.text",))
+        if isinstance(source_text, str):
+            expected[key] = source_text
     if not expected:
         return bundle
     captured = {

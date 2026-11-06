@@ -37,6 +37,11 @@ _ATTRIBUTES_BY_SPAN = {
 }
 _MAX_SAFE_JSON_INTEGER = 2**53 - 1
 _PROTOJSON_NUMERIC_RE = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+_PROTOJSON_ANY_VALUE_KINDS = {
+    "string_value": "stringValue",
+    "double_value": "doubleValue",
+    "int_value": "intValue",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +77,30 @@ def _issue(issues: list[HostProfileIssue], code: str, path: str, message: str) -
     issues.append(HostProfileIssue(code=code, path=path, message=message))
 
 
+def _protojson_field(
+    value: Mapping[str, Any],
+    json_name: str,
+    proto_name: str,
+    path: str,
+    issues: list[HostProfileIssue],
+    *,
+    default: Any = None,
+) -> Any:
+    """Read one ProtoJSON field under either accepted field-name spelling."""
+
+    if json_name in value and proto_name in value:
+        _issue(
+            issues,
+            "duplicate_field",
+            path,
+            f"must use either {json_name} or {proto_name}, not both",
+        )
+        return default
+    if json_name in value:
+        return value[json_name]
+    return value.get(proto_name, default)
+
+
 def _host_attributes(
     span: Mapping[str, Any], path: str, issues: list[HostProfileIssue]
 ) -> dict[str, list[tuple[str, Any]]]:
@@ -102,6 +131,7 @@ def _host_attributes(
             )
             continue
         kind, scalar = next(iter(value.items()))
+        kind = _PROTOJSON_ANY_VALUE_KINDS.get(kind, kind)
         selected.setdefault(key, []).append((kind, scalar))
     return selected
 
@@ -255,7 +285,9 @@ def check_host_profile(payload: bytes | str | Mapping[str, Any]) -> HostProfileR
     if not isinstance(request, Mapping):
         _issue(issues, "invalid_request", "$", "must be an OTLP ExportTraceServiceRequest object")
         return HostProfileReport((), 0, tuple(issues))
-    resource_spans = request.get("resourceSpans")
+    resource_spans = _protojson_field(
+        request, "resourceSpans", "resource_spans", "$.resourceSpans", issues
+    )
     if not isinstance(resource_spans, list):
         _issue(issues, "invalid_request", "$.resourceSpans", "must be an array")
         return HostProfileReport((), 0, tuple(issues))
@@ -272,7 +304,14 @@ def check_host_profile(payload: bytes | str | Mapping[str, Any]) -> HostProfileR
                 "must be an OTLP resource spans object",
             )
             continue
-        scope_spans = resource_span.get("scopeSpans", [])
+        scope_spans = _protojson_field(
+            resource_span,
+            "scopeSpans",
+            "scope_spans",
+            f"{resource_path}.scopeSpans",
+            issues,
+            default=[],
+        )
         if not isinstance(scope_spans, list):
             _issue(issues, "invalid_scope_spans", f"{resource_path}.scopeSpans", "must be an array")
             continue

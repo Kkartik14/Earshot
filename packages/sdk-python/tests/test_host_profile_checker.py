@@ -44,6 +44,42 @@ def _attribute(span: dict, key: str) -> dict:
     return next(attribute for attribute in _attributes(span) if attribute["key"] == key)
 
 
+def test_checker_accepts_protojson_proto_field_name_aliases() -> None:
+    request = _reported_request()
+    request["resource_spans"] = request.pop("resourceSpans")
+    resource_span = request["resource_spans"][0]
+    resource_span["scope_spans"] = resource_span.pop("scopeSpans")
+    spans = resource_span["scope_spans"][0]["spans"]
+    aliases = {
+        "stringValue": "string_value",
+        "doubleValue": "double_value",
+        "intValue": "int_value",
+    }
+    for span in spans:
+        for attribute in span["attributes"]:
+            value = attribute.get("value")
+            if isinstance(value, dict) and len(value) == 1:
+                kind = next(iter(value))
+                if kind in aliases:
+                    value[aliases[kind]] = value.pop(kind)
+
+    report = check_host_profile(json.dumps(request))
+
+    assert report.valid
+    assert report.host_profile_versions == ("0.2.0",)
+    assert report.spans_checked == 4
+
+
+def test_checker_rejects_duplicate_protojson_field_aliases() -> None:
+    request = _reported_request()
+    request["resource_spans"] = copy.deepcopy(request["resourceSpans"])
+
+    report = check_host_profile(request)
+
+    assert not report.valid
+    assert "duplicate_field" in {issue.code for issue in report.issues}
+
+
 @pytest.mark.parametrize(
     ("case", "mutate", "code"),
     [

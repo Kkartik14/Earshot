@@ -803,6 +803,37 @@ def test_host_profile_0_2_transcripts_follow_the_version_gate_and_capture_preset
     )
     assert transcript_policy.decision == "deny"
 
+
+def test_host_transcript_nul_normalization_does_not_mark_the_source_missing() -> None:
+    from earshot.call_capture import apply_capture_preset
+    from earshot.call_materializer import transcript_text_json
+    from host_profile_support import HostTurn, host_request
+
+    source_text = "spoken\x00text"
+    turn = HostTurn(
+        "turn-1",
+        SYNTHETIC_CALL_START,
+        SYNTHETIC_CALL_START + 2_000_000_000,
+        user_speech=((SYNTHETIC_CALL_START, SYNTHETIC_CALL_START + 500_000_000),),
+        user_transcripts=(source_text,),
+    )
+    stored = [
+        apply_capture_preset("full", span)
+        for span in spans_from_request(host_request([turn], scope_version="0.2.0"))
+    ]
+    [speech_span] = [span for span in stored if span.span.name == "user_speech"]
+    bundle = _materialize(_snapshot(stored))
+    [operation] = [
+        operation
+        for operation in bundle.profile.operations
+        if operation.operation_name == "user_speech"
+    ]
+    [coverage] = [item for item in bundle.profile.coverage if item.signal == "call.transcript"]
+
+    assert json.loads(transcript_text_json(speech_span))["text"] == "spokentext"
+    assert operation.attributes["earshot.transcript.text"] == source_text
+    assert coverage.availability == "available"
+
     legacy = [
         apply_capture_preset("full", span) for span in spans_from_request(host_request([turn]))
     ]
