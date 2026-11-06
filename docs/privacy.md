@@ -75,6 +75,15 @@ suite replays the scripted Pipecat and LiveKit samples under `metadata_only`, th
 searches stored bytes for session keys, identities, and content that the preset should
 drop.
 
+In hosted mode, `earshot:calls:read` permits a host to stream a stored Recording, its
+waveform peaks, or a generated stereo rendition only from the token's signed Project.
+These routes do not expose blob-store URLs. A `metadata_only` Project refuses Recordings
+before they are stored; a read scope cannot bypass that preset. Previously stored
+full-capture audio remains available until retention or explicit deletion; changing a
+preset does not retroactively purge it. Call and Project deletion remove the recording
+blobs, peaks, analyses and their catalog rows, and subsequent reads cannot retrieve the
+deleted data.
+
 `redacted` is reserved. Asking for it is refused with `EARSHOT_PRESET_UNAVAILABLE`. There
 is no redaction engine, and a regex masker would give a false sense of safety. A Project
 that needs masking must use `metadata_only` until one exists.

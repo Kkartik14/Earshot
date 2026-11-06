@@ -22,6 +22,7 @@ from earshot.storage_recordings import RecordingStore
 from otlp_support import request, serve
 from store_support import catalog_rows, make_store
 from test_hosted_jwt import _hosted_config, _token, issuer  # noqa: F401  (issuer is a fixture)
+from test_recordings_api import wav
 
 SECOND = 1_000_000_000
 START = 1_800_000_000 * SECOND
@@ -46,6 +47,10 @@ CALL_OPERATIONS = (
     ("POST", "/v1/traces", CALLS_WRITE),
     ("POST", "/v1/recordings", CALLS_WRITE),
     ("PUT", "/v1/recordings/user-1/content", CALLS_WRITE),
+    ("GET", "/v1/recordings/user-1/content", CALLS_READ),
+    ("GET", "/v1/recordings/user-1/peaks", CALLS_READ),
+    ("GET", "/v1/recordings/user-1/rendition", CALLS_READ),
+    ("GET", "/v1/recordings/user-1/rendition/peaks", CALLS_READ),
     ("GET", "/v1/calls", CALLS_READ),
     ("GET", f"/v1/calls/{CALL}", CALLS_READ),
     ("GET", f"/v1/calls/{CALL}/live-turns", CALLS_READ),
@@ -54,14 +59,11 @@ CALL_OPERATIONS = (
     ("DELETE", f"/v1/calls/{CALL}", CALLS_DELETE),
 )
 
-# Call surfaces a host does not need: raw span attributes, Earshot's copy of the audio,
+# Call surfaces a host does not need: raw span attributes, recording metadata,
 # transcript upload, prices and the receiver's counters. Closed for every method.
 CLOSED_CALL_PATHS = (
     f"/v1/calls/{CALL}/spans/0123456789abcdef0123456789abcdef/0123456789abcdef",
     "/v1/recordings/user-1",
-    "/v1/recordings/user-1/peaks",
-    "/v1/recordings/user-1/rendition",
-    "/v1/recordings/user-1/rendition/peaks",
     "/v1/recordings/user-1/transcript",
     "/v1/prices",
     "/v1/otlp/stats",
@@ -113,6 +115,114 @@ def test_the_closed_call_surfaces_stay_closed_whatever_the_token_grants(tmp_path
             assert _error_code(reply) == "EARSHOT_OPERATION_UNAVAILABLE", (method, path)
 
 
+def test_calls_read_does_not_make_a_metadata_only_recording_available(
+    tmp_path,
+    issuer,  # noqa: F811
+) -> None:
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    store.set_capture_preset("project-a", "metadata_only")
+    writer = _headers(issuer, [CALLS_WRITE])
+    reader = _headers(issuer, [CALLS_READ])
+    manifest = {
+        "recording_id": "user-1",
+        "session_key": "call-private",
+        "speaker": "user",
+        "content_type": "audio/wav",
+        "started_at_unix_nano": str(START),
+    }
+
+    with serve(create_app(store=store, config=_hosted_config(issuer))) as port:
+        created = request(
+            port,
+            "POST",
+            "/v1/recordings",
+            json.dumps(manifest).encode(),
+            headers=writer,
+        )
+        content = request(
+            port,
+            "GET",
+            "/v1/recordings/user-1/content",
+            headers=reader,
+        )
+        peaks = request(
+            port,
+            "GET",
+            "/v1/recordings/user-1/peaks",
+            headers=reader,
+        )
+
+    assert created.status == 422 and _error_code(created) == "EARSHOT_PRESET_FORBIDS_MEDIA"
+    assert (content.status, content.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
+    assert (peaks.status, peaks.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM calls") == [(0,)]
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
+
+
+def test_call_delete_removes_hosted_audio_reads_and_the_blob(tmp_path, issuer) -> None:  # noqa: F811
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    blob_root = tmp_path / "blobs"
+    app = create_app(
+        store=store,
+        config=_hosted_config(issuer),
+        blob_store=LocalBlobStore(blob_root),
+    )
+    writer = _headers(issuer, [CALLS_WRITE])
+    reader = _headers(issuer, [CALLS_READ])
+    deleter = _headers(issuer, [CALLS_DELETE])
+    manifest = {
+        "recording_id": "user-1",
+        "session_key": "call-audio",
+        "speaker": "user",
+        "content_type": "audio/wav",
+        "started_at_unix_nano": str(START),
+    }
+
+    with serve(app) as port:
+        created = request(
+            port,
+            "POST",
+            "/v1/recordings",
+            json.dumps(manifest).encode(),
+            headers=writer,
+        )
+        uploaded = request(
+            port,
+            "PUT",
+            created.json()["upload_path"],
+            wav(channels=1, seconds=0.5),
+            headers={**writer, "Content-Type": "audio/wav"},
+        )
+        [(call_id,)] = catalog_rows(
+            tmp_path,
+            "SELECT call_id FROM recordings WHERE project_id = ? AND recording_id = ?",
+            ("project-a", "user-1"),
+        )
+        before = request(
+            port,
+            "GET",
+            "/v1/recordings/user-1/content",
+            headers=reader,
+        )
+        deleted = request(port, "DELETE", f"/v1/calls/{call_id}", headers=deleter)
+        after = request(
+            port,
+            "GET",
+            "/v1/recordings/user-1/content",
+            headers=reader,
+        )
+
+    assert created.status == 201, created.body
+    assert uploaded.status == 200, uploaded.body
+    assert before.status == 200 and before.body
+    assert (deleted.status, deleted.body) == (204, b"")
+    assert (after.status, after.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
+    assert not [path for path in blob_root.rglob("*") if path.is_file()]
+
+
 def test_an_operation_missing_from_the_table_fails_closed(tmp_path, issuer) -> None:  # noqa: F811
     store = make_store(tmp_path)
     store.create_project("project-a", display_name="Project A")
@@ -136,6 +246,10 @@ def test_the_hosted_contract_lists_the_call_operations_with_their_scopes(tmp_pat
         ("post", "/v1/traces"): CALLS_WRITE,
         ("post", "/v1/recordings"): CALLS_WRITE,
         ("put", "/v1/recordings/{recording_id}/content"): CALLS_WRITE,
+        ("get", "/v1/recordings/{recording_id}/content"): CALLS_READ,
+        ("get", "/v1/recordings/{recording_id}/peaks"): CALLS_READ,
+        ("get", "/v1/recordings/{recording_id}/rendition"): CALLS_READ,
+        ("get", "/v1/recordings/{recording_id}/rendition/peaks"): CALLS_READ,
         ("get", "/v1/calls"): CALLS_READ,
         ("get", "/v1/calls/{call_id}"): CALLS_READ,
         ("get", "/v1/calls/{call_id}/live-turns"): CALLS_READ,
@@ -148,14 +262,13 @@ def test_the_hosted_contract_lists_the_call_operations_with_their_scopes(tmp_pat
     for path in (
         "/v1/calls/{call_id}/spans/{trace_id}/{span_id}",
         "/v1/recordings/{recording_id}",
-        "/v1/recordings/{recording_id}/peaks",
         "/v1/recordings/{recording_id}/transcript",
         "/v1/prices",
         "/v1/otlp/stats",
     ):
         assert path not in paths, path
-    # A path with an open and a closed method lists only the open one.
-    assert set(paths["/v1/recordings/{recording_id}/content"]) == {"put"}
+    # A path with open reads and a write lists only those methods.
+    assert set(paths["/v1/recordings/{recording_id}/content"]) == {"get", "put"}
 
 
 def _project_with_a_call_revision(tmp_path: Path, project_id: str):

@@ -2483,10 +2483,11 @@ def _authentication_required(settings: ApiConfig) -> bool:
 
 # Hosted authorization is one closed table: each operation a hosted JWT may perform, as
 # (method, route template), and the one scope that grants it. Anything not listed answers
-# 403 ``EARSHOT_OPERATION_UNAVAILABLE``, including the Call surfaces a host does not need: a
-# span's raw attributes, Earshot's copy of the audio, transcript upload, prices and the
-# receiver's counters. HEAD and OPTIONS take the scope of the same route's GET. The OpenAPI
-# document reads the same table, so the contract lists exactly what is open.
+# 403 ``EARSHOT_OPERATION_UNAVAILABLE``, including Call raw span attributes, recording
+# metadata, transcript upload, prices and the receiver's counters. Recording bytes, peaks,
+# and renditions are project-scoped Call reads. HEAD and OPTIONS take the scope of the same
+# route's GET. The OpenAPI document reads the same table, so the contract lists exactly what
+# is open.
 _HOSTED_OPERATION_SCOPES: tuple[tuple[str, str, str], ...] = (
     ("GET", "/v1/incidents", "earshot:read"),
     ("POST", "/v1/incidents", "earshot:write"),
@@ -2516,6 +2517,10 @@ _HOSTED_OPERATION_SCOPES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/v1/traces", CALLS_WRITE_SCOPE),
     ("POST", "/v1/recordings", CALLS_WRITE_SCOPE),
     ("PUT", "/v1/recordings/{recording_id}/content", CALLS_WRITE_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/content", CALLS_READ_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/peaks", CALLS_READ_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/rendition", CALLS_READ_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/rendition/peaks", CALLS_READ_SCOPE),
     ("GET", "/v1/calls", CALLS_READ_SCOPE),
     ("GET", "/v1/calls/{call_id}", CALLS_READ_SCOPE),
     ("GET", "/v1/calls/{call_id}/live-turns", CALLS_READ_SCOPE),

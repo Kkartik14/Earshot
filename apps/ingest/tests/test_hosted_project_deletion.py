@@ -191,6 +191,42 @@ def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks
             assert _object_needles(tmp_path, transcript_needles) == set(transcript_needles)
         else:
             assert stored_needles(tmp_path, transcript_needles) == set(transcript_needles)
+        [(tenant_recording_id,)] = catalog_rows(
+            tmp_path,
+            "SELECT recording_id FROM recordings WHERE project_id = ?",
+            (TENANT,),
+        )
+        [(neighbour_recording_id,)] = catalog_rows(
+            tmp_path,
+            "SELECT recording_id FROM recordings WHERE project_id = ?",
+            (NEIGHBOUR,),
+        )
+        tenant_reader = _headers(issuer, TENANT, "earshot:calls:read")
+        neighbour_reader = _headers(issuer, NEIGHBOUR, "earshot:calls:read")
+        tenant_audio = request(
+            port,
+            "GET",
+            f"/v1/recordings/{tenant_recording_id}/content",
+            headers=tenant_reader,
+        )
+        tenant_peaks = request(
+            port,
+            "GET",
+            f"/v1/recordings/{tenant_recording_id}/peaks",
+            headers=tenant_reader,
+        )
+        cross_project_audio = request(
+            port,
+            "GET",
+            f"/v1/recordings/{neighbour_recording_id}/content",
+            headers=tenant_reader,
+        )
+        cross_project_peaks = request(
+            port,
+            "GET",
+            f"/v1/recordings/{neighbour_recording_id}/peaks",
+            headers=tenant_reader,
+        )
 
         deleter = _headers(issuer, TENANT, "earshot:project:delete")
         for _ in range(50):
@@ -202,6 +238,30 @@ def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks
             port, "GET", "/v1/calls", headers=_headers(issuer, TENANT, "earshot:calls:read")
         )
         neighbour_read = _projected(port, issuer, NEIGHBOUR)
+        tenant_audio_after_delete = request(
+            port,
+            "GET",
+            f"/v1/recordings/{tenant_recording_id}/content",
+            headers=tenant_reader,
+        )
+        tenant_peaks_after_delete = request(
+            port,
+            "GET",
+            f"/v1/recordings/{tenant_recording_id}/peaks",
+            headers=tenant_reader,
+        )
+        neighbour_audio_after_delete = request(
+            port,
+            "GET",
+            f"/v1/recordings/{neighbour_recording_id}/content",
+            headers=neighbour_reader,
+        )
+        neighbour_peaks_after_delete = request(
+            port,
+            "GET",
+            f"/v1/recordings/{neighbour_recording_id}/peaks",
+            headers=neighbour_reader,
+        )
 
     store.close()
 
@@ -212,6 +272,16 @@ def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks
     assert tenant_before["call_transcripts"] == 1
     assert any(key.startswith("recordings/") for key in tenant_blobs), tenant_blobs
     assert any(key.startswith("analysis/") for key in tenant_blobs), tenant_blobs
+    assert tenant_audio.status == 200 and tenant_audio.body
+    assert tenant_peaks.status == 200 and tenant_peaks.body
+    assert (cross_project_audio.status, cross_project_audio.problem_code()) == (
+        404,
+        "EARSHOT_RECORDING_NOT_FOUND",
+    )
+    assert (cross_project_peaks.status, cross_project_peaks.problem_code()) == (
+        404,
+        "EARSHOT_RECORDING_NOT_FOUND",
+    )
 
     assert deleted.status == 200 and deleted.json()["state"] == "deleted"
     assert _rows(tmp_path, TENANT) == dict.fromkeys(CALL_EVIDENCE_TABLES, 0)
@@ -232,6 +302,10 @@ def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks
         assert stored_needles(tmp_path, transcript_needles) == {neighbour_transcript}
     assert _blobs(blobs, NEIGHBOUR) == neighbour_blobs
     assert neighbour_read["projection"]["framework"] == "host"
+    assert tenant_audio_after_delete.status == 410
+    assert tenant_peaks_after_delete.status == 410
+    assert neighbour_audio_after_delete.status == 200 and neighbour_audio_after_delete.body
+    assert neighbour_peaks_after_delete.status == 200 and neighbour_peaks_after_delete.body
 
 
 # --- what races the fence ----------------------------------------------------------------------

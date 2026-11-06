@@ -520,15 +520,21 @@ generic incident scopes never grant:
 | Scope                  | Operations                                                                                                                      |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`                                           |
-| `earshot:calls:read`   | `GET /v1/calls`, `GET /v1/calls/{call_id}`, `GET /v1/calls/{call_id}/live-turns`, `POST /v1/calls:resolve`, `GET /v1/dashboard` |
+| `earshot:calls:read`   | Call list/detail, live turns, resolve, dashboard and the project-scoped Recording reads below.                                  |
 | `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                                                                    |
 
 Every other Call surface stays closed in hosted mode and answers 403
 `EARSHOT_OPERATION_UNAVAILABLE` for every method: a span's raw attributes
-(`/v1/calls/{call_id}/spans/*`), Earshot's copy of the audio (every `GET /v1/recordings*`),
-transcript upload, `/v1/prices*` and `/v1/otlp/stats`. The hosted OpenAPI lists exactly
-the open operations. Hosted authorization is one closed table of (method, route) and scope:
-an operation not in it is refused, whatever the token grants.
+(`/v1/calls/{call_id}/spans/*`), recording metadata, transcript upload, `/v1/prices*` and
+`/v1/otlp/stats`. Recording content, waveform peaks and stereo renditions are
+project-scoped to the hosted token's signed project ID; no blob-store URL is returned. The
+read routes are `GET /v1/recordings/{recording_id}/content`,
+`GET /v1/recordings/{recording_id}/peaks`,
+`GET /v1/recordings/{recording_id}/rendition` and
+`GET /v1/recordings/{recording_id}/rendition/peaks`.
+The hosted OpenAPI lists exactly the open operations. Hosted authorization is one closed
+table of (method, route) and scope: an operation not in it is refused, whatever the token
+grants.
 
 A call's revisions are incidents. A hosted token without `earshot:calls:read` never sees
 one: incident list, turn metrics and summaries leave them out, and any incident route that
