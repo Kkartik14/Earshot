@@ -18,6 +18,7 @@ PLATFORM_SUMMARY_DEPRECATION_LINK = (
     "<https://github.com/Kkartik14/Earshot/blob/main/docs/platform-integration.md"
     '#generic-and-platform-summaries>; rel="deprecation"; type="text/html"'
 )
+PLATFORM_SUMMARY_DEPRECATION = "@1794528000"
 
 
 class PlatformObserveItem(BaseModel):
@@ -131,6 +132,7 @@ def create_platform_router(store: IncidentStore) -> APIRouter:
 
 
 __all__ = [
+    "PLATFORM_SUMMARY_DEPRECATION",
     "PLATFORM_SUMMARY_DEPRECATION_LINK",
     "PlatformObserveItem",
     "PlatformObserveSummary",

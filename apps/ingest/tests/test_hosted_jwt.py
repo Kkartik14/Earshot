@@ -1864,6 +1864,7 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
         "<https://github.com/Kkartik14/Earshot/blob/main/docs/platform-integration.md"
         '#generic-and-platform-summaries>; rel="deprecation"; type="text/html"'
     )
+    assert response.headers["Deprecation"] == "@1794528000"
     assert "Sunset" not in response.headers
     item = response.json()["items"][0]
     assert item["id"] == bundle.profile.session.session_id
@@ -1873,6 +1874,7 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     unauthorized = client.get(f"/v1/platform/projects/{project_id}/observe/summary")
     assert unauthorized.status_code == 401
     assert unauthorized.headers["Link"] == response.headers["Link"]
+    assert unauthorized.headers["Deprecation"] == response.headers["Deprecation"]
 
     insufficient_scope = client.get(
         f"/v1/platform/projects/{project_id}/observe/summary",
@@ -1883,6 +1885,7 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     assert insufficient_scope.status_code == 403
     assert insufficient_scope.json()["error"]["code"] == "EARSHOT_SCOPE_REQUIRED"
     assert insufficient_scope.headers["Link"] == response.headers["Link"]
+    assert insufficient_scope.headers["Deprecation"] == response.headers["Deprecation"]
 
     mismatch = client.get(
         f"/v1/platform/projects/{project_id}/observe/summary",
@@ -1891,7 +1894,18 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     assert mismatch.status_code == 403
     assert mismatch.json()["error"]["code"] == "EARSHOT_PROJECT_MISMATCH"
     assert mismatch.headers["Link"] == response.headers["Link"]
+    assert mismatch.headers["Deprecation"] == response.headers["Deprecation"]
     assert "Sunset" not in mismatch.headers
+
+    invalid_query = client.get(
+        f"/v1/platform/projects/{project_id}/observe/summary",
+        params={"record_id": "x" * 201},
+        headers=headers,
+    )
+    assert invalid_query.status_code == 422
+    assert invalid_query.headers["Link"] == response.headers["Link"]
+    assert invalid_query.headers["Deprecation"] == response.headers["Deprecation"]
+    assert "Sunset" not in invalid_query.headers
 
     operation = app.openapi()["paths"]["/v1/platform/projects/{project_id}/observe/summary"]["get"]
     assert operation["deprecated"] is True
@@ -1904,6 +1918,7 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     )
     assert absent.status_code == 404
     assert "Link" not in absent.headers
+    assert "Deprecation" not in absent.headers
 
 
 def test_hosted_openapi_publishes_scope_requirements_and_hides_operator_auth(

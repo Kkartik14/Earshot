@@ -3847,10 +3847,16 @@ def create_app(
         if settings.auth_mode == "hosted_jwt"
         else None
     )
+    platform_summary_deprecation = ""
     platform_summary_deprecation_link = ""
     if enable_platform_adapter:
-        from .integrations.platform import PLATFORM_SUMMARY_DEPRECATION_LINK, create_platform_router
+        from .integrations.platform import (
+            PLATFORM_SUMMARY_DEPRECATION,
+            PLATFORM_SUMMARY_DEPRECATION_LINK,
+            create_platform_router,
+        )
 
+        platform_summary_deprecation = PLATFORM_SUMMARY_DEPRECATION
         platform_summary_deprecation_link = PLATFORM_SUMMARY_DEPRECATION_LINK
         app.include_router(create_platform_router(repository))
 
@@ -4448,6 +4454,7 @@ def create_app(
                 r"/v1/platform/projects/[^/]+/observe/summary",
                 request.url.path,
             ):
+                response.headers["Deprecation"] = platform_summary_deprecation
                 response.headers["Link"] = platform_summary_deprecation_link
             return response
 

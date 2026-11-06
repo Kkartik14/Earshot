@@ -424,8 +424,9 @@ date has been set, so Earshot does not send a `Sunset` header. Every GET
 response for the enabled route, including authentication failures, carries a
 `Link` header pointing to the migration guidance in the
 [Platform integration guide](./platform-integration.md#generic-and-platform-summaries).
-The RFC 9745 `Deprecation` date header will be added once the effective
-calendar date is approved.
+The RFC 9745 `Deprecation` header is `@1794528000` (2026-11-13T00:00:00Z),
+the proposed 0.5.0 release date. Earshot does not send a `Sunset` header until
+the 0.6.0 unavailability date is set.
 
 ### Hosted scopes
 
