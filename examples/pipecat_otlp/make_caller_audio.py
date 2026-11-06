@@ -123,7 +123,8 @@ def _valid_cached_wav(path: Path, metadata_path: Path, digest: str) -> bool:
             line["start_s"] + line["duration_s"] <= wav_duration + tolerance for line in lines
         )
         timeline_ordered = all(
-            left["start_s"] <= right["start_s"] for left, right in pairwise(lines)
+            left["start_s"] + left["duration_s"] <= right["start_s"]
+            for left, right in pairwise(lines)
         )
         return (
             math.isclose(metadata["duration_s"], wav_duration, rel_tol=0, abs_tol=tolerance)

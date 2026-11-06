@@ -155,6 +155,7 @@ def test_default_cache_path_is_namespaced_by_model_and_voice(monkeypatch, tmp_pa
         "negative_timeline",
         "out_of_range_timeline",
         "misordered_timeline",
+        "overlapping_timeline",
         "wrong_duration",
         "audio_content_mismatch",
     ],
@@ -192,6 +193,11 @@ def test_corrupt_or_stale_cache_is_regenerated(monkeypatch, tmp_path, corruption
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "misordered_timeline":
         metadata["lines"][0]["start_s"] = metadata["lines"][1]["start_s"] + 0.1
+        metadata_path.write_text(module.json.dumps(metadata))
+    elif corruption == "overlapping_timeline":
+        metadata["lines"][1]["start_s"] = (
+            metadata["lines"][0]["start_s"] + metadata["lines"][0]["duration_s"] / 2
+        )
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "wrong_duration":
         metadata["duration_s"] += 1.0
