@@ -103,7 +103,10 @@ if TYPE_CHECKING:
 
 # Bumped when the projection's computation or shape changes: every stored
 # projection then reads as stale until the job recomputes it.
-CALL_PROJECTION_VERSION = 8
+# Keep this semantic introduction point fixed when ``CALL_PROJECTION_VERSION`` is
+# bumped for unrelated projection changes.
+POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION = 8
+CALL_PROJECTION_VERSION = POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION
 PROJECTION_STATES = ("none", "stale", "current")
 
 

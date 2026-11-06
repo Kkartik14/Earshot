@@ -57,6 +57,10 @@ A call detail and every list item carry `projection_state`:
 | `stale`            | The Call, its Project's prices, the built-in prices or the projection algorithm changed since it was computed. It is still served until it is recomputed. |
 | `current`          | Up to date.                                                                                                                                               |
 
+Until an older projection is recomputed, its reported-latency summary is `null` if
+its projection semantics predate positive-only latencies. Nonpositive per-turn values
+are `null` as well, and latency filters never match unknown values.
+
 `projection.analysis_state` summarizes the Revision's Recordings: `none` (no Recording),
 `pending` (an analysis is still running), `stored` (all stored), `partial` (all finished,
 some stored), `failed` or `unavailable`. To wait for a finished view, poll

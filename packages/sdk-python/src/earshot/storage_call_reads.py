@@ -29,6 +29,10 @@ Postgres's ``ILIKE`` folds other scripts' case too). It needs the project's
 current preset to be ``full``: a ``metadata_only`` project may still hold lines
 captured before its preset changed, and they are not searched.
 
+Reported-latency summaries from projection versions predating positive-only
+latencies are unknown until recomputed. Nonpositive per-turn values are unknown on
+detail reads and never satisfy latency filters.
+
 **A span** is read only through the call its trace is bound to.
 """
 
@@ -48,7 +52,13 @@ from .call_materializer import (
     transcript_coverage,
     transcript_text_json_from_stored_span,
 )
-from .call_projection import CallSource, ProjectionInputs, ProjectionStamps, projection_state
+from .call_projection import (
+    CallSource,
+    POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION,
+    ProjectionInputs,
+    ProjectionStamps,
+    projection_state,
+)
 from .storage import decode_page_cursor, encode_page_cursor
 from .storage_call_sources import read_call_source
 from .storage_calls import call_spans_sql
@@ -146,8 +156,16 @@ class CallFilters:
 
 
 _RANGES = (
-    ("min_reported_latency_ms", "p.reported_latency_p50_ms >= ?"),
-    ("max_reported_latency_ms", "p.reported_latency_p50_ms <= ?"),
+    (
+        "min_reported_latency_ms",
+        f"p.projection_version >= {POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION} "
+        "AND p.reported_latency_p50_ms > 0 AND p.reported_latency_p50_ms >= ?",
+    ),
+    (
+        "max_reported_latency_ms",
+        f"p.projection_version >= {POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION} "
+        "AND p.reported_latency_p50_ms > 0 AND p.reported_latency_p50_ms <= ?",
+    ),
     ("min_audible_gap_ms", "p.audible_gap_p50_ms >= ?"),
     ("max_audible_gap_ms", "p.audible_gap_p50_ms <= ?"),
     ("min_cost_nano_usd", "p.cost_lower_bound_nano_usd >= ?"),
@@ -326,6 +344,15 @@ def _projection(row: Any, tags: tuple[str, ...]) -> CallProjectionSummary | None
         value = row[name]
         return None if value is None else int(value)
 
+    def known_reported_latency(name: str) -> int | None:
+        if int(row["projection_version"]) < POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION:
+            return None
+        value = row[name]
+        if value is None:
+            return None
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+
     return CallProjectionSummary(
         revision=int(row["projection_revision"]),
         agent=row["agent"],
@@ -335,8 +362,8 @@ def _projection(row: Any, tags: tuple[str, ...]) -> CallProjectionSummary | None
         duration_ms=known("duration_ms"),
         turn_count=int(row["turn_count"]),
         measurable_turns=int(row["measurable_turns"]),
-        reported_latency_p50_ms=known("reported_latency_p50_ms"),
-        reported_latency_max_ms=known("reported_latency_max_ms"),
+        reported_latency_p50_ms=known_reported_latency("reported_latency_p50_ms"),
+        reported_latency_max_ms=known_reported_latency("reported_latency_max_ms"),
         audible_gap_p50_ms=known("audible_gap_p50_ms"),
         audible_gap_max_ms=known("audible_gap_max_ms"),
         cost_lower_bound_nano_usd=known("cost_lower_bound_nano_usd"),
@@ -405,6 +432,25 @@ def _tags(
         ).fetchall():
             tags.setdefault(row["call_id"], []).append(row["tag"])
     return {call_id: tuple(values) for call_id, values in tags.items()}
+
+
+def _positive_reported_latencies(detail: Any) -> Any:
+    """Make absent, malformed, and nonpositive legacy turn latency unknown on reads."""
+
+    if not isinstance(detail, dict):
+        return detail
+    turns = detail.get("turns")
+    if not isinstance(turns, list):
+        return detail
+    for turn in turns:
+        if not isinstance(turn, dict):
+            continue
+        latency = turn.get("reported_latency_ms")
+        if latency is not None and (
+            not isinstance(latency, int) or isinstance(latency, bool) or latency <= 0
+        ):
+            turn["reported_latency_ms"] = None
+    return detail
 
 
 def _summaries(
@@ -637,7 +683,7 @@ class CallReads:
                 "SELECT detail_json FROM call_projections WHERE project_id = ? AND call_id = ?",
                 (project_id, call_id),
             ).fetchone()
-            detail = json.loads(detail_json)
+            detail = _positive_reported_latencies(json.loads(detail_json))
         return CallDetail(
             summary=summary,
             revisions=revisions,

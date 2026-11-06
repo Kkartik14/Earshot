@@ -50,6 +50,7 @@ from earshot.storage_call_purge import CallPurger
 from earshot.storage_call_reads import CallFilters, CallReads
 from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_closer import Closer
+from earshot.storage_dashboard import DashboardQuery, DashboardReads
 from earshot.storage_prices import NewPrice, PriceStore
 from earshot.storage_recordings import RecordingManifest, RecordingStore
 from otlp_support import make_request, make_span, serve, string_attribute
@@ -412,6 +413,93 @@ def test_a_new_revision_makes_a_projection_stale_until_it_is_recomputed(tmp_path
     world.project()
     assert world.projection(call_id)["state"] == "current"
     assert world.projection(call_id)["summary"].revision == 2
+
+
+def test_stale_v7_projection_treats_nonpositive_latency_as_unknown_on_public_reads(
+    tmp_path,
+) -> None:
+    world = World(tmp_path)
+    call_id = world.replay(captured_requests())
+    world.close()
+    world.project()
+    [(detail_json, started_unix_nano)] = catalog_rows(
+        tmp_path,
+        "SELECT detail_json, started_unix_nano FROM call_projections "
+        "WHERE project_id = ? AND call_id = ?",
+        ("default", call_id),
+    )
+    detail = json.loads(detail_json)
+    turns = detail["turns"]
+    assert len(turns) == 3
+    turns[0]["reported_latency_ms"] = 0
+    turns[1]["reported_latency_ms"] = 1000
+    turns[2]["reported_latency_ms"] = 1100
+    fourth = dict(turns[2], index=max(turn["index"] for turn in turns) + 1)
+    fourth["reported_latency_ms"] = 1200
+    turns.append(fourth)
+    with catalog(tmp_path) as connection:
+        connection.execute(
+            "UPDATE call_projections SET projection_version = 7, turn_count = 4, "
+            "reported_latency_p50_ms = 1000, reported_latency_max_ms = 1200, detail_json = ? "
+            "WHERE project_id = ? AND call_id = ?",
+            (json.dumps(detail), "default", call_id),
+        )
+
+    call = world.reads.get_call("default", call_id)
+    assert call is not None
+    assert call.summary.projection_state == "stale"
+    assert call.summary.projection is not None
+    assert (
+        call.summary.projection.reported_latency_p50_ms,
+        call.summary.projection.reported_latency_max_ms,
+    ) == (None, None)
+    assert [turn["reported_latency_ms"] for turn in call.projection_detail["turns"]] == [
+        None,
+        1000,
+        1100,
+        1200,
+    ]
+
+    page = world.reads.list_calls("default")
+    [listed] = page.items
+    assert listed.projection_state == "stale"
+    assert listed.projection is not None
+    assert (
+        listed.projection.reported_latency_p50_ms,
+        listed.projection.reported_latency_max_ms,
+    ) == (None, None)
+    assert not world.reads.list_calls(
+        "default", filters=CallFilters(min_reported_latency_ms=1000)
+    ).items
+    assert not world.reads.list_calls(
+        "default", filters=CallFilters(max_reported_latency_ms=1000)
+    ).items
+
+    dashboard = DashboardReads(world.store).dashboard(
+        "default", DashboardQuery(started_unix_nano, started_unix_nano + 1, bucket="day")
+    )
+    assert dashboard["overall"]["reported_latency"] == {
+        "p50_ms": 1100,
+        "p95_ms": 1200,
+        "turns": 3,
+        "of_turns": 4,
+        "calls": 1,
+        "of_calls": 1,
+    }
+
+    world.project()
+    recomputed = world.reads.get_call("default", call_id)
+    assert recomputed is not None
+    assert recomputed.summary.projection_state == "current"
+    assert recomputed.summary.projection is not None
+    assert recomputed.summary.projection.reported_latency_p50_ms > 0
+    assert recomputed.summary.projection.reported_latency_max_ms > 0
+    assert all(
+        latency is None or latency > 0
+        for latency in (
+            turn["reported_latency_ms"] for turn in recomputed.projection_detail["turns"]
+        )
+    )
 
 
 def test_a_projection_computed_while_its_call_changed_is_discarded(tmp_path) -> None:
