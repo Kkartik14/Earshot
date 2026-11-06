@@ -156,6 +156,8 @@ def test_default_cache_path_is_namespaced_by_model_and_voice(monkeypatch, tmp_pa
         "out_of_range_timeline",
         "misordered_timeline",
         "overlapping_timeline",
+        "shifted_in_range_timeline",
+        "wrong_speech_duration",
         "wrong_duration",
         "audio_content_mismatch",
     ],
@@ -198,6 +200,12 @@ def test_corrupt_or_stale_cache_is_regenerated(monkeypatch, tmp_path, corruption
         metadata["lines"][1]["start_s"] = (
             metadata["lines"][0]["start_s"] + metadata["lines"][0]["duration_s"] / 2
         )
+        metadata_path.write_text(module.json.dumps(metadata))
+    elif corruption == "shifted_in_range_timeline":
+        metadata["lines"][0]["start_s"] = 0.2
+        metadata_path.write_text(module.json.dumps(metadata))
+    elif corruption == "wrong_speech_duration":
+        metadata["lines"][0]["duration_s"] /= 2
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "wrong_duration":
         metadata["duration_s"] += 1.0
@@ -290,6 +298,26 @@ def test_load_rejects_a_cache_pair_changed_after_validation(monkeypatch, tmp_pat
         return result
 
     monkeypatch.setattr(module, "_ensure_caller_wav", replace_audio_after_validation)
+
+    with pytest.raises(RuntimeError, match="cache changed while it was being read"):
+        module.load_caller_wav_and_metadata(path)
+
+
+def test_load_rejects_timeline_changed_after_validation(monkeypatch, tmp_path) -> None:
+    module = load_caller_audio_module()
+    monkeypatch.setattr(module, "_synthesize", lambda _text: b"\x01\x00" * 4)
+    monkeypatch.setenv("CARTESIA_VOICE_ID", "voice-a")
+    path = tmp_path / "caller.wav"
+    ensure = module._ensure_caller_wav
+
+    def replace_timeline_after_validation(wav_path, metadata_path, digest, force):
+        result = ensure(wav_path, metadata_path, digest, force)
+        metadata = module.json.loads(metadata_path.read_text())
+        metadata["lines"][0]["start_s"] = 0.2
+        metadata_path.write_text(module.json.dumps(metadata))
+        return result
+
+    monkeypatch.setattr(module, "_ensure_caller_wav", replace_timeline_after_validation)
 
     with pytest.raises(RuntimeError, match="cache changed while it was being read"):
         module.load_caller_wav_and_metadata(path)

@@ -75,6 +75,11 @@ def caller_wav_metadata_path(path: Path) -> Path:
     return path.with_suffix(".json")
 
 
+def _timeline_sha256(lines: object) -> str:
+    encoded = json.dumps(lines, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _finite_number(value: object) -> bool:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
@@ -96,6 +101,7 @@ def _valid_cached_wav(path: Path, metadata_path: Path, digest: str) -> bool:
             or metadata["duration_s"] <= 0
             or not isinstance(lines, list)
             or len(lines) != len(CALLER_SCRIPT)
+            or metadata.get("timeline_sha256") != _timeline_sha256(lines)
             or not all(
                 isinstance(line, dict)
                 and line.get("text") == text
@@ -132,7 +138,7 @@ def _valid_cached_wav(path: Path, metadata_path: Path, digest: str) -> bool:
             and timeline_ordered
             and hashlib.sha256(path.read_bytes()).hexdigest() == metadata["wav_sha256"]
         )
-    except (EOFError, OSError, UnicodeError, ValueError, wave.Error):
+    except (EOFError, OSError, TypeError, UnicodeError, ValueError, wave.Error):
         return False
 
 
@@ -193,6 +199,7 @@ def _ensure_caller_wav(path: Path, metadata_path: Path, digest: str, force: bool
         "wav_sha256": wav_sha256,
         "duration_s": len(pcm) / (2 * SAMPLE_RATE),
         "lines": lines,
+        "timeline_sha256": _timeline_sha256(lines),
     }
     temporary_path: Path | None = None
     try:
@@ -227,7 +234,10 @@ def load_caller_wav_and_metadata(
     try:
         audio = wav_path.read_bytes()
         metadata = json.loads(metadata_path.read_text())
-    except (OSError, UnicodeError, ValueError) as exc:
+        timeline_sha256 = _timeline_sha256(
+            metadata.get("lines") if isinstance(metadata, dict) else None
+        )
+    except (OSError, TypeError, UnicodeError, ValueError) as exc:
         raise RuntimeError(
             "caller WAV cache changed while it was being read; rerun the operation"
         ) from exc
@@ -235,6 +245,7 @@ def load_caller_wav_and_metadata(
         not isinstance(metadata, dict)
         or metadata.get("cache_sha256") != digest
         or not isinstance(metadata.get("wav_sha256"), str)
+        or metadata.get("timeline_sha256") != timeline_sha256
         or hashlib.sha256(audio).hexdigest() != metadata["wav_sha256"]
     ):
         raise RuntimeError("caller WAV cache changed while it was being read; rerun the operation")
