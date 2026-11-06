@@ -13,6 +13,7 @@ One test makes the database refuse a call's projection with a real trigger on
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -1327,15 +1328,41 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
 
 @pytest.mark.parametrize("preset", ["full", "metadata_only"])
 @pytest.mark.parametrize(
-    ("reported_seconds", "expected_quantity_milli", "expected_api_quantity"),
+    (
+        "reported_seconds",
+        "expected_quantity_milli",
+        "expected_api_quantity",
+        "expected_repriced_status",
+    ),
     [
-        pytest.param((1e308, 1e308, 0.001), 2 * 10**311 + 1, None, id="fractional-overflow"),
-        pytest.param((1e308, 1e308), 2 * 10**311, None, id="whole-overflow"),
-        pytest.param((1e308,), 10**311, 1e308, id="large-finite-whole-seconds"),
+        pytest.param(
+            (1e308, 1e308, 0.001), 2 * 10**311 + 1, None, "no_price", id="fractional-overflow"
+        ),
+        pytest.param((1e308, 1e308), 2 * 10**311, None, "no_price", id="whole-overflow"),
+        pytest.param(
+            (float(2**53), 1.0),
+            (2**53 + 1) * 1000,
+            None,
+            "priced",
+            id="finite-integer-rounded-by-api-float",
+        ),
+        pytest.param(
+            (1e308, 0.001),
+            10**311 + 1,
+            None,
+            "no_price",
+            id="finite-fraction-rounded-by-api-float",
+        ),
+        pytest.param((1e308,), 10**311, 1e308, "no_price", id="large-finite-whole-seconds"),
     ],
 )
 def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow(
-    tmp_path, preset, reported_seconds, expected_quantity_milli, expected_api_quantity
+    tmp_path,
+    preset,
+    reported_seconds,
+    expected_quantity_milli,
+    expected_api_quantity,
+    expected_repriced_status,
 ) -> None:
     from host_profile_support import HostStage, HostTurn, host_request
 
@@ -1390,6 +1417,38 @@ def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow
         assert math.isfinite(stt_cost["quantity"])
         assert stt_cost["quantity"] == expected_api_quantity
 
+    if expected_repriced_status == "priced" and expected_api_quantity is None:
+        # Version 8 could have persisted this rounded number. The projection-version
+        # bump must make that detail stale and replace it from its exact usage record.
+        detail = call.projection_detail
+        [old_stt_cost] = [item for item in detail["cost_items"] if item["unit"] == "audio_second"]
+        old_stt_cost["quantity"] = float(2**53)
+        legacy_digest = hashlib.sha256(b"version-8-rounded-detail").hexdigest()
+        with catalog(tmp_path) as connection:
+            connection.execute(
+                "UPDATE call_projections SET projection_version = 8, detail_json = ?, "
+                "input_digest = ? "
+                "WHERE project_id = ? AND call_id = ?",
+                (json.dumps(detail), legacy_digest, "default", call_id),
+            )
+
+        stale = world.reads.get_call("default", call_id)
+        assert stale is not None
+        assert stale.summary.projection_state == "stale"
+        snapshot = world.projector.snapshot("default", call_id)
+        assert snapshot is not None
+        assert snapshot.kind == "full"
+        world.project()
+        refreshed = world.reads.get_call("default", call_id)
+        assert refreshed is not None
+        assert refreshed.summary.projection_state == "current"
+        [refreshed_stt] = [
+            item
+            for item in refreshed.projection_detail["cost_items"]
+            if item["unit"] == "audio_second"
+        ]
+        assert refreshed_stt["quantity"] is None
+
     # Repricing must use the exact durable quantity, not reread the source spans.
     with catalog(tmp_path) as connection:
         connection.execute(
@@ -1419,7 +1478,8 @@ def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow
     [repriced_stt] = [
         item for item in repriced.projection_detail["cost_items"] if item["unit"] == "audio_second"
     ]
-    assert repriced_stt["status"] == "no_price"
+    assert repriced_stt["status"] == expected_repriced_status
+    assert repriced_stt["quantity"] == expected_api_quantity
     [(repriced_usage_json,)] = catalog_rows(
         tmp_path,
         "SELECT usage_json FROM call_projections WHERE project_id = ? AND call_id = ?",

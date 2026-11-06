@@ -289,8 +289,9 @@ times are both present for `measured`, start only for `start_only`, and both nul
 | `not_reported` | A request left its usage unknown (one item per request).                                                        |
 | `estimated`    | STT seconds estimated from user audio duration when no request for that provider/model reports metered seconds. |
 
-When an exact quantity exceeds the finite API-number range, `quantity` is `null`, never
-clamped. The projection retains its exact integer milli quantity for repricing.
+When an exact quantity cannot round-trip through a finite JSON number, `quantity` is
+`null`, never clamped or rounded to a different value. The projection retains its exact
+integer milli quantity for repricing.
 
 `lower_bound_nano_usd` sums the priced items; `estimated_nano_usd` sums the estimated
 ones; `unknown_items` counts the rest. A cost is `complete` when it has a lower bound and

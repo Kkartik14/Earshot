@@ -106,7 +106,7 @@ if TYPE_CHECKING:
 # Keep this semantic introduction point fixed when ``CALL_PROJECTION_VERSION`` is
 # bumped for unrelated projection changes.
 POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION = 8
-CALL_PROJECTION_VERSION = POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION
+CALL_PROJECTION_VERSION = 9
 PROJECTION_STATES = ("none", "stale", "current")
 
 

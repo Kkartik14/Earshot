@@ -251,7 +251,12 @@ def _quantity(quantity_milli: int | None) -> int | float | None:
         api_quantity = float(seconds)
     except OverflowError:
         return None
-    return api_quantity if math.isfinite(api_quantity) else None
+    if not math.isfinite(api_quantity):
+        return None
+    # Python's shortest JSON float spelling can round large exact integers (for
+    # example, 2**53 + 1) to a different quantity. Keep the API truthful by
+    # returning null when that wire number would not round-trip through Decimal.
+    return api_quantity if Decimal(str(api_quantity)) == seconds else None
 
 
 @dataclass(frozen=True, slots=True)

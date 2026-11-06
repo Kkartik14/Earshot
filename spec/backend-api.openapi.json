@@ -3237,7 +3237,7 @@
       },
       "CostItemResponse": {
         "additionalProperties": false,
-        "description": "One cost item. ``priced`` and ``estimated`` items cost ``quantity`` units of\n``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),\nrounded half up to a whole nano-USD; ``no_price`` has usage and no price row;\n``not_reported`` has no usage. ``quantity`` is null when the exact stored quantity\ncannot be represented as a finite API number. ``span`` is where the usage was read,\nif one span.",
+        "description": "One cost item. ``priced`` and ``estimated`` items cost ``quantity`` units of\n``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),\nrounded half up to a whole nano-USD; ``no_price`` has usage and no price row;\n``not_reported`` has no usage. ``quantity`` is null when the exact stored quantity\ncannot round-trip through a finite API number. ``span`` is where the usage was read,\nif one span.",
         "properties": {
           "cost_nano_usd": {
             "anyOf": [
