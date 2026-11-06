@@ -38,6 +38,8 @@ complete. Nothing is clamped.
 
 from __future__ import annotations
 
+import math
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, localcontext
@@ -49,6 +51,8 @@ REPORTED = "reported"
 NOT_REPORTED = "not_reported"
 ESTIMATE = "estimate"
 _INT64_MAX = 2**63 - 1
+_MAX_SAFE_API_INTEGER = 2**53 - 1
+_MAX_FINITE_API_QUANTITY = Decimal.from_float(sys.float_info.max)
 # Each request's meters that are always reported: one missing makes the request
 # ``not_reported`` (the other meters are emitted only when reported).
 _PRIMARY_METERS = {"llm": ("input_token", "output_token"), "tts": ("character",)}
@@ -235,7 +239,19 @@ def _quantity(quantity_milli: int | None) -> int | float | None:
     if quantity_milli is None:
         return None
     whole, part = divmod(quantity_milli, 1000)
-    return whole if part == 0 else quantity_milli / 1000
+    if part == 0 and whole <= _MAX_SAFE_API_INTEGER:
+        return whole
+    decimal_quantity = Decimal(quantity_milli)
+    with localcontext() as context:
+        context.prec = max(context.prec, len(decimal_quantity.as_tuple().digits) + 3)
+        seconds = decimal_quantity / Decimal(1000)
+    if seconds > _MAX_FINITE_API_QUANTITY:
+        return None
+    try:
+        api_quantity = float(seconds)
+    except OverflowError:
+        return None
+    return api_quantity if math.isfinite(api_quantity) else None
 
 
 @dataclass(frozen=True, slots=True)

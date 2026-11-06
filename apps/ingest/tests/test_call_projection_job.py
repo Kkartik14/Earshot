@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -1322,6 +1323,110 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
         (call_id,),
     )
     assert json.loads(repriced_usage) == stored_usage
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+@pytest.mark.parametrize(
+    ("reported_seconds", "expected_quantity_milli", "expected_api_quantity"),
+    [
+        pytest.param((1e308, 1e308, 0.001), 2 * 10**311 + 1, None, id="fractional-overflow"),
+        pytest.param((1e308, 1e308), 2 * 10**311, None, id="whole-overflow"),
+        pytest.param((1e308,), 10**311, 1e308, id="large-finite-whole-seconds"),
+    ],
+)
+def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow(
+    tmp_path, preset, reported_seconds, expected_quantity_milli, expected_api_quantity
+) -> None:
+    from host_profile_support import HostStage, HostTurn, host_request
+
+    stages = tuple(
+        HostStage(
+            "stt",
+            START + index * SECOND,
+            START + (index + 1) * SECOND,
+            {
+                "gen_ai.provider.name": "deepgram",
+                "gen_ai.request.model": "nova-3",
+                "earshot.stt.usage.audio_seconds": seconds,
+            },
+        )
+        for index, seconds in enumerate(reported_seconds)
+    )
+    turn = HostTurn(
+        "turn-large-stt-usage",
+        START,
+        START + (len(stages) + 1) * SECOND,
+        stages=stages,
+    )
+    world = World(tmp_path)
+    world.store.set_capture_preset("default", preset)
+    call_id = world.replay([host_request([turn], scope_version="0.2.0")])
+    world.close()
+
+    world.project()
+
+    call = world.reads.get_call("default", call_id)
+    assert call is not None
+    assert call.summary.projection_state == "current"
+    assert call.summary.projection is not None
+    [(usage_json,)] = catalog_rows(
+        tmp_path,
+        "SELECT usage_json FROM call_projections WHERE project_id = ? AND call_id = ?",
+        ("default", call_id),
+    )
+    usage = json.loads(usage_json)
+    [reported_stt] = [
+        item for item in usage if item["operation"] == "stt" and item["kind"] == "reported"
+    ]
+    assert reported_stt["quantity_milli"] == expected_quantity_milli
+    [stt_cost] = [
+        item for item in call.projection_detail["cost_items"] if item["unit"] == "audio_second"
+    ]
+    assert stt_cost["status"] == "no_price"
+    if expected_api_quantity is None:
+        assert stt_cost["quantity"] is None
+    else:
+        assert isinstance(stt_cost["quantity"], float)
+        assert math.isfinite(stt_cost["quantity"])
+        assert stt_cost["quantity"] == expected_api_quantity
+
+    # Repricing must use the exact durable quantity, not reread the source spans.
+    with catalog(tmp_path) as connection:
+        connection.execute(
+            "UPDATE spans SET payload = ? WHERE trace_id IN "
+            "(SELECT trace_id FROM call_traces WHERE project_id = ? AND call_id = ?)",
+            (bytes((255,)), "default", call_id),
+        )
+    PriceStore(world.store).add(
+        "default",
+        NewPrice(
+            provider="deepgram",
+            model="nova-3",
+            unit="audio_second",
+            price_nano_usd=1,
+            per_quantity=1,
+            effective_from_unix_nano=0,
+            source_url=None,
+            note=None,
+        ),
+    )
+    world.project()
+
+    repriced = world.reads.get_call("default", call_id)
+    assert repriced is not None
+    assert repriced.summary.projection_state == "current"
+    assert repriced.summary.projection is not None
+    [repriced_stt] = [
+        item for item in repriced.projection_detail["cost_items"] if item["unit"] == "audio_second"
+    ]
+    assert repriced_stt["status"] == "no_price"
+    [(repriced_usage_json,)] = catalog_rows(
+        tmp_path,
+        "SELECT usage_json FROM call_projections WHERE project_id = ? AND call_id = ?",
+        ("default", call_id),
+    )
+    assert json.loads(repriced_usage_json) == usage
+    assert world.projector.failure("default", call_id) is None
 
 
 @pytest.mark.parametrize("preset", ["full", "metadata_only"])
