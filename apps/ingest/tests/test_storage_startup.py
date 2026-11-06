@@ -207,6 +207,100 @@ def test_reprojection_leaves_expired_incidents_to_the_retention_reaper(tmp_path)
     assert store.projections_pending() == 0
 
 
+def test_create_app_exports_queue_snapshot_failure_and_recovers(tmp_path, monkeypatch) -> None:
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from earshot import api as api_module
+    from earshot.maintenance import MaintenanceLoop
+    from earshot.server_metrics import ServerMetrics
+
+    store = make_store(tmp_path / "catalog")
+    original_snapshot = store.operational_queue_depths
+    calls: list[int] = []
+    calls_lock = threading.Lock()
+    failed = threading.Event()
+    recovered = threading.Event()
+
+    def flaky_snapshot(**kwargs):
+        with calls_lock:
+            calls.append(len(calls) + 1)
+            attempt = len(calls)
+        if attempt == 1:
+            failed.set()
+            raise OSError("private database path")
+        result = original_snapshot(**kwargs)
+        recovered.set()
+        return result
+
+    monkeypatch.setattr(store, "operational_queue_depths", flaky_snapshot)
+    original_add_job = MaintenanceLoop.add_job
+
+    def speed_up_snapshot_retry(
+        loop, name, job, *, failure_backoff_seconds: float | None = None
+    ) -> None:
+        if name == "queue-depth-snapshot":
+            assert failure_backoff_seconds == 30.0
+            failure_backoff_seconds = 3.1
+        original_add_job(loop, name, job, failure_backoff_seconds=failure_backoff_seconds)
+
+    monkeypatch.setattr(MaintenanceLoop, "add_job", speed_up_snapshot_retry)
+
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    metrics = ServerMetrics(meter=provider.get_meter("earshot.server.create-app-test"))
+    app = api_module.create_app(
+        store=store,
+        blob_store=LocalBlobStore(tmp_path / "blobs"),
+        server_metrics=metrics,
+    )
+
+    try:
+        with TestClient(app):
+            assert failed.wait(timeout=2)
+            time.sleep(2.0)
+            with calls_lock:
+                assert calls == [1]
+
+            failed_metrics = reader.get_metrics_data()
+            failure_points = [
+                point
+                for resource in failed_metrics.resource_metrics
+                for scope in resource.scope_metrics
+                for metric in scope.metrics
+                if metric.name == "earshot.maintenance.job.failures"
+                for point in metric.data.data_points
+            ]
+            assert [(dict(point.attributes), point.value) for point in failure_points] == [
+                ({"error.type": "io", "job.name": "queue-depth-snapshot"}, 1)
+            ]
+
+            assert recovered.wait(timeout=4)
+            with calls_lock:
+                assert calls == [1, 2]
+
+        recovered_metrics = reader.get_metrics_data()
+        queue_depth_points = [
+            point
+            for resource in recovered_metrics.resource_metrics
+            for scope in resource.scope_metrics
+            for metric in scope.metrics
+            if metric.name == "earshot.storage.queue.depth"
+            for point in metric.data.data_points
+        ]
+        assert {point.attributes["queue.name"] for point in queue_depth_points} == {
+            "call_closer",
+            "recording_analysis",
+            "recording_fetch",
+            "blob_deletions",
+            "incident_reprojection",
+            "parked_traces",
+        }
+    finally:
+        provider.shutdown()
+        store.close()
+
+
 def test_readiness_reports_pending_projections_without_failing_on_them(tmp_path) -> None:
     ingest_incidents(tmp_path, 2)
     mark_stale(tmp_path)
@@ -395,6 +489,98 @@ def test_one_remote_blob_probe_failure_preserves_ready_state(tmp_path, monkeypat
     assert response.status_code == 200
     assert response.json()["components"]["blob_store"] == "ready"
     assert "EARSHOT_BLOB_HEALTHCHECK_FAILED" not in caplog.text
+
+
+def test_ready_fail_success_fail_keeps_blob_store_ready(caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _BlobStoreReadiness
+
+    class FlakyBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def health_check(self) -> None:
+            self.calls += 1
+            if self.calls in {2, 4}:
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+    blobs = FlakyBlobs()
+    readiness = _BlobStoreReadiness(blobs)
+
+    for expected_calls in range(1, 5):
+        asyncio.run(readiness.probe(0))
+        assert blobs.calls == expected_calls
+        assert readiness.status() == "ready"
+
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED" not in caplog.text
+
+
+def test_three_consecutive_blob_probe_failures_log_once(caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _BlobStoreReadiness
+
+    class FailingBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def health_check(self) -> None:
+            self.calls += 1
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+    blobs = FailingBlobs()
+    readiness = _BlobStoreReadiness(blobs)
+
+    for _ in range(3):
+        asyncio.run(readiness.probe(0))
+
+    assert blobs.calls == 3
+    assert readiness.status() == "unavailable"
+    assert caplog.text.count("EARSHOT_BLOB_HEALTHCHECK_FAILED") == 1
+
+
+def test_unknown_blob_provider_code_logs_as_other(caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _BlobStoreReadiness
+
+    class UnknownFailure:
+        def health_check(self) -> None:
+            raise ClientError({"Error": {"Code": "FutureProviderCode"}}, "ListObjectsV2")
+
+    readiness = _BlobStoreReadiness(UnknownFailure())
+    asyncio.run(readiness.probe(0))
+    asyncio.run(readiness.probe(0))
+
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED (other)" in caplog.text
+    assert "FutureProviderCode" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "code", ["ExpiredToken", "AuthorizationHeaderMalformed", "PermanentRedirect"]
+)
+def test_known_blob_provider_codes_remain_bounded_in_logs(code: str) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _bounded_blob_store_error_code
+
+    error = ClientError({"Error": {"Code": code}}, "ListObjectsV2")
+
+    assert _bounded_blob_store_error_code(error) == code
+
+
+def test_local_blob_store_health_is_not_probed_by_the_maintenance_job(
+    tmp_path, monkeypatch
+) -> None:
+    from earshot.api import _BlobStoreReadiness
+
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    monkeypatch.setattr(
+        blobs, "health_check", lambda: pytest.fail("local stores are checked in /readyz")
+    )
+
+    assert asyncio.run(_BlobStoreReadiness(blobs).probe(0)) == 30.0
 
 
 def test_failed_remote_blob_probe_does_not_revive_an_expired_ready_state(

@@ -36,6 +36,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from .clock import Clock, SystemClock
+from .storage import DATABASE_ERRORS
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -234,6 +235,8 @@ class MaintenanceLoop:
             return "timeout"
         if isinstance(error, OSError):
             return "io"
+        if isinstance(error, DATABASE_ERRORS):
+            return "storage"
         if type(error).__module__.startswith("earshot.storage"):
             return "storage"
         return "other"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 
 import pytest
 
@@ -58,6 +59,12 @@ def test_a_failing_job_is_logged_and_does_not_stop_the_others(caplog) -> None:
 
     assert seen == [7]
     assert "maintenance job broken failed (RuntimeError)" in caplog.text
+
+
+def test_sqlite_database_errors_are_reported_as_storage() -> None:
+    error = sqlite3.OperationalError("private database path")
+
+    assert MaintenanceLoop._error_category(error) == "storage"
 
 
 def test_run_ticks_until_stopped() -> None:

@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import Annotated, Any, Literal, TypeVar
+from typing import Annotated, Any, Literal, TypeVar, cast
 from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, Header, Query, Request
@@ -251,8 +251,11 @@ _LOGGER = logging.getLogger(__name__)
 _BLOB_STORE_ERROR_CODES = frozenset(
     {
         "AccessDenied",
+        "AuthorizationHeaderMalformed",
+        "ExpiredToken",
         "InvalidAccessKeyId",
         "NoSuchBucket",
+        "PermanentRedirect",
         "RequestTimeout",
         "ServiceUnavailable",
         "SignatureDoesNotMatch",
@@ -370,10 +373,11 @@ class _BlobStoreReadiness:
         return self._state
 
     async def probe(self, _now_unix_nano: int) -> float:
-        if self._blobs is None:
+        if isinstance(self._blobs, LocalBlobStore):
             return self._INTERVAL_SECONDS
+        blobs = cast(BlobStore, self._blobs)
         try:
-            await asyncio.to_thread(self._blobs.health_check)
+            await asyncio.to_thread(blobs.health_check)
         except Exception as error:
             checked_at = time.monotonic()
             with self._lock:
@@ -3602,7 +3606,8 @@ def create_app(
 
     maintenance.add_job("queue-depth-snapshot", snapshot_queue_depths, failure_backoff_seconds=30.0)
     if blob_store is not None:
-        maintenance.add_job("blob-store-health", blob_readiness.probe)
+        if not isinstance(blob_store, LocalBlobStore):
+            maintenance.add_job("blob-store-health", blob_readiness.probe)
         # At startup: what crashed uploads left (spool files, multipart uploads).
         maintenance.add_job("blob-spool-sweep", blob_sweep_job(blob_store))
         maintenance.add_job("blob-deletions", blob_deletion_job(recordings))
