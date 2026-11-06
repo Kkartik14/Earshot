@@ -417,6 +417,16 @@ same-origin `/observe?sessionId=...` link. Its hosted scope is also
 [`earshot.integrations.platform`](../packages/sdk-python/src/earshot/integrations/platform/adapter.py)
 and adds no Platform dependency to the generic summary service.
 
+The Platform-specific route is deprecated starting with API 0.17.0 (Earshot
+0.5.0), in favor of `GET /v1/projects/{project_id}/summary`. It remains
+available through 0.5.x; removal is planned for 0.6.0. No calendar removal
+date has been set, so Earshot does not send a `Sunset` header. Every GET
+response for the enabled route, including authentication failures, carries a
+`Link` header pointing to the migration guidance in the
+[Platform integration guide](./platform-integration.md#generic-and-platform-summaries).
+The RFC 9745 `Deprecation` date header will be added once the effective
+calendar date is approved.
+
 ### Hosted scopes
 
 In `hosted_jwt` mode, every project-data route requires the scope shown here. This

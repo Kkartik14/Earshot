@@ -3847,9 +3847,11 @@ def create_app(
         if settings.auth_mode == "hosted_jwt"
         else None
     )
+    platform_summary_deprecation_link = ""
     if enable_platform_adapter:
-        from .integrations.platform import create_platform_router
+        from .integrations.platform import PLATFORM_SUMMARY_DEPRECATION_LINK, create_platform_router
 
+        platform_summary_deprecation_link = PLATFORM_SUMMARY_DEPRECATION_LINK
         app.include_router(create_platform_router(repository))
 
     def openapi_schema() -> dict[str, Any]:
@@ -4434,6 +4436,20 @@ def create_app(
                     status_code=403,
                 )
         return await call_next(request)
+
+    if enable_platform_adapter:
+
+        @app.middleware("http")
+        async def platform_summary_deprecation_link_header(
+            request: Request, call_next: Callable[..., Any]
+        ) -> Response:
+            response = await call_next(request)
+            if request.method.upper() == "GET" and re.fullmatch(
+                r"/v1/platform/projects/[^/]+/observe/summary",
+                request.url.path,
+            ):
+                response.headers["Link"] = platform_summary_deprecation_link
+            return response
 
     @app.post(
         "/v1/auth/session",

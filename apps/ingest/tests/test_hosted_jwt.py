@@ -1860,10 +1860,29 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     )
 
     assert response.status_code == 200
+    assert response.headers["Link"] == (
+        "<https://github.com/Kkartik14/Earshot/blob/main/docs/platform-integration.md"
+        '#generic-and-platform-summaries>; rel="deprecation"; type="text/html"'
+    )
+    assert "Sunset" not in response.headers
     item = response.json()["items"][0]
     assert item["id"] == bundle.profile.session.session_id
     assert item["href"].startswith("/observe?")
     assert SECRET_SENTINEL not in response.text
+
+    unauthorized = client.get(f"/v1/platform/projects/{project_id}/observe/summary")
+    assert unauthorized.status_code == 401
+    assert unauthorized.headers["Link"] == response.headers["Link"]
+
+    insufficient_scope = client.get(
+        f"/v1/platform/projects/{project_id}/observe/summary",
+        headers={
+            "Authorization": f"Bearer {_token(issuer, project_id=project_id, scope='earshot:read')}"
+        },
+    )
+    assert insufficient_scope.status_code == 403
+    assert insufficient_scope.json()["error"]["code"] == "EARSHOT_SCOPE_REQUIRED"
+    assert insufficient_scope.headers["Link"] == response.headers["Link"]
 
     mismatch = client.get(
         f"/v1/platform/projects/{project_id}/observe/summary",
@@ -1871,6 +1890,12 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     )
     assert mismatch.status_code == 403
     assert mismatch.json()["error"]["code"] == "EARSHOT_PROJECT_MISMATCH"
+    assert mismatch.headers["Link"] == response.headers["Link"]
+    assert "Sunset" not in mismatch.headers
+
+    operation = app.openapi()["paths"]["/v1/platform/projects/{project_id}/observe/summary"]["get"]
+    assert operation["deprecated"] is True
+    assert "GET /v1/projects/{project_id}/summary" in operation["description"]
 
     without_adapter = TestClient(create_app(store=store, config=_hosted_config(issuer)))
     absent = without_adapter.get(
@@ -1878,6 +1903,7 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
         headers=headers,
     )
     assert absent.status_code == 404
+    assert "Link" not in absent.headers
 
 
 def test_hosted_openapi_publishes_scope_requirements_and_hides_operator_auth(

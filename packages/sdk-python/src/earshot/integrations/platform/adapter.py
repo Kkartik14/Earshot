@@ -14,6 +14,11 @@ from ...auth import sees_call_revisions
 from ...storage import IncidentStore, InvalidCursorError
 from ...summary import summarize_project
 
+PLATFORM_SUMMARY_DEPRECATION_LINK = (
+    "<https://github.com/Kkartik14/Earshot/blob/main/docs/platform-integration.md"
+    '#generic-and-platform-summaries>; rel="deprecation"; type="text/html"'
+)
+
 
 class PlatformObserveItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -59,10 +64,13 @@ def create_platform_router(store: IncidentStore) -> APIRouter:
         response_model=PlatformObserveSummary,
         response_model_exclude_none=True,
         summary="Adapt the Earshot project summary to Platform Observe links",
+        deprecated=True,
         description=(
             "Platform authenticates the user and mints a short-lived Earshot JWT. "
             "The path project UUID must match its signed project claim. The adapter "
-            "returns metadata only and adds Platform-specific labels and links."
+            "returns metadata only and adds Platform-specific labels and links. "
+            "Deprecated in API 0.17.0 (Earshot 0.5.0); use the host-neutral "
+            "GET /v1/projects/{project_id}/summary operation."
         ),
     )
     def observe_summary(
@@ -123,6 +131,7 @@ def create_platform_router(store: IncidentStore) -> APIRouter:
 
 
 __all__ = [
+    "PLATFORM_SUMMARY_DEPRECATION_LINK",
     "PlatformObserveItem",
     "PlatformObserveSummary",
     "create_platform_router",
