@@ -101,10 +101,18 @@ def test_metadata_only_is_allowlist_based_for_unknown_keys() -> None:
 
 def test_only_registered_stt_audio_usage_is_metadata_not_audio_payload() -> None:
     usage, usage_omissions = sanitize_attributes({"earshot.stt.usage.audio_seconds": 0.375})
+    tts_usage, tts_omissions = sanitize_attributes({"earshot.tts.usage.character_count": 2**53 - 1})
+    oversized_tts, oversized_tts_omissions = sanitize_attributes(
+        {"earshot.tts.usage.character_count": 2**53}
+    )
     payload, payload_omissions = sanitize_attributes({"vendor.audio_seconds": SECRET_SENTINEL})
 
     assert usage == {"earshot.stt.usage.audio_seconds": 0.375}
     assert usage_omissions == []
+    assert tts_usage == {"earshot.tts.usage.character_count": 2**53 - 1}
+    assert tts_omissions == []
+    assert oversized_tts == {}
+    assert [item.reason for item in oversized_tts_omissions] == ["unsafe_attribute_key_or_value"]
     assert payload == {}
     assert [item.capture_class for item in payload_omissions] == [CaptureClass.AUDIO]
     assert classify_attribute("earshot.stt.usage.audio_seconds") is CaptureClass.METADATA

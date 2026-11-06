@@ -511,15 +511,25 @@ def test_host_profile_0_2_reports_stt_and_tts_usage_and_keeps_fractional_reprici
             {
                 "gen_ai.provider.name": "cartesia",
                 "gen_ai.request.model": "sonic-3",
-                "earshot.tts.usage.character_count": 2**63 - 1,
+                "earshot.tts.usage.character_count": 2**53 - 1,
+            },
+        ),
+        HostStage(
+            "tts",
+            T0 + 4 * SECOND,
+            T0 + 5 * SECOND,
+            {
+                "gen_ai.provider.name": "cartesia",
+                "gen_ai.request.model": "sonic-3",
+                "earshot.tts.usage.character_count": 2**53,
             },
         ),
     )
-    turn = HostTurn("turn-1", T0, T0 + 4 * SECOND, stages=stages)
+    turn = HostTurn("turn-1", T0, T0 + 5 * SECOND, stages=stages)
     items = usage_items(_host(turn, scope_version="0.2.0"))
 
     assert _quantities(items, "stt", "audio_second") == [0.375, 0.625, None]
-    assert _quantities(items, "tts", "character") == [2**63 - 1]
+    assert _quantities(items, "tts", "character") == [2**53 - 1, None]
 
     usage = call_usage(items, user_audio_ms=99_999)
     [reported_stt] = [
@@ -528,12 +538,13 @@ def test_host_profile_0_2_reports_stt_and_tts_usage_and_keeps_fractional_reprici
     [unknown_stt] = [
         entry for entry in usage if entry["operation"] == "stt" and entry["kind"] == "not_reported"
     ]
-    [reported_tts] = [entry for entry in usage if entry["operation"] == "tts"]
+    [reported_tts, unknown_tts] = [entry for entry in usage if entry["operation"] == "tts"]
     assert reported_stt["quantity_milli"] == 1000
     assert reported_stt["span"] is None
     assert unknown_stt["quantity_milli"] is None
     assert unknown_stt["span"] is not None
-    assert reported_tts["quantity_milli"] == (2**63 - 1) * 1000
+    assert reported_tts["quantity_milli"] == (2**53 - 1) * 1000
+    assert (unknown_tts["kind"], unknown_tts["quantity_milli"]) == ("not_reported", None)
 
     price = PriceRow(1, None, "deepgram", "nova-3", "audio_second", 6_000_000_000, 60, 0)
     cost = price_usage([reported_stt], [price], project_id="default", at_unix_nano=1)

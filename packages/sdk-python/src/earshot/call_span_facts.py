@@ -160,6 +160,7 @@ _OUTPUT_TOKENS = ("gen_ai.usage.output_tokens", ("completion_tokens",))
 _CHARACTERS = ("metrics.character_count", ("characters_count",))
 _HOST_STT_AUDIO_SECONDS = "earshot.stt.usage.audio_seconds"
 _HOST_TTS_CHARACTER_COUNT = "earshot.tts.usage.character_count"
+_HOST_MAX_JSON_SAFE_INTEGER = 2**53 - 1
 _TTS_INPUT_TOKENS = (("input_tokens",),)
 _TTS_OUTPUT_TOKENS = (("output_tokens",),)
 _PROVIDER = ("gen_ai.provider.name", ("metadata", "model_provider"))
@@ -261,13 +262,24 @@ def _first(attributes: Mapping[str, Any], metrics: Mapping[str, Any], sources: t
     return None
 
 
-def _count(attributes: Mapping[str, Any], metrics: Mapping[str, Any], sources: tuple) -> int | None:
+def _count(
+    attributes: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+    sources: tuple,
+    *,
+    maximum: int | None = None,
+) -> int | None:
     """The first source's positive integer count; 0 and anything else are unknown, and
     an unknown source never hides a later one."""
 
     for source in sources:
         value = _first(attributes, metrics, (source,))
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > 0
+            and (maximum is None or value <= maximum)
+        ):
             return value
     return None
 
@@ -333,7 +345,12 @@ def _meters(
     if operation == "tts":
         if host_profile:
             character_count = (
-                _count(attributes, metrics, (_HOST_TTS_CHARACTER_COUNT,))
+                _count(
+                    attributes,
+                    metrics,
+                    (_HOST_TTS_CHARACTER_COUNT,),
+                    maximum=_HOST_MAX_JSON_SAFE_INTEGER,
+                )
                 if host_profile_v2
                 else None
             )

@@ -135,8 +135,9 @@ groups:
         note: >-
           This attribute is defined by host profile 0.2.0 when the earshot.host scope
           version is exactly 0.2.0. Omit when unknown. A present value is a positive
-          integer. Do not infer it by counting text, bytes, Unicode scalar values, or
-          grapheme clusters.
+          JSON-safe integer no greater than 9007199254740991, so it remains exact in
+          Earshot's JSON incident profile. Do not infer it by counting text, bytes,
+          Unicode scalar values, or grapheme clusters.
       - id: earshot.conversation.item.id
         type: string
         requirement_level: opt_in

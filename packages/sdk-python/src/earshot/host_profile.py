@@ -33,8 +33,6 @@ _ATTRIBUTES_BY_SPAN = {
     _STT_AUDIO_SECONDS: frozenset({"stt"}),
     _TTS_CHARACTER_COUNT: frozenset({"tts"}),
 }
-_INT64_MIN = -(2**63)
-_INT64_MAX = 2**63 - 1
 _MAX_SAFE_JSON_INTEGER = 2**53 - 1
 
 
@@ -106,12 +104,12 @@ def _host_attributes(
 
 
 def _int64(value: Any) -> int | None:
-    """Decode the ProtoJSON int64 number/string forms without losing float precision."""
+    """Decode a JSON-safe integer from the ProtoJSON int64 number/string forms."""
 
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
-        return value if _INT64_MIN <= value <= _INT64_MAX else None
+        return value if abs(value) <= _MAX_SAFE_JSON_INTEGER else None
     if isinstance(value, float):
         if (
             not math.isfinite(value)
@@ -120,7 +118,7 @@ def _int64(value: Any) -> int | None:
         ):
             return None
         parsed = int(value)
-        return parsed if _INT64_MIN <= parsed <= _INT64_MAX else None
+        return parsed if abs(parsed) <= _MAX_SAFE_JSON_INTEGER else None
     if isinstance(value, str):
         if not value or value.strip() != value or " " in value:
             return None
@@ -138,7 +136,7 @@ def _int64(value: Any) -> int | None:
             ):
                 return None
             parsed = int(numeric)
-        return parsed if _INT64_MIN <= parsed <= _INT64_MAX else None
+        return parsed if abs(parsed) <= _MAX_SAFE_JSON_INTEGER else None
     return None
 
 
@@ -210,7 +208,12 @@ def _check_value(
     else:
         character_count = _int64(value)
         if character_count is None or character_count <= 0:
-            _issue(issues, "invalid_tts_character_count", path, "must be a positive int64")
+            _issue(
+                issues,
+                "invalid_tts_character_count",
+                path,
+                "must be a positive JSON-safe int64 no greater than 9007199254740991",
+            )
 
 
 def check_host_profile(payload: bytes | str | Mapping[str, Any]) -> HostProfileReport:

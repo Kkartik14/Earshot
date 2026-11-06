@@ -1234,3 +1234,107 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
         (call_id,),
     )
     assert json.loads(repriced_usage) == stored_usage
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_host_max_json_safe_tts_usage_is_exact_in_revision_and_durable_projection(
+    tmp_path, preset
+) -> None:
+    from earshot.codec import decode_incident_protobuf
+    from host_profile_support import HostStage, HostTurn, host_request
+
+    max_json_safe_integer = 2**53 - 1
+    turn = HostTurn(
+        "turn-max-json-safe-tts",
+        START,
+        START + 2 * SECOND,
+        stages=(
+            HostStage(
+                "tts",
+                START,
+                START + SECOND,
+                {
+                    "gen_ai.provider.name": "e7-max-json-safe-test",
+                    "gen_ai.request.model": "synthetic",
+                    "earshot.tts.usage.character_count": max_json_safe_integer,
+                },
+            ),
+        ),
+    )
+    world = World(tmp_path)
+    world.store.set_capture_preset("default", preset)
+    call_id = world.replay([host_request([turn], scope_version="0.2.0")])
+    world.close()
+    world.project()
+
+    _, revision_payload = world.store.get_artifact(f"{call_id}.r1")
+    revision = decode_incident_protobuf(revision_payload)
+    [tts] = [
+        operation for operation in revision.profile.operations if operation.operation_name == "tts"
+    ]
+    assert tts.attributes["earshot.tts.usage.character_count"] == max_json_safe_integer
+
+    [(usage_json,)] = catalog_rows(
+        tmp_path,
+        "SELECT usage_json FROM call_projections WHERE call_id = ?",
+        (call_id,),
+    )
+    [tts_usage] = [item for item in json.loads(usage_json) if item["operation"] == "tts"]
+    assert tts_usage["quantity_milli"] == max_json_safe_integer * 1000
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_host_tts_above_json_safe_range_is_omitted_and_not_billed(tmp_path, preset) -> None:
+    from hashlib import sha256
+
+    from earshot.codec import decode_incident_protobuf
+    from host_profile_support import HostStage, HostTurn, host_request
+
+    turn = HostTurn(
+        "turn-oversized-tts",
+        START,
+        START + 2 * SECOND,
+        stages=(
+            HostStage(
+                "tts",
+                START,
+                START + SECOND,
+                {
+                    "gen_ai.provider.name": "e7-max-int64-test",
+                    "gen_ai.request.model": "synthetic",
+                    "earshot.tts.usage.character_count": 2**53,
+                },
+            ),
+        ),
+    )
+    world = World(tmp_path)
+    world.store.set_capture_preset("default", preset)
+    call_id = world.replay([host_request([turn], scope_version="0.2.0")])
+    world.close()
+    world.project()
+
+    _, revision_payload = world.store.get_artifact(f"{call_id}.r1")
+    revision = decode_incident_protobuf(revision_payload)
+    [tts] = [
+        operation for operation in revision.profile.operations if operation.operation_name == "tts"
+    ]
+    assert "earshot.tts.usage.character_count" not in tts.attributes
+    [omission] = [
+        item
+        for item in revision.profile.privacy.omissions
+        if item.attributes.get("field_key_sha256")
+        == sha256(b"earshot.tts.usage.character_count").hexdigest()
+    ]
+    assert (omission.capture_class, omission.reason, omission.count) == (
+        "metadata",
+        "unsafe_attribute_key_or_value",
+        1,
+    )
+
+    [(usage_json,)] = catalog_rows(
+        tmp_path,
+        "SELECT usage_json FROM call_projections WHERE call_id = ?",
+        (call_id,),
+    )
+    [tts_usage] = [item for item in json.loads(usage_json) if item["operation"] == "tts"]
+    assert (tts_usage["kind"], tts_usage["quantity_milli"]) == ("not_reported", None)

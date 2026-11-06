@@ -196,6 +196,26 @@ def test_checker_rejects_fractional_protojson_int64_string() -> None:
     assert "invalid_tts_character_count" in {issue.code for issue in report.issues}
 
 
+def test_checker_accepts_max_json_safe_tts_count() -> None:
+    request = _reported_request()
+    tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
+    _attribute(tts, "earshot.tts.usage.character_count")["value"]["intValue"] = str(2**53 - 1)
+
+    assert check_host_profile(json.dumps(request)).valid
+
+
+@pytest.mark.parametrize("tts_value", [2**53, str(2**53), str(2**63 - 1)])
+def test_checker_rejects_tts_count_above_json_safe_range(tts_value) -> None:
+    request = _reported_request()
+    tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
+    _attribute(tts, "earshot.tts.usage.character_count")["value"]["intValue"] = tts_value
+
+    report = check_host_profile(json.dumps(request))
+
+    assert not report.valid
+    assert "invalid_tts_character_count" in {issue.code for issue in report.issues}
+
+
 def test_checker_rejects_tts_int64_values_that_exceed_python_integer_parse_limits() -> None:
     request = _reported_request()
     tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
@@ -268,7 +288,7 @@ def test_checker_accepts_positive_reported_latency_in_the_legacy_profile() -> No
     assert check_host_profile(request).valid
 
 
-def test_json_int64_limit_is_valid_and_an_omitted_scope_version_is_legacy() -> None:
+def test_missing_scope_version_retains_legacy_profile_0_1_behavior() -> None:
     request = _reported_request()
     tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
     _attribute(tts, "earshot.tts.usage.character_count")["value"]["intValue"] = str(2**63 - 1)
