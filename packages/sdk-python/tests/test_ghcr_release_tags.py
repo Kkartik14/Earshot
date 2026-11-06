@@ -190,6 +190,38 @@ def test_same_version_alias_with_a_different_digest_is_a_conflict(
     assert registry.tags[latest].digest == OTHER_DIGEST
 
 
+@pytest.mark.parametrize(
+    ("version", "alias", "current"),
+    [
+        ("0.4.0", "0.5", None),
+        ("0.6.0", "0.5", _info("0.5.0", "c" * 40, OTHER_DIGEST)),
+    ],
+    ids=["missing-minor-alias", "existing-minor-alias"],
+)
+def test_minor_alias_cannot_create_or_advance_to_another_release_line(
+    monkeypatch: pytest.MonkeyPatch,
+    version: str,
+    alias: str,
+    current: Any,
+) -> None:
+    release = _info(version, "a" * 40, OLD_DIGEST)
+    version_reference = f"{IMAGE}:{version}"
+    alias_reference = f"{IMAGE}:{alias}"
+    tags = {version_reference: release}
+    if current is not None:
+        tags[alias_reference] = current
+    registry = RegistryState(tags=tags, by_digest={OLD_DIGEST: release})
+    _patch_registry(monkeypatch, registry)
+
+    with pytest.raises(RuntimeError, match="release line"):
+        promote_ghcr_tags.promote_tags(
+            IMAGE, version, OLD_DIGEST, [version_reference, alias_reference]
+        )
+
+    assert registry.created == []
+    assert registry.tags.get(alias_reference) is current
+
+
 def test_immutable_sha_tag_with_another_digest_is_never_retargeted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

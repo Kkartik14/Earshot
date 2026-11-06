@@ -69,6 +69,14 @@ def _promote_moving_alias(
     tag: str,
     digest: str,
 ) -> None:
+    release_order = _stable_version(version)
+    minor_match = _MINOR_TAG.fullmatch(tag)
+    minor_order = (
+        tuple(int(part) for part in minor_match.groups()) if minor_match is not None else None
+    )
+    if minor_order is not None and release_order[:2] != minor_order:
+        raise RuntimeError(f"{reference} does not match the {version} release line")
+
     current = inspect_image(reference)
     if current is not None and current.digest == digest:
         print(f"Verified alias {reference} at {digest}")
@@ -82,11 +90,7 @@ def _promote_moving_alias(
     if not isinstance(existing_version, str):
         raise RuntimeError(f"{reference} has no usable OCI version label")
     existing_order = _stable_version(existing_version)
-    release_order = _stable_version(version)
-    minor_match = _MINOR_TAG.fullmatch(tag)
-    if minor_match is not None and existing_order[:2] != tuple(
-        int(part) for part in minor_match.groups()
-    ):
+    if minor_order is not None and existing_order[:2] != minor_order:
         raise RuntimeError(
             f"{reference} points outside its {tag} release line ({existing_version})"
         )
