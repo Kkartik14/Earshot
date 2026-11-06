@@ -105,7 +105,7 @@ For an orchestrator this means:
 
 Each write also holds a lock on its own session. If that session dies in the middle of a
 write, Earshot logs `EARSHOT_WRITE_LOCK_LOST` and the write finishes without the lock; the
-next write reconnects. This is a known 0.3.0 limitation.
+next write reconnects.
 
 ## Put a Collector in front
 
@@ -247,9 +247,9 @@ aws s3api put-bucket-lifecycle-configuration \
 Replace `<configured-prefix>` with the complete path prefix in `EARSHOT_BLOB_URL` (omit
 the slash when the URL has no prefix). Do not add expiration rules for Earshot's
 objects: Earshot deletes recordings, and the peaks and renditions derived from them,
-itself when a Call is purged or its Project is deleted (in 0.3.0 no Call expires; see
-[retention](./privacy.md#calls)). If bucket
-versioning is on, a deletion leaves a noncurrent version behind; add a
+itself when a Call is purged or its Project is deleted. Calls do not expire; see
+[retention](./privacy.md#calls). If bucket versioning is on, a deletion leaves a
+noncurrent version behind; add a
 `NoncurrentVersionExpiration` rule, or turn versioning off, to bound how long deleted
 recordings survive. For an S3-compatible endpoint, add
 `--endpoint-url <endpoint>` to this command and use the endpoint from

@@ -128,6 +128,12 @@ state values for forward compatibility.
 }
 ```
 
+| Component      | States                                        |
+| -------------- | --------------------------------------------- |
+| `catalog`      | `ready`, `unavailable`                        |
+| `blob_store`   | `ready`, `unavailable`, `unknown`, `disabled` |
+| `materializer` | `ready`, `unavailable`, `unknown`             |
+
 `blob_store` is `disabled` when no store is configured and `unknown` before the first
 remote-store probe or when its latest result is older than 90 seconds. It is `unavailable`
 after two consecutive failed checks. Local filesystem checks run directly. Remote
