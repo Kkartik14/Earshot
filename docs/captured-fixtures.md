@@ -54,6 +54,7 @@ request is made only when the matching cache entry is absent or invalid. Cache w
 not coordinated across processes; do not concurrently generate or force-rebuild the same
 digest path, or share an explicit output path between runs. A capture or scrub read that
 overlaps a rebuild can fail closed; rerun it after the rebuild finishes.
+Older sidecars without the timeline checksum are invalidated and re-synthesized once.
 
 OpenAI Realtime and finalized-delivery connectors currently have no retained real provider
 capture. Their absence is listed in the root manifest. Synthetic tests do not replace

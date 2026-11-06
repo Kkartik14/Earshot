@@ -24,6 +24,11 @@ def load_caller_audio_module():
     return module
 
 
+def timeline_checksum(lines: object) -> str:
+    encoded = json.dumps(lines, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def test_generator_imports_without_posix_fcntl(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "fcntl", None)
 
@@ -149,6 +154,8 @@ def test_default_cache_path_is_namespaced_by_model_and_voice(monkeypatch, tmp_pa
         "invalid_metadata",
         "wrong_digest",
         "wrong_audio_digest",
+        "wrong_timeline_checksum",
+        "missing_timeline_checksum",
         "invalid_wav",
         "nonfinite_timeline",
         "boolean_timeline",
@@ -179,6 +186,12 @@ def test_corrupt_or_stale_cache_is_regenerated(monkeypatch, tmp_path, corruption
     elif corruption == "wrong_audio_digest":
         metadata["wav_sha256"] = "stale-audio"
         metadata_path.write_text(module.json.dumps(metadata))
+    elif corruption == "wrong_timeline_checksum":
+        metadata["timeline_sha256"] = "stale-timeline"
+        metadata_path.write_text(module.json.dumps(metadata))
+    elif corruption == "missing_timeline_checksum":
+        metadata.pop("timeline_sha256")
+        metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "invalid_wav":
         path.write_bytes(b"not a WAV file")
     elif corruption == "nonfinite_timeline":
@@ -189,17 +202,21 @@ def test_corrupt_or_stale_cache_is_regenerated(monkeypatch, tmp_path, corruption
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "negative_timeline":
         metadata["lines"][0]["start_s"] = -1.0
+        metadata["timeline_sha256"] = timeline_checksum(metadata["lines"])
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "out_of_range_timeline":
         metadata["lines"][0]["start_s"] = metadata["duration_s"] + 1.0
+        metadata["timeline_sha256"] = timeline_checksum(metadata["lines"])
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "misordered_timeline":
         metadata["lines"][0]["start_s"] = metadata["lines"][1]["start_s"] + 0.1
+        metadata["timeline_sha256"] = timeline_checksum(metadata["lines"])
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "overlapping_timeline":
         metadata["lines"][1]["start_s"] = (
             metadata["lines"][0]["start_s"] + metadata["lines"][0]["duration_s"] / 2
         )
+        metadata["timeline_sha256"] = timeline_checksum(metadata["lines"])
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "shifted_in_range_timeline":
         metadata["lines"][0]["start_s"] = 0.2
@@ -278,6 +295,7 @@ def test_load_returns_cached_audio_and_timeline_metadata(monkeypatch, tmp_path) 
         {"text": text, "start_s": start, "duration_s": 0.00025}
         for text, start in zip(module.CALLER_SCRIPT, (1.0, 8.00025, 15.0005), strict=True)
     ]
+    assert metadata["timeline_sha256"] == timeline_checksum(metadata["lines"])
     assert module._valid_cached_wav(
         path, module.caller_wav_metadata_path(path), module._cache_digest()
     )
