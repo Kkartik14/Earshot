@@ -43,7 +43,7 @@ groups:
       - id: earshot.turn.reported_latency_ms
         type: double
         requirement_level: opt_in
-        brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; a present value is a positive finite OTLP doubleValue or intValue. Absent or invalid values are unknown, never 0."
+        brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; absent when unknown. A present value is a positive finite OTLP doubleValue or intValue. Zero, negative, and non-finite values are omitted."
         note: The semantic type is double; a positive OTLP intValue is also permitted by the host profile as numeric input.
       - id: earshot.turn.timeline_continuous
         type: boolean

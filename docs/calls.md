@@ -297,9 +297,9 @@ For a host that runs its own pipeline rather than Pipecat or LiveKit, and export
 calls' turns itself. Every span is under the instrumentation scope `earshot.host`, with
 times on the host's wall clock: the clock its Recordings' `started_at_unix_nano` is on.
 The profile's version is `host_profile_version` in [`GET /version`](./backend-api.md#get-version).
-The current implementation reports 0.1.0. Profile 0.2.0 adds optional provider-metered
-STT and TTS usage attributes and optional transcript text on speech spans; Earshot
-continues to accept 0.1.0 spans. The attributes are registered in
+The current implementation reports 0.2.0 and continues to accept 0.1.0 spans. Profile
+0.2.0 adds optional provider-metered STT and TTS usage attributes and optional transcript
+text on speech spans. The attributes are registered in
 [`semconv/earshot.yaml`](../semconv/earshot.yaml).
 Set the `earshot.host` instrumentation scope version to the profile version emitted.
 An absent scope version retains 0.1.0 behavior. A different or unrecognized version
@@ -315,7 +315,8 @@ scope version is exactly `0.2.0`.
 - **Turns.** One per `turn` span. User on is the starts of its `user_speech` spans, user
   off the latest of their ends, and agent on the earliest start of its `agent_speech`
   spans. The reported latency is `earshot.turn.reported_latency_ms`. A present value is
-  a positive finite OTLP `doubleValue` or `intValue`; otherwise it is unknown, never 0.
+  a positive finite OTLP `doubleValue` or `intValue`. Absent, zero, negative, or
+  non-finite values are omitted and remain unknown, never 0.
 - **The audible gap** is measured on the `continuous_timeline_assumed` basis, since the
   host places its Recording's frames by its wall clock. A turn with
   `earshot.turn.timeline_continuous=false` is `not_measurable` with

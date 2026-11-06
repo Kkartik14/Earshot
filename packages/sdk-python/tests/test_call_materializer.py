@@ -818,6 +818,37 @@ def test_host_profile_0_2_transcripts_follow_the_version_gate_and_capture_preset
     assert legacy_coverage.availability == "not_observed"
 
 
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+@pytest.mark.parametrize("latency", [0.0, -1.0, float("inf"), float("nan")])
+def test_invalid_host_reported_latency_is_omitted_from_the_revision(preset, latency) -> None:
+    from earshot.call_capture import apply_capture_preset
+    from host_profile_support import HostTurn, host_request
+
+    turn = HostTurn(
+        "turn-invalid-latency",
+        SYNTHETIC_CALL_START,
+        SYNTHETIC_CALL_START + 2_000_000_000,
+        reported_latency_ms=latency,
+    )
+    source = spans_from_request(host_request([turn], scope_version="0.2.0"))
+    stored = [apply_capture_preset(preset, span) for span in source]
+    bundle = _materialize(_snapshot(stored, preset=preset))
+
+    [operation] = [op for op in bundle.profile.operations if op.operation_name == "turn"]
+    assert "earshot.turn.reported_latency_ms" not in operation.attributes
+    [omission] = [
+        item
+        for item in bundle.profile.privacy.omissions
+        if item.attributes.get("field_key_sha256")
+        == hashlib.sha256(b"earshot.turn.reported_latency_ms").hexdigest()
+    ]
+    assert (omission.capture_class, omission.reason, omission.count) == (
+        "metadata",
+        "adapter_payload_omitted",
+        1,
+    )
+
+
 def test_oversized_host_transcript_makes_revision_transcript_coverage_unavailable() -> None:
     from earshot.call_capture import apply_capture_preset
     from earshot.call_materializer import transcript_text_json

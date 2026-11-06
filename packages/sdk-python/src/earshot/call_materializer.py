@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -160,6 +161,7 @@ _CONNECTOR_TRANSCRIPT_SOURCE = (None, ("earshot.connector.transcript.text",))
 _CONNECTOR_TRANSCRIPT_SPAN = "earshot.connector.transcript_line"
 _CONNECTOR_TRANSCRIPT_TIMING = "earshot.connector.transcript.timing"
 _CONNECTOR_TRANSCRIPT_INDEX = "earshot.connector.transcript.index"
+_HOST_REPORTED_LATENCY = "earshot.turn.reported_latency_ms"
 _TRANSCRIPT_TIMINGS = frozenset({"measured", "start_only", "order_only"})
 _UPLOAD_SCOPE = "earshot.upload"
 _HOST_PROFILE_0_2_FIELDS = frozenset(
@@ -668,6 +670,17 @@ def _semantic_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any
     for key, value in converted["attributes"].items():
         expected = attribute_capture_class(key)
         recorded_as = canonical_attribute_key(key)
+        invalid_host_latency = (
+            span.scope.name == HOST_SCOPE
+            and recorded_as == _HOST_REPORTED_LATENCY
+            and (
+                span.span.name != "turn"
+                or isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value <= 0
+            )
+        )
         wrong_profile_version = (
             span.scope.name == HOST_SCOPE
             and host_profile_scope_version(span.scope) != HOST_PROFILE_VERSION
@@ -678,6 +691,7 @@ def _semantic_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any
             or not recorder_agrees(recorded_as, expected)
             or wrong_profile_version
             or (duplicated_host_transcript and key == "earshot.transcript.text")
+            or invalid_host_latency
         ):
             recorder.record_omission(key, capture_class=expected)
             continue
