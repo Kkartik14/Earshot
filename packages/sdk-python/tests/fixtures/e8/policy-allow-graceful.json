@@ -2,8 +2,8 @@
   "metadata": {
     "case": "same_observed_interruption_under_allow_and_graceful",
     "source_configuration": {
-      "turn-allow": {"interruption_policy_mode": "allow"},
-      "turn-graceful": {"interruption_policy_mode": "graceful"}
+      "turn-allow": { "interruption_policy_mode": "allow" },
+      "turn-graceful": { "interruption_policy_mode": "graceful" }
     }
   },
   "request": {
@@ -11,7 +11,7 @@
       {
         "scopeSpans": [
           {
-            "scope": {"name": "earshot.host", "version": "0.2.0"},
+            "scope": { "name": "earshot.host", "version": "0.2.0" },
             "spans": [
               {
                 "traceId": "00000000000000000000000000000022",
@@ -20,12 +20,15 @@
                 "startTimeUnixNano": "3000000000",
                 "endTimeUnixNano": "3200000000",
                 "attributes": [
-                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-allow"}}
+                  { "key": "earshot.turn.id", "value": { "stringValue": "turn-allow" } }
                 ],
                 "events": [
-                  {"timeUnixNano": "3150000000", "name": "earshot.interruption.accepted"}
+                  {
+                    "timeUnixNano": "3150000000",
+                    "name": "earshot.interruption.accepted"
+                  }
                 ],
-                "status": {"code": 0}
+                "status": { "code": 0 }
               },
               {
                 "traceId": "00000000000000000000000000000022",
@@ -34,12 +37,18 @@
                 "startTimeUnixNano": "4000000000",
                 "endTimeUnixNano": "4200000000",
                 "attributes": [
-                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-graceful"}}
+                  {
+                    "key": "earshot.turn.id",
+                    "value": { "stringValue": "turn-graceful" }
+                  }
                 ],
                 "events": [
-                  {"timeUnixNano": "4150000000", "name": "earshot.interruption.accepted"}
+                  {
+                    "timeUnixNano": "4150000000",
+                    "name": "earshot.interruption.accepted"
+                  }
                 ],
-                "status": {"code": 0}
+                "status": { "code": 0 }
               }
             ]
           }

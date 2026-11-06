@@ -2,8 +2,8 @@
   "metadata": {
     "case": "direct_stage_windows_and_errors_only",
     "source_facts": {
-      "llm-span": {"duration_ms": 5000, "status": "unset"},
-      "tts-span": {"duration_ms": 500, "status": "error"}
+      "llm-span": { "duration_ms": 5000, "status": "unset" },
+      "tts-span": { "duration_ms": 500, "status": "error" }
     }
   },
   "request": {
@@ -11,7 +11,7 @@
       {
         "scopeSpans": [
           {
-            "scope": {"name": "earshot.host", "version": "0.2.0"},
+            "scope": { "name": "earshot.host", "version": "0.2.0" },
             "spans": [
               {
                 "traceId": "00000000000000000000000000000044",
@@ -20,9 +20,9 @@
                 "startTimeUnixNano": "7000000000",
                 "endTimeUnixNano": "14000000000",
                 "attributes": [
-                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-stages"}}
+                  { "key": "earshot.turn.id", "value": { "stringValue": "turn-stages" } }
                 ],
-                "status": {"code": 0}
+                "status": { "code": 0 }
               },
               {
                 "traceId": "00000000000000000000000000000044",
@@ -32,11 +32,17 @@
                 "startTimeUnixNano": "8000000000",
                 "endTimeUnixNano": "13000000000",
                 "attributes": [
-                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-stages"}},
-                  {"key": "gen_ai.provider.name", "value": {"stringValue": "synthetic"}},
-                  {"key": "gen_ai.request.model", "value": {"stringValue": "test-model"}}
+                  { "key": "earshot.turn.id", "value": { "stringValue": "turn-stages" } },
+                  {
+                    "key": "gen_ai.provider.name",
+                    "value": { "stringValue": "synthetic" }
+                  },
+                  {
+                    "key": "gen_ai.request.model",
+                    "value": { "stringValue": "test-model" }
+                  }
                 ],
-                "status": {"code": 0}
+                "status": { "code": 0 }
               },
               {
                 "traceId": "00000000000000000000000000000044",
@@ -46,11 +52,17 @@
                 "startTimeUnixNano": "13000000000",
                 "endTimeUnixNano": "13500000000",
                 "attributes": [
-                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-stages"}},
-                  {"key": "gen_ai.provider.name", "value": {"stringValue": "synthetic"}},
-                  {"key": "gen_ai.request.model", "value": {"stringValue": "test-model"}}
+                  { "key": "earshot.turn.id", "value": { "stringValue": "turn-stages" } },
+                  {
+                    "key": "gen_ai.provider.name",
+                    "value": { "stringValue": "synthetic" }
+                  },
+                  {
+                    "key": "gen_ai.request.model",
+                    "value": { "stringValue": "test-model" }
+                  }
                 ],
-                "status": {"code": 2}
+                "status": { "code": 2 }
               }
             ]
           }

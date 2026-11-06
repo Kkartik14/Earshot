@@ -2,8 +2,8 @@
   "metadata": {
     "case": "accepted_barge_in_and_unobserved_acceptance",
     "source_facts": {
-      "turn-accepted": {"interruption": "accepted:barge_in", "terminal": "cancelled"},
-      "turn-unobserved": {"interruption": "not_observed", "terminal": "cancelled"}
+      "turn-accepted": { "interruption": "accepted:barge_in", "terminal": "cancelled" },
+      "turn-unobserved": { "interruption": "not_observed", "terminal": "cancelled" }
     }
   },
   "request": {
@@ -11,7 +11,7 @@
       {
         "scopeSpans": [
           {
-            "scope": {"name": "earshot.host", "version": "0.2.0"},
+            "scope": { "name": "earshot.host", "version": "0.2.0" },
             "spans": [
               {
                 "traceId": "00000000000000000000000000000011",
@@ -20,14 +20,23 @@
                 "startTimeUnixNano": "1000000000",
                 "endTimeUnixNano": "1250000000",
                 "attributes": [
-                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-accepted"}},
-                  {"key": "earshot.turn.reported_latency_ms", "value": {"doubleValue": 125.0}}
+                  {
+                    "key": "earshot.turn.id",
+                    "value": { "stringValue": "turn-accepted" }
+                  },
+                  {
+                    "key": "earshot.turn.reported_latency_ms",
+                    "value": { "doubleValue": 125.0 }
+                  }
                 ],
                 "events": [
-                  {"timeUnixNano": "1150000000", "name": "earshot.interruption.accepted"},
-                  {"timeUnixNano": "1200000000", "name": "earshot.turn.cancelled"}
+                  {
+                    "timeUnixNano": "1150000000",
+                    "name": "earshot.interruption.accepted"
+                  },
+                  { "timeUnixNano": "1200000000", "name": "earshot.turn.cancelled" }
                 ],
-                "status": {"code": 0}
+                "status": { "code": 0 }
               },
               {
                 "traceId": "00000000000000000000000000000011",
@@ -36,12 +45,15 @@
                 "startTimeUnixNano": "2000000000",
                 "endTimeUnixNano": "2300000000",
                 "attributes": [
-                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-unobserved"}}
+                  {
+                    "key": "earshot.turn.id",
+                    "value": { "stringValue": "turn-unobserved" }
+                  }
                 ],
                 "events": [
-                  {"timeUnixNano": "2250000000", "name": "earshot.turn.cancelled"}
+                  { "timeUnixNano": "2250000000", "name": "earshot.turn.cancelled" }
                 ],
-                "status": {"code": 0}
+                "status": { "code": 0 }
               }
             ]
           }
