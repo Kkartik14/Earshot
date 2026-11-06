@@ -17,7 +17,8 @@ Subcommands (raw output goes to ``.earshot/raw-captures/elevenlabs/``, git-ignor
     synthetic. It then waits for the conversation to finish processing and fetches
     the conversation JSON and ``/audio``.
 
-Keys come from ``--env`` (default ``../TVIC/.env``): ``ELEVENLABS_API_KEY``.
+Keys come from ``--env`` (default ``../TVIC/.env``): ``ELEVENLABS_API_KEY`` and, for
+``converse``, ``CARTESIA_API_KEY`` plus ``CARTESIA_VOICE_ID`` for the synthetic caller.
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import io
 import json
+import os
 import sys
 import time
 import urllib.parse
@@ -47,9 +50,12 @@ from provider_capture import (
     write_response,
 )
 
+sys.path.insert(0, str(ROOT / "examples" / "pipecat_otlp"))
+
+from make_caller_audio import load_caller_wav_and_metadata
+
 API = "https://api.elevenlabs.io"
 RAW = RAW_ROOT / "elevenlabs"
-CALLER_CACHE = ROOT / ".earshot" / "pipecat_otlp"
 AGENT_NAME = "earshot-fixture-agent"
 AGENT_PROMPT = (
     "You are a restaurant booking line used for an automated test. Reply in one short "
@@ -120,8 +126,8 @@ def fetch(key: str, index: int) -> None:
 
 def _caller_lines() -> list[bytes]:
     """PCM16 mono 16 kHz bytes of each line of the cached synthetic caller WAV."""
-    meta = json.loads((CALLER_CACHE / "caller.json").read_text())
-    with wave.open(str(CALLER_CACHE / "caller.wav"), "rb") as wav:
+    caller_wav, meta = load_caller_wav_and_metadata()
+    with wave.open(io.BytesIO(caller_wav), "rb") as wav:
         if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) != (1, 2, SAMPLE_RATE):
             raise SystemExit("caller.wav is not mono PCM16 16 kHz")
         pcm = wav.readframes(wav.getnframes())
@@ -300,6 +306,11 @@ def main() -> None:
     sub.add_parser("converse")
     args = parser.parse_args()
     key = load_keys(args.env, ["ELEVENLABS_API_KEY"])["ELEVENLABS_API_KEY"]
+    if args.command == "converse":
+        caller_keys = ("CARTESIA_API_KEY", "CARTESIA_VOICE_ID")
+        missing = [name for name in caller_keys if not os.environ.get(name)]
+        if missing:
+            os.environ.update(load_keys(args.env, missing))
     try:
         if args.command == "survey":
             survey(key)

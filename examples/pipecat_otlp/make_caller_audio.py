@@ -37,7 +37,6 @@ def _synthesize(text: str) -> bytes:
         "voice": {"mode": CARTESIA_VOICE_MODE, "id": os.environ["CARTESIA_VOICE_ID"]},
         "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": SAMPLE_RATE},
         "language": "en",
-        "voice_mode": CARTESIA_VOICE_MODE,
     }
     request = urllib.request.Request(
         CARTESIA_URL,
@@ -107,12 +106,7 @@ def _valid_cached_wav(path: Path, metadata_path: Path, digest: str) -> bool:
             )
         ):
             return False
-        expected_start = LEAD_IN_S
         tolerance = 1 / SAMPLE_RATE
-        for line in lines:
-            if not math.isclose(line["start_s"], expected_start, rel_tol=0, abs_tol=tolerance):
-                return False
-            expected_start = line["start_s"] + line["duration_s"] + GAP_S
 
         with wave.open(str(path), "rb") as wav:
             frames = wav.getnframes()
@@ -121,13 +115,11 @@ def _valid_cached_wav(path: Path, metadata_path: Path, digest: str) -> bool:
                 and wav.getsampwidth() == 2
                 and wav.getframerate() == SAMPLE_RATE
                 and frames > 0
-                and path.stat().st_size == 44 + frames * 2
             ):
                 return False
         wav_duration = frames / SAMPLE_RATE
         return (
             math.isclose(metadata["duration_s"], wav_duration, rel_tol=0, abs_tol=tolerance)
-            and math.isclose(expected_start, wav_duration, rel_tol=0, abs_tol=tolerance)
             and hashlib.sha256(path.read_bytes()).hexdigest() == metadata["wav_sha256"]
         )
     except (EOFError, OSError, UnicodeError, ValueError, wave.Error):

@@ -5,8 +5,9 @@ A Call is one voice session: every span that shares a Session Key in a Project, 
 Recordings uploaded for it. When a Call closes, Earshot stores a Revision, an ordinary
 Incident built from all of its spans and Recordings.
 
-This page covers Pipecat 1.6 and LiveKit Agents 1.8, the producers tested end to end,
-and the two clients that upload a call's recording: Python's
+The examples have been exercised with Pipecat 1.6 and LiveKit Agents 1.8. Earshot's
+`livekit` extra supports `livekit-agents>=1.6.5,<1.9`. This page also covers the two
+clients that upload a call's recording: Python's
 [`earshot.client`](#the-python-client-earshotclient) and Node's
 [`earshot-observability`](#node-earshot-observability). Any OTLP/HTTP producer can send spans; see the
 [README](../README.md#what-earshot-receives-today) for what each source gets. Once a Call

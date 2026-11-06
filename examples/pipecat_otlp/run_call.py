@@ -1,6 +1,6 @@
 """Run one real Pipecat 1.6 voice call and export its traces over OTLP/HTTP.
 
-    export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # Earshot, or any OTLP receiver
+    export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4319   # Earshot, or any OTLP receiver
     python examples/pipecat_otlp/run_call.py --out .earshot/pipecat_otlp/run [--upload]
 
 A scripted caller WAV (see make_caller_audio.py) streams in at real time through
@@ -126,7 +126,7 @@ def _redacting_log_sink(message: str) -> None:
 
 
 async def run_call(out: Path, conversation_id: str, upload_url: str | None = None) -> dict:
-    caller_wav, _caller_metadata = load_caller_wav_and_metadata()
+    caller_wav, _ = load_caller_wav_and_metadata()
     caller_pcm = _read_pcm(caller_wav)
     setup_tracing(service_name="earshot-pipecat-otlp-example", exporter=OTLPSpanExporter())
     provider = trace.get_tracer_provider()
@@ -223,9 +223,11 @@ async def run_call(out: Path, conversation_id: str, upload_url: str | None = Non
         missing.append("OpenTelemetry force_flush returned false")
     if caller.started_at_unix_nano is None:
         missing.append("the input produced no first audio frame")
-    missing_tracks = sorted({"user", "agent"} - tracks.keys())
-    if missing_tracks:
-        missing.append(f"the recorder produced no {'/'.join(missing_tracks)} track")
+    expected_tracks = {"user", "agent"}
+    if set(tracks) != expected_tracks:
+        missing.append(
+            f"the recorder produced tracks {sorted(tracks)}, expected {sorted(expected_tracks)}"
+        )
     if missing:
         raise RuntimeError("call ended before recording was complete: " + "; ".join(missing))
     out.mkdir(parents=True, exist_ok=True)

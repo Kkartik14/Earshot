@@ -1,5 +1,10 @@
 # Earshot 0.3.0 release notes
 
+> **Correction (2026-11-07):** The real Pipecat call recorded for this release used
+> Pipecat 1.6.0, not 1.5. The previously stated 47–81 ms latency-accuracy range was not
+> retained with reproducible measurements and is withdrawn; this release makes no such
+> accuracy-range claim.
+
 0.3.0 turns each closed Call into a **call view**: its audio with a waveform, the
 transcript on the audio's time axis (click a line to seek), per-turn latency as the
 framework reports it beside the **audible gap at the agent** measured from the

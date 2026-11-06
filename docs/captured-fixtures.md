@@ -45,6 +45,13 @@ to replace private identifiers and regenerate audio where the manifest requires 
 the updated manifest and files, then run the provider fixture tests. Never include the
 unscrubbed source response or credentials in Git.
 
+For an ElevenLabs capture, `scripts/capture_elevenlabs.py --env <env-file> converse`
+requires `ELEVENLABS_API_KEY`, `CARTESIA_API_KEY`, and `CARTESIA_VOICE_ID` from that file
+(or the process environment). To scrub an existing capture on a fresh checkout, run
+`scripts/scrub_provider_capture.py elevenlabs --env <env-file>` with the same Cartesia
+settings; it resolves the WAV and timeline through the shared cache helper. The Cartesia
+request is made only when the matching cache entry is absent or invalid.
+
 OpenAI Realtime and finalized-delivery connectors currently have no retained real provider
 capture. Their absence is listed in the root manifest. Synthetic tests do not replace
 missing source evidence.

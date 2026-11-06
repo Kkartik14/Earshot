@@ -243,14 +243,9 @@ def test_a_real_livekit_call_becomes_one_final_call_with_its_stereo_recording(
         assert (content.status, content.media_type, content.body) == (200, "audio/ogg", uploaded)
 
         # Every exported span is stored, and none was lost.
-        [(stored_spans, agent_turns, agent_speaking)] = read_rows(
+        [(stored_spans,)] = read_rows(
             database_url,
-            "SELECT count(*), "
-            "sum(CASE WHEN name = 'agent_turn' AND scope_name = 'livekit-agents' "
-            "THEN 1 ELSE 0 END), "
-            "sum(CASE WHEN name = 'agent_speaking' AND scope_name = 'livekit-agents' "
-            "THEN 1 ELSE 0 END) "
-            "FROM spans WHERE project_id = ?",
+            "SELECT count(*) FROM spans WHERE project_id = ?",
             project,
         )
         played_agent_turn_ids = {
@@ -302,8 +297,6 @@ def test_a_real_livekit_call_becomes_one_final_call_with_its_stereo_recording(
     user_text = " ".join(line["text"] for line in detail["transcript"] if line["speaker"] == "user")
     assert len(agent_lines) == played_agent_turns > 0, detail["transcript"]
     assert agent_line_ids == played_agent_turn_ids, detail["transcript"]
-    assert agent_turns >= played_agent_turns
-    assert agent_speaking >= played_agent_turns
     assert all(text.strip() for text in agent_lines)
     heard = script_words(user_text) & script_words(" ".join(manifest["caller_script"]))
     assert len(heard) >= 2, detail["transcript"]

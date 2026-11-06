@@ -78,14 +78,17 @@ Primary sources: [server authentication](https://docs.vapi.ai/server-url/server-
 This adapter has synthetic conformance coverage only; no real signed delivery has been
 verified. The notes below describe current parser behavior, not verified delivery support.
 
-- Accepts only `event=call_analyzed` and keys the Receipt from `event + call.call_id`.
+- Accepts both `call_ended` and `call_analyzed`, keyed by `event + call.call_id`. Both
+  include call, transcript and recording facts; only `call_analyzed` adds analysis, cost
+  and latency facts, and either event marks the Call ended.
 - Trust uses `X-Retell-Signature: v={timestamp_ms},d={digest}`. The digest is HMAC-SHA256
   over `raw_body + timestamp` with the webhook API key; timestamps outside five minutes
   are rejected.
 - Agent word start/end offsets time normalized transcript lines; raw word arrays are not
   retained. They do not prove transport playout, render, or that audio was heard.
-- `latency.*.values` are documented milliseconds but have no stable transcript-turn join.
-  They remain session-scoped provider samples and never masquerade as per-turn evidence.
+- `latency.*.values` are documented milliseconds. The `e2e` values also create indexed
+  turn-latency facts by array order, without joining them to transcript messages by ID or
+  time; that ordinal association is not verified against a real delivery.
 - Interruption coverage is `not_exposed`. The normalizer selects transcript, analysis,
   cost, latency, and recording evidence; the active Capture Preset governs transcript and
   media storage. Call IDs are HMAC-correlated, and `gen_ai.agent.id` is removed by

@@ -255,8 +255,16 @@ def test_cli_accepts_every_shipped_connector_provider(provider: str) -> None:
             "PROVIDER_WEBHOOK_SECRET",
         ]
     )
-
     assert arguments.provider == provider
+
+
+def test_connector_provider_help_marks_vapi_and_retell_unsupported(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        _build_parser().parse_args(["connector", "create", "--help"])
+
+    assert exit_info.value.code == 0
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "Vapi and Retell adapters are synthetic-only and not production-supported" in help_text
 
 
 def _crashed_journal(directory) -> None:

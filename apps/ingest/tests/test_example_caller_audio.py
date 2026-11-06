@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
+import json
+import sys
 import wave
 from pathlib import Path
 
@@ -19,6 +22,78 @@ def load_caller_audio_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_generator_imports_without_posix_fcntl(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "fcntl", None)
+
+    load_caller_audio_module()
+
+
+def test_cartesia_request_matches_the_supported_pipecat_voice_shape(monkeypatch) -> None:
+    module = load_caller_audio_module()
+    monkeypatch.setenv("CARTESIA_API_KEY", "test-key")
+    monkeypatch.setenv("CARTESIA_VOICE_ID", "test-voice")
+    requests = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self) -> bytes:
+            return b"\x00\x00"
+
+    def urlopen(request, *, timeout):
+        assert timeout == 60
+        requests.append(json.loads(request.data))
+        return Response()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", urlopen)
+
+    assert module._synthesize("Hello") == b"\x00\x00"
+    assert requests == [
+        {
+            "model_id": module.DEFAULT_CARTESIA_MODEL,
+            "transcript": "Hello",
+            "voice": {"mode": "id", "id": "test-voice"},
+            "output_format": {
+                "container": "raw",
+                "encoding": "pcm_s16le",
+                "sample_rate": module.SAMPLE_RATE,
+            },
+            "language": "en",
+        }
+    ]
+
+
+def test_elevenlabs_capture_uses_the_shared_digest_cache(monkeypatch) -> None:
+    capture_path = ROOT / "scripts" / "capture_elevenlabs.py"
+    spec = importlib.util.spec_from_file_location("earshot_capture_elevenlabs", capture_path)
+    assert spec is not None and spec.loader is not None
+    capture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(capture)
+
+    pcm = b"\x01\x00" * 6400
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(pcm)
+    cached = buffer.getvalue()
+    metadata = {"lines": [{"start_s": 0.0, "duration_s": 0.2}]}
+    loads = []
+    monkeypatch.setattr(
+        capture,
+        "load_caller_wav_and_metadata",
+        lambda: loads.append(True) or (cached, metadata),
+    )
+
+    assert capture._caller_lines() == [pcm[: int((0.2 + 0.15) * 16_000) * 2]]
+    assert loads == [True]
 
 
 def test_explicit_cache_reuses_audio_and_invalidates_model_and_voice(monkeypatch, tmp_path) -> None:
@@ -163,7 +238,7 @@ def test_failed_sidecar_replace_does_not_leave_stale_metadata(monkeypatch, tmp_p
         module.ensure_caller_wav(path)
 
     assert not module.caller_wav_metadata_path(path).exists()
-    assert not list(tmp_path.glob("*.tmp"))
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["caller.wav"]
     assert generated == list(module.CALLER_SCRIPT) * 2
 
 

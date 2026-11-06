@@ -1,12 +1,13 @@
 """Scrub a raw hosted-provider capture into ``fixtures/captured/<provider>/``.
 
-    python scripts/scrub_provider_capture.py elevenlabs
+    python scripts/scrub_provider_capture.py elevenlabs --env ../TVIC/.env
     python scripts/scrub_provider_capture.py twilio
 
 Reads ``.earshot/raw-captures/<provider>/`` (git-ignored) and writes the scrubbed REST
-responses, the audio and ``manifest.json``. The build is deterministic and **refuses to
-write** if any leak rule in ``provider_capture.find_leaks`` fires or any env secret or
-raw identifier survives. It prints counts only, never a raw value.
+responses, the audio and ``manifest.json``. ElevenLabs also needs Cartesia credentials
+from ``--env`` if its digest-named caller WAV must be generated. The build is deterministic
+and **refuses to write** if any leak rule in ``provider_capture.find_leaks`` fires or an
+environment secret or raw identifier survives. It prints counts only, never a raw value.
 
 Identifiers are replaced by format-valid placeholders (same prefix and length, body of
 zeros plus a counter) in first-seen order, everywhere they occur: fields, URIs and
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import struct
@@ -46,9 +48,14 @@ from provider_capture import (
     ROOT,
     env_secret_values,
     find_leaks,
+    load_keys,
     secret_variants,
     sha256_prefixes,
 )
+
+sys.path.insert(0, str(ROOT / "examples" / "pipecat_otlp"))
+
+from make_caller_audio import load_caller_wav_and_metadata
 
 FIXTURES = ROOT / "fixtures" / "captured"
 SYNTHETIC_SOURCE = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5" / "audio" / "user.wav"
@@ -334,7 +341,7 @@ def build_elevenlabs() -> None:
     segments = _el_audio_onsets(audio)
     run = json.loads((raw / "run.json").read_text())
     events = json.loads((raw / "ws_events.json").read_text())
-    caller = json.loads((ROOT / ".earshot" / "pipecat_otlp" / "caller.json").read_text())
+    _, caller = load_caller_wav_and_metadata()
     import capture_elevenlabs as capture
 
     metadata = conversation["metadata"]
@@ -814,8 +821,13 @@ def build_twilio() -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("provider", choices=["elevenlabs", "twilio"])
+    parser.add_argument("--env", type=Path, default=DEFAULT_ENV)
     args = parser.parse_args()
     if args.provider == "elevenlabs":
+        caller_keys = ("CARTESIA_API_KEY", "CARTESIA_VOICE_ID")
+        missing = [name for name in caller_keys if not os.environ.get(name)]
+        if missing:
+            os.environ.update(load_keys(args.env, missing))
         build_elevenlabs()
     else:
         build_twilio()
