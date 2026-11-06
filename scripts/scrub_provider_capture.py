@@ -834,25 +834,27 @@ def _build_fixture_atomically(provider: str, build: Callable[[Path], tuple[int, 
         replacements, file_count = build(staged)
 
         previous = FIXTURES / f"{temporary_path.name}.previous"
-        had_previous = destination.exists()
-        if had_previous:
-            os.replace(destination, previous)
         try:
+            if destination.exists():
+                os.replace(destination, previous)
             os.replace(staged, destination)
-        except OSError:
-            if had_previous and previous.exists() and not destination.exists():
+        except BaseException as error:
+            if previous.exists() and not destination.exists():
                 try:
                     os.replace(previous, destination)
                 except OSError as rollback_error:
-                    raise RuntimeError(
-                        f"could not install {provider} fixture; previous fixture is preserved at "
-                        f"{previous}"
-                    ) from rollback_error
+                    error.add_note(
+                        f"could not restore the previous fixture; it is preserved at {previous}: "
+                        f"{rollback_error}"
+                    )
             elif previous.exists() and destination.exists():
-                shutil.rmtree(previous)
+                error.add_note(
+                    f"previous fixture preserved at {previous}; destination changed during install"
+                )
             raise
-        if previous.exists():
-            shutil.rmtree(previous)
+        else:
+            if previous.exists():
+                shutil.rmtree(previous)
     print(f"{provider}: {replacements} replacements, {file_count} files")
 
 

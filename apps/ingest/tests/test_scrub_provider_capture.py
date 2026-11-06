@@ -159,7 +159,13 @@ def test_failed_fixture_build_preserves_previous_output(monkeypatch, tmp_path, p
     assert list(fixtures.iterdir()) == [previous]
 
 
-def test_failed_fixture_install_restores_previous_output(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize(
+    ("exception_type", "message"),
+    [(OSError, "simulated install failure"), (KeyboardInterrupt, "simulated interruption")],
+)
+def test_failed_fixture_install_restores_previous_output(
+    monkeypatch, tmp_path, exception_type, message
+) -> None:
     module = load_scrubber_module()
     fixtures = tmp_path / "fixtures"
     previous = fixtures / "elevenlabs"
@@ -182,14 +188,54 @@ def test_failed_fixture_install_restores_previous_output(monkeypatch, tmp_path) 
 
     def fail_install(source: str | Path, destination: str | Path) -> None:
         if Path(source).name == "fixture" and Path(destination) == previous:
-            raise OSError("simulated install failure")
+            raise exception_type(message)
         real_replace(source, destination)
 
     monkeypatch.setattr(module, "build_elevenlabs", build)
     monkeypatch.setattr(module.os, "replace", fail_install)
 
-    with pytest.raises(OSError, match="simulated install failure"):
+    with pytest.raises(exception_type, match=message):
         module.main()
 
     assert (previous / "manifest.json").read_text() == "complete previous fixture"
     assert list(fixtures.iterdir()) == [previous]
+
+
+def test_failed_concurrent_install_preserves_previous_backup(monkeypatch, tmp_path) -> None:
+    module = load_scrubber_module()
+    fixtures = tmp_path / "fixtures"
+    previous = fixtures / "elevenlabs"
+    previous.mkdir(parents=True)
+    (previous / "manifest.json").write_text("complete previous fixture")
+    monkeypatch.setattr(module, "FIXTURES", fixtures)
+    monkeypatch.setattr(module, "ENV_FILES", [])
+    monkeypatch.setattr(
+        sys, "argv", ["scrub_provider_capture.py", "elevenlabs", "--env", str(tmp_path / "e")]
+    )
+    monkeypatch.setenv("CARTESIA_API_KEY", "synthetic-cartesia-key-123456")
+    monkeypatch.setenv("CARTESIA_VOICE_ID", "synthetic-cartesia-voice-123456")
+
+    def build(out: Path) -> tuple[int, int]:
+        out.mkdir(parents=True)
+        (out / "manifest.json").write_text("complete new fixture")
+        return 1, 1
+
+    real_replace = module.os.replace
+
+    def race_install(source: str | Path, destination: str | Path) -> None:
+        if Path(source).name == "fixture" and Path(destination) == previous:
+            previous.mkdir()
+            (previous / "partial.json").write_text("concurrent writer")
+            raise OSError("simulated concurrent install")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(module, "build_elevenlabs", build)
+    monkeypatch.setattr(module.os, "replace", race_install)
+
+    with pytest.raises(OSError, match="simulated concurrent install") as raised:
+        module.main()
+
+    backups = [path for path in fixtures.iterdir() if path != previous]
+    assert len(backups) == 1
+    assert (backups[0] / "manifest.json").read_text() == "complete previous fixture"
+    assert any(str(backups[0]) in note for note in raised.value.__notes__)
