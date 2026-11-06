@@ -6,9 +6,9 @@
     "captured_on": "2026-10-19",
     "source_kind": "real_capture_scrubbed",
     "capture_driver": "scripts/capture_elevenlabs.py",
-    "capture_driver_sha256": "46874870d963283abfa6669661ab005a66655641177c84dd6d8d5a8dbf67ba71",
+    "capture_driver_sha256": "cee93c8af1bd8322f081abf57000e6183adf0e14b7bf2653ce5fa0731d64063f",
     "scrubber": "scripts/scrub_provider_capture.py",
-    "scrubber_sha256": "f8d310dde424da83b8993cabdcda95268b9d0e061371635ef7fb4222b1141171",
+    "scrubber_sha256": "cd59851eb90be5f7df7b0e78674759c9a425b9cf0ce787fc62907107569f8daa",
     "survey": "free GET /v1/convai/agents and /v1/convai/conversations: 0 agents, 0 conversations",
     "requests": {
       "conversation.json": "GET https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}",
@@ -35,7 +35,7 @@
     },
     "websocket_events": {
       "agent_response": 5,
-      "audio": 39,
+      "audio": 45,
       "caller_line_0": 1,
       "caller_line_1": 1,
       "caller_line_2": 1,
@@ -47,12 +47,12 @@
     "account_tier": "free"
   },
   "cost_reported": {
-    "metadata.cost": 386,
+    "metadata.cost": 384,
     "metadata.cost_unit": "credits",
-    "metadata.cost_fiat": 0.03840430375462008,
-    "metadata.charging.llm_charge": 25,
-    "metadata.charging.call_charge": 361,
-    "metadata.charging.llm_price": 0.0026039,
+    "metadata.cost_fiat": 0.03845370352434318,
+    "metadata.charging.llm_charge": 24,
+    "metadata.charging.call_charge": 360,
+    "metadata.charging.llm_price": 0.0024107,
     "subscription.character_count_delta": 0
   },
   "scrub_rules": [
@@ -219,7 +219,7 @@
       {
         "index": 1,
         "role": "user",
-        "time_in_call_secs": 5,
+        "time_in_call_secs": 4,
         "interrupted": false
       },
       {
@@ -266,15 +266,17 @@
       }
     ],
     "audio_speech_segments_s": [
-      [0.25, 3.1],
-      [5.15, 7.8],
-      [8.45, 10.6],
-      [12.8, 14.05],
-      [14.55, 16.35],
-      [17.05, 19.5],
-      [21.55, 23.0],
-      [23.35, 24.55],
-      [25.6, 28.65]
+      [0.25, 2.0],
+      [2.5, 3.05],
+      [4.85, 8.0],
+      [8.6, 10.85],
+      [12.7, 14.05],
+      [14.45, 16.35],
+      [17.0, 19.5],
+      [21.5, 23.25],
+      [23.7, 25.05],
+      [25.85, 28.3],
+      [28.65, 29.1]
     ],
     "audio_speech_segments_method": "afconvert decode + 50 ms RMS>200 VAD (scripts/scrub_provider_capture.py _segments)",
     "observed": "user turns are floor(speech onset) in all 4 cases (5.15->5, 12.8->12, 14.55->14, 21.55->21); agent turns start at or up to 1.05 s before the audible onset (16 vs 17.05). Audio t=0 = start_time [inferred: turn 0 at 0 is audible from 0.25 s]."
@@ -291,31 +293,31 @@
     "channel_layout": "mixed: agent and caller in one mono channel",
     "sample_rate": 16000,
     "bitrate_kbps": 128,
-    "frames": 874,
-    "duration_s": 31.464,
-    "call_duration_secs": 32
+    "frames": 885,
+    "duration_s": 31.86,
+    "call_duration_secs": 33
   },
   "files": [
     {
       "file": "conversation.json",
       "kind": "json",
       "source": "GET /v1/convai/conversations/{id}",
-      "bytes": 32223,
-      "canonical_sha256": "b8bc30ebbaf804dfe41eaa781da0fb93ea2fee32e22dabfb494df7d0a7017ccb"
+      "bytes": 33292,
+      "canonical_sha256": "6622ff799f8d04589375723247ea037820ccee9765b8be447f7a75fdaf4eab53"
     },
     {
       "file": "conversation.otel.json",
       "kind": "json",
       "source": "?format=opentelemetry",
-      "bytes": 70989,
-      "canonical_sha256": "ce048cf2e5b095f21c3e06a027aeb8c3e73c6341b9fe11b8dc24d325918762fd"
+      "bytes": 72311,
+      "canonical_sha256": "d820340f8bed18120dbe2b4bd6f53e44039a33881dfa786f15b9ea8964605739"
     },
     {
       "file": "audio.mp3",
       "kind": "audio",
       "source": "GET /v1/convai/conversations/{id}/audio",
-      "bytes": 503468,
-      "sha256": "ba0f0e318ca10f2a94ab38f9e7f5833990d0b00060d496e625d47b7ebab126d5"
+      "bytes": 509804,
+      "sha256": "88fa47f6896c9c52ce1a8b555ea32220a8d731662a0987cc1bab854f9ee8683d"
     }
   ]
 }
