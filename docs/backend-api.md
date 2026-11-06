@@ -161,7 +161,7 @@ authorization mode:
   "api_version": "0.17.0",
   "contract_version": "0.2.0",
   "semantic_profile_version": "0.2.0",
-  "call_projection_version": 9,
+  "call_projection_version": 10,
   "host_profile_version": "0.2.0",
   "capabilities": { "hosted_jwt": true, "signals": true }
 }

@@ -44,40 +44,138 @@ def _attribute(span: dict, key: str) -> dict:
     return next(attribute for attribute in _attributes(span) if attribute["key"] == key)
 
 
-def test_checker_accepts_protojson_proto_field_name_aliases() -> None:
+def test_checker_ignores_nonstandard_original_proto_field_names() -> None:
     request = _reported_request()
-    request["resource_spans"] = request.pop("resourceSpans")
-    resource_span = request["resource_spans"][0]
+    resource_span = request["resourceSpans"][0]
     resource_span["scope_spans"] = resource_span.pop("scopeSpans")
-    spans = resource_span["scope_spans"][0]["spans"]
-    aliases = {
-        "stringValue": "string_value",
-        "doubleValue": "double_value",
-        "intValue": "int_value",
-    }
-    for span in spans:
-        for attribute in span["attributes"]:
-            value = attribute.get("value")
-            if isinstance(value, dict) and len(value) == 1:
-                kind = next(iter(value))
-                if kind in aliases:
-                    value[aliases[kind]] = value.pop(kind)
 
     report = check_host_profile(json.dumps(request))
+
+    assert report.valid
+    assert report.host_profile_versions == ()
+    assert report.spans_checked == 0
+
+
+def test_checker_does_not_accept_snake_case_any_value_field_names() -> None:
+    request = _reported_request()
+    transcript = _attribute(
+        request["resourceSpans"][0]["scopeSpans"][0]["spans"][1],
+        "earshot.transcript.text",
+    )
+    transcript["value"]["string_value"] = transcript["value"].pop("stringValue")
+
+    report = check_host_profile(request)
+
+    assert not report.valid
+    assert "invalid_any_value" in {issue.code for issue in report.issues}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"doubleValue": 1.0, "stringValue": "recognized last"},
+        {"stringValue": "recognized first", "doubleValue": 1.0},
+    ],
+)
+def test_checker_rejects_multiple_anyvalue_oneof_fields(value) -> None:
+    request = _reported_request()
+    transcript = _attribute(
+        request["resourceSpans"][0]["scopeSpans"][0]["spans"][1],
+        "earshot.transcript.text",
+    )
+    transcript["value"] = value
+
+    report = check_host_profile(json.dumps(request))
+
+    assert not report.valid
+    assert "invalid_any_value" in {issue.code for issue in report.issues}
+
+
+def test_checker_uses_last_value_for_duplicate_anyvalue_field_name() -> None:
+    payload = (
+        '{"resourceSpans":[{"scopeSpans":[{"scope":{"name":"earshot.host",'
+        '"version":"0.2.0"},"spans":[{"name":"user_speech","attributes":['
+        '{"key":"earshot.transcript.text","value":{"stringValue":"first",'
+        '"stringValue":"   "}}]}]}]}]}'
+    )
+
+    report = check_host_profile(payload)
+
+    assert not report.valid
+    assert "invalid_transcript_text" in {issue.code for issue in report.issues}
+    assert report.host_profile_versions == ("0.2.0",)
+    assert report.spans_checked == 1
+
+
+def test_checker_rejects_interleaved_duplicate_anyvalue_oneof_field() -> None:
+    payload = (
+        '{"resourceSpans":[{"scopeSpans":[{"scope":{"name":"earshot.host",'
+        '"version":"0.2.0"},"spans":[{"name":"user_speech","attributes":['
+        '{"key":"earshot.transcript.text","value":{"intValue":"1",'
+        '"stringValue":"text","intValue":"2"}}]}]}]}]}'
+    )
+
+    report = check_host_profile(payload)
+
+    assert not report.valid
+    assert "invalid_any_value" in {issue.code for issue in report.issues}
+
+
+@pytest.mark.parametrize(
+    ("payload", "versions", "span_count"),
+    [
+        ("{}", (), 0),
+        ('{"resourceSpans": null}', (), 0),
+        ({"resourceSpans": [{"scopeSpans": None}]}, (), 0),
+        (
+            {
+                "resourceSpans": [
+                    {
+                        "scopeSpans": [
+                            {"scope": {"name": "earshot.host", "version": "0.2.0"}, "spans": None}
+                        ]
+                    }
+                ]
+            },
+            ("0.2.0",),
+            0,
+        ),
+    ],
+)
+def test_checker_treats_omitted_or_null_repeated_envelope_fields_as_empty(
+    payload, versions: tuple[str, ...], span_count: int
+) -> None:
+    report = check_host_profile(payload)
+
+    assert report.valid
+    assert report.host_profile_versions == versions
+    assert report.spans_checked == span_count
+
+
+def test_checker_treats_null_repeated_attributes_as_empty() -> None:
+    request = _reported_request()
+    for resource_span in request["resourceSpans"]:
+        for scope_span in resource_span["scopeSpans"]:
+            for span in scope_span["spans"]:
+                span["attributes"] = None
+
+    report = check_host_profile(request)
 
     assert report.valid
     assert report.host_profile_versions == ("0.2.0",)
     assert report.spans_checked == 4
 
 
-def test_checker_rejects_duplicate_protojson_field_aliases() -> None:
-    request = _reported_request()
-    request["resource_spans"] = copy.deepcopy(request["resourceSpans"])
+def test_checker_uses_last_value_for_duplicate_json_field_names() -> None:
+    payload = (
+        '{"resourceSpans": [], "resourceSpans": '
+        '[{"scopeSpans": [{"scope": {"name": "earshot.host", "version": "0.2.0"}}]}]}'
+    )
 
-    report = check_host_profile(request)
+    report = check_host_profile(payload)
 
-    assert not report.valid
-    assert "duplicate_field" in {issue.code for issue in report.issues}
+    assert report.valid
+    assert report.host_profile_versions == ("0.2.0",)
 
 
 @pytest.mark.parametrize(
