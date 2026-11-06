@@ -17,7 +17,7 @@ each release; see the [alpha compatibility policy](docs/release.md#alpha-compati
 
 ## Quick start
 
-This takes about a minute with a Pipecat 1.5 bot you already run.
+This takes about a minute with a Pipecat 1.6 bot you already run.
 
 **1. Install and start Earshot.**
 
@@ -33,7 +33,7 @@ analyses each recording for the call view's audible gap and waveform.
 **2. Point Pipecat's HTTP OTLP exporter at it.** Use the HTTP exporter, not the gRPC one.
 
 ```bash
-pip install 'pipecat-ai[tracing]>=1.5,<1.6' opentelemetry-exporter-otlp-proto-http
+pip install 'pipecat-ai[tracing]>=1.6.0,<1.7.0' opentelemetry-exporter-otlp-proto-http
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4319
 ```
 
@@ -54,11 +54,11 @@ worker = PipelineWorker(
 
 Set `conversation_id` and `earshot.session.id` to the **same** value, your own ID for the
 call. That value is the Session Key: Earshot groups the call's spans by it, and the
-Recordings API takes it. Pipecat 1.5 puts `conversation.id` on every `turn` span, and
+Recordings API takes it. Pipecat puts `conversation.id` on every `turn` span, and
 those arrive first. It puts `earshot.session.id` only on the `conversation` span, which
 it sends last, and a trace keeps the first key Earshot sees in it. So if the two values
 differ, the Call is keyed by `conversation_id`, and a Recording created with the other
-value becomes a second Call. This is a known limitation of 0.3.0; see
+value becomes a second Call because a trace binds to the first Session Key it sees; see
 [session keys](docs/otlp-quickstart.md#session-keys).
 
 **3. Upload the recordings.** Create each Recording when the call starts, at its first
@@ -107,7 +107,7 @@ is a complete, real Pipecat call.
 
 | Source                                      | Status in 0.4.0                                                                                                                                                                                                 |
 | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pipecat 1.5 and 1.6 over OTLP/HTTP          | Supported: Calls with timing, transcript, recordings and the call view. Tested against real Pipecat 1.5.0 and 1.6.0 calls.                                                                                      |
+| Pipecat 1.6 over OTLP/HTTP                  | Supported: Calls with timing, transcript, recordings and the call view. Tested against real Pipecat 1.6.0 calls.                                                                                                |
 | Any OTLP/HTTP producer                      | Spans are stored and grouped into Calls by session key. Call Revisions include Pipecat, LiveKit and `earshot.host` profile spans; other instrumentation is declared as omitted.                                 |
 | LiveKit Agents over OTLP/HTTP               | Supported for 1.6 to 1.8: Calls with timing, the played-text transcript, LiveKit's stereo recording and the call view. Tested against a real headless LiveKit 1.8.8 call (no LiveKit server or room).           |
 | Earshot Python SDK                          | Supported: Pipecat 1.6 and LiveKit 1.6 to 1.8 adapters, and Deepgram, Cartesia, Sarvam and OpenAI Realtime event mappers, recorded as portable Incident bundles, and `earshot.client` for recordings and calls. |
