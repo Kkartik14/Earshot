@@ -199,6 +199,7 @@ def test_corrupt_or_stale_cache_is_regenerated(monkeypatch, tmp_path, corruption
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "boolean_timeline":
         metadata["lines"][0]["duration_s"] = True
+        metadata["timeline_sha256"] = timeline_checksum(metadata["lines"])
         metadata_path.write_text(module.json.dumps(metadata))
     elif corruption == "negative_timeline":
         metadata["lines"][0]["start_s"] = -1.0
