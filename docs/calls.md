@@ -58,8 +58,9 @@ A call detail and every list item carry `projection_state`:
 | `current`          | Up to date.                                                                                                                                               |
 
 Until an older projection is recomputed, its reported-latency summary is `null` if
-its projection semantics predate positive-only latencies. Nonpositive per-turn values
-are `null` as well, and latency filters never match unknown values.
+its projection semantics predate positive-only latencies, and its cost-item quantities
+are `null` if it predates exact quantity conversion. Nonpositive per-turn values are
+`null` as well, and latency filters never match unknown values.
 
 `projection.analysis_state` summarizes the Revision's Recordings: `none` (no Recording),
 `pending` (an analysis is still running), `stored` (all stored), `partial` (all finished,

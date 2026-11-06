@@ -107,6 +107,9 @@ if TYPE_CHECKING:
 # bumped for unrelated projection changes.
 POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION = 8
 CALL_PROJECTION_VERSION = 9
+# Version 8's API quantity conversion could round large finite values. Until those
+# projections are rebuilt, their cost quantities are unknown at read time.
+EXACT_COST_QUANTITY_PROJECTION_VERSION = 9
 PROJECTION_STATES = ("none", "stale", "current")
 
 

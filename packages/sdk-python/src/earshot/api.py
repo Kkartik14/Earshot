@@ -600,7 +600,8 @@ class CostItemResponse(ApiModel):
     ``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),
     rounded half up to a whole nano-USD; ``no_price`` has usage and no price row;
     ``not_reported`` has no usage. ``quantity`` is null when the exact stored quantity
-    cannot round-trip through a finite API number. ``span`` is where the usage was read,
+    cannot round-trip through a finite API number, or while a legacy projection awaits
+    recomputation with exact quantity conversion. ``span`` is where the usage was read,
     if one span."""
 
     status: Literal["priced", "no_price", "not_reported", "estimated"]

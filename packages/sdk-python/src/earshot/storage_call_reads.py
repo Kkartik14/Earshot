@@ -54,6 +54,7 @@ from .call_materializer import (
 )
 from .call_projection import (
     CallSource,
+    EXACT_COST_QUANTITY_PROJECTION_VERSION,
     POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION,
     ProjectionInputs,
     ProjectionStamps,
@@ -453,6 +454,20 @@ def _positive_reported_latencies(detail: Any) -> Any:
     return detail
 
 
+def _null_legacy_cost_quantities(detail: Any) -> Any:
+    """Withhold quantities from v8 details, whose finite floats could be rounded."""
+
+    if not isinstance(detail, dict):
+        return detail
+    cost_items = detail.get("cost_items")
+    if not isinstance(cost_items, list):
+        return detail
+    for item in cost_items:
+        if isinstance(item, dict) and "quantity" in item:
+            item["quantity"] = None
+    return detail
+
+
 def _summaries(
     connection: DatabaseConnection, project_id: str, rows: list[Any], inputs: _ProjectInputs
 ) -> tuple[CallSummary, ...]:
@@ -684,6 +699,8 @@ class CallReads:
                 (project_id, call_id),
             ).fetchone()
             detail = _positive_reported_latencies(json.loads(detail_json))
+            if int(row["projection_version"]) < EXACT_COST_QUANTITY_PROJECTION_VERSION:
+                detail = _null_legacy_cost_quantities(detail)
         return CallDetail(
             summary=summary,
             revisions=revisions,

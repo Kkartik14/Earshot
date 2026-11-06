@@ -1435,6 +1435,10 @@ def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow
         stale = world.reads.get_call("default", call_id)
         assert stale is not None
         assert stale.summary.projection_state == "stale"
+        [stale_stt] = [
+            item for item in stale.projection_detail["cost_items"] if item["unit"] == "audio_second"
+        ]
+        assert stale_stt["quantity"] is None
         snapshot = world.projector.snapshot("default", call_id)
         assert snapshot is not None
         assert snapshot.kind == "full"
