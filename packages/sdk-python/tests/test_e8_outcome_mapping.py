@@ -50,18 +50,20 @@ def _turn_id(span: dict[str, Any]) -> str | None:
 
 
 def _attribute_keys(case: dict[str, Any]) -> set[str]:
-    return {
-        attribute["key"]
-        for span in _spans(case)
-        for attribute in [
-            *span.get("attributes", []),
-            *(
-                attribute
-                for event in span.get("events", [])
-                for attribute in event.get("attributes", [])
-            ),
-        ]
-    }
+    keys: set[str] = set()
+    for resource in case["request"]["resourceSpans"]:
+        keys.update(
+            attribute["key"] for attribute in resource.get("resource", {}).get("attributes", [])
+        )
+        for scope in resource["scopeSpans"]:
+            keys.update(
+                attribute["key"] for attribute in scope.get("scope", {}).get("attributes", [])
+            )
+            for span in scope["spans"]:
+                keys.update(attribute["key"] for attribute in span.get("attributes", []))
+                for event in span.get("events", []):
+                    keys.update(attribute["key"] for attribute in event.get("attributes", []))
+    return keys
 
 
 @pytest.mark.parametrize("name", CASES)
