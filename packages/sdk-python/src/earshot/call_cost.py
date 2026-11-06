@@ -17,9 +17,10 @@ request meter, from ``call_span_facts.usage_items`` (the usage-to-meter table):
   gets this estimate only when none of its requests reported seconds. With no
   duration it is ``not_reported``.
 
-Quantities are integers in thousandths of the unit (``quantity_milli``), so seconds
-measured in milliseconds stay exact. Reported host STT seconds are summed as decimal
-values then rounded half up once to the nearest millisecond.
+Most usage quantities are integers in thousandths of the unit (``quantity_milli``).
+Reported host STT seconds retain their exact shortest-decimal float spellings in
+``quantity_decimal``; they are summed without rounding so sub-millisecond reports
+remain priceable. Estimated STT seconds still come from integer milliseconds.
 
 **Pricing** (``price_usage``). The price of (provider, model, unit) for a call is the
 project's own row with the latest ``effective_from_unix_nano`` at or before the call's
@@ -42,7 +43,7 @@ import math
 import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal, localcontext
+from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any
 
 from .call_span_facts import AUDIO_SECOND, UsageItem
@@ -133,7 +134,7 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
     for (provider, model), requests in stt.items():
         reported = [item for item in requests if item.quantity is not None]
         if reported:
-            quantity_milli = _audio_seconds_milli(
+            quantity_decimal = _audio_seconds_decimal(
                 [Decimal(str(item.quantity)) for item in reported]
             )
             spans = [_span(item) for item in reported]
@@ -144,7 +145,7 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
                     "provider": provider,
                     "model": model,
                     "unit": AUDIO_SECOND,
-                    "quantity_milli": quantity_milli,
+                    "quantity_decimal": str(quantity_decimal),
                     "span": spans[0] if len(spans) == 1 else None,
                 }
             )
@@ -190,18 +191,17 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
     )
 
 
-def _audio_seconds_milli(seconds: Sequence[Decimal]) -> int:
-    """Sum reported seconds exactly, then round once to the usage model's millis."""
+def _audio_seconds_decimal(seconds: Sequence[Decimal]) -> Decimal:
+    """Sum reported seconds exactly without rounding to an artificial unit."""
 
     if not seconds:
-        return 0
+        return Decimal(0)
     decimal_places = max(0, -min(value.as_tuple().exponent for value in seconds))
     whole_digits = max(1, max(value.adjusted() + 1 for value in seconds))
     precision = whole_digits + decimal_places + len(str(len(seconds))) + 4
     with localcontext() as context:
         context.prec = max(context.prec, precision)
-        total = sum(seconds, Decimal(0))
-        return int((total * 1000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+        return sum(seconds, Decimal(0))
 
 
 def match_price(
@@ -235,6 +235,24 @@ def _cost(quantity_milli: int, price: PriceRow) -> int:
     return (2 * quantity_milli * price.price_nano_usd + denominator) // (2 * denominator)
 
 
+def _cost_decimal(quantity: Decimal, price: PriceRow) -> int | None:
+    """Price an exact decimal quantity with rational integer arithmetic."""
+
+    if not quantity.is_finite() or quantity < 0:
+        return None
+    sign, digits, exponent = quantity.as_tuple()
+    if sign:
+        return None
+    coefficient = int("".join(str(digit) for digit in digits) or "0")
+    if exponent >= 0:
+        numerator = coefficient * 10**exponent * price.price_nano_usd
+        denominator = price.per_quantity
+    else:
+        numerator = coefficient * price.price_nano_usd
+        denominator = price.per_quantity * 10 ** (-exponent)
+    return (2 * numerator + denominator) // (2 * denominator)
+
+
 def _quantity(quantity_milli: int | None) -> int | float | None:
     if quantity_milli is None:
         return None
@@ -259,6 +277,34 @@ def _quantity(quantity_milli: int | None) -> int | float | None:
     return api_quantity if Decimal(str(api_quantity)) == seconds else None
 
 
+def _quantity_decimal(quantity: Decimal | None) -> int | float | None:
+    """Expose an exact usage decimal only when the API JSON number round-trips."""
+
+    if quantity is None or not quantity.is_finite() or quantity < 0:
+        return None
+    try:
+        if quantity == quantity.to_integral_value():
+            whole = int(quantity)
+            if abs(whole) <= _MAX_SAFE_API_INTEGER:
+                return whole
+        api_quantity = float(quantity)
+    except (OverflowError, ValueError):
+        return None
+    if not math.isfinite(api_quantity):
+        return None
+    return api_quantity if Decimal(str(api_quantity)) == quantity else None
+
+
+def _stored_quantity_decimal(value: Any) -> Decimal | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        quantity = Decimal(value)
+    except (InvalidOperation, ValueError):
+        return None
+    return quantity if quantity.is_finite() and quantity >= 0 else None
+
+
 @dataclass(frozen=True, slots=True)
 class CallCost:
     items: tuple[dict[str, Any], ...]
@@ -281,13 +327,31 @@ def price_usage(
     any_estimated = False
     unknown = 0
     for entry in usage:
-        quantity = entry["quantity_milli"]
+        raw_decimal_quantity = entry.get("quantity_decimal")
+        decimal_quantity = (
+            _stored_quantity_decimal(raw_decimal_quantity)
+            if raw_decimal_quantity is not None
+            else None
+        )
+        quantity_milli = entry.get("quantity_milli")
+        api_quantity = (
+            _quantity_decimal(decimal_quantity)
+            if raw_decimal_quantity is not None
+            else _quantity(quantity_milli)
+        )
         price = None
-        if entry["kind"] != NOT_REPORTED:
+        if entry["kind"] != NOT_REPORTED and not (
+            raw_decimal_quantity is not None and decimal_quantity is None
+        ):
             price = match_price(
                 prices, project_id, entry["provider"], entry["model"], entry["unit"], at_unix_nano
             )
-        cost = None if price is None or quantity is None else _cost(quantity, price)
+        if price is None:
+            cost = None
+        elif raw_decimal_quantity is not None:
+            cost = None if decimal_quantity is None else _cost_decimal(decimal_quantity, price)
+        else:
+            cost = None if quantity_milli is None else _cost(quantity_milli, price)
         if cost is not None and cost > _INT64_MAX:
             # Beyond what the catalog stores: unknown, never a clamped number.
             price, cost = None, None
@@ -311,7 +375,7 @@ def price_usage(
                 "provider": entry["provider"],
                 "model": entry["model"],
                 "unit": entry["unit"],
-                "quantity": _quantity(quantity),
+                "quantity": api_quantity,
                 "price_id": None if price is None else price.id,
                 "price_nano_usd": None if price is None else price.price_nano_usd,
                 "per_quantity": None if price is None else price.per_quantity,

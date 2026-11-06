@@ -183,7 +183,7 @@ def test_checker_rejects_json_number_with_extreme_exponent_without_raising() -> 
     assert "invalid_json" in {issue.code for issue in report.issues}
 
 
-@pytest.mark.parametrize("tts_value", [217.0, "217.0", "2.17e2", "+217", "0217"])
+@pytest.mark.parametrize("tts_value", [217.0, "217.0", "2.17e2"])
 def test_checker_accepts_protojson_numeric_strings_and_integral_number_forms(tts_value) -> None:
     request = _reported_request()
     turn, _, stt, tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"]
@@ -244,6 +244,67 @@ def test_checker_rejects_lossy_or_non_protojson_tts_integer_forms(wire_value) ->
 
     assert not report.valid
     assert "invalid_tts_character_count" in {issue.code for issue in report.issues}
+
+
+@pytest.mark.parametrize(
+    ("key", "kind", "value", "code"),
+    [
+        (
+            "earshot.turn.reported_latency_ms",
+            "doubleValue",
+            " 812.5 ",
+            "invalid_turn_reported_latency",
+        ),
+        (
+            "earshot.turn.reported_latency_ms",
+            "doubleValue",
+            "3_75e-1",
+            "invalid_turn_reported_latency",
+        ),
+        (
+            "earshot.stt.usage.audio_seconds",
+            "doubleValue",
+            "01.5",
+            "invalid_stt_audio_seconds",
+        ),
+        (
+            "earshot.tts.usage.character_count",
+            "intValue",
+            "0217",
+            "invalid_tts_character_count",
+        ),
+        (
+            "earshot.tts.usage.character_count",
+            "intValue",
+            "+217",
+            "invalid_tts_character_count",
+        ),
+    ],
+)
+def test_checker_rejects_nonportable_protojson_numeric_strings(key, kind, value, code) -> None:
+    request = _reported_request()
+    turn, _, stt, tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    span = {
+        "earshot.turn.reported_latency_ms": turn,
+        "earshot.stt.usage.audio_seconds": stt,
+        "earshot.tts.usage.character_count": tts,
+    }[key]
+    _attribute(span, key)["value"][kind] = value
+
+    report = check_host_profile(json.dumps(request))
+
+    assert not report.valid
+    assert code in {issue.code for issue in report.issues}
+
+
+def test_checker_reports_deeply_nested_json_as_invalid_without_raising() -> None:
+    nested = "[" * 1500 + "0" + "]" * 1500
+    payload = f'{{"resourceSpans": [], "vendor.extension": {nested}}}'
+
+    report = check_host_profile(payload)
+
+    assert not report.valid
+    assert {issue.code for issue in report.issues} == {"invalid_json"}
 
 
 def test_checker_accepts_integral_python_float_for_tts_integer_mapping() -> None:

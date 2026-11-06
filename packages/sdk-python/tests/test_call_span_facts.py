@@ -539,7 +539,7 @@ def test_host_profile_0_2_reports_stt_and_tts_usage_and_keeps_fractional_reprici
         entry for entry in usage if entry["operation"] == "stt" and entry["kind"] == "not_reported"
     ]
     [reported_tts, unknown_tts] = [entry for entry in usage if entry["operation"] == "tts"]
-    assert reported_stt["quantity_milli"] == 1000
+    assert reported_stt["quantity_decimal"] == "1.000"
     assert reported_stt["span"] is None
     assert unknown_stt["quantity_milli"] is None
     assert unknown_stt["span"] is not None

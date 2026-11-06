@@ -16,6 +16,7 @@ import asyncio
 import hashlib
 import json
 import math
+from decimal import Decimal, localcontext
 from pathlib import Path
 
 import pytest
@@ -1210,6 +1211,16 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
                 },
             ),
             HostStage(
+                "stt",
+                START + SECOND,
+                START + 2 * SECOND,
+                {
+                    "gen_ai.provider.name": "e7-precision-test",
+                    "gen_ai.request.model": "synthetic",
+                    "earshot.stt.usage.audio_seconds": 0.0004,
+                },
+            ),
+            HostStage(
                 "tts",
                 START + 2 * SECOND,
                 START + 3 * SECOND,
@@ -1229,11 +1240,20 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
 
     _, revision_payload = world.store.get_artifact(f"{call_id}.r1")
     revision = decode_incident_protobuf(revision_payload)
-    stage_attributes = {
-        operation.operation_name: operation.attributes for operation in revision.profile.operations
-    }
-    assert stage_attributes["stt"]["earshot.stt.usage.audio_seconds"] == 0.375
-    assert stage_attributes["tts"]["earshot.tts.usage.character_count"] == 217
+    stt_attributes = [
+        operation.attributes
+        for operation in revision.profile.operations
+        if operation.operation_name == "stt"
+    ]
+    assert any(
+        attributes["earshot.stt.usage.audio_seconds"] == 0.375 for attributes in stt_attributes
+    )
+    tts_attributes = next(
+        operation.attributes
+        for operation in revision.profile.operations
+        if operation.operation_name == "tts"
+    )
+    assert tts_attributes["earshot.tts.usage.character_count"] == 217
 
     content_needles = [
         b"HOST_USAGE_TRANSCRIPT_CONTENT_D5_SENTINEL",
@@ -1264,9 +1284,14 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
         (call_id,),
     )
     stored_usage = json.loads(usage_json)
-    [stt_usage] = [item for item in stored_usage if item["operation"] == "stt"]
+    stt_usage = {
+        item["provider"]: item
+        for item in stored_usage
+        if item["operation"] == "stt" and item["kind"] == "reported"
+    }
     [tts_usage] = [item for item in stored_usage if item["operation"] == "tts"]
-    assert (stt_usage["kind"], stt_usage["quantity_milli"]) == ("reported", 375)
+    assert stt_usage["deepgram"]["quantity_decimal"] == "0.375"
+    assert stt_usage["e7-precision-test"]["quantity_decimal"] == "0.0004"
     assert (tts_usage["kind"], tts_usage["quantity_milli"]) == ("reported", 217_000)
 
     with catalog(tmp_path) as connection:
@@ -1280,6 +1305,19 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
             unit="audio_second",
             price_nano_usd=6_000_000_000,
             per_quantity=60,
+            effective_from_unix_nano=0,
+            source_url=None,
+            note=None,
+        ),
+    )
+    prices.add(
+        "default",
+        NewPrice(
+            provider="e7-precision-test",
+            model="synthetic",
+            unit="audio_second",
+            price_nano_usd=1_000_000_000,
+            per_quantity=1,
             effective_from_unix_nano=0,
             source_url=None,
             note=None,
@@ -1303,7 +1341,14 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
     projection = world.projection(call_id)
     assert projection["state"] == "current"
     stt_item = next(
-        item for item in projection["detail"]["cost_items"] if item["unit"] == "audio_second"
+        item
+        for item in projection["detail"]["cost_items"]
+        if item["unit"] == "audio_second" and item["provider"] == "deepgram"
+    )
+    precision_item = next(
+        item
+        for item in projection["detail"]["cost_items"]
+        if item["unit"] == "audio_second" and item["provider"] == "e7-precision-test"
     )
     tts_item = next(
         item for item in projection["detail"]["cost_items"] if item["unit"] == "character"
@@ -1313,6 +1358,16 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
         0.375,
         37_500_000,
     )
+    assert (
+        precision_item["status"],
+        precision_item["quantity"],
+        precision_item["cost_nano_usd"],
+    ) == ("priced", 0.0004, 400_000)
+    from earshot.api import CostItemResponse
+
+    assert json.loads(CostItemResponse.model_validate(precision_item).model_dump_json())[
+        "quantity"
+    ] == (0.0004)
     assert (tts_item["status"], tts_item["quantity"], tts_item["cost_nano_usd"]) == (
         "priced",
         217,
@@ -1330,37 +1385,26 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
 @pytest.mark.parametrize(
     (
         "reported_seconds",
-        "expected_quantity_milli",
         "expected_api_quantity",
         "expected_repriced_status",
     ),
     [
-        pytest.param(
-            (1e308, 1e308, 0.001), 2 * 10**311 + 1, None, "no_price", id="fractional-overflow"
-        ),
-        pytest.param((1e308, 1e308), 2 * 10**311, None, "no_price", id="whole-overflow"),
+        pytest.param((1e308, 1e308, 0.001), None, "no_price", id="fractional-overflow"),
+        pytest.param((1e308, 1e308), None, "no_price", id="whole-overflow"),
         pytest.param(
             (float(2**53), 1.0),
-            (2**53 + 1) * 1000,
             None,
             "priced",
             id="finite-integer-rounded-by-api-float",
         ),
-        pytest.param(
-            (1e308, 0.001),
-            10**311 + 1,
-            None,
-            "no_price",
-            id="finite-fraction-rounded-by-api-float",
-        ),
-        pytest.param((1e308,), 10**311, 1e308, "no_price", id="large-finite-whole-seconds"),
+        pytest.param((1e308, 0.001), None, "no_price", id="finite-fraction-rounded-by-api-float"),
+        pytest.param((1e308,), 1e308, "no_price", id="large-finite-whole-seconds"),
     ],
 )
 def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow(
     tmp_path,
     preset,
     reported_seconds,
-    expected_quantity_milli,
     expected_api_quantity,
     expected_repriced_status,
 ) -> None:
@@ -1405,7 +1449,10 @@ def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow
     [reported_stt] = [
         item for item in usage if item["operation"] == "stt" and item["kind"] == "reported"
     ]
-    assert reported_stt["quantity_milli"] == expected_quantity_milli
+    with localcontext() as context:
+        context.prec = 660
+        exact_quantity = sum((Decimal(str(seconds)) for seconds in reported_seconds), Decimal(0))
+    assert Decimal(reported_stt["quantity_decimal"]) == exact_quantity
     [stt_cost] = [
         item for item in call.projection_detail["cost_items"] if item["unit"] == "audio_second"
     ]
@@ -1418,15 +1465,15 @@ def test_large_reported_stt_usage_projects_and_reprices_without_loss_or_overflow
         assert stt_cost["quantity"] == expected_api_quantity
 
     if expected_repriced_status == "priced" and expected_api_quantity is None:
-        # Version 8 could have persisted this rounded number. The projection-version
-        # bump must make that detail stale and replace it from its exact usage record.
+        # Version 9 could have persisted a millisecond-rounded STT quantity. The
+        # projection-version bump must hide it and rebuild from source spans.
         detail = call.projection_detail
         [old_stt_cost] = [item for item in detail["cost_items"] if item["unit"] == "audio_second"]
         old_stt_cost["quantity"] = float(2**53)
-        legacy_digest = hashlib.sha256(b"version-8-rounded-detail").hexdigest()
+        legacy_digest = hashlib.sha256(b"version-9-rounded-detail").hexdigest()
         with catalog(tmp_path) as connection:
             connection.execute(
-                "UPDATE call_projections SET projection_version = 8, detail_json = ?, "
+                "UPDATE call_projections SET projection_version = 9, detail_json = ?, "
                 "input_digest = ? "
                 "WHERE project_id = ? AND call_id = ?",
                 (json.dumps(detail), legacy_digest, "default", call_id),

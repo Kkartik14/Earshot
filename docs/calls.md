@@ -85,8 +85,9 @@ what it holds, and counts in it.
 64-bit nanosecond range, and a reported latency or other producer-reported duration whose
 nanoseconds do not fit it, are unknown (`null`). So is a cost whose total does not
 fit 64 bits, which also makes the cost incomplete. A label (agent, outcome or tag)
-holding U+0000 is absent, and U+0000 is removed from transcript text, so it is never
-stored.
+holding U+0000 is absent. U+0000 is removed from the normalized transcript used by the
+call view and search. With full capture, the original transcript remains in the source
+span and revision; `metadata_only` removes transcript content before storage.
 
 **One bad Call does not stop the others.** A Call whose projection cannot be stored is
 logged with `EARSHOT_PROJECTION_FAILED` and one of these codes, then set aside and retried
@@ -292,7 +293,7 @@ times are both present for `measured`, start only for `start_only`, and both nul
 
 When an exact quantity cannot round-trip through a finite JSON number, `quantity` is
 `null`, never clamped or rounded to a different value. The projection retains its exact
-integer milli quantity for repricing.
+reported decimal STT seconds or integer-milli quantity for repricing.
 
 `lower_bound_nano_usd` sums the priced items; `estimated_nano_usd` sums the estimated
 ones; `unknown_items` counts the rest. A cost is `complete` when it has a lower bound and

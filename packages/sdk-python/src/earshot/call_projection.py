@@ -106,10 +106,10 @@ if TYPE_CHECKING:
 # Keep this semantic introduction point fixed when ``CALL_PROJECTION_VERSION`` is
 # bumped for unrelated projection changes.
 POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION = 8
-CALL_PROJECTION_VERSION = 9
-# Version 8's API quantity conversion could round large finite values. Until those
-# projections are rebuilt, their cost quantities are unknown at read time.
-EXACT_COST_QUANTITY_PROJECTION_VERSION = 9
+CALL_PROJECTION_VERSION = 10
+# Earlier projections may have rounded reported STT seconds to milliseconds. Until
+# they are rebuilt from source spans, their cost quantities are unknown at read time.
+EXACT_COST_QUANTITY_PROJECTION_VERSION = 10
 PROJECTION_STATES = ("none", "stale", "current")
 
 

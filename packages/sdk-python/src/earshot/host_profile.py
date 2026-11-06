@@ -36,7 +36,7 @@ _ATTRIBUTES_BY_SPAN = {
     _TTS_CHARACTER_COUNT: frozenset({"tts"}),
 }
 _MAX_SAFE_JSON_INTEGER = 2**53 - 1
-_PROTOJSON_NUMERIC_RE = re.compile(r"[+-]?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
+_PROTOJSON_NUMERIC_RE = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +154,8 @@ def _double(value: Any) -> float | None:
 
     if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
         return None
+    if isinstance(value, str) and not _PROTOJSON_NUMERIC_RE.fullmatch(value):
+        return None
     try:
         parsed = float(value)
     except (OverflowError, TypeError, ValueError):
@@ -245,7 +247,7 @@ def check_host_profile(payload: bytes | str | Mapping[str, Any]) -> HostProfileR
                 parse_float=Decimal,
                 parse_constant=_reject_json_constant,
             )
-        except (UnicodeDecodeError, ValueError, TypeError, InvalidOperation):
+        except (UnicodeDecodeError, ValueError, TypeError, InvalidOperation, RecursionError):
             _issue(issues, "invalid_json", "$", "must be a UTF-8 OTLP/JSON request")
             return HostProfileReport((), 0, tuple(issues))
     else:
