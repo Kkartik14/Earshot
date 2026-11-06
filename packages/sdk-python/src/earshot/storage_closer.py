@@ -91,6 +91,8 @@ MATERIALIZE_TIMEOUT_SECONDS = 600.0
 MATERIALIZER_START_TIMEOUT_SECONDS = 60.0
 # How long closing waits for a build in progress before it kills the child.
 MATERIALIZER_CLOSE_GRACE_SECONDS = 10.0
+MATERIALIZER_RESTART_INITIAL_BACKOFF_SECONDS = 1.0
+MATERIALIZER_RESTART_MAX_BACKOFF_SECONDS = 60.0
 
 # A claim's snapshot: its span keys (read inside the claim's write mutation), the
 # resources those spans name, and the spans' payloads (read outside every lock).
@@ -332,6 +334,7 @@ class MaterializerProcess:
         self._process: Any = None
         self._connection: Any = None
         self._closed = False
+        self._start_failure_logged = False
 
     @property
     def pid(self) -> int | None:
@@ -383,12 +386,26 @@ class MaterializerProcess:
         self._connection = parent
         if not ready:
             self._discard()
+            self._log_start_transition(failed=True, cause=cause)
+            raise MaterializerWorkerError(
+                "EARSHOT_MATERIALIZER_START_FAILED: the materializer process did not start"
+                + ("" if cause is None else f" ({cause})")
+            )
+        self._log_start_transition(failed=False)
+
+    def _log_start_transition(self, *, failed: bool, cause: str | None = None) -> None:
+        """Log a materializer start failure or recovery once per state transition."""
+
+        if failed:
+            if self._start_failure_logged:
+                return
+            self._start_failure_logged = True
             if cause is None:
                 _LOGGER.error(
                     "EARSHOT_MATERIALIZER_START_FAILED: the closer's materializer process did "
                     "not start, so calls are not closed; a program that starts the server "
-                    'itself must guard its entry point with `if __name__ == "__main__":` (the '
-                    "process is spawned, which imports the program's main module again)"
+                    'itself must guard its entry point with `if __name__ == "__main__":` '
+                    "(the process is spawned, which imports the program's main module again)"
                 )
             else:
                 _LOGGER.error(
@@ -397,10 +414,9 @@ class MaterializerProcess:
                     "processes and open files",
                     cause,
                 )
-            raise MaterializerWorkerError(
-                "EARSHOT_MATERIALIZER_START_FAILED: the materializer process did not start"
-                + ("" if cause is None else f" ({cause})")
-            )
+        elif self._start_failure_logged:
+            self._start_failure_logged = False
+            _LOGGER.info("EARSHOT_MATERIALIZER_RECOVERED: the materializer process is ready")
 
     def _discard(self) -> None:
         """Kill the child (if any) and forget it."""
@@ -970,6 +986,7 @@ class _CloserJob:
         self.closer = closer
         self.metrics = metrics
         self._started = False
+        self._materializer_restart_backoff_seconds = MATERIALIZER_RESTART_INITIAL_BACKOFF_SECONDS
 
     async def __call__(self, now_unix_nano: int) -> float | None:
         try:
@@ -979,11 +996,21 @@ class _CloserJob:
                 )
                 self._started = True
             # Lifespan starts the child before serving; hosts composing the loop
-            # themselves start it here. Rechecking each tick also recovers a worker
-            # killed after a timeout or OOM, even when no call is due. A failed start
-            # is logged and retried on the next tick.
-            with contextlib.suppress(MaterializerWorkerError):
+            # themselves start it here. Rechecking recovers a worker killed after a
+            # timeout or OOM, even when no call is due. Repeated failures back off
+            # exponentially and the process logs only state transitions.
+            try:
                 await asyncio.to_thread(self.closer.start)
+            except MaterializerWorkerError:
+                delay = self._materializer_restart_backoff_seconds
+                self._materializer_restart_backoff_seconds = min(
+                    delay * 2, MATERIALIZER_RESTART_MAX_BACKOFF_SECONDS
+                )
+                return delay
+            else:
+                self._materializer_restart_backoff_seconds = (
+                    MATERIALIZER_RESTART_INITIAL_BACKOFF_SECONDS
+                )
             outcome = await asyncio.to_thread(
                 self.closer.close_next,
                 now_unix_nano=now_unix_nano,

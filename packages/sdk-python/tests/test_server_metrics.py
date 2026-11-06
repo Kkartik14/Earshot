@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 
 import pytest
@@ -13,6 +14,8 @@ from earshot.storage_closer import (
     CALL_INTEGRITY,
     MATERIALIZE_WORKER_FAILED,
     CloseOutcome,
+    MaterializerProcess,
+    MaterializerWorkerError,
     call_closer_job,
 )
 from earshot.storage_recordings import RecordingManifest, RecordingStore
@@ -384,6 +387,58 @@ def test_call_closer_job_counts_a_handled_materializer_failure() -> None:
         ]
     assert "private" not in str(observed)
     provider.shutdown()
+
+
+def test_call_closer_job_backs_off_materializer_restarts_and_resets_after_recovery() -> None:
+    class RestartingCloser:
+        def __init__(self) -> None:
+            self.start_attempts = 0
+            self.release_attempts = 0
+            self.close_next_attempts = 0
+
+        def release_leases(self, **_kwargs) -> int:
+            self.release_attempts += 1
+            return 0
+
+        def start(self) -> None:
+            self.start_attempts += 1
+            if self.start_attempts <= 8 or self.start_attempts == 10:
+                raise MaterializerWorkerError("private startup detail")
+
+        def close_next(self, **_kwargs) -> None:
+            self.close_next_attempts += 1
+            return None
+
+        def close(self) -> None:
+            pass
+
+    closer = RestartingCloser()
+    job = call_closer_job(closer)
+    expected_backoff = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 60.0, 60.0]
+
+    assert [asyncio.run(job(index)) for index in range(1, 9)] == expected_backoff
+    assert asyncio.run(job(9)) is None
+    assert asyncio.run(job(10)) == 1.0
+    assert closer.start_attempts == 10
+    assert closer.release_attempts == 1
+    assert closer.close_next_attempts == 1
+
+    asyncio.run(job.aclose())
+
+
+def test_materializer_start_logs_only_state_transitions(caplog) -> None:
+    process = MaterializerProcess()
+
+    with caplog.at_level(logging.INFO, logger="earshot.storage_closer"):
+        process._log_start_transition(failed=True, cause="OSError, errno 24")
+        process._log_start_transition(failed=True, cause="OSError, errno 24")
+        process._log_start_transition(failed=False)
+        process._log_start_transition(failed=False)
+        process._log_start_transition(failed=True, cause="OSError, errno 24")
+
+    assert caplog.text.count("EARSHOT_MATERIALIZER_START_FAILED") == 2
+    assert caplog.text.count("EARSHOT_MATERIALIZER_RECOVERED") == 1
+    assert "private" not in caplog.text
 
 
 def test_recording_store_counts_failed_journaled_blob_deletion(tmp_path) -> None:
