@@ -120,13 +120,13 @@ def test_a_real_conversation_becomes_a_call_with_start_only_lines(world) -> None
 
 def test_cost_span_uses_the_provider_reported_amount(world) -> None:
     conversation = copy.deepcopy(CONVERSATION)
-    conversation["metadata"]["cost"] = 123.45
+    conversation["metadata"]["cost"] = 123
 
     world.deliver(_event("post_call_transcription", conversation))
 
     [cost] = _by_name(world, "earshot.connector.cost")
     assert (cost["earshot.connector.cost.amount"], cost["earshot.connector.cost.unit"]) == (
-        123.45,
+        123,
         "credit",
     )
 
