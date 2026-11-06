@@ -922,6 +922,16 @@ def test_host_turns_measure_the_gaps_livekit_measures_on_the_same_audio() -> Non
     assert host.columns["measurable_turns"] == 3
 
 
+def test_a_positive_submillisecond_host_latency_is_not_projected_as_zero() -> None:
+    from dataclasses import replace
+
+    turns = _host_turns_at_livekits_anchors()
+    turns[0] = replace(turns[0], reported_latency_ms=0.1)
+    projection = _host(turns)
+
+    assert projection.detail["turns"][0]["reported_latency_ms"] is None
+
+
 def test_a_turn_the_host_declares_discontinuous_is_not_measurable() -> None:
     projection = _host(_host_turns_at_livekits_anchors({2: {"timeline_continuous": False}}))
     measured = _gaps(_livekit())

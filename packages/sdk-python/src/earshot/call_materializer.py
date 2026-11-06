@@ -78,12 +78,14 @@ from .call_capture import (
     attribute_capture_class,
     attribute_values,
     canonical_attribute_key,
+    host_profile_scope_version,
     recorder_agrees,
 )
 from .clock import ManualClock
 from .contract import (
     ClockDomain,
     ClockRelation,
+    Coverage,
     IncidentBundle,
     MediaRef,
     Producer,
@@ -94,7 +96,8 @@ from .contract import (
 from .privacy import CaptureClass, CapturePolicy, classify_attribute
 from .recorder import IncidentRecorder, RecorderConfig
 from .recordings import verified_channel_speakers
-from .versions import PACKAGE_VERSION
+from .validation import assert_valid_incident
+from .versions import HOST_PROFILE_VERSION, PACKAGE_VERSION
 
 if TYPE_CHECKING:
     from .storage_recordings import Recording
@@ -159,6 +162,13 @@ _CONNECTOR_TRANSCRIPT_TIMING = "earshot.connector.transcript.timing"
 _CONNECTOR_TRANSCRIPT_INDEX = "earshot.connector.transcript.index"
 _TRANSCRIPT_TIMINGS = frozenset({"measured", "start_only", "order_only"})
 _UPLOAD_SCOPE = "earshot.upload"
+_HOST_PROFILE_0_2_FIELDS = frozenset(
+    {
+        "earshot.transcript.text",
+        "earshot.stt.usage.audio_seconds",
+        "earshot.tts.usage.character_count",
+    }
+)
 # ``transcript_coverage`` values: lines found; the preset stores none; none observed.
 TRANSCRIPT_AVAILABLE = "available"
 TRANSCRIPT_NOT_CAPTURED = "not_captured_by_preset"
@@ -168,6 +178,13 @@ TRANSCRIPT_NOT_OBSERVED = "not_observed"
 def _line_source(span: OtlpSpan) -> tuple[str | None, tuple[str, ...]] | None:
     """``(speaker, attributes)`` of the span kinds that carry a transcript line."""
 
+    if (
+        span.scope.name == HOST_SCOPE
+        and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
+        and span.span.name in {"user_speech", "agent_speech"}
+    ):
+        speaker = "user" if span.span.name == "user_speech" else "agent"
+        return speaker, ("earshot.transcript.text",)
     if span.span.name == _CONNECTOR_TRANSCRIPT_SPAN and (
         span.scope.name == _UPLOAD_SCOPE or span.scope.name.startswith("earshot.connector.")
     ):
@@ -203,6 +220,11 @@ def transcript_text(span: OtlpSpan) -> tuple[str, str] | None:
     if source is None:
         return None
     speaker, attributes = source
+    if (
+        span.scope.name == HOST_SCOPE
+        and sum(item.key == "earshot.transcript.text" for item in span.span.attributes) != 1
+    ):
+        return None
     text = _attribute_value(span.span.attributes, attributes)
     if not isinstance(text, str):
         return None
@@ -518,19 +540,79 @@ def materialize(snapshot: CallSnapshot) -> IncidentBundle:
         )
         for scope in sorted(unrecognized):
             recorder.record_omission(f"otlp.scope.{scope}", capture_class=CaptureClass.METADATA)
-    _record_transcript_coverage(recorder, spans, snapshot.capture_preset)
+    transcript_records = transcript_lines(spans)
+    _record_transcript_coverage(recorder, transcript_records, snapshot.capture_preset)
     clock.wall, clock.monotonic = end, end - start
     if snapshot.final:
-        return recorder.close("completed")
-    return recorder.close_partial(
-        RecoveryRecord(
-            method="otlp_quiet_period",
-            reason="no_end_signal",
-            close_observed=False,
-            recoverer=Producer(name=PRODUCER_NAME, version=PACKAGE_VERSION),
-        ),
-        status="interrupted",
+        bundle = recorder.close("completed")
+    else:
+        bundle = recorder.close_partial(
+            RecoveryRecord(
+                method="otlp_quiet_period",
+                reason="no_end_signal",
+                close_observed=False,
+                recoverer=Producer(name=PRODUCER_NAME, version=PACKAGE_VERSION),
+            ),
+            status="interrupted",
+        )
+    return _reconcile_host_transcript_capture(
+        bundle, spans, transcript_records, snapshot.capture_preset
     )
+
+
+def _reconcile_host_transcript_capture(
+    bundle: IncidentBundle,
+    spans: Sequence[OtlpSpan],
+    lines: Sequence[TranscriptLine],
+    preset: str,
+) -> IncidentBundle:
+    """Expose host transcript lines that the bounded revision recorder could not retain.
+
+    Calls keep the admitted source spans and transcript index independently of the
+    revision's 64 KiB per-value and aggregate capture budgets. A full-capture
+    revision must therefore stop claiming transcript availability when it could not
+    retain every opted-in host line.
+    """
+
+    if preset != CAPTURE_PRESET_FULL:
+        return bundle
+    host_speech_spans = {
+        (span.span.trace_id.hex(), span.span.span_id.hex())
+        for span in spans
+        if span.scope.name == HOST_SCOPE
+        and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
+        and span.span.name in {"user_speech", "agent_speech"}
+    }
+    expected = {
+        (line.trace_id, line.span_id): line.text
+        for line in lines
+        if (line.trace_id, line.span_id) in host_speech_spans
+    }
+    if not expected:
+        return bundle
+    captured = {
+        (operation.trace_id, operation.span_id): operation.attributes.get("earshot.transcript.text")
+        for operation in bundle.profile.operations
+    }
+    missing = [key for key, text in expected.items() if captured.get(key) != text]
+    if not missing:
+        return bundle
+
+    coverage = tuple(
+        Coverage(
+            signal="call.transcript",
+            availability="unavailable",
+            reason="recorder_capture_truncated",
+            dropped_count=len(missing),
+        )
+        if item.signal == "call.transcript"
+        else item
+        for item in bundle.profile.coverage
+    )
+    profile = bundle.profile.model_copy(update={"coverage": coverage})
+    reconciled = bundle.model_copy(update={"profile": profile})
+    assert_valid_incident(reconciled)
+    return reconciled
 
 
 def _recording_end(recording: Recording) -> int:
@@ -578,10 +660,25 @@ def _semantic_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any
 
     converted = adapter_span(span)
     kept: dict[str, Any] = {}
+    duplicated_host_transcript = (
+        span.scope.name == HOST_SCOPE
+        and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
+        and sum(item.key == "earshot.transcript.text" for item in span.span.attributes) > 1
+    )
     for key, value in converted["attributes"].items():
         expected = attribute_capture_class(key)
         recorded_as = canonical_attribute_key(key)
-        if recorded_as in _INPUT_HISTORY_KEYS or not recorder_agrees(recorded_as, expected):
+        wrong_profile_version = (
+            span.scope.name == HOST_SCOPE
+            and host_profile_scope_version(span.scope) != HOST_PROFILE_VERSION
+            and key in _HOST_PROFILE_0_2_FIELDS
+        )
+        if (
+            recorded_as in _INPUT_HISTORY_KEYS
+            or not recorder_agrees(recorded_as, expected)
+            or wrong_profile_version
+            or (duplicated_host_transcript and key == "earshot.transcript.text")
+        ):
             recorder.record_omission(key, capture_class=expected)
             continue
         kept[key] = value
@@ -677,11 +774,11 @@ def transcript_coverage(lines: Sequence[TranscriptLine], preset: str) -> str:
 
 
 def _record_transcript_coverage(
-    recorder: IncidentRecorder, spans: Sequence[OtlpSpan], preset: str
+    recorder: IncidentRecorder, lines: Sequence[TranscriptLine], preset: str
 ) -> None:
     """Declare whether the call's spans hold a transcript (``transcript_lines``)."""
 
-    coverage = transcript_coverage(transcript_lines(spans), preset)
+    coverage = transcript_coverage(lines, preset)
     if coverage == TRANSCRIPT_AVAILABLE:
         recorder.record_coverage("call.transcript", "available")
     elif coverage == TRANSCRIPT_NOT_CAPTURED:

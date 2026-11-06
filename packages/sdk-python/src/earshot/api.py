@@ -38,6 +38,7 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
+    WithJsonSchema,
 )
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -605,7 +606,10 @@ class CostItemResponse(ApiModel):
     provider: str | None
     model: str | None
     unit: str | None
-    quantity: float | None
+    quantity: Annotated[
+        int | float | None,
+        WithJsonSchema({"anyOf": [{"type": "number"}, {"type": "null"}], "title": "Quantity"}),
+    ]
     price_id: int | None
     price_nano_usd: int | None
     per_quantity: int | None

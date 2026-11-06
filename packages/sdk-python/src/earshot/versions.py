@@ -21,9 +21,11 @@ PIPELINE_ADAPTER_VERSION = "0.3.0"
 LIVEKIT_ADAPTER_VERSION = "0.1.0"
 PIPECAT_ADAPTER_VERSION = "0.1.0"
 TVIC_RUNTIME_ADAPTER_VERSION = "0.1.0"
-# The host span profile (``call_span_facts``): the spans a host exports for its own
-# pipeline's calls.
-HOST_PROFILE_VERSION = "0.1.0"
+# The host span profile (``call_span_facts``): producers emit 0.2.0; the receiver
+# continues to interpret 0.1.0 as the legacy profile when a scope version is absent.
+LEGACY_HOST_PROFILE_VERSION = "0.1.0"
+HOST_PROFILE_VERSION = "0.2.0"
+SUPPORTED_HOST_PROFILE_VERSIONS = (LEGACY_HOST_PROFILE_VERSION, HOST_PROFILE_VERSION)
 # The hosted-provider translators (payload -> call evidence spans). Stamped on each
 # delivery's evidence; a connector accepts deliveries whatever version created it.
 ELEVENLABS_NORMALIZER_VERSION = "0.2.0"

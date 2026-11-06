@@ -5,16 +5,21 @@ so a price change reprices a call without decoding anything: one entry per bille
 request meter, from ``call_span_facts.usage_items`` (the usage-to-meter table):
 
 - ``reported``: the requests' known quantities, summed per (operation, provider,
-  model, unit); ``span`` names the request when there is one;
+  model, unit); STT requests with the same provider and model are summed, and
+  ``span`` names the request when there is one;
 - ``not_reported``: one entry per request that left a meter unknown (a cancelled LLM
-  request reports nothing; LiveKit writes 0 for what it did not get);
-- ``estimate``: STT audio seconds, which no framework reports on a span: once per
-  call and (provider, model), the user audio's duration (the recording's, else the
-  call's), as a streaming STT bills connected time. With no duration it is
-  ``not_reported``.
+  request reports nothing; LiveKit writes 0 for what it did not get; a host STT
+  request missing usage remains unknown if another request for that provider/model
+  reported seconds);
+- ``estimate``: STT audio seconds, which Pipecat and LiveKit do not report on a span:
+  once per call and (provider, model), the user audio's duration (the recording's,
+  else the call's), as a streaming STT bills connected time. A host provider/model
+  gets this estimate only when none of its requests reported seconds. With no
+  duration it is ``not_reported``.
 
 Quantities are integers in thousandths of the unit (``quantity_milli``), so seconds
-measured in milliseconds stay exact.
+measured in milliseconds stay exact. Reported host STT seconds are summed as decimal
+values then rounded half up once to the nearest millisecond.
 
 **Pricing** (``price_usage``). The price of (provider, model, unit) for a call is the
 project's own row with the latest ``effective_from_unix_nano`` at or before the call's
@@ -35,6 +40,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 from typing import Any
 
 from .call_span_facts import AUDIO_SECOND, UsageItem
@@ -71,11 +77,11 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
 
     reported: dict[tuple, dict[str, Any]] = {}
     unreported: list[dict[str, Any]] = []
-    stt: dict[tuple, None] = {}
+    stt: dict[tuple, list[UsageItem]] = {}
     by_request: dict[tuple, list[UsageItem]] = {}
     for item in items:
         if item.operation == "stt":
-            stt.setdefault((item.provider, item.model), None)
+            stt.setdefault((item.provider, item.model), []).append(item)
             continue
         by_request.setdefault((item.trace_id, item.span_id, item.operation), []).append(item)
     for (_, _, operation), request in by_request.items():
@@ -120,7 +126,39 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
         spans = entry.pop("spans")
         entry["span"] = spans[0] if len(spans) == 1 else None
         usage.append(entry)
-    for provider, model in stt:
+    for (provider, model), requests in stt.items():
+        reported = [item for item in requests if item.quantity is not None]
+        if reported:
+            quantity_milli = _audio_seconds_milli(
+                [Decimal(str(item.quantity)) for item in reported]
+            )
+            spans = [_span(item) for item in reported]
+            usage.append(
+                {
+                    "kind": REPORTED,
+                    "operation": "stt",
+                    "provider": provider,
+                    "model": model,
+                    "unit": AUDIO_SECOND,
+                    "quantity_milli": quantity_milli,
+                    "span": spans[0] if len(spans) == 1 else None,
+                }
+            )
+            for item in requests:
+                if item.quantity is not None:
+                    continue
+                unreported.append(
+                    {
+                        "kind": NOT_REPORTED,
+                        "operation": "stt",
+                        "provider": item.provider,
+                        "model": item.model,
+                        "unit": AUDIO_SECOND,
+                        "quantity_milli": None,
+                        "span": _span(item),
+                    }
+                )
+            continue
         usage.append(
             {
                 "kind": NOT_REPORTED if user_audio_ms is None else ESTIMATE,
@@ -146,6 +184,20 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
             (entry["span"] or {}).get("span_id", ""),
         ),
     )
+
+
+def _audio_seconds_milli(seconds: Sequence[Decimal]) -> int:
+    """Sum reported seconds exactly, then round once to the usage model's millis."""
+
+    if not seconds:
+        return 0
+    decimal_places = max(0, -min(value.as_tuple().exponent for value in seconds))
+    whole_digits = max(1, max(value.adjusted() + 1 for value in seconds))
+    precision = whole_digits + decimal_places + len(str(len(seconds))) + 4
+    with localcontext() as context:
+        context.prec = max(context.prec, precision)
+        total = sum(seconds, Decimal(0))
+        return int((total * 1000).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def match_price(

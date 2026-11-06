@@ -37,6 +37,7 @@ from .codec import (
 from .exporters import span_count
 from .exporters.push import OtlpHttpExporter
 from .exporters.registry import export_incident, exporter_names
+from .host_profile import check_host_profile
 from .privacy import ExportPolicyError, assert_export_allowed
 from .query import EvidenceQuery, compare_incidents
 from .validation import assert_valid_incident, validate_incident
@@ -115,6 +116,17 @@ def _validate_command(arguments: argparse.Namespace) -> int:
         }
     )
     return 0 if report.ok else 1
+
+
+def _check_host_profile_command(arguments: argparse.Namespace) -> int:
+    """Check one standard OTLP/JSON host-profile request without opening the store."""
+
+    payload = (
+        sys.stdin.buffer.read() if arguments.path == "-" else Path(arguments.path).read_bytes()
+    )
+    report = check_host_profile(payload)
+    _print_json(report.as_dict())
+    return 0 if report.valid else 1
 
 
 def _ingest_command(arguments: argparse.Namespace) -> int:
@@ -671,6 +683,12 @@ def _build_parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="validate an incident file")
     validate.add_argument("path")
     validate.set_defaults(handler=_validate_command)
+
+    check_host_profile_parser = commands.add_parser(
+        "check-host-profile", help="check an OTLP/JSON host-profile trace request"
+    )
+    check_host_profile_parser.add_argument("path", help="request JSON file, or - for stdin")
+    check_host_profile_parser.set_defaults(handler=_check_host_profile_command)
 
     ingest = commands.add_parser("ingest", help="ingest an incident into the local store")
     ingest.add_argument("path")

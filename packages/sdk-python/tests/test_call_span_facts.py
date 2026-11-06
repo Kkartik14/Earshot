@@ -346,10 +346,10 @@ def test_a_reported_time_is_known_exactly_when_its_nanoseconds_fit_signed_64_bit
 # --- the host profile -------------------------------------------------------------------------
 
 
-def _host(*turns, preset: str = "full"):
+def _host(*turns, preset: str = "full", scope_version: str = "0.1.0"):
     from host_profile_support import host_request
 
-    return _stored(spans_from_request(host_request(turns)), preset)
+    return _stored(spans_from_request(host_request(turns, scope_version=scope_version)), preset)
 
 
 SECOND = 1_000_000_000
@@ -392,7 +392,7 @@ def test_a_host_turn_without_speech_spans_has_unknown_anchors_never_zero() -> No
     assert (anchors.reported_latency_ms, anchors.timeline_continuous) == (None, None)
 
 
-@pytest.mark.parametrize("latency", [7_635_833, 812.5, 0.001, 0])
+@pytest.mark.parametrize("latency", [7_635_833, 812.5, 0.001])
 def test_a_host_latency_is_kept_exactly_as_the_host_sent_it(latency) -> None:
     from host_profile_support import HostTurn
 
@@ -401,8 +401,8 @@ def test_a_host_latency_is_kept_exactly_as_the_host_sent_it(latency) -> None:
     assert turn_anchors(_host(turn))[0].reported_latency_ms == latency
 
 
-@pytest.mark.parametrize("latency", [-1.0, float("inf"), "812", True])
-def test_a_host_latency_that_is_not_a_finite_non_negative_number_is_unknown(latency) -> None:
+@pytest.mark.parametrize("latency", [-1.0, 0.0, float("inf"), "812", True])
+def test_a_host_latency_that_is_not_a_finite_positive_number_is_unknown(latency) -> None:
     from host_profile_support import HostTurn
 
     turn = HostTurn(
@@ -469,3 +469,110 @@ def test_host_stages_bill_like_the_frameworks_and_unknown_counts_are_not_reporte
         ("llm", "openai", "gpt-4o-mini"),
         ("tts", "cartesia", None),
     }
+
+
+def test_host_profile_0_2_reports_stt_and_tts_usage_and_keeps_fractional_repricing_durable() -> (
+    None
+):
+    from earshot.call_cost import PriceRow, call_usage, price_usage
+    from host_profile_support import HostStage, HostTurn
+
+    stages = (
+        HostStage(
+            "stt",
+            T0,
+            T0 + 250_000_000,
+            {
+                "gen_ai.provider.name": "deepgram",
+                "gen_ai.request.model": "nova-3",
+                "earshot.stt.usage.audio_seconds": 0.375,
+            },
+        ),
+        HostStage(
+            "stt",
+            T0 + SECOND,
+            T0 + SECOND + 250_000_000,
+            {
+                "gen_ai.provider.name": "deepgram",
+                "gen_ai.request.model": "nova-3",
+                "earshot.stt.usage.audio_seconds": 0.625,
+            },
+        ),
+        HostStage(
+            "stt",
+            T0 + 2 * SECOND,
+            T0 + 2 * SECOND + 250_000_000,
+            {"gen_ai.provider.name": "deepgram", "gen_ai.request.model": "nova-3"},
+        ),
+        HostStage(
+            "tts",
+            T0 + 3 * SECOND,
+            T0 + 4 * SECOND,
+            {
+                "gen_ai.provider.name": "cartesia",
+                "gen_ai.request.model": "sonic-3",
+                "earshot.tts.usage.character_count": 2**63 - 1,
+            },
+        ),
+    )
+    turn = HostTurn("turn-1", T0, T0 + 4 * SECOND, stages=stages)
+    items = usage_items(_host(turn, scope_version="0.2.0"))
+
+    assert _quantities(items, "stt", "audio_second") == [0.375, 0.625, None]
+    assert _quantities(items, "tts", "character") == [2**63 - 1]
+
+    usage = call_usage(items, user_audio_ms=99_999)
+    [reported_stt] = [
+        entry for entry in usage if entry["operation"] == "stt" and entry["kind"] == "reported"
+    ]
+    [unknown_stt] = [
+        entry for entry in usage if entry["operation"] == "stt" and entry["kind"] == "not_reported"
+    ]
+    [reported_tts] = [entry for entry in usage if entry["operation"] == "tts"]
+    assert reported_stt["quantity_milli"] == 1000
+    assert reported_stt["span"] is None
+    assert unknown_stt["quantity_milli"] is None
+    assert unknown_stt["span"] is not None
+    assert reported_tts["quantity_milli"] == (2**63 - 1) * 1000
+
+    price = PriceRow(1, None, "deepgram", "nova-3", "audio_second", 6_000_000_000, 60, 0)
+    cost = price_usage([reported_stt], [price], project_id="default", at_unix_nano=1)
+    assert cost.items[0]["quantity"] == 1
+    assert cost.items[0]["cost_nano_usd"] == 100_000_000
+
+
+def test_host_profile_0_1_does_not_interpret_profile_0_2_usage_attributes() -> None:
+    from host_profile_support import HostStage, HostTurn
+
+    turn = HostTurn(
+        "turn-1",
+        T0,
+        T0 + 2 * SECOND,
+        stages=(
+            HostStage(
+                "stt",
+                T0,
+                T0 + SECOND,
+                {
+                    "gen_ai.provider.name": "deepgram",
+                    "gen_ai.request.model": "nova-3",
+                    "earshot.stt.usage.audio_seconds": 0.375,
+                },
+            ),
+            HostStage(
+                "tts",
+                T0 + SECOND,
+                T0 + 2 * SECOND,
+                {
+                    "gen_ai.provider.name": "cartesia",
+                    "gen_ai.request.model": "sonic-3",
+                    "earshot.tts.usage.character_count": 217,
+                },
+            ),
+        ),
+    )
+
+    items = usage_items(_host(turn, scope_version="0.1.0"))
+
+    assert _quantities(items, "stt", "audio_second") == [None]
+    assert _quantities(items, "tts", "character") == [None]

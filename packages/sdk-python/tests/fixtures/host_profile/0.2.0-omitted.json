@@ -1,0 +1,49 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "scope": {"name": "earshot.host", "version": "0.2.0"},
+          "spans": [
+            {
+              "traceId": "00000000000000000000000000000001",
+              "spanId": "0000000000000001",
+              "name": "turn",
+              "startTimeUnixNano": "1000000000",
+              "endTimeUnixNano": "2000000000",
+              "attributes": [
+                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}}
+              ]
+            },
+            {
+              "traceId": "00000000000000000000000000000001",
+              "spanId": "0000000000000002",
+              "parentSpanId": "0000000000000001",
+              "name": "stt",
+              "startTimeUnixNano": "1100000000",
+              "endTimeUnixNano": "1200000000",
+              "attributes": [
+                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
+                {"key": "gen_ai.provider.name", "value": {"stringValue": "deepgram"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "nova-3"}}
+              ]
+            },
+            {
+              "traceId": "00000000000000000000000000000001",
+              "spanId": "0000000000000003",
+              "parentSpanId": "0000000000000001",
+              "name": "tts",
+              "startTimeUnixNano": "1500000000",
+              "endTimeUnixNano": "1800000000",
+              "attributes": [
+                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
+                {"key": "gen_ai.provider.name", "value": {"stringValue": "cartesia"}},
+                {"key": "gen_ai.request.model", "value": {"stringValue": "sonic-3"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

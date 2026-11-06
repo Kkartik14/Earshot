@@ -74,6 +74,7 @@ class World:
         self.blobs = LocalBlobStore(path / "blobs")
         self.recordings = RecordingStore(self.store, calls=self.calls, blobs=self.blobs)
         self.closer = Closer(self.store, calls=self.calls, recordings=self.recordings)
+        self.purger = CallPurger(self.store, calls=self.calls, recordings=self.recordings)
         self.runner = AnalysisRunner(
             AnalysisStore(self.store), blobs=self.blobs, spool_root=path / "analysis-tmp"
         )
@@ -973,3 +974,224 @@ def test_metadata_only_stores_no_stray_content_from_host_spans(tmp_path, preset)
         assert found == set()
     else:  # the control: the same search finds both when they are stored
         assert found == set(needles)
+
+
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_host_profile_transcript_privacy_and_call_deletion(tmp_path, preset) -> None:
+    from earshot.codec import decode_incident_protobuf
+    from host_profile_support import HostTurn, host_request
+
+    user_text = "HOST_TRANSCRIPT_USER_D5_SENTINEL_62f7"
+    agent_text = "HOST_TRANSCRIPT_AGENT_D5_SENTINEL_91ac"
+    turn = HostTurn(
+        "turn-1",
+        START,
+        START + 3 * SECOND,
+        user_speech=((START, START + SECOND),),
+        user_transcripts=(user_text,),
+        agent_speech=(START + 2 * SECOND, START + 3 * SECOND),
+        agent_transcript=agent_text,
+    )
+    world = World(tmp_path)
+    world.store.set_capture_preset("default", preset)
+    call_id = world.replay([host_request([turn], scope_version="0.2.0")])
+    world.close()
+    world.project()
+
+    call = world.reads.get_call("default", call_id)
+    assert call is not None
+    _, payload = world.store.get_artifact(f"{call_id}.r1")
+    revision = decode_incident_protobuf(payload)
+    captured_text = [
+        operation.attributes.get("earshot.transcript.text")
+        for operation in revision.profile.operations
+        if "earshot.transcript.text" in operation.attributes
+    ]
+    needles = [user_text.encode(), agent_text.encode()]
+
+    if preset == "full":
+        assert {line.text for line in call.transcript} == {user_text, agent_text}
+        assert {line["text"] for line in call.projection_detail["transcript"]} == {
+            user_text,
+            agent_text,
+        }
+        assert set(captured_text) == {user_text, agent_text}
+        assert call.transcript_coverage == "available"
+        assert stored_needles(tmp_path, needles) == set(needles)
+    else:
+        assert call.transcript == ()
+        assert call.projection_detail["transcript"] == []
+        assert captured_text == []
+        assert call.transcript_coverage == "not_captured_by_preset"
+        [coverage] = [
+            item for item in revision.profile.coverage if item.signal == "call.transcript"
+        ]
+        assert coverage.reason == "not_captured_by_preset"
+        [policy] = [
+            item
+            for item in revision.profile.privacy.capture_classes
+            if item.capture_class == "transcript"
+        ]
+        assert (policy.decision, policy.captured) == ("deny", False)
+        assert stored_needles(tmp_path, needles) == set()
+
+    world.purger.purge_call("default", call_id)
+    world.store.close()
+    assert stored_needles(tmp_path, needles) == set()
+
+
+def test_oversized_host_transcript_index_stays_full_and_revision_reports_its_omission(
+    tmp_path,
+) -> None:
+    from earshot.codec import decode_incident_protobuf
+    from host_profile_support import HostTurn, host_request
+
+    text = "HOST_TRANSCRIPT_SIZE_D5_SENTINEL_" + "x" * (70 * 1024)
+    turn = HostTurn(
+        "turn-1",
+        START,
+        START + 2 * SECOND,
+        user_speech=((START, START + SECOND),),
+        user_transcripts=(text,),
+    )
+    world = World(tmp_path)
+    call_id = world.replay([host_request([turn], scope_version="0.2.0")])
+    world.close()
+    world.project()
+
+    call = world.reads.get_call("default", call_id)
+    assert call is not None
+    assert call.transcript_coverage == "available"
+    assert [line.text for line in call.transcript] == [text]
+    assert [line["text"] for line in call.projection_detail["transcript"]] == [text]
+    [(indexed_text,)] = catalog_rows(
+        tmp_path, "SELECT text FROM call_transcripts WHERE call_id = ?", (call_id,)
+    )
+    assert indexed_text == text
+
+    _, payload = world.store.get_artifact(f"{call_id}.r1")
+    revision = decode_incident_protobuf(payload)
+    [coverage] = [item for item in revision.profile.coverage if item.signal == "call.transcript"]
+    [omission] = [
+        item
+        for item in revision.profile.privacy.omissions
+        if item.capture_class == "transcript" and item.reason == "recorder_capture_truncated"
+    ]
+    assert (coverage.availability, coverage.reason, coverage.dropped_count) == (
+        "unavailable",
+        "recorder_capture_truncated",
+        1,
+    )
+    assert omission.count == 1
+    assert not any(
+        operation.attributes.get("earshot.transcript.text") == text
+        for operation in revision.profile.operations
+    )
+
+    needle = b"HOST_TRANSCRIPT_SIZE_D5_SENTINEL_"
+    world.purger.purge_call("default", call_id)
+    world.store.close()
+    assert stored_needles(tmp_path, [needle]) == set()
+
+
+def test_host_reported_usage_is_durable_and_repriced_without_reading_source_spans(tmp_path) -> None:
+    from host_profile_support import HostStage, HostTurn, host_request
+
+    turn = HostTurn(
+        "turn-usage",
+        START,
+        START + 4 * SECOND,
+        stages=(
+            HostStage(
+                "stt",
+                START,
+                START + SECOND,
+                {
+                    "gen_ai.provider.name": "deepgram",
+                    "gen_ai.request.model": "nova-3",
+                    "earshot.stt.usage.audio_seconds": 0.375,
+                },
+            ),
+            HostStage(
+                "tts",
+                START + 2 * SECOND,
+                START + 3 * SECOND,
+                {
+                    "gen_ai.provider.name": "cartesia",
+                    "gen_ai.request.model": "sonic-3",
+                    "earshot.tts.usage.character_count": 217,
+                },
+            ),
+        ),
+    )
+    world = World(tmp_path)
+    call_id = world.replay([host_request([turn], scope_version="0.2.0")])
+    world.close()
+    world.project()
+
+    [(usage_json,)] = catalog_rows(
+        tmp_path,
+        "SELECT usage_json FROM call_projections WHERE call_id = ?",
+        (call_id,),
+    )
+    stored_usage = json.loads(usage_json)
+    [stt_usage] = [item for item in stored_usage if item["operation"] == "stt"]
+    [tts_usage] = [item for item in stored_usage if item["operation"] == "tts"]
+    assert (stt_usage["kind"], stt_usage["quantity_milli"]) == ("reported", 375)
+    assert (tts_usage["kind"], tts_usage["quantity_milli"]) == ("reported", 217_000)
+
+    with catalog(tmp_path) as connection:
+        connection.execute("UPDATE spans SET payload = ?", (bytes((255,)),))
+    prices = PriceStore(world.store)
+    prices.add(
+        "default",
+        NewPrice(
+            provider="deepgram",
+            model="nova-3",
+            unit="audio_second",
+            price_nano_usd=6_000_000_000,
+            per_quantity=60,
+            effective_from_unix_nano=0,
+            source_url=None,
+            note=None,
+        ),
+    )
+    prices.add(
+        "default",
+        NewPrice(
+            provider="cartesia",
+            model="sonic-3",
+            unit="character",
+            price_nano_usd=1_000_000,
+            per_quantity=1000,
+            effective_from_unix_nano=0,
+            source_url=None,
+            note=None,
+        ),
+    )
+
+    assert world.project() == 1
+    projection = world.projection(call_id)
+    assert projection["state"] == "current"
+    stt_item = next(
+        item for item in projection["detail"]["cost_items"] if item["unit"] == "audio_second"
+    )
+    tts_item = next(
+        item for item in projection["detail"]["cost_items"] if item["unit"] == "character"
+    )
+    assert (stt_item["status"], stt_item["quantity"], stt_item["cost_nano_usd"]) == (
+        "priced",
+        0.375,
+        37_500_000,
+    )
+    assert (tts_item["status"], tts_item["quantity"], tts_item["cost_nano_usd"]) == (
+        "priced",
+        217,
+        217_000,
+    )
+    [(repriced_usage,)] = catalog_rows(
+        tmp_path,
+        "SELECT usage_json FROM call_projections WHERE call_id = ?",
+        (call_id,),
+    )
+    assert json.loads(repriced_usage) == stored_usage

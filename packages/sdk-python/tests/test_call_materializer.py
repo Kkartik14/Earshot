@@ -11,6 +11,7 @@ stored as the receiver stores them.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import random
 import subprocess
@@ -754,3 +755,103 @@ def test_a_host_call_is_a_valid_deterministic_metadata_only_revision_under_both_
         [coverage] = [item for item in bundle.profile.coverage if item.signal == "call.transcript"]
         expected = "not_observed" if preset == "full" else "unavailable"
         assert coverage.availability == expected, preset
+
+
+def test_host_profile_0_2_transcripts_follow_the_version_gate_and_capture_preset() -> None:
+    from earshot.call_capture import apply_capture_preset
+    from earshot.call_materializer import transcript_text_json
+    from host_profile_support import HostTurn, host_request
+
+    text = "The source supplied this sentence."
+    turn = HostTurn(
+        "turn-1",
+        SYNTHETIC_CALL_START,
+        SYNTHETIC_CALL_START + 2_000_000_000,
+        user_speech=((SYNTHETIC_CALL_START, SYNTHETIC_CALL_START + 500_000_000),),
+        user_transcripts=(text,),
+    )
+    source = spans_from_request(host_request([turn], scope_version="0.2.0"))
+
+    full = [apply_capture_preset("full", span) for span in source]
+    full_bundle = _materialize(_snapshot(full))
+    speech_span = next(span for span in full if span.span.name == "user_speech")
+    transcript_json = transcript_text_json(speech_span)
+    [operation] = [
+        op for op in full_bundle.profile.operations if op.operation_name == "user_speech"
+    ]
+    [coverage] = [item for item in full_bundle.profile.coverage if item.signal == "call.transcript"]
+    assert json.loads(transcript_json)["text"] == text
+    assert operation.attributes["earshot.transcript.text"] == text
+    assert coverage.availability == "available"
+
+    metadata_only = [apply_capture_preset("metadata_only", span) for span in source]
+    metadata_bundle = _materialize(_snapshot(metadata_only, preset="metadata_only"))
+    [metadata_speech] = [span for span in metadata_only if span.span.name == "user_speech"]
+    [metadata_operation] = [
+        op for op in metadata_bundle.profile.operations if op.operation_name == "user_speech"
+    ]
+    [metadata_coverage] = [
+        item for item in metadata_bundle.profile.coverage if item.signal == "call.transcript"
+    ]
+    assert transcript_text_json(metadata_speech) is None
+    assert "earshot.transcript.text" not in metadata_operation.attributes
+    assert metadata_coverage.reason == "not_captured_by_preset"
+    transcript_policy = next(
+        item
+        for item in metadata_bundle.profile.privacy.capture_classes
+        if item.capture_class == "transcript"
+    )
+    assert transcript_policy.decision == "deny"
+
+    legacy = [
+        apply_capture_preset("full", span) for span in spans_from_request(host_request([turn]))
+    ]
+    legacy_bundle = _materialize(_snapshot(legacy))
+    assert all(transcript_text_json(span) is None for span in legacy)
+    assert not any(
+        "earshot.transcript.text" in operation.attributes
+        for operation in legacy_bundle.profile.operations
+    )
+    [legacy_coverage] = [
+        item for item in legacy_bundle.profile.coverage if item.signal == "call.transcript"
+    ]
+    assert legacy_coverage.availability == "not_observed"
+
+
+def test_oversized_host_transcript_makes_revision_transcript_coverage_unavailable() -> None:
+    from earshot.call_capture import apply_capture_preset
+    from earshot.call_materializer import transcript_text_json
+    from host_profile_support import HostTurn, host_request
+
+    text = "x" * (70 * 1024)
+    turn = HostTurn(
+        "turn-1",
+        SYNTHETIC_CALL_START,
+        SYNTHETIC_CALL_START + 2_000_000_000,
+        user_speech=((SYNTHETIC_CALL_START, SYNTHETIC_CALL_START + 500_000_000),),
+        user_transcripts=(text,),
+    )
+    stored = [
+        apply_capture_preset("full", span)
+        for span in spans_from_request(host_request([turn], scope_version="0.2.0"))
+    ]
+    [speech_span] = [span for span in stored if span.span.name == "user_speech"]
+    bundle = _materialize(_snapshot(stored))
+    [coverage] = [item for item in bundle.profile.coverage if item.signal == "call.transcript"]
+    [omission] = [
+        item
+        for item in bundle.profile.privacy.omissions
+        if item.capture_class == "transcript" and item.reason == "recorder_capture_truncated"
+    ]
+
+    assert len(json.loads(transcript_text_json(speech_span))["text"]) == len(text)
+    assert not any(
+        operation.attributes.get("earshot.transcript.text") == text
+        for operation in bundle.profile.operations
+    )
+    assert (coverage.availability, coverage.reason, coverage.dropped_count) == (
+        "unavailable",
+        "recorder_capture_truncated",
+        1,
+    )
+    assert omission.count == 1

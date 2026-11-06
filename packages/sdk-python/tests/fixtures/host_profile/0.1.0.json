@@ -1,0 +1,23 @@
+{
+  "resourceSpans": [
+    {
+      "scopeSpans": [
+        {
+          "scope": {"name": "earshot.host", "version": "0.1.0"},
+          "spans": [
+            {
+              "traceId": "00000000000000000000000000000001",
+              "spanId": "0000000000000001",
+              "name": "turn",
+              "startTimeUnixNano": "1000000000",
+              "endTimeUnixNano": "2000000000",
+              "attributes": [
+                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
