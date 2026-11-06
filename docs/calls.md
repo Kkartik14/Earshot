@@ -86,8 +86,11 @@ what it holds, and counts in it.
 nanoseconds do not fit it, are unknown (`null`). So is a cost whose total does not
 fit 64 bits, which also makes the cost incomplete. A label (agent, outcome or tag)
 holding U+0000 is absent. U+0000 is removed from the normalized transcript used by the
-call view and search. With full capture, the original transcript remains in the source
-span and revision; `metadata_only` removes transcript content before storage.
+call view and search. With full capture, the original transcript remains in the stored
+source span and Call transcript. A Revision holds it only while it fits the recorder's
+64 KiB per-value and aggregate capture budgets; an oversized transcript is omitted
+from the Revision and marks `call.transcript` unavailable with reason
+`recorder_capture_truncated`. `metadata_only` removes transcript content before storage.
 
 **One bad Call does not stop the others.** A Call whose projection cannot be stored is
 logged with `EARSHOT_PROJECTION_FAILED` and one of these codes, then set aside and retried
