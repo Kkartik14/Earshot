@@ -103,7 +103,7 @@ def _host_attributes(
     return selected
 
 
-def _int64(value: Any) -> int | None:
+def _json_safe_int64(value: Any) -> int | None:
     """Decode a JSON-safe integer from the ProtoJSON int64 number/string forms."""
 
     if isinstance(value, bool):
@@ -206,7 +206,7 @@ def _check_value(
         if seconds is None or seconds <= 0:
             _issue(issues, "invalid_stt_audio_seconds", path, "must be a finite positive double")
     else:
-        character_count = _int64(value)
+        character_count = _json_safe_int64(value)
         if character_count is None or character_count <= 0:
             _issue(
                 issues,
