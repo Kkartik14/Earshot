@@ -1,0 +1,61 @@
+{
+  "metadata": {
+    "case": "direct_stage_windows_and_errors_only",
+    "source_facts": {
+      "llm-span": {"duration_ms": 5000, "status": "unset"},
+      "tts-span": {"duration_ms": 500, "status": "error"}
+    }
+  },
+  "request": {
+    "resourceSpans": [
+      {
+        "scopeSpans": [
+          {
+            "scope": {"name": "earshot.host", "version": "0.2.0"},
+            "spans": [
+              {
+                "traceId": "00000000000000000000000000000044",
+                "spanId": "0000000000000041",
+                "name": "turn",
+                "startTimeUnixNano": "7000000000",
+                "endTimeUnixNano": "14000000000",
+                "attributes": [
+                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-stages"}}
+                ],
+                "status": {"code": 0}
+              },
+              {
+                "traceId": "00000000000000000000000000000044",
+                "spanId": "0000000000000042",
+                "parentSpanId": "0000000000000041",
+                "name": "llm",
+                "startTimeUnixNano": "8000000000",
+                "endTimeUnixNano": "13000000000",
+                "attributes": [
+                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-stages"}},
+                  {"key": "gen_ai.provider.name", "value": {"stringValue": "synthetic"}},
+                  {"key": "gen_ai.request.model", "value": {"stringValue": "test-model"}}
+                ],
+                "status": {"code": 0}
+              },
+              {
+                "traceId": "00000000000000000000000000000044",
+                "spanId": "0000000000000043",
+                "parentSpanId": "0000000000000041",
+                "name": "tts",
+                "startTimeUnixNano": "13000000000",
+                "endTimeUnixNano": "13500000000",
+                "attributes": [
+                  {"key": "earshot.turn.id", "value": {"stringValue": "turn-stages"}},
+                  {"key": "gen_ai.provider.name", "value": {"stringValue": "synthetic"}},
+                  {"key": "gen_ai.request.model", "value": {"stringValue": "test-model"}}
+                ],
+                "status": {"code": 2}
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
