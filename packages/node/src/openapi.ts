@@ -2158,7 +2158,10 @@ export interface components {
      * @description One cost item. ``priced`` and ``estimated`` items cost ``quantity`` units of
      *     ``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),
      *     rounded half up to a whole nano-USD; ``no_price`` has usage and no price row;
-     *     ``not_reported`` has no usage. ``span`` is where the usage was read, if one span.
+     *     ``not_reported`` has no usage. ``quantity`` is null when the exact stored quantity
+     *     cannot round-trip through a finite API number, or while a legacy projection awaits
+     *     recomputation with exact quantity conversion. ``span`` is where the usage was read,
+     *     if one span.
      */
     CostItemResponse: {
       /** Cost Nano Usd */

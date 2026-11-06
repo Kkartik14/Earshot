@@ -3,7 +3,7 @@
     {
       "scopeSpans": [
         {
-          "scope": {"name": "earshot.host", "version": "0.2.0"},
+          "scope": { "name": "earshot.host", "version": "0.2.0" },
           "spans": [
             {
               "traceId": "00000000000000000000000000000001",
@@ -12,7 +12,7 @@
               "startTimeUnixNano": "1000000000",
               "endTimeUnixNano": "2000000000",
               "attributes": [
-                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}}
+                { "key": "earshot.turn.id", "value": { "stringValue": "turn-1" } }
               ]
             },
             {
@@ -23,9 +23,9 @@
               "startTimeUnixNano": "1100000000",
               "endTimeUnixNano": "1200000000",
               "attributes": [
-                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
-                {"key": "gen_ai.provider.name", "value": {"stringValue": "deepgram"}},
-                {"key": "gen_ai.request.model", "value": {"stringValue": "nova-3"}}
+                { "key": "earshot.turn.id", "value": { "stringValue": "turn-1" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "deepgram" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "nova-3" } }
               ]
             },
             {
@@ -36,9 +36,9 @@
               "startTimeUnixNano": "1500000000",
               "endTimeUnixNano": "1800000000",
               "attributes": [
-                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
-                {"key": "gen_ai.provider.name", "value": {"stringValue": "cartesia"}},
-                {"key": "gen_ai.request.model", "value": {"stringValue": "sonic-3"}}
+                { "key": "earshot.turn.id", "value": { "stringValue": "turn-1" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "cartesia" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "sonic-3" } }
               ]
             }
           ]

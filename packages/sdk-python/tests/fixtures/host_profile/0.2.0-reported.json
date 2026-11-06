@@ -3,7 +3,7 @@
     {
       "scopeSpans": [
         {
-          "scope": {"name": "earshot.host", "version": "0.2.0"},
+          "scope": { "name": "earshot.host", "version": "0.2.0" },
           "spans": [
             {
               "traceId": "00000000000000000000000000000001",
@@ -12,10 +12,10 @@
               "startTimeUnixNano": "1000000000",
               "endTimeUnixNano": "2000000000",
               "attributes": [
-                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
+                { "key": "earshot.turn.id", "value": { "stringValue": "turn-1" } },
                 {
                   "key": "earshot.turn.reported_latency_ms",
-                  "value": {"doubleValue": 812.5}
+                  "value": { "doubleValue": 812.5 }
                 }
               ]
             },
@@ -27,10 +27,10 @@
               "startTimeUnixNano": "1100000000",
               "endTimeUnixNano": "1300000000",
               "attributes": [
-                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
+                { "key": "earshot.turn.id", "value": { "stringValue": "turn-1" } },
                 {
                   "key": "earshot.transcript.text",
-                  "value": {"stringValue": "Can we meet at nine?"}
+                  "value": { "stringValue": "Can we meet at nine?" }
                 }
               ]
             },
@@ -42,10 +42,13 @@
               "startTimeUnixNano": "1100000000",
               "endTimeUnixNano": "1200000000",
               "attributes": [
-                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
-                {"key": "gen_ai.provider.name", "value": {"stringValue": "deepgram"}},
-                {"key": "gen_ai.request.model", "value": {"stringValue": "nova-3"}},
-                {"key": "earshot.stt.usage.audio_seconds", "value": {"doubleValue": 0.375}}
+                { "key": "earshot.turn.id", "value": { "stringValue": "turn-1" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "deepgram" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "nova-3" } },
+                {
+                  "key": "earshot.stt.usage.audio_seconds",
+                  "value": { "doubleValue": 0.375 }
+                }
               ]
             },
             {
@@ -56,12 +59,12 @@
               "startTimeUnixNano": "1500000000",
               "endTimeUnixNano": "1800000000",
               "attributes": [
-                {"key": "earshot.turn.id", "value": {"stringValue": "turn-1"}},
-                {"key": "gen_ai.provider.name", "value": {"stringValue": "cartesia"}},
-                {"key": "gen_ai.request.model", "value": {"stringValue": "sonic-3"}},
+                { "key": "earshot.turn.id", "value": { "stringValue": "turn-1" } },
+                { "key": "gen_ai.provider.name", "value": { "stringValue": "cartesia" } },
+                { "key": "gen_ai.request.model", "value": { "stringValue": "sonic-3" } },
                 {
                   "key": "earshot.tts.usage.character_count",
-                  "value": {"intValue": "217"}
+                  "value": { "intValue": "217" }
                 }
               ]
             }
