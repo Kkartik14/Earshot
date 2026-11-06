@@ -53,9 +53,9 @@ from .call_materializer import (
     transcript_text_json_from_stored_span,
 )
 from .call_projection import (
-    CallSource,
     EXACT_COST_QUANTITY_PROJECTION_VERSION,
     POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION,
+    CallSource,
     ProjectionInputs,
     ProjectionStamps,
     projection_state,
