@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from .versions import (
@@ -34,6 +36,7 @@ _ATTRIBUTES_BY_SPAN = {
     _TTS_CHARACTER_COUNT: frozenset({"tts"}),
 }
 _MAX_SAFE_JSON_INTEGER = 2**53 - 1
+_PROTOJSON_NUMERIC_RE = re.compile(r"[+-]?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +113,8 @@ def _json_safe_int64(value: Any) -> int | None:
         return None
     if isinstance(value, int):
         return value if abs(value) <= _MAX_SAFE_JSON_INTEGER else None
+    if isinstance(value, Decimal):
+        return _decimal_json_safe_integer(value)
     if isinstance(value, float):
         if (
             not math.isfinite(value)
@@ -120,30 +125,34 @@ def _json_safe_int64(value: Any) -> int | None:
         parsed = int(value)
         return parsed if abs(parsed) <= _MAX_SAFE_JSON_INTEGER else None
     if isinstance(value, str):
-        if not value or value.strip() != value or " " in value:
+        if not _PROTOJSON_NUMERIC_RE.fullmatch(value):
             return None
         try:
-            parsed = int(value)
-        except ValueError:
-            try:
-                numeric = float(value)
-            except (OverflowError, ValueError):
-                return None
-            if (
-                not math.isfinite(numeric)
-                or not numeric.is_integer()
-                or abs(numeric) > _MAX_SAFE_JSON_INTEGER
-            ):
-                return None
-            parsed = int(numeric)
-        return parsed if abs(parsed) <= _MAX_SAFE_JSON_INTEGER else None
+            numeric = Decimal(value)
+        except (InvalidOperation, ValueError):
+            return None
+        return _decimal_json_safe_integer(numeric)
     return None
+
+
+def _decimal_json_safe_integer(value: Decimal) -> int | None:
+    """Convert an exact decimal integer within the interoperable JSON range."""
+
+    if not value.is_finite() or abs(value) > _MAX_SAFE_JSON_INTEGER:
+        return None
+    try:
+        if value != value.to_integral_value():
+            return None
+        parsed = int(value)
+    except (InvalidOperation, ValueError):
+        return None
+    return parsed if abs(parsed) <= _MAX_SAFE_JSON_INTEGER else None
 
 
 def _double(value: Any) -> float | None:
     """Decode a finite ProtoJSON double number or numeric string."""
 
-    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
         return None
     try:
         parsed = float(value)
@@ -223,13 +232,19 @@ def check_host_profile(payload: bytes | str | Mapping[str, Any]) -> HostProfileR
     scope versions retain profile 0.1.0 behavior. Profile 0.2.0 attributes are
     rejected under every other version and on every span role not defined for them.
     The report contains paths and stable codes only; it never echoes attribute values.
+    Byte and string inputs preserve ProtoJSON numeric lexemes for exact validation;
+    already-decoded mappings are checked by the numeric values they contain.
     """
 
     issues: list[HostProfileIssue] = []
     if isinstance(payload, (bytes, str)):
         try:
             text = payload.decode("utf-8-sig") if isinstance(payload, bytes) else payload
-            request = json.loads(text, parse_constant=_reject_json_constant)
+            request = json.loads(
+                text,
+                parse_float=Decimal,
+                parse_constant=_reject_json_constant,
+            )
         except (UnicodeDecodeError, ValueError, TypeError):
             _issue(issues, "invalid_json", "$", "must be a UTF-8 OTLP/JSON request")
             return HostProfileReport((), 0, tuple(issues))

@@ -216,6 +216,47 @@ def test_checker_rejects_tts_count_above_json_safe_range(tts_value) -> None:
     assert "invalid_tts_character_count" in {issue.code for issue in report.issues}
 
 
+@pytest.mark.parametrize(
+    "wire_value",
+    [
+        '"9007199254740991.1"',
+        "9007199254740991.1",
+        '"2_17"',
+    ],
+)
+def test_checker_rejects_lossy_or_non_protojson_tts_integer_forms(wire_value) -> None:
+    payload = (
+        (FIXTURES / "0.2.0-reported.json")
+        .read_text()
+        .replace('"intValue": "217"', f'"intValue": {wire_value}')
+    )
+
+    report = check_host_profile(payload)
+
+    assert not report.valid
+    assert "invalid_tts_character_count" in {issue.code for issue in report.issues}
+
+
+def test_checker_accepts_integral_python_float_for_tts_integer_mapping() -> None:
+    request = _reported_request()
+    tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
+    _attribute(tts, "earshot.tts.usage.character_count")["value"]["intValue"] = 217.0
+
+    report = check_host_profile(request)
+
+    assert report.valid
+
+
+def test_checker_accepts_exact_integral_protojson_exponent() -> None:
+    payload = (
+        (FIXTURES / "0.2.0-reported.json")
+        .read_text()
+        .replace('"intValue": "217"', '"intValue": 2.17e2')
+    )
+
+    assert check_host_profile(payload).valid
+
+
 def test_checker_rejects_tts_int64_values_that_exceed_python_integer_parse_limits() -> None:
     request = _reported_request()
     tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
