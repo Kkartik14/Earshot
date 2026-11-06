@@ -174,6 +174,15 @@ def test_checker_uses_strict_json_and_rejects_bare_nonfinite_constants() -> None
     assert "invalid_json" in {issue.code for issue in report.issues}
 
 
+def test_checker_rejects_json_number_with_extreme_exponent_without_raising() -> None:
+    payload = '{"resourceSpans": [], "extension": 1e999999999999999999999999999999999999999}'
+
+    report = check_host_profile(payload)
+
+    assert not report.valid
+    assert "invalid_json" in {issue.code for issue in report.issues}
+
+
 @pytest.mark.parametrize("tts_value", [217.0, "217.0", "2.17e2", "+217"])
 def test_checker_accepts_protojson_numeric_strings_and_integral_number_forms(tts_value) -> None:
     request = _reported_request()

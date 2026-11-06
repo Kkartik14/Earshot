@@ -245,7 +245,7 @@ def check_host_profile(payload: bytes | str | Mapping[str, Any]) -> HostProfileR
                 parse_float=Decimal,
                 parse_constant=_reject_json_constant,
             )
-        except (UnicodeDecodeError, ValueError, TypeError):
+        except (UnicodeDecodeError, ValueError, TypeError, InvalidOperation):
             _issue(issues, "invalid_json", "$", "must be a UTF-8 OTLP/JSON request")
             return HostProfileReport((), 0, tuple(issues))
     else:
