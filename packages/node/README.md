@@ -15,7 +15,7 @@ The package is ESM-only and needs Node 22.12 or later. Its one runtime peer is
 `@opentelemetry/api`. It is about 300 lines, with types generated from Earshot's
 OpenAPI spec.
 
-After the Earshot 0.4.0 SDK release is published, install it with its OpenTelemetry peers:
+Install the package with its OpenTelemetry peers:
 
 ```sh
 npm install earshot-observability@^0.4.0 @opentelemetry/api @opentelemetry/sdk-trace-node \

@@ -35,6 +35,8 @@ See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility det
 
 ### Added
 
+- **Node npm release.** The Node SDK first ships on npm as `earshot-observability`
+  0.4.0. `@earshot/browser` and `@earshot/viewer-ui` remain private workspace packages.
 - **Hosted Calls.** A hosted JWT reaches the Calls under three scopes of their own:
   `earshot:calls:write` (OTLP spans and Recordings), `earshot:calls:read` (call list and
   detail, Session Key resolution, dashboard) and `earshot:calls:delete` (call purge). The
@@ -165,6 +167,10 @@ matters only to installs from source. See the
     `EarshotError` with Earshot's stable code.
   - `recordingIdFor` names the same Recording as Python's `recording_id_for`.
   - Response types generated from the OpenAPI spec.
+
+> Correction (2026-11-07): `@earshot/node` was never published; the Node SDK first ships
+> as `earshot-observability` 0.4.0.
+
 - **Viewer: calls list** (`/calls`). Filters by agent, outcome, tags, reported latency,
   audible gap, cost and transcript text, and pages with "load more". A call that isn't
   projected yet shows no metrics rather than zeros, and a cost cap reports how many calls
