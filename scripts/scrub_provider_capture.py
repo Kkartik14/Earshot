@@ -60,7 +60,8 @@ from make_caller_audio import load_caller_wav_and_metadata
 FIXTURES = ROOT / "fixtures" / "captured"
 SYNTHETIC_SOURCE = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5" / "audio" / "user.wav"
 ENV_FILES = [ROOT / ".env", DEFAULT_ENV]
-CAPTURED_ON = "2026-10-19"
+ELEVENLABS_CAPTURED_ON = "2026-11-07"
+TWILIO_CAPTURED_ON = "2026-10-19"
 VAD_WINDOW_S, VAD_RMS, VAD_HANG = 0.05, 200.0, 6
 # MPEG-2 Layer III (ISO/IEC 13818-3): bitrate index -> kbps, sample-rate index -> Hz.
 MPEG2_L3_KBPS = (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)
@@ -210,7 +211,16 @@ def _segments(samples: array, rate: int) -> list[tuple[float, float]]:
 
 # --------------------------------------------------------------------------- ElevenLabs
 
-EL_ID_KEYS = {"agent_id", "conversation_id", "branch_id", "version_id", "user_id"}
+EL_ID_KEYS = {
+    "agent_id",
+    "conversation_id",
+    "branch_id",
+    "version_id",
+    "user_id",
+    "traceId",
+    "spanId",
+    "parentSpanId",
+}
 EL_ID_SHAPE = re.compile(r"\b(agent|conv|agtbrch|agtvrsn|user)_[0-9a-z]{20,}\b")
 EL_FIELDS = [
     ("conversation_id", "str", "provider call ID; the session key (`earshot.session.id`)"),
@@ -355,7 +365,7 @@ def build_elevenlabs() -> None:
             "and `start_only` transcript tests."
         ),
         "provenance": {
-            "captured_on": CAPTURED_ON,
+            "captured_on": ELEVENLABS_CAPTURED_ON,
             "source_kind": "real_capture_scrubbed",
             "capture_driver": "scripts/capture_elevenlabs.py",
             "capture_driver_sha256": _script_digest("capture_elevenlabs.py"),
@@ -410,6 +420,8 @@ def build_elevenlabs() -> None:
             "agent_id, conversation_id, branch_id, version_id, user_id and system__*_id dynamic "
             "variables, plus any agent_/conv_/agtbrch_/agtvrsn_/user_ ID found by shape: "
             "same prefix and length, body = zeros + first-seen counter",
+            "OTel traceId, spanId and parentSpanId fields: zero-padded hex placeholders of the "
+            "same length; repeated references and parent links remain consistent",
             "voice_id (turn metrics, charging.tts_usage, OTel elevenlabs.voice_id): "
             "`voice` + zeros + counter, same length",
             "replacement is applied to the whole text, so IDs inside URIs, OTel attributes "
@@ -456,10 +468,9 @@ def build_elevenlabs() -> None:
                 else "not measured (afconvert unavailable)"
             ),
             "observed": (
-                "user turns are floor(speech onset) in all 4 cases (5.15->5, 12.8->12, "
-                "14.55->14, 21.55->21); agent turns start at or up to 1.05 s before the "
-                "audible onset (16 vs 17.05). Audio t=0 = start_time [inferred: turn 0 at 0 "
-                "is audible from 0.25 s]."
+                "Transcript timestamps are provider-reported whole-second start-only values; "
+                "detected audio speech onsets, when available, are listed separately in "
+                "audio_speech_segments_s."
             ),
         },
         "audio": {
@@ -692,7 +703,7 @@ def build_twilio() -> None:
             "recordings regenerated. Used by the recording poll/import and fetch tests."
         ),
         "provenance": {
-            "captured_on": CAPTURED_ON,
+            "captured_on": TWILIO_CAPTURED_ON,
             "source_kind": "real_capture_scrubbed",
             "capture_driver": "scripts/capture_twilio.py",
             "capture_driver_sha256": _script_digest("capture_twilio.py"),
@@ -823,6 +834,9 @@ def main() -> None:
     parser.add_argument("provider", choices=["elevenlabs", "twilio"])
     parser.add_argument("--env", type=Path, default=DEFAULT_ENV)
     args = parser.parse_args()
+    env_file = args.env.expanduser().resolve()
+    if env_file not in {path.resolve() for path in ENV_FILES}:
+        ENV_FILES.append(env_file)
     if args.provider == "elevenlabs":
         caller_keys = ("CARTESIA_API_KEY", "CARTESIA_VOICE_ID")
         missing = [name for name in caller_keys if not os.environ.get(name)]

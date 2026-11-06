@@ -1146,8 +1146,8 @@
             },
             "spans": [
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000002",
                 "name": "elevenlabs.conversation",
                 "kind": 1,
                 "startTimeUnixNano": "1794003981000000000",
@@ -1363,9 +1363,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "5543d984ea5d4f01",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000003",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.agent_response",
                 "kind": 1,
                 "startTimeUnixNano": "1794003981000000000",
@@ -1449,9 +1449,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "c1556ad690994934",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000004",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.user_transcript",
                 "kind": 1,
                 "startTimeUnixNano": "1794003985000000000",
@@ -1487,9 +1487,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "58bc675e7e1a4d03",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000005",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.agent_response",
                 "kind": 1,
                 "startTimeUnixNano": "1794003989000000000",
@@ -1627,9 +1627,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "09f95d2e19324848",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000006",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.user_transcript",
                 "kind": 1,
                 "startTimeUnixNano": "1794003993000000000",
@@ -1665,9 +1665,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "79a8b5214cdc4b32",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000007",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.agent_response",
                 "kind": 1,
                 "startTimeUnixNano": "1794003995000000000",
@@ -1811,9 +1811,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "ff0c70915527459b",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000008",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.user_transcript",
                 "kind": 1,
                 "startTimeUnixNano": "1794003995000000000",
@@ -1849,9 +1849,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "696505f3f1694a99",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "0000000000000009",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.agent_response",
                 "kind": 1,
                 "startTimeUnixNano": "1794003997000000000",
@@ -1989,9 +1989,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "81592c3ba81b4441",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "000000000000000a",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.user_transcript",
                 "kind": 1,
                 "startTimeUnixNano": "1794004002000000000",
@@ -2027,9 +2027,9 @@
                 }
               },
               {
-                "traceId": "48433f18fee70a7f7a365d1f055329fa",
-                "spanId": "d6899b7425854e0e",
-                "parentSpanId": "4680833605ff4ac7",
+                "traceId": "00000000000000000000000000000001",
+                "spanId": "000000000000000b",
+                "parentSpanId": "0000000000000002",
                 "name": "elevenlabs.recv.agent_response",
                 "kind": 1,
                 "startTimeUnixNano": "1794004006000000000",

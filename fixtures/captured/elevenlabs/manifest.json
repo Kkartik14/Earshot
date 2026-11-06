@@ -3,12 +3,12 @@
   "provider": "elevenlabs",
   "description": "One real ElevenLabs Agents conversation fetched with the conversations API, scrubbed. Both sides are synthetic speech. Used by the conversation import and `start_only` transcript tests.",
   "provenance": {
-    "captured_on": "2026-10-19",
+    "captured_on": "2026-11-07",
     "source_kind": "real_capture_scrubbed",
     "capture_driver": "scripts/capture_elevenlabs.py",
     "capture_driver_sha256": "cee93c8af1bd8322f081abf57000e6183adf0e14b7bf2653ce5fa0731d64063f",
     "scrubber": "scripts/scrub_provider_capture.py",
-    "scrubber_sha256": "cd59851eb90be5f7df7b0e78674759c9a425b9cf0ce787fc62907107569f8daa",
+    "scrubber_sha256": "437b00ae3a368c3cf73576b5b4822aa098abd07f87964febd00991f851529333",
     "survey": "free GET /v1/convai/agents and /v1/convai/conversations: 0 agents, 0 conversations",
     "requests": {
       "conversation.json": "GET https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}",
@@ -57,6 +57,7 @@
   },
   "scrub_rules": [
     "agent_id, conversation_id, branch_id, version_id, user_id and system__*_id dynamic variables, plus any agent_/conv_/agtbrch_/agtvrsn_/user_ ID found by shape: same prefix and length, body = zeros + first-seen counter",
+    "OTel traceId, spanId and parentSpanId fields: zero-padded hex placeholders of the same length; repeated references and parent links remain consistent",
     "voice_id (turn metrics, charging.tts_usage, OTel elevenlabs.voice_id): `voice` + zeros + counter, same length",
     "replacement is applied to the whole text, so IDs inside URIs, OTel attributes and system__conversation_history are covered",
     "kept verbatim: timestamps, durations, costs, metrics, model names and all text. All text is synthetic: the caller script above and the agent's LLM replies",
@@ -279,7 +280,7 @@
       [28.65, 29.1]
     ],
     "audio_speech_segments_method": "afconvert decode + 50 ms RMS>200 VAD (scripts/scrub_provider_capture.py _segments)",
-    "observed": "user turns are floor(speech onset) in all 4 cases (5.15->5, 12.8->12, 14.55->14, 21.55->21); agent turns start at or up to 1.05 s before the audible onset (16 vs 17.05). Audio t=0 = start_time [inferred: turn 0 at 0 is audible from 0.25 s]."
+    "observed": "Transcript timestamps are provider-reported whole-second start-only values; detected audio speech onsets, when available, are listed separately in audio_speech_segments_s."
   },
   "audio": {
     "file": "audio.mp3",
@@ -302,15 +303,15 @@
       "file": "conversation.json",
       "kind": "json",
       "source": "GET /v1/convai/conversations/{id}",
-      "bytes": 33292,
+      "bytes": 33280,
       "canonical_sha256": "6622ff799f8d04589375723247ea037820ccee9765b8be447f7a75fdaf4eab53"
     },
     {
       "file": "conversation.otel.json",
       "kind": "json",
       "source": "?format=opentelemetry",
-      "bytes": 72311,
-      "canonical_sha256": "d820340f8bed18120dbe2b4bd6f53e44039a33881dfa786f15b9ea8964605739"
+      "bytes": 72299,
+      "canonical_sha256": "61e0910fe606c2417bc9101c748c1086b4989a8248aaab2828e91ca6836cd602"
     },
     {
       "file": "audio.mp3",
