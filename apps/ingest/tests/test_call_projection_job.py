@@ -1094,13 +1094,19 @@ def test_oversized_host_transcript_index_stays_full_and_revision_reports_its_omi
     assert stored_needles(tmp_path, [needle]) == set()
 
 
-def test_host_reported_usage_is_durable_and_repriced_without_reading_source_spans(tmp_path) -> None:
+@pytest.mark.parametrize("preset", ["full", "metadata_only"])
+def test_host_reported_usage_is_durable_and_repriced_without_reading_source_spans(
+    tmp_path, preset
+) -> None:
+    from earshot.codec import decode_incident_protobuf
     from host_profile_support import HostStage, HostTurn, host_request
 
     turn = HostTurn(
         "turn-usage",
         START,
         START + 4 * SECOND,
+        user_speech=((START, START + SECOND),),
+        user_transcripts=("HOST_USAGE_TRANSCRIPT_CONTENT_D5_SENTINEL",),
         stages=(
             HostStage(
                 "stt",
@@ -1110,6 +1116,7 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
                     "gen_ai.provider.name": "deepgram",
                     "gen_ai.request.model": "nova-3",
                     "earshot.stt.usage.audio_seconds": 0.375,
+                    "audio.data": "HOST_USAGE_AUDIO_CONTENT_D5_SENTINEL",
                 },
             ),
             HostStage(
@@ -1125,9 +1132,41 @@ def test_host_reported_usage_is_durable_and_repriced_without_reading_source_span
         ),
     )
     world = World(tmp_path)
+    world.store.set_capture_preset("default", preset)
     call_id = world.replay([host_request([turn], scope_version="0.2.0")])
     world.close()
     world.project()
+
+    _, revision_payload = world.store.get_artifact(f"{call_id}.r1")
+    revision = decode_incident_protobuf(revision_payload)
+    stage_attributes = {
+        operation.operation_name: operation.attributes for operation in revision.profile.operations
+    }
+    assert stage_attributes["stt"]["earshot.stt.usage.audio_seconds"] == 0.375
+    assert stage_attributes["tts"]["earshot.tts.usage.character_count"] == 217
+
+    content_needles = [
+        b"HOST_USAGE_TRANSCRIPT_CONTENT_D5_SENTINEL",
+        b"HOST_USAGE_AUDIO_CONTENT_D5_SENTINEL",
+    ]
+    if preset == "metadata_only":
+        assert not any(
+            "earshot.transcript.text" in operation.attributes
+            or "audio.data" in operation.attributes
+            for operation in revision.profile.operations
+        )
+        assert stored_needles(tmp_path, content_needles) == set()
+    else:
+        assert any(
+            operation.attributes.get("earshot.transcript.text")
+            == "HOST_USAGE_TRANSCRIPT_CONTENT_D5_SENTINEL"
+            for operation in revision.profile.operations
+        )
+        assert any(
+            operation.attributes.get("audio.data") == "HOST_USAGE_AUDIO_CONTENT_D5_SENTINEL"
+            for operation in revision.profile.operations
+        )
+        assert stored_needles(tmp_path, content_needles) == set(content_needles)
 
     [(usage_json,)] = catalog_rows(
         tmp_path,

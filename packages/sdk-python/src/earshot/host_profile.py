@@ -35,6 +35,7 @@ _ATTRIBUTES_BY_SPAN = {
 }
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
+_MAX_SAFE_JSON_INTEGER = 2**53 - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,24 +106,58 @@ def _host_attributes(
 
 
 def _int64(value: Any) -> int | None:
-    """Decode the protobuf JSON mapping's int64 number or decimal-string form."""
+    """Decode the ProtoJSON int64 number/string forms without losing float precision."""
 
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
         return value if _INT64_MIN <= value <= _INT64_MAX else None
-    if isinstance(value, str):
-        if not value or value.strip() != value:
+    if isinstance(value, float):
+        if (
+            not math.isfinite(value)
+            or not value.is_integer()
+            or abs(value) > _MAX_SAFE_JSON_INTEGER
+        ):
             return None
-        digits = value[1:] if value.startswith("-") else value
-        if not digits or not digits.isascii() or not digits.isdecimal():
+        parsed = int(value)
+        return parsed if _INT64_MIN <= parsed <= _INT64_MAX else None
+    if isinstance(value, str):
+        if not value or value.strip() != value or " " in value:
             return None
         try:
             parsed = int(value)
         except ValueError:
-            return None
+            try:
+                numeric = float(value)
+            except (OverflowError, ValueError):
+                return None
+            if (
+                not math.isfinite(numeric)
+                or not numeric.is_integer()
+                or abs(numeric) > _MAX_SAFE_JSON_INTEGER
+            ):
+                return None
+            parsed = int(numeric)
         return parsed if _INT64_MIN <= parsed <= _INT64_MAX else None
     return None
+
+
+def _double(value: Any) -> float | None:
+    """Decode a finite ProtoJSON double number or numeric string."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        parsed = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return parsed if math.isfinite(parsed) else None
+
+
+def _reject_json_constant(value: str) -> None:
+    """Reject Python's non-standard bare NaN/Infinity JSON extensions."""
+
+    raise ValueError(f"non-standard JSON numeric constant: {value}")
 
 
 def _check_value(
@@ -160,11 +195,8 @@ def _check_value(
         if not isinstance(value, str) or not value.strip():
             _issue(issues, "invalid_transcript_text", path, "must be a nonblank string")
     elif key == _TURN_REPORTED_LATENCY:
-        try:
-            finite = math.isfinite(value) if not isinstance(value, bool) else False
-        except (OverflowError, TypeError):
-            finite = False
-        if not isinstance(value, (int, float)) or not finite or value <= 0:
+        latency = _double(value)
+        if latency is None or latency <= 0:
             _issue(
                 issues,
                 "invalid_turn_reported_latency",
@@ -172,11 +204,8 @@ def _check_value(
                 "must be a finite positive double when present",
             )
     elif key == _STT_AUDIO_SECONDS:
-        try:
-            finite = math.isfinite(value) if not isinstance(value, bool) else False
-        except (OverflowError, TypeError):
-            finite = False
-        if not isinstance(value, (int, float)) or not finite or value <= 0:
+        seconds = _double(value)
+        if seconds is None or seconds <= 0:
             _issue(issues, "invalid_stt_audio_seconds", path, "must be a finite positive double")
     else:
         character_count = _int64(value)
@@ -197,7 +226,7 @@ def check_host_profile(payload: bytes | str | Mapping[str, Any]) -> HostProfileR
     if isinstance(payload, (bytes, str)):
         try:
             text = payload.decode("utf-8-sig") if isinstance(payload, bytes) else payload
-            request = json.loads(text)
+            request = json.loads(text, parse_constant=_reject_json_constant)
         except (UnicodeDecodeError, ValueError, TypeError):
             _issue(issues, "invalid_json", "$", "must be a UTF-8 OTLP/JSON request")
             return HostProfileReport((), 0, tuple(issues))

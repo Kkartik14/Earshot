@@ -163,6 +163,39 @@ def test_checker_rejects_non_utf8_json_bytes() -> None:
     assert {issue.code for issue in report.issues} == {"invalid_json"}
 
 
+def test_checker_uses_strict_json_and_rejects_bare_nonfinite_constants() -> None:
+    request = _reported_request()
+    turn = request["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+    turn["attributes"].append({"key": "vendor.extension", "value": {"doubleValue": math.nan}})
+
+    report = check_host_profile(json.dumps(request))
+
+    assert not report.valid
+    assert "invalid_json" in {issue.code for issue in report.issues}
+
+
+@pytest.mark.parametrize("tts_value", [217.0, "217.0", "2.17e2", "+217"])
+def test_checker_accepts_protojson_numeric_strings_and_integral_number_forms(tts_value) -> None:
+    request = _reported_request()
+    turn, _, stt, tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    _attribute(turn, "earshot.turn.reported_latency_ms")["value"]["doubleValue"] = "812.5"
+    _attribute(stt, "earshot.stt.usage.audio_seconds")["value"]["doubleValue"] = "3.75e-1"
+    _attribute(tts, "earshot.tts.usage.character_count")["value"]["intValue"] = tts_value
+
+    assert check_host_profile(json.dumps(request)).valid
+
+
+def test_checker_rejects_fractional_protojson_int64_string() -> None:
+    request = _reported_request()
+    tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
+    _attribute(tts, "earshot.tts.usage.character_count")["value"]["intValue"] = "217.5"
+
+    report = check_host_profile(json.dumps(request))
+
+    assert not report.valid
+    assert "invalid_tts_character_count" in {issue.code for issue in report.issues}
+
+
 def test_checker_rejects_tts_int64_values_that_exceed_python_integer_parse_limits() -> None:
     request = _reported_request()
     tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]

@@ -201,6 +201,8 @@ _SAFE_EXACT = {
     "earshot.call.ended",
     "earshot.turn.reported_latency_ms",
     "earshot.turn.timeline_continuous",
+    "earshot.stt.usage.audio_seconds",
+    "earshot.tts.usage.character_count",
     "earshot.tts.voice",
     "earshot.link.type",
     "earshot.link.target_scope",
@@ -317,6 +319,7 @@ _INTEGER_METADATA_KEYS = frozenset(
         "gen_ai.usage.cache_read.input_tokens",
         "gen_ai.usage.cache_creation.input_tokens",
         "gen_ai.usage.reasoning_tokens",
+        "earshot.tts.usage.character_count",
     }
 )
 _NUMERIC_METADATA_KEYS = frozenset(
@@ -328,6 +331,7 @@ _NUMERIC_METADATA_KEYS = frozenset(
         "lk.end_of_turn_delay",
         "lk.e2e_latency",
         "earshot.turn.reported_latency_ms",
+        "earshot.stt.usage.audio_seconds",
         "lk.transcript_confidence",
         "lk.transcription_delay",
         "turn.duration_seconds",
