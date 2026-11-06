@@ -64,17 +64,14 @@ _CALLS_SQL = (
 )
 # Each projected turn's reported latency and, when measured, its audible gap.
 _TURNS_SQLITE = (
-    "SELECT p.call_id, CASE WHEN "
-    "json_extract(t.value, '$.reported_latency_ms') > 0 "
-    "THEN json_extract(t.value, '$.reported_latency_ms') END AS reported_ms, "
+    "SELECT p.call_id, json_extract(t.value, '$.reported_latency_ms') AS reported_ms, "
     "CASE WHEN json_extract(t.value, '$.audible_gap.status') = 'measured' "
     "THEN json_extract(t.value, '$.audible_gap.value_ms') END AS gap_ms "
     "FROM call_projections p, json_each(p.detail_json, '$.turns') AS t "
     f"WHERE {_IN_RANGE}"
 )
 _TURNS_POSTGRESQL = (
-    "SELECT p.call_id, CASE WHEN (t.value ->> 'reported_latency_ms')::bigint > 0 "
-    "THEN (t.value ->> 'reported_latency_ms')::bigint END AS reported_ms, "
+    "SELECT p.call_id, (t.value ->> 'reported_latency_ms')::bigint AS reported_ms, "
     "CASE WHEN t.value -> 'audible_gap' ->> 'status' = 'measured' "
     "THEN (t.value -> 'audible_gap' ->> 'value_ms')::bigint END AS gap_ms "
     "FROM call_projections p "
@@ -318,7 +315,9 @@ def _read_calls(
     for row in connection.execute(turns, in_range).fetchall():
         call = calls[row["call_id"]]
         if row["reported_ms"] is not None:
-            call.reported_ms.append(int(row["reported_ms"]))
+            reported_ms = int(row["reported_ms"])
+            if reported_ms > 0:
+                call.reported_ms.append(reported_ms)
         if row["gap_ms"] is not None:
             call.gap_ms.append(int(row["gap_ms"]))
     for row in connection.execute(_LLM_SQL, in_range).fetchall():
