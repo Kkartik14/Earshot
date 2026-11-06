@@ -159,8 +159,9 @@ acceptance-observer failures, and any exact retry still retained after the
 bounded flush. The example shows an error if the final drain is unaccepted or an
 observer failed. `CaptureSession.stop()` is observer-only and does not claim that
 a call ended. A hosted application must persist finalized `call_id` values in
-its durable seal outbox and reconcile ambiguous seal responses as described in
-[`platform-integration.md`](../../docs/platform-integration.md). This sample
+its durable seal outbox and reconcile ambiguous seal responses as described in the
+[`POST /v1/live/sessions/{session_id}/seal` contract](../../docs/backend-api.md#post-v1livesessionssession_idseal)
+and [`platform-integration.md`](../../docs/platform-integration.md). This sample
 does not implement that host-owned outbox.
 
 If the final batch receives `413`, the example keeps its transport available and

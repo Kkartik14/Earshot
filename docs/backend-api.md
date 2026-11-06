@@ -25,9 +25,7 @@ fallbacks. The receiver verifies RS256 or ES256, `kid`, signature, exact issuer,
 one-string audience, `sub`, `project_id`, scope, `iat`, `exp`, and `jti`. Tokens may
 live for at most five minutes. Every route project ID must equal the signed claim;
 `X-Earshot-Project-Id`, when supplied, is only a matching assertion. The issuer, JWKS,
-audience, and scope vocabulary are deployment configuration. The route scopes listed
-below are Earshot's current contract proposal and must be agreed with the Platform token
-issuer before hosted acceptance.
+audience, and scope vocabulary are deployment configuration.
 JWKS keys are cached for five minutes. An unknown key ID triggers at most one refresh
 per 30 seconds per process, so signing-key rotation needs an overlap window while
 instances refresh their cache.
@@ -170,8 +168,9 @@ authorization mode:
 ```
 
 `capabilities.hosted_jwt` is true when the server runs in `hosted_jwt` mode;
-`capabilities.signals` is true when the `signals` extra is installed, so recordings are
-analysed. `host_profile_version` is the version of the
+`capabilities.signals` is true when the `signals` extra is installed. It reports that
+analysis support is available; it does not report whether an individual Recording has
+been analysed. `host_profile_version` is the version of the
 [host span profile](./calls.md#the-host-span-profile) the server reads. The values come
 from `earshot.versions` and the call projection; a host
 compares them with the versions it was built against before it sends anything.

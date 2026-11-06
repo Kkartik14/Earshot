@@ -17,7 +17,9 @@ Before provisioning or sending telemetry, request `GET /version`. It is unauthen
 and contains no project data. Compare the returned API and profile versions and
 capabilities with the host build; do not infer them from a package version or a fixed
 release number. The response includes `api_version`, `host_profile_version`,
-`call_projection_version`, and whether hosted JWT and recording analysis are enabled.
+`call_projection_version`, whether hosted JWT mode is active, and whether the optional
+`signals` analysis extra is installed. The `signals` capability reports installed
+support, not whether an individual Recording has been analysed.
 See [`GET /version`](./backend-api.md#get-version) for the response shape.
 
 ## Authenticate server-to-server
@@ -32,7 +34,7 @@ authenticated API boundary.
 Every project request must match the signed `project_id` claim. A project-ID header is
 only an assertion; it never grants access. Tokens can live for at most five minutes.
 Hosted mode does not accept operator API keys, `EARSHOT_TOKEN`, or the browser-cookie
-exchange. See [hosted authorization](./backend-api.md#hosted-detail-and-live-apis) and
+exchange. See [hosted authorization scopes](./backend-api.md#hosted-scopes) and
 [production configuration](./configuration.md).
 
 The current Earshot scope vocabulary is documented in the
@@ -77,6 +79,11 @@ Recording. Earshot also recognizes framework keys such as `gen_ai.conversation.i
 the first key binding for a trace wins. Read the
 [Session Key rules](./otlp-quickstart.md#session-keys)
 before choosing identifiers or retry behavior.
+
+Hosted producers must send an Authorization bearer token that carries only
+`earshot:calls:write`. Because hosted tokens last at most five minutes, a static OTLP
+header will expire. Relay spans through the host's authenticated backend, or use a
+producer exporter that refreshes a `calls:write`-only token.
 
 For a custom voice pipeline, emit spans under the `earshot.host` instrumentation scope
 using the [host span profile](./calls.md#the-host-span-profile) version reported by
