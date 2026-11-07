@@ -123,8 +123,8 @@ unchanged. A 200 response contains `call_id`, `state` (`open` or `closed`), `rev
 (null while open; the latest Revision number after close) and `turns[]`. Each turn has
 the same fields and meaning as `projection.turns[]` above. The response also carries
 `axis_origin_unix_nano` and `axis_origin`, which define the origin for its `*_ms` values.
-While a Call is open, earlier-arriving evidence can move the origin, so times may re-base
-between responses; render each response against the origin it carries. `state` describes
+While a Call is open, a later-arriving span with an earlier timestamp can move the origin,
+so times may re-base between responses; render each response against the origin it carries. `state` describes
 the Call; there is no separate per-turn `finished` flag.
 
 While the Call is open, the route runs the existing Call projector over the Call's
