@@ -230,8 +230,9 @@ registered in [`semconv/earshot.yaml`](../semconv/earshot.yaml).
   Profile 0.1.0 defines no STT or TTS quantity attributes. Profile 0.2.0 optionally adds
   `earshot.stt.usage.audio_seconds`, a positive finite OTLP `doubleValue` or positive
   `intValue` of provider-metered audio seconds for one STT request, and
-  `earshot.tts.usage.character_count`, a positive OTLP `int64` in the provider's own TTS
-  character-metering units for one request. These are request quantities, not cumulative
+  `earshot.tts.usage.character_count`, a positive JSON-safe OTLP `int64` from `1` through
+  `9,007,199,254,740,991` in the provider's own TTS character-metering units for one request.
+  These are request quantities, not cumulative
   counters. Hosts omit unknown values; zero is invalid. Do not infer STT usage from span
   or speech duration, or TTS usage by counting text, bytes,
   Unicode scalar values, or grapheme clusters. The profile 0.2.0 additions do not change
