@@ -17,8 +17,8 @@ from urllib.parse import urlencode
 
 import pytest
 
-from captured_otlp import captured_requests
-from earshot.api import create_app
+from captured_otlp import CAPTURED_SESSION_KEY, captured_requests
+from earshot.api import CallTurnResponse, _live_turns_etag, _LiveTurnsBodyCache, create_app
 from earshot.call_capture import spans_from_request
 from earshot.call_projection import (
     CALL_PROJECTION_VERSION,
@@ -27,13 +27,18 @@ from earshot.call_projection import (
     projection_state,
 )
 from earshot.clock import ManualClock
+from earshot.storage import ProjectInactiveError
+from earshot.storage_call_projections import CallProjector
+from earshot.storage_call_purge import CallPurger
 from earshot.storage_call_reads import CallReads
 from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_closer import Closer
-from earshot.storage_recordings import RecordingStore
+from earshot.storage_recordings import RecordingManifest, RecordingStore
+from host_profile_support import HOST_SESSION_KEY, HostStage, HostTurn, host_request
 from otlp_support import make_request, make_span, request, serve, string_attribute
 from projection_support import SUMMARY_COLUMNS, example_detail, insert_projection
-from store_support import catalog, make_store
+from store_support import catalog, catalog_rows, make_store
+from test_hosted_jwt import _hosted_config, _token, issuer  # noqa: F401
 
 pytestmark = pytest.mark.integration
 
@@ -402,6 +407,458 @@ def test_call_detail_is_no_store_with_an_etag_and_answers_304_to_a_matching_if_n
 
 def _captured_spans():
     return [span for item in captured_requests() for span in spans_from_request(item)]
+
+
+def _host_turns(count: int = 3, *, attributes: dict | None = None) -> list[HostTurn]:
+    turns = []
+    for index in range(1, count + 1):
+        start = START + index * 10 * SECOND
+        turns.append(
+            HostTurn(
+                f"turn-{index}",
+                start,
+                start + 6 * SECOND,
+                user_speech=((start, start + SECOND),),
+                agent_speech=(start + 3 * SECOND, start + 6 * SECOND),
+                stages=(HostStage("llm", start + SECOND, start + 2 * SECOND),),
+                reported_latency_ms=900.0 + index,
+                attributes=attributes or {},
+            )
+        )
+    return turns
+
+
+def _project_revision(store, project_id: str, call_id: str) -> None:
+    assert CallProjector(store).project_call(project_id, call_id)
+
+
+def test_call_turn_response_accepts_a_projection_without_the_new_parent_ref() -> None:
+    turn = {**example_detail()["turns"][0]}
+    turn.pop("turn_span")
+
+    assert CallTurnResponse.model_validate(turn).turn_span is None
+
+
+def test_live_turns_rebase_when_the_root_span_arrives_last(tmp_path) -> None:
+    store, _ = _store(tmp_path)
+    calls = CallStore(store)
+    turn_start = START + 5 * SECOND
+    request_data = host_request(
+        [HostTurn("turn-1", turn_start, turn_start + 3 * SECOND)], ended=False
+    )
+    spans = spans_from_request(request_data)
+    root = next(span for span in spans if span.span.name == "call")
+    turn = next(span for span in spans if span.span.name == "turn")
+    root.span.start_time_unix_nano = turn_start - 2 * SECOND
+    calls.record_spans("default", [turn])
+    call_id = calls.call_id("default", HOST_SESSION_KEY, 0)
+
+    with serve(create_app(store=store)) as port:
+        path = f"/v1/calls/{call_id}/live-turns"
+        before_root = request(port, "GET", path)
+        calls.record_spans("default", [root])
+        after_root = request(
+            port, "GET", path, headers={"If-None-Match": before_root.headers["etag"]}
+        )
+
+    assert before_root.status == after_root.status == 200
+    assert before_root.json()["axis_origin_unix_nano"] == str(turn_start)
+    assert before_root.json()["axis_origin"] == "first_evidence"
+    assert before_root.json()["turns"][0]["start_ms"] == 0
+    assert after_root.json()["axis_origin_unix_nano"] == str(turn_start - 2 * SECOND)
+    assert after_root.json()["axis_origin"] == "first_evidence"
+    assert after_root.json()["turns"][0]["start_ms"] == 2_000
+    assert after_root.headers["etag"] != before_root.headers["etag"]
+
+
+def test_live_turns_metadata_only_match_revision_without_text(tmp_path) -> None:
+    store, clock = _store(tmp_path)
+    store.set_capture_preset("default", "metadata_only")
+    sentinel = "SENTINEL-TRANSCRIPT-7f3a"
+    calls = CallStore(store)
+    calls.record_spans(
+        "default",
+        spans_from_request(
+            host_request(
+                _host_turns(
+                    attributes={
+                        "earshot.transcript.text": sentinel,
+                        "gen_ai.prompt": sentinel,
+                    }
+                )
+            )
+        ),
+    )
+    call_id = calls.call_id("default", HOST_SESSION_KEY, 0)
+
+    with serve(create_app(store=store)) as port:
+        live = request(port, "GET", f"/v1/calls/{call_id}/live-turns")
+        _close_all(store, clock)
+        _project_revision(store, "default", call_id)
+        closed = request(port, "GET", f"/v1/calls/{call_id}/live-turns")
+        detail = request(port, "GET", f"/v1/calls/{call_id}")
+
+    assert sentinel.encode() not in live.body
+    assert sentinel.encode() not in closed.body
+    assert live.json()["turns"] == closed.json()["turns"]
+    assert closed.json()["turns"] == detail.json()["projection"]["turns"]
+
+
+def test_live_turns_etag_includes_call_state_and_revision(tmp_path) -> None:
+    store, clock = _store(tmp_path)
+    calls = CallStore(store)
+    calls.record_spans("default", spans_from_request(host_request(_host_turns(1))))
+    call_id = calls.call_id("default", HOST_SESSION_KEY, 0)
+    clock.advance(SECOND)
+
+    with CallReads(store).live_turns_snapshot("default", call_id) as snapshot:
+        assert snapshot is not None
+        baseline = _live_turns_etag(snapshot)
+        state_changed = _live_turns_etag(replace(snapshot, state="closed"))
+        revision_changed = _live_turns_etag(replace(snapshot, revision=1))
+
+    assert state_changed != baseline
+    assert revision_changed != baseline
+
+
+def test_live_turns_body_cache_evicts_by_lru_and_byte_limit() -> None:
+    count_bounded = _LiveTurnsBodyCache(max_entries=2, max_bytes=100)
+    first = ("project", "call-1", "etag-1")
+    second = ("project", "call-2", "etag-2")
+    third = ("project", "call-3", "etag-3")
+    count_bounded.put(first, b"first")
+    count_bounded.put(second, b"second")
+    assert count_bounded.get(first) == b"first"
+    count_bounded.put(third, b"third")
+    assert count_bounded.get(second) is None
+    assert count_bounded.get(first) == b"first"
+    assert count_bounded.get(third) == b"third"
+
+    byte_bounded = _LiveTurnsBodyCache(max_entries=4, max_bytes=5)
+    byte_bounded.put(first, b"12")
+    byte_bounded.put(second, b"34")
+    assert byte_bounded.get(first) == b"12"
+    byte_bounded.put(third, b"abc")
+    assert byte_bounded.get(second) is None
+    assert byte_bounded.get(first) == b"12"
+    assert byte_bounded.get(third) == b"abc"
+    byte_bounded.put(("project", "call-4", "etag-4"), b"123456")
+    assert byte_bounded.get(("project", "call-4", "etag-4")) is None
+
+
+def test_another_projects_token_gets_the_detail_404_for_live_turns(tmp_path, issuer) -> None:  # noqa: F811
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="A")
+    store.create_project("project-b", display_name="B")
+    calls = CallStore(store)
+    calls.record_spans("project-a", spans_from_request(host_request(_host_turns(2), ended=False)))
+    call_id = calls.call_id("project-a", HOST_SESSION_KEY, 0)
+
+    def headers(project_id: str) -> dict[str, str]:
+        token = _token(issuer, project_id=project_id, scope="earshot:calls:read")
+        return {"Authorization": f"Bearer {token}"}
+
+    with serve(create_app(store=store, config=_hosted_config(issuer))) as port:
+        own = request(port, "GET", f"/v1/calls/{call_id}/live-turns", headers=headers("project-a"))
+        other_live = request(
+            port, "GET", f"/v1/calls/{call_id}/live-turns", headers=headers("project-b")
+        )
+        other_detail = request(port, "GET", f"/v1/calls/{call_id}", headers=headers("project-b"))
+
+    assert own.status == 200 and len(own.json()["turns"]) == 2
+    assert (other_live.status, other_live.body) == (other_detail.status, other_detail.body)
+    assert other_live.status == 404
+
+
+def test_live_turns_snapshot_rejects_a_project_being_deleted(tmp_path) -> None:
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="A")
+    calls = CallStore(store)
+    calls.record_spans("project-a", spans_from_request(host_request(_host_turns(1), ended=False)))
+    call_id = calls.call_id("project-a", HOST_SESSION_KEY, 0)
+
+    assert store.begin_project_deletion("project-a") == "deleting"
+    with (
+        pytest.raises(ProjectInactiveError),
+        CallReads(store).live_turns_snapshot("project-a", call_id),
+    ):
+        pass
+
+
+def test_live_turns_wait_for_parent_and_invalidate_on_every_new_span(tmp_path) -> None:
+    store, clock = _store(tmp_path)
+    calls = CallStore(store)
+    spans = _captured_spans()
+    root = next(span for span in spans if span.span.name == "conversation")
+    turn = next(span for span in spans if span.span.name == "turn")
+    calls.record_spans("default", [root])
+    call_id = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+    clock.advance(SECOND)
+
+    with serve(create_app(store=store)) as port:
+        path = f"/v1/calls/{call_id}/live-turns"
+        no_parent = request(port, "GET", path)
+        assert no_parent.status == 200, (no_parent.status, no_parent.body[:300])
+        calls.record_spans("default", [turn])
+        after_parent = request(
+            port, "GET", path, headers={"If-None-Match": no_parent.headers["etag"]}
+        )
+
+        # A new descendant that the projected turn summary omits must still invalidate
+        # the validator, so a host can observe every accepted child export.
+        unprojected_child = make_span(
+            int.from_bytes(turn.span.trace_id, "big"),
+            900,
+            name="unprojected_child",
+            parent=int.from_bytes(turn.span.span_id, "big"),
+            start=turn.span.start_time_unix_nano,
+        )
+        calls.record_spans(
+            "default",
+            spans_from_request(make_request([unprojected_child], scope=turn.scope.name)),
+        )
+        after_child = request(
+            port,
+            "GET",
+            path,
+            headers={"If-None-Match": after_parent.headers["etag"]},
+        )
+        unchanged = request(
+            port,
+            "GET",
+            path,
+            headers={"If-None-Match": after_child.headers["etag"]},
+        )
+
+    assert no_parent.status == after_parent.status == after_child.status == 200
+    assert no_parent.json()["turns"] == []
+    parent_body = after_parent.json()
+    assert (parent_body["state"], parent_body["revision"], len(parent_body["turns"])) == (
+        "open",
+        None,
+        1,
+    )
+    assert parent_body["turns"][0]["turn_span"] == {
+        "trace_id": turn.span.trace_id.hex(),
+        "span_id": turn.span.span_id.hex(),
+    }
+    assert after_child.json() == parent_body
+    assert after_parent.headers["etag"] != no_parent.headers["etag"]
+    assert after_child.headers["etag"] != after_parent.headers["etag"]
+    assert (unchanged.status, unchanged.body, unchanged.headers["etag"]) == (
+        304,
+        b"",
+        after_child.headers["etag"],
+    )
+    assert unchanged.headers["cache-control"] == "no-store"
+    assert set(parent_body) == {
+        "call_id",
+        "state",
+        "revision",
+        "axis_origin_unix_nano",
+        "axis_origin",
+        "turns",
+    }
+    assert catalog_rows(tmp_path, "SELECT count(*) FROM call_projections") == [(0,)]
+
+
+def test_live_turns_keep_spans_visible_while_the_first_revision_is_materializing(
+    tmp_path,
+) -> None:
+    store, clock = _store(tmp_path)
+    calls = CallStore(store)
+    spans = _captured_spans()
+    root = next(span for span in spans if span.span.name == "conversation")
+    turn = next(span for span in spans if span.span.name == "turn")
+    calls.record_spans("default", [root, turn])
+    call_id = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+    clock.advance(SECOND)
+    path = f"/v1/calls/{call_id}/live-turns"
+
+    with serve(create_app(store=store)) as port:
+        before_claim = request(port, "GET", path)
+
+    assert before_claim.status == 200
+    before_body = before_claim.json()
+    assert before_body["state"] == "open" and len(before_body["turns"]) == 1
+
+    recordings = RecordingStore(store, calls=calls, blobs=None)
+    closer = Closer(store, calls=calls, recordings=recordings)
+    clock.advance(CallTimings().long_quiet_nano)
+    claim = closer.claim()
+    assert claim is not None and claim.revision == 1
+
+    # A child accepted after the snapshot remains unassigned while the first Revision
+    # is materializing; the live view still includes it in its source version.
+    child = make_span(
+        int.from_bytes(turn.span.trace_id, "big"),
+        900,
+        name="unprojected_child",
+        parent=int.from_bytes(turn.span.span_id, "big"),
+        start=turn.span.start_time_unix_nano,
+    )
+    calls.record_spans(
+        "default",
+        spans_from_request(make_request([child], scope=turn.scope.name)),
+    )
+
+    with serve(create_app(store=store)) as port:
+        during_claim = request(port, "GET", path)
+        unchanged = request(
+            port,
+            "GET",
+            path,
+            headers={"If-None-Match": during_claim.headers["etag"]},
+        )
+
+    assert during_claim.status == 200
+    assert during_claim.json() == before_body
+    assert during_claim.headers["etag"] != before_claim.headers["etag"]
+    assert (unchanged.status, unchanged.body, unchanged.headers["etag"]) == (
+        304,
+        b"",
+        during_claim.headers["etag"],
+    )
+
+
+def test_live_turns_keep_spans_visible_after_the_first_revision_materialization_fails(
+    tmp_path,
+) -> None:
+    store, clock = _store(tmp_path)
+    calls = CallStore(store)
+    spans = _captured_spans()
+    root = next(span for span in spans if span.span.name == "conversation")
+    turn = next(span for span in spans if span.span.name == "turn")
+    calls.record_spans("default", [root, turn])
+    call_id = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+    clock.advance(SECOND)
+    path = f"/v1/calls/{call_id}/live-turns"
+
+    with serve(create_app(store=store)) as port:
+        before = request(port, "GET", path)
+
+    recordings = RecordingStore(store, calls=calls, blobs=None)
+    closer = Closer(store, calls=calls, recordings=recordings)
+    clock.advance(CallTimings().long_quiet_nano)
+    claim = closer.claim()
+    assert claim is not None and claim.revision == 1
+    assert closer.fail(claim, "TEST_MATERIALIZE_FAILED")
+
+    with serve(create_app(store=store)) as port:
+        after_failure = request(port, "GET", path)
+        unchanged = request(
+            port,
+            "GET",
+            path,
+            headers={"If-None-Match": before.headers["etag"]},
+        )
+
+    assert before.json()["state"] == "open" and len(before.json()["turns"]) == 1
+    assert after_failure.status == 200
+    assert after_failure.json() == before.json()
+    assert after_failure.headers["etag"] == before.headers["etag"]
+    assert (unchanged.status, unchanged.body, unchanged.headers["etag"]) == (
+        304,
+        b"",
+        before.headers["etag"],
+    )
+
+
+def test_live_turns_missing_and_purged_calls_match_call_detail_not_found(tmp_path) -> None:
+    store, clock = _store(tmp_path)
+    calls = CallStore(store)
+    root = next(span for span in _captured_spans() if span.span.name == "conversation")
+    calls.record_spans("default", [root])
+    call_id = calls.call_id("default", CAPTURED_SESSION_KEY, 0)
+    clock.advance(SECOND)
+    purger = CallPurger(
+        store, calls=calls, recordings=RecordingStore(store, calls=calls, blobs=None)
+    )
+
+    with serve(create_app(store=store)) as port:
+        missing_live = request(port, "GET", "/v1/calls/missing/live-turns")
+        missing_detail = request(port, "GET", "/v1/calls/missing")
+        cached_live = request(port, "GET", f"/v1/calls/{call_id}/live-turns")
+        purger.purge_call("default", call_id)
+        purged_live = request(port, "GET", f"/v1/calls/{call_id}/live-turns")
+        purged_detail = request(port, "GET", f"/v1/calls/{call_id}")
+
+    assert (missing_live.status, missing_live.body) == (missing_detail.status, missing_detail.body)
+    assert cached_live.status == 200
+    assert (purged_live.status, purged_live.body) == (purged_detail.status, purged_detail.body)
+    assert missing_live.status == purged_live.status == 404
+
+
+def test_live_turns_closed_without_revision_ignores_late_unassigned_turns(tmp_path) -> None:
+    store, clock = _store(tmp_path)
+    calls = CallStore(store)
+    recordings = RecordingStore(store, calls=calls, blobs=None)
+    created, _ = recordings.create(
+        "default",
+        RecordingManifest(
+            recording_id="failed-only.user",
+            session_key="failed-only-recording",
+            speaker="user",
+            content_type="audio/wav",
+            started_at_unix_nano=str(clock.wall),
+        ),
+    )
+    clock.advance(CallTimings().upload_hold_nano + 1)
+    assert recordings.fail_stale_uploads() == 1
+    closer = Closer(store, calls=calls, recordings=recordings)
+    outcome = closer.close_next()
+    assert outcome is not None and outcome.result == "closed_without_revision"
+
+    # A session can export a late turn after the recording-only Call closed. It is
+    # unassigned evidence until the closer creates Revision 1, so it is not visible
+    # through the closed Call's live-turn response.
+    late_turn = make_span(
+        99,
+        1,
+        name="turn",
+        attributes=[string_attribute("earshot.session.id", "failed-only-recording")],
+    )
+    with serve(create_app(store=store)) as port:
+        path = f"/v1/calls/{created.call_id}/live-turns"
+        before_late = request(port, "GET", path)
+        calls.record_spans(
+            "default",
+            spans_from_request(make_request([late_turn], scope="pipecat.turn")),
+        )
+        live = request(
+            port,
+            "GET",
+            path,
+            headers={"If-None-Match": before_late.headers["etag"]},
+        )
+        detail = request(port, "GET", f"/v1/calls/{created.call_id}")
+
+    assert live.status == detail.status == 200
+    assert before_late.json()["turns"] == []
+    assert live.headers["etag"] != before_late.headers["etag"]
+    assert live.json() == {
+        "call_id": created.call_id,
+        "state": "closed",
+        "revision": None,
+        "axis_origin_unix_nano": None,
+        "axis_origin": None,
+        "turns": [],
+    }
+    assert detail.json()["latest_revision"] is None
+
+    clock.advance(CallTimings().long_quiet_nano)
+    outcome = closer.close_next()
+    assert outcome is not None and (outcome.result, outcome.revision) == ("revision", 1)
+    with serve(create_app(store=store)) as port:
+        after_revision = request(
+            port,
+            "GET",
+            f"/v1/calls/{created.call_id}/live-turns",
+            headers={"If-None-Match": live.headers["etag"]},
+        )
+
+    assert (after_revision.status, after_revision.json()["revision"]) == (200, 1)
+    assert len(after_revision.json()["turns"]) == 1
 
 
 def test_the_span_route_serves_one_span_of_the_call_and_404_for_any_other(tmp_path) -> None:

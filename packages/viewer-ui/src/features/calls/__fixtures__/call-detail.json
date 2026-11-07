@@ -64,6 +64,10 @@
       {
         "index": 0,
         "turn_id": "turn-1",
+        "turn_span": {
+          "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+          "span_id": "1000000000000000"
+        },
         "start_ms": 1310,
         "end_ms": 7420,
         "reported_latency_ms": 1800,
@@ -101,6 +105,10 @@
       {
         "index": 1,
         "turn_id": "turn-2",
+        "turn_span": {
+          "trace_id": "8d6a3c4f0b1e2d3c4b5a69788796a5b4",
+          "span_id": "1000000000000008"
+        },
         "start_ms": 11810,
         "end_ms": 19710,
         "reported_latency_ms": 1352,

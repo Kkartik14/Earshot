@@ -1,12 +1,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ViewerQueryScopeProvider } from "../../api/queryScope";
 import { fakeClocks } from "./__fixtures__/fakeMediaClock";
 import exampleCall from "./__fixtures__/call-detail.json";
 import exampleSpan from "./__fixtures__/llm-span.json";
-import type { CallDetail, CallProjection, CallSpan, CallTurn, PlacedLine } from "./api";
+import type {
+  CallDetail,
+  CallLiveTurns,
+  CallProjection,
+  CallSpan,
+  CallTurn,
+  PlacedLine,
+} from "./api";
 import { CallViewBody } from "./CallView";
 import { MediaClockContext } from "./Player";
 import { SpanDetail } from "./SpanDrawer";
@@ -29,7 +36,13 @@ function withProjection(changes: Partial<CallProjection>): CallDetail {
   };
 }
 
-function renderCall(call: CallDetail) {
+function renderCall(
+  call: CallDetail,
+  liveTurns?: CallTurn[],
+  liveRevision?: number | null,
+  liveAxisOrigin?: CallLiveTurns["axis_origin"],
+  liveAxisOriginUnixNano?: string | null,
+) {
   const { factory, clocks } = fakeClocks();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -41,7 +54,19 @@ function renderCall(call: CallDetail) {
       </ViewerQueryScopeProvider>
     </QueryClientProvider>
   );
-  return { ...render(<CallViewBody call={call} />, { wrapper }), clocks };
+  return {
+    ...render(
+      <CallViewBody
+        call={call}
+        liveTurns={liveTurns}
+        liveRevision={liveRevision}
+        liveAxisOrigin={liveAxisOrigin}
+        liveAxisOriginUnixNano={liveAxisOriginUnixNano}
+      />,
+      { wrapper },
+    ),
+    clocks,
+  };
 }
 
 async function renderWithClock(call: CallDetail) {
@@ -215,10 +240,393 @@ describe("turns table", () => {
     expect(third).not.toHaveTextContent(/0\.00 s/);
   });
 
+  it("keeps turns without framework IDs in distinct rows", async () => {
+    const turnsWithoutIds = baseProjection.turns.slice(0, 2).map((turn, index) => ({
+      ...turn,
+      index,
+      turn_id: null,
+    }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await renderWithClock(withProjection({ turns: turnsWithoutIds }));
+      expect(rows()).toHaveLength(2);
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/i);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it("keeps null index keys distinct from numeric-looking framework IDs", async () => {
+    const mixedTurns = baseProjection.turns.slice(0, 2).map((turn, index) => ({
+      ...turn,
+      index,
+      turn_id: index === 0 ? null : "0",
+    }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      await renderWithClock(withProjection({ turns: mixedTurns }));
+      expect(rows()).toHaveLength(2);
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/i);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("seeks to a turn from its start", async () => {
     const { clock } = await renderWithClock(withProjection({}));
     fireEvent.click(screen.getByRole("button", { name: "Play turn 2 from 0:11.8" }));
     expect(clock.seeks).toEqual([11_810]);
+  });
+
+  it("keeps turn playback focus when a newly arrived earlier turn shifts row numbers", async () => {
+    const call = withProjection({});
+    const { rerender } = await renderWithClock(call);
+    const playTurn = screen.getByRole("button", { name: "Play turn 2 from 0:11.8" });
+    playTurn.focus();
+
+    const earlierTurn: CallTurn = {
+      ...baseProjection.turns[0],
+      turn_id: "turn-earlier",
+      index: 0,
+      start_ms: 0,
+      end_ms: 1_000,
+      spans: [],
+    };
+    const shiftedTurns = [
+      earlierTurn,
+      ...baseProjection.turns.map((turn) => ({ ...turn, index: turn.index + 1 })),
+    ];
+    rerender(
+      <CallViewBody
+        call={{ ...call, projection: { ...call.projection!, turns: shiftedTurns } }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Play turn 3 from 0:11.8" })).toHaveFocus();
+  });
+
+  it("keeps ID-less turn focus by its parent span when earlier descendants arrive", async () => {
+    const idlessTurn = {
+      ...baseProjection.turns[1],
+      index: 0,
+      turn_id: null,
+      turn_span: {
+        trace_id: baseProjection.turns[1].spans[0].trace_id,
+        span_id: "parent-turn",
+      },
+    } as CallTurn;
+    const call = withProjection({ turns: [idlessTurn] });
+    const { rerender } = await renderWithClock(call);
+    const playTurn = screen.getByRole("button", { name: "Play turn 1 from 0:11.8" });
+    playTurn.focus();
+
+    const earlierTurn: CallTurn = {
+      ...baseProjection.turns[0],
+      turn_id: "turn-earlier",
+      index: 0,
+      start_ms: 0,
+      end_ms: 1_000,
+      spans: [],
+    };
+    const earlierChild = {
+      ...idlessTurn.spans[0],
+      span_id: "earlier-child",
+      start_ms: 0,
+    };
+    const shiftedIdlessTurn = {
+      ...idlessTurn,
+      index: 1,
+      spans: [earlierChild, ...idlessTurn.spans],
+    } as CallTurn;
+    rerender(
+      <CallViewBody
+        call={{
+          ...call,
+          projection: {
+            ...call.projection!,
+            turns: [earlierTurn, shiftedIdlessTurn],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Play turn 2 from 0:11.8" })).toHaveFocus();
+  });
+
+  it("moves focus to Turns when an open turn disappears on close without a Revision", () => {
+    const openCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(
+      openCall,
+      baseProjection.turns,
+      null,
+      "first_evidence",
+      base.first_evidence_unix_nano,
+    );
+    const opener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    opener.focus();
+    expect(opener).toHaveFocus();
+
+    const closedCall: CallDetail = { ...openCall, state: "closed" };
+    rerender(<CallViewBody call={closedCall} liveTurns={[]} liveRevision={null} />);
+
+    expect(screen.getByRole("heading", { name: "Turns" })).toHaveFocus();
+    expect(
+      screen.getByText(
+        "Turns are unavailable until a Revision captures the accepted evidence.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("restores focus when a closed Call moves turns into its current projection", async () => {
+    const openCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(
+      openCall,
+      baseProjection.turns,
+      null,
+      baseProjection.axis_origin,
+      baseProjection.axis_origin_unix_nano,
+    );
+    const opener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    opener.focus();
+    expect(opener).toHaveFocus();
+
+    const currentCall = withProjection({});
+    rerender(
+      <CallViewBody
+        call={currentCall}
+        liveRevision={currentCall.projection!.revision}
+        liveTurns={baseProjection.turns}
+        liveAxisOrigin={baseProjection.axis_origin}
+        liveAxisOriginUnixNano={baseProjection.axis_origin_unix_nano}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Turns" })).toHaveFocus(),
+    );
+  });
+
+  it("keeps live turns on their own axis until matching audio and transcript are projected", () => {
+    const staleCall = withProjection({ axis_origin: "recording_start" });
+    staleCall.projection_state = "stale";
+    staleCall.latest_revision = {
+      ...staleCall.latest_revision!,
+      revision: 2,
+      bundle_id: "call_0d0d68c6f99a393adc2596ec43815ea9.r2",
+    };
+    const liveTurn: CallTurn = {
+      ...baseProjection.turns[0],
+      index: 0,
+      start_ms: 0,
+    };
+    const { clocks } = renderCall(
+      staleCall,
+      [liveTurn],
+      2,
+      "first_evidence",
+      (BigInt(baseProjection.axis_origin_unix_nano) - 2_000_000_000n).toString(),
+    );
+    expect(screen.queryByRole("button", { name: "Play" })).toBeNull();
+    expect(clocks).toHaveLength(0);
+    expect(
+      screen.getByText(/audio and transcript from revision 1 are hidden/i),
+    ).toBeInTheDocument();
+    const turnsPanel = screen.getByRole("heading", { name: "Turns" }).closest("section");
+    expect(turnsPanel).not.toBeNull();
+    expect(within(turnsPanel as HTMLElement).getByText("0:00.0")).toBeInTheDocument();
+    expect(
+      within(turnsPanel as HTMLElement).queryByRole("button", { name: /play turn/i }),
+    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Transcript from spans" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Transcript" })).toBeNull();
+    expect(
+      screen.getByText("Times are on the call's axis, from the call's first evidence."),
+    ).toBeInTheDocument();
+  });
+
+  it("uses current live turns when their closed revision and axis match the projection", async () => {
+    const liveTurn: CallTurn = {
+      ...baseProjection.turns[0],
+      index: 0,
+      start_ms: 2_200,
+    };
+    renderCall(
+      base,
+      [liveTurn],
+      baseProjection.revision,
+      baseProjection.axis_origin,
+      baseProjection.axis_origin_unix_nano,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Play turn 1 from 0:02.2" }),
+    ).toBeInTheDocument();
+  });
+
+  it("announces the axis change and moves focus when playback controls disappear", async () => {
+    const call = withProjection({});
+    const { rerender } = await renderWithClock(call);
+    const playTurn = screen.getByRole("button", { name: "Play turn 1 from 0:01.3" });
+    playTurn.focus();
+    expect(playTurn).toHaveFocus();
+
+    const staleCall = withProjection({});
+    staleCall.projection_state = "stale";
+    staleCall.latest_revision = {
+      ...staleCall.latest_revision!,
+      revision: 2,
+      bundle_id: "call_0d0d68c6f99a393adc2596ec43815ea9.r2",
+    };
+    rerender(
+      <CallViewBody
+        call={staleCall}
+        liveRevision={2}
+        liveTurns={[{ ...baseProjection.turns[0], start_ms: 0 }]}
+        liveAxisOrigin="first_evidence"
+        liveAxisOriginUnixNano={(
+          BigInt(baseProjection.axis_origin_unix_nano) - 2_000_000_000n
+        ).toString()}
+      />,
+    );
+
+    const notice = screen.getByText(/audio and transcript from revision 1 are hidden/i);
+    expect(notice).toHaveAttribute("role", "status");
+    expect(notice).toHaveAttribute("aria-live", "polite");
+    await waitFor(() => expect(notice).toHaveFocus());
+
+    const alignedCall = withProjection({});
+    rerender(
+      <CallViewBody
+        call={alignedCall}
+        liveRevision={alignedCall.projection!.revision}
+        liveTurns={baseProjection.turns}
+        liveAxisOrigin={baseProjection.axis_origin}
+        liveAxisOriginUnixNano={baseProjection.axis_origin_unix_nano}
+      />,
+    );
+    await screen.findByRole("button", { name: "Play" });
+    const restoredNotice = screen.getByText(
+      "Audio and transcript now match the current turn axis.",
+    );
+    expect(restoredNotice).toHaveAttribute("role", "status");
+    await waitFor(() => expect(restoredNotice).toHaveFocus());
+  });
+
+  it("restores focus when an open-call turn detail becomes unaligned on close", async () => {
+    const openCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(
+      openCall,
+      baseProjection.turns,
+      null,
+      "first_evidence",
+      base.first_evidence_unix_nano,
+    );
+    const opener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    opener.focus();
+    expect(opener).toHaveFocus();
+
+    const staleCall = withProjection({});
+    staleCall.projection_state = "stale";
+    staleCall.latest_revision = {
+      ...staleCall.latest_revision!,
+      revision: 2,
+      bundle_id: "call_0d0d68c6f99a393adc2596ec43815ea9.r2",
+    };
+    rerender(
+      <CallViewBody
+        call={staleCall}
+        liveRevision={2}
+        liveTurns={baseProjection.turns}
+        liveAxisOrigin="first_evidence"
+        liveAxisOriginUnixNano={(
+          BigInt(base.first_evidence_unix_nano) - 2_000_000_000n
+        ).toString()}
+      />,
+    );
+
+    const notice = screen.getByText(/Live turns use the latest Call axis/);
+    await waitFor(() => expect(notice).toHaveFocus());
+  });
+
+  it("announces an exact live-axis rebase when the turn count stays the same", () => {
+    const openCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const firstOrigin = BigInt(base.first_evidence_unix_nano);
+    const turn = { ...baseProjection.turns[0], start_ms: 0 };
+    const { rerender } = renderCall(
+      openCall,
+      [turn],
+      null,
+      "first_evidence",
+      firstOrigin.toString(),
+    );
+    expect(screen.queryByText(/live time axis changed/i)).toBeNull();
+
+    rerender(
+      <CallViewBody
+        call={openCall}
+        liveTurns={[{ ...turn, start_ms: 2_000 }]}
+        liveAxisOrigin="first_evidence"
+        liveAxisOriginUnixNano={(firstOrigin - 2_000_000_000n).toString()}
+      />,
+    );
+
+    expect(
+      screen.getByText("The live time axis changed once. Turn times were updated."),
+    ).toHaveAttribute("role", "status");
+  });
+
+  it("places an unprojected span transcript on the live turns axis", () => {
+    const transcriptStart = BigInt(base.first_evidence_unix_nano) + 20_000_000_000n;
+    const liveOrigin = BigInt(base.first_evidence_unix_nano) + 10_000_000_000n;
+    const liveCall: CallDetail = {
+      ...base,
+      state: "open",
+      projection_state: "none",
+      projection: null,
+      transcript: [
+        {
+          ...base.transcript[0],
+          start_unix_nano: transcriptStart.toString(),
+        },
+      ],
+    };
+
+    renderCall(
+      liveCall,
+      baseProjection.turns,
+      null,
+      "first_evidence",
+      liveOrigin.toString(),
+    );
+
+    const transcriptLine = screen.getByText(base.transcript[0].text).closest("li");
+    expect(transcriptLine).toHaveTextContent("0:10.0");
   });
 
   it("opens a span's details as a dialog, closes on Escape and restores focus", async () => {
@@ -234,6 +642,130 @@ describe("turns table", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(opener).toHaveFocus();
+  });
+
+  it("restores focus after live rows shift and projection replaces their table", async () => {
+    const liveCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(liveCall, baseProjection.turns);
+    const liveOpener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    fireEvent.click(liveOpener);
+    const dialog = screen.getByRole("dialog", { name: "llm span detail" });
+
+    const earlierTurn: CallTurn = {
+      ...baseProjection.turns[0],
+      turn_id: "turn-earlier",
+      index: 0,
+      start_ms: 0,
+      spans: [],
+    };
+    const turnsWithEarlierParent = [
+      earlierTurn,
+      ...baseProjection.turns.map((turn) => ({ ...turn, index: turn.index + 1 })),
+    ];
+    rerender(<CallViewBody call={liveCall} liveTurns={turnsWithEarlierParent} />);
+    await act(async () => {});
+    rerender(<CallViewBody call={withProjection({})} liveTurns={baseProjection.turns} />);
+    await act(async () => {});
+    expect(liveOpener.isConnected).toBe(false);
+    const projectedOpener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await act(async () => {});
+
+    expect(projectedOpener).toHaveFocus();
+  });
+
+  it("announces new turns in a polite live region", async () => {
+    const liveCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(liveCall, baseProjection.turns);
+    const turnsPanel = screen.getByRole("heading", { name: "Turns" }).closest("section");
+    expect(turnsPanel).not.toBeNull();
+    const announcement = within(turnsPanel as HTMLElement).getByRole("status");
+    expect(announcement).toHaveAttribute("aria-live", "polite");
+    expect(announcement).toBeEmptyDOMElement();
+
+    const newTurn: CallTurn = {
+      ...baseProjection.turns[0],
+      turn_id: "turn-new",
+      index: baseProjection.turns.length,
+    };
+    rerender(
+      <CallViewBody call={liveCall} liveTurns={[...baseProjection.turns, newTurn]} />,
+    );
+
+    expect(
+      await screen.findByText(
+        `1 new turn received. ${baseProjection.turns.length + 1} turns total.`,
+      ),
+    ).toHaveAttribute("aria-live", "polite");
+  });
+
+  it("resets the live-turn announcement when navigating to another Call", async () => {
+    const firstCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const secondCall: CallDetail = {
+      ...firstCall,
+      call_id: "call_abcdef0123456789abcdef0123456789",
+    };
+    const firstTurns = baseProjection.turns.slice(0, 2);
+    const secondTurns = [
+      ...baseProjection.turns,
+      {
+        ...baseProjection.turns[0],
+        turn_id: "turn-new-a",
+        index: baseProjection.turns.length,
+      },
+    ];
+    const { rerender } = renderCall(firstCall, firstTurns);
+    const turnAnnouncement = () => {
+      const turnsPanel = screen
+        .getByRole("heading", { name: "Turns" })
+        .closest("section");
+      return within(turnsPanel as HTMLElement).getByRole("status");
+    };
+    expect(turnAnnouncement()).toBeEmptyDOMElement();
+
+    rerender(<CallViewBody call={secondCall} liveTurns={secondTurns} />);
+    await act(async () => {});
+
+    expect(turnAnnouncement()).toBeEmptyDOMElement();
+  });
+
+  it("does not claim that no turns were captured before a closed Call gets a Revision", () => {
+    const closedWithoutRevision: CallDetail = {
+      ...base,
+      state: "closed",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    renderCall(closedWithoutRevision, []);
+
+    expect(
+      screen.getByText(
+        "Turns are unavailable until a Revision captures the accepted evidence.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No parent turn spans were captured for this call."),
+    ).toBeNull();
+    expect(screen.queryByText("No turns were received for this call.")).toBeNull();
   });
 });
 

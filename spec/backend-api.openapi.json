@@ -913,6 +913,80 @@
         "title": "CallDetailResponse",
         "type": "object"
       },
+      "CallLiveTurnsResponse": {
+        "additionalProperties": false,
+        "description": "The current parent-span-backed turns for an open Call or latest Revision.",
+        "properties": {
+          "axis_origin": {
+            "anyOf": [
+              {
+                "enum": [
+                  "recording_start",
+                  "first_evidence"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Evidence source for relative times; null only for a closed Call without a Revision.",
+            "title": "Axis Origin"
+          },
+          "axis_origin_unix_nano": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Integer nanosecond origin for relative times; null only for a closed Call without a Revision.",
+            "title": "Axis Origin Unix Nano"
+          },
+          "call_id": {
+            "title": "Call Id",
+            "type": "string"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "state": {
+            "enum": [
+              "open",
+              "closed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/CallTurnResponse"
+            },
+            "title": "Turns",
+            "type": "array"
+          }
+        },
+        "required": [
+          "call_id",
+          "state",
+          "revision",
+          "axis_origin_unix_nano",
+          "axis_origin",
+          "turns"
+        ],
+        "title": "CallLiveTurnsResponse",
+        "type": "object"
+      },
       "CallMediaResponse": {
         "additionalProperties": false,
         "description": "One playable audio source on the call's axis. A ``rendition`` (a stereo file\nmade from a mono pair on one timeline) stands for the recordings it names, which\nare then not listed on their own. Paths are relative to the server's base URL;\n``peaks_path`` serves audiowaveform ``.dat`` peaks with one channel per entry of\n``channels`` (null until the analysis stores them).",
@@ -1807,7 +1881,7 @@
       },
       "CallTurnResponse": {
         "additionalProperties": false,
-        "description": "One turn: the framework-reported latency beside the audible gap.",
+        "description": "One turn, its stable parent-span identity, reported latency and audible gap.",
         "properties": {
           "audible_gap": {
             "$ref": "#/components/schemas/AudibleGapResponse"
@@ -1866,6 +1940,17 @@
               }
             ],
             "title": "Turn Id"
+          },
+          "turn_span": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpanRefResponse"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Stable parent turn-span identity when available; null when the stored projection has no parent reference."
           }
         },
         "required": [
@@ -9880,7 +9965,7 @@
   "info": {
     "description": "Local immutable ingest, retrieval, purge, and digest-bound analysis for Earshot v1alpha1 incidents.",
     "title": "Earshot local ingest",
-    "version": "0.16.0"
+    "version": "0.17.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -11269,6 +11354,212 @@
           {}
         ],
         "summary": "Get Call Endpoint"
+      }
+    },
+    "/v1/calls/{call_id}/live-turns": {
+      "get": {
+        "description": "The current framework turns for an open Call, or for its latest Revision after close (revision is null when a closed Call has no Revision). A turn appears when its parent turn span arrives; later spans may enrich it. A closed Call without a Revision returns no turns, including unassigned late evidence. Stored Recording analyses may contribute audible-gap fields. The response includes no raw span attributes, recordings, transcript or prices. It carries a strong ETag and Cache-Control: no-store, plus the time-axis origin used by its relative times; both origin fields are null for a closed Call without a Revision. While open, the origin can re-base as evidence arrives.",
+        "operationId": "get_call_live_turns_endpoint_v1_calls__call_id__live_turns_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "call_id",
+            "required": true,
+            "schema": {
+              "title": "Call Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "If-None-Match",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallLiveTurnsResponse"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "Cache-Control": {
+                "description": "The response is not stored by caches.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "Strong validator for the current live-turn representation.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified: the If-None-Match ETag is current.",
+            "headers": {
+              "Cache-Control": {
+                "description": "The response is not stored by caches.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "Strong validator for the current live-turn representation.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "BrowserSession": []
+          },
+          {}
+        ],
+        "summary": "Get Call Live Turns Endpoint"
       }
     },
     "/v1/calls/{call_id}/spans/{trace_id}/{span_id}": {

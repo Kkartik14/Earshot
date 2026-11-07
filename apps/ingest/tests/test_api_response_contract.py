@@ -167,6 +167,15 @@ def test_every_call_recording_span_and_price_route_answers_its_declared_models(
     trace_id, span_id = _first_llm_span()
     unknown_call = "call_0123456789abcdef0123456789abcdef"
     app = create_app(store=store, blob_store=blobs)
+    live_turns_operation = app.openapi()["paths"]["/v1/calls/{call_id}/live-turns"]["get"]
+    assert any(
+        parameter["in"] == "header" and parameter["name"] == "If-None-Match"
+        for parameter in live_turns_operation["parameters"]
+    )
+    for status in ("200", "304"):
+        assert {"ETag", "Cache-Control"} <= set(
+            live_turns_operation["responses"][status]["headers"]
+        )
 
     with serve(app) as port:
         send = ContractClient(app, port)
@@ -251,6 +260,11 @@ def test_every_call_recording_span_and_price_route_answers_its_declared_models(
         assert send("GET", "/v1/calls", "/v1/calls?cursor=nope").status == 400
 
         detail = send("GET", "/v1/calls/{call_id}", detail_path)
+        live_turns = send("GET", "/v1/calls/{call_id}/live-turns", f"{detail_path}/live-turns")
+        assert live_turns.status == 200
+        assert live_turns.json()["state"] == "closed"
+        assert live_turns.json()["revision"] == detail.json()["latest_revision"]["revision"]
+        assert live_turns.json()["turns"] == detail.json()["projection"]["turns"]
         # One mono user recording is no recorder timeline: nothing is measured.
         gaps = [turn["audible_gap"] for turn in detail.json()["projection"]["turns"]]
         assert {(gap["status"], gap["reason"]) for gap in gaps} == {

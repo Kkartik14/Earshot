@@ -1,4 +1,11 @@
-import { useId } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+} from "react";
 import type { CallTurn, TurnSpan } from "./api";
 import { formatClock, formatSeconds, gapReadout, humanize } from "./format";
 import type { MediaClock } from "./mediaClock";
@@ -23,6 +30,25 @@ const BASIS_NOTE: Record<NonNullable<CallTurn["audible_gap"]["basis"]>, string> 
   continuous_timeline_assumed: "continuous recorder timeline assumed",
 };
 
+function turnRowKey(turn: CallTurn): string {
+  if (turn.turn_span != null) {
+    return `span:${turn.turn_span.trace_id}:${turn.turn_span.span_id}`;
+  }
+  if (turn.turn_id != null) return `id:${turn.turn_id}`;
+  const firstSpan = turn.spans[0];
+  return firstSpan == null
+    ? `index:${turn.index}`
+    : `span:${firstSpan.trace_id}:${firstSpan.span_id}`;
+}
+
+type TurnFocusTarget = {
+  attribute: "data-turn-playback-key" | "data-span-ref";
+  value: string;
+};
+
+const useIsomorphicLayoutEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
+
 /** Per turn: the framework's reported latency beside the audible gap measured at
  * the agent from the recording. Neither is ever shown as 0 when it is unknown. */
 export function TurnsTable({
@@ -30,23 +56,86 @@ export function TurnsTable({
   clock,
   openSpanId,
   onOpenSpan,
+  emptyMessage = "No turns were received for this call.",
 }: {
   turns: CallTurn[];
   clock: MediaClock | null;
   openSpanId: string | null;
   onOpenSpan: (span: TurnSpan, opener: HTMLElement) => void;
+  emptyMessage?: string;
 }) {
   const headingId = useId();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const previousTurnCount = useRef(turns.length);
+  const [announcement, setAnnouncement] = useState("");
+  const table = useRef<HTMLTableElement>(null);
+  const pendingFocus = useRef<TurnFocusTarget | null>(null);
+  useEffect(() => {
+    const added = turns.length - previousTurnCount.current;
+    previousTurnCount.current = turns.length;
+    if (added > 0) {
+      const total = turns.length === 1 ? "1 turn total." : `${turns.length} turns total.`;
+      setAnnouncement(
+        `${added} new ${added === 1 ? "turn" : "turns"} received. ${total}`,
+      );
+    }
+  }, [turns.length]);
+  const rememberFocusedControl = (event: FocusEvent<HTMLTableElement>) => {
+    const target = event.target as HTMLElement;
+    const playbackKey = target.dataset.turnPlaybackKey;
+    if (playbackKey != null) {
+      pendingFocus.current = {
+        attribute: "data-turn-playback-key",
+        value: playbackKey,
+      };
+    } else if (target.dataset.spanRef != null) {
+      pendingFocus.current = {
+        attribute: "data-span-ref",
+        value: target.dataset.spanRef,
+      };
+    }
+  };
+  useIsomorphicLayoutEffect(() => {
+    const previousTarget = pendingFocus.current;
+    pendingFocus.current = null;
+    if (previousTarget == null) return;
+    const active = document.activeElement;
+    if (active !== document.body && active != null && active.isConnected) return;
+    const target = Array.from(
+      table.current?.querySelectorAll<HTMLElement>(`[${previousTarget.attribute}]`) ?? [],
+    ).find(
+      (element) =>
+        element.getAttribute(previousTarget.attribute) === previousTarget.value,
+    );
+    if (target == null) {
+      heading.current?.focus();
+    } else {
+      target.focus();
+    }
+  }, [turns]);
   return (
     <section className={styles.panel} aria-labelledby={headingId}>
-      <h2 id={headingId} className={styles.panelTitle}>
+      <h2
+        ref={heading}
+        id={headingId}
+        className={styles.panelTitle}
+        data-turns-heading
+        tabIndex={-1}
+      >
         Turns
       </h2>
+      <p className={styles.screenReaderOnly} role="status" aria-live="polite">
+        {announcement}
+      </p>
       {turns.length === 0 ? (
-        <p className={styles.note}>The framework reported no turns for this call.</p>
+        <p className={styles.note}>{emptyMessage}</p>
       ) : (
         <div className={styles.tableWrap}>
-          <table className={styles.table}>
+          <table
+            ref={table}
+            className={styles.table}
+            onFocusCapture={rememberFocusedControl}
+          >
             <caption className={styles.caption}>
               Reported latency is what the framework measured; the audible gap is measured
               at the agent from the recording.
@@ -68,7 +157,7 @@ export function TurnsTable({
                 const number = turn.index + 1;
                 const basis = turn.audible_gap.basis;
                 return (
-                  <tr key={turn.index}>
+                  <tr key={`${turn.index}:${turnRowKey(turn)}`}>
                     <th scope="row">{number}</th>
                     <td>
                       {turn.start_ms == null ? (
@@ -79,6 +168,7 @@ export function TurnsTable({
                         <button
                           type="button"
                           className={styles.seek}
+                          data-turn-playback-key={turnRowKey(turn)}
                           aria-label={`Play turn ${number} from ${formatClock(turn.start_ms)}`}
                           onClick={() => clock.seek(turn.start_ms as number)}
                         >
@@ -117,6 +207,7 @@ export function TurnsTable({
                             className={styles.spanButton}
                             data-role={span.role}
                             data-error={span.status === "error" ? "true" : undefined}
+                            data-span-ref={`${span.trace_id}:${span.span_id}`}
                             aria-haspopup="dialog"
                             aria-expanded={openSpanId === span.span_id}
                             onClick={(event) => onOpenSpan(span, event.currentTarget)}

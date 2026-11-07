@@ -107,7 +107,7 @@ Every 0.2.0 field is kept. `projection` adds:
 | `cost`                                          | `lower_bound_nano_usd`, `estimated_nano_usd`, `unknown_items`, `complete`. See [cost](#cost).                                                                                                                                                             |
 | `axis_origin_unix_nano`, `axis_origin`          | Time zero of every `*_ms` below: the earliest Recording's start (`recording_start`), or the first evidence when there is none.                                                                                                                            |
 | `media[]`                                       | What to play: `content_path` (Range), `peaks_path`, `content_type`, `offset_ms`, `duration_ms`, `channels[]` (one lane each, `user` or `agent`), and its `analysis_state` and `analysis_error_code`. A rendition replaces the mono pair it was made from. |
-| `turns[]`                                       | One per framework turn: its window, `reported_latency_ms`, `audible_gap`, and its `spans[]` for the detail drawers.                                                                                                                                       |
+| `turns[]`                                       | One per framework turn: its stable parent `turn_span` reference when available, optional framework `turn_id`, window, `reported_latency_ms`, `audible_gap`, and `spans[]` for detail drawers.                                                             |
 | `signals`                                       | See [signals](#signals).                                                                                                                                                                                                                                  |
 | `cost_items[]`                                  | Each priced, estimated or unknown item.                                                                                                                                                                                                                   |
 | `transcript[]`                                  | The placed transcript. See [transcript placement](#transcript-placement).                                                                                                                                                                                 |
@@ -120,27 +120,32 @@ Unknown is `null`, never `0`. The response is `Cache-Control: no-store` with a s
 The target is API 0.17.0 in the 0.5.0 line. This additive, read-only route requires
 `earshot:calls:read` in hosted mode; the existing detail route and its response stay
 unchanged. A 200 response contains `call_id`, `state` (`open` or `closed`), `revision`
-(null while open; the latest Revision number after close) and `turns[]`. Each turn has
-the same fields and meaning as `projection.turns[]` above. The response also carries
-`axis_origin_unix_nano` and `axis_origin`, which define the origin for its `*_ms` values.
-Both are null for a closed Call without a Revision, whose response has no projection. While
-a Call is open, newly stored Recordings can change which evidence defines the origin, and
-later evidence may have an earlier timestamp. Times may therefore re-base between
-responses; render each response against its own origin. `state` describes the Call; there
-is no separate per-turn `finished` flag.
+(null while open or when a closed Call has no Revision; otherwise the latest Revision
+number) and `turns[]`. Each turn has the same fields and meaning as
+`projection.turns[]` above. The response also carries `axis_origin_unix_nano` and
+`axis_origin`, which define the origin for its `*_ms` values. Both are null for a closed
+Call without a Revision, whose response has no projection. While a Call is open, newly
+stored Recordings can change which evidence defines the origin, and later evidence may
+have an earlier timestamp. Times may therefore re-base between responses; render each
+response against its own origin. `state` describes the Call; there is no separate
+per-turn `finished` flag.
 
 While the Call is open, the route runs the existing Call projector over the Call's
-accepted, stored spans after the project's capture-preset filtering. It returns a turn
-only when its parent turn span has arrived: `turn` for Pipecat and the host profile, or
+accepted, stored spans after the project's capture-preset filtering, plus any stored
+Recordings and their available analyses. Those analyses can contribute audible-gap
+fields; the route returns no recording media. It returns a turn only when its parent
+turn span has arrived: `turn` for Pipecat and the host profile, or
 `agent_turn` for LiveKit. It does not infer turns from child spans. The parent span is
 final when exported; later accepted children may fill in more projected fields. Until
 those children arrive, unobserved values keep the projector's existing null or
 `not_measurable` meanings. The route does not persist a provisional projection or create
 a Revision.
 
-After the Call closes, the route uses the same projector over only the evidence held by
-the latest durable Revision; it does not include evidence that the Revision did not
-capture. Once the durable projection is current, the route's `turns[]` match it field
+After the Call closes with a Revision, the route uses the same projector over only the
+evidence held by the latest durable Revision; it does not include evidence that the
+Revision did not capture. A Call that closes without a Revision has `revision: null` and
+no turns. Late evidence for such a Call stays out of this response until a new Revision
+captures it. Once the durable projection is current, the route's `turns[]` match it field
 for field. A turn's `spans[]` contains only the existing projected summaries (IDs, name,
 role, status and times); it never includes
 raw span attributes or events. The route never includes audio, transcript or prices.
@@ -151,10 +156,35 @@ Responses are `Cache-Control: no-store` and carry a strong `ETag`; matching
 `If-None-Match` answers 304. The validator is tied to the same input snapshot as the
 response and changes when a new span is stored for the Call, including a later child
 that enriches an already returned turn, even if that child does not change the current
-JSON fields. Hosts can poll every two seconds. The ETag rarely matches while a Call is
-live and spans continue to arrive; it is most useful when the input snapshot is quiet.
+JSON fields. A stored Recording analysis, Call state or Revision change, or capture-preset
+change also changes the validator. Hosts can poll every two seconds. The ETag rarely
+matches while a Call is live and spans continue to arrive; it is most useful when the
+input snapshot is quiet.
 The target is at most 1 s p95 from accepted span to route visibility and at most 5 s p95
 from runtime turn end to the host UI at that polling interval.
+
+The bundled viewer polls this route every two seconds while the Call is open or its detail
+projection is not `current`. With no projection, it shows live turns and labels the turn
+times and span transcript from the live response's exact axis origin. It announces when
+that exact origin rebases, even if the number of turns stays the same. The open Call's
+span-transcript text is a snapshot from the last Call-detail read; reload the view to see
+new transcript lines before close. If a projection exists while the Call is open or its
+detail projection is absent, stale or on a different
+revision or axis, the viewer shows live turns without playback controls, hides that
+projection's media and transcript until the matching detail projection is ready. It
+restores playback with the matching detail projection and stops recurring live polling
+once `projection_state` is `current`. A current projection
+whose `analysis_state` is `pending` keeps the detail query polling: when analysis finishes
+it can invalidate the projection, after which the viewer resumes live-turn polling until
+the replacement projection is current. A closed Call without a Revision remains not current
+until a later Revision captures its evidence, so the viewer continues checking for that
+change.
+
+The live-turn and detail queries retry network failures, 408, 429 and 5xx responses up to
+three times after the initial request. While a closed Call's projection is absent, stale or
+awaiting analysis, a transient detail-refresh failure leaves the last loaded view visible
+and the viewer retries every two seconds. Other 4xx responses stop retries and recurring
+polling.
 
 **Local capacity measurement (2026-11-07).** On SQLite, each Call held 300 or 1,000
 synthetic turns. For 12 seconds, an emitter accepted about one additional unprojected
@@ -183,11 +213,6 @@ bodies over 12 seconds represent about 107 Mbps of response-body egress per cont
 changing Call, before HTTP overhead. This short local SQLite run describes the measured
 workstation envelope; it does not model a hosted deployment or replace the accepted-span
 visibility target above.
-
-The bundled viewer polls this route every two seconds while `state` is `open`. When it
-becomes `closed`, the viewer stops live polling and refreshes Call detail. It keeps
-showing these Revision turns while detail's projection is absent or stale, then switches
-to the durable detail projection when `projection_state` is `current`.
 
 ### The audible gap at the agent
 
