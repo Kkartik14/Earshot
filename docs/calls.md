@@ -302,8 +302,9 @@ STT and TTS usage attributes and optional transcript text on speech spans; Earsh
 continues to accept 0.1.0 spans. The attributes are registered in
 [`semconv/earshot.yaml`](../semconv/earshot.yaml).
 Set the `earshot.host` instrumentation scope version to the profile version emitted.
-An absent scope version retains 0.1.0 behavior; profile 0.2.0-only fields are
-interpreted only when the scope version is exactly `0.2.0`.
+An absent scope version retains 0.1.0 behavior. A different or unrecognized version
+does not opt in to profile 0.2.0: its fields are interpreted as 0.2.0 only when the
+scope version is exactly `0.2.0`.
 
 | Span                          | Parent | Carries                                                                                                                                                                                                                                                                               |
 | ----------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -342,13 +343,17 @@ interpreted only when the scope version is exactly `0.2.0`.
   requests. Missing TTS counts remain unknown.
 - **Transcript.** In profile 0.2.0, a host may attach one nonblank,
   source-provided `earshot.transcript.text` value to each `user_speech` or
-  `agent_speech` span. The span name supplies the speaker and its interval supplies the
-  transcript line's measured timing. Omit the attribute when no text was supplied; an
-  empty or whitespace-only value is invalid. Earshot does not derive transcript text
-  from audio or other stage output. Under `full`, each supplied line is stored with its
-  span and appears in the Call transcript. Under `metadata_only`, the attribute is
-  removed before storage and transcript coverage is `not_captured_by_preset`. The host
-  decides whether a call's text may be sent; Earshot stores only text it receives.
+  `agent_speech` span, no larger than 64 KiB (65,536 bytes when encoded as UTF-8). For
+  `user_speech`, send final transcription only, never interim or partial hypotheses.
+  For `agent_speech`, send the words actually spoken in that speech stretch, not
+  generated response text that was not spoken. The span name supplies the speaker and
+  its interval supplies the transcript line's measured timing. Omit the attribute when
+  no text was supplied; an empty or whitespace-only value is invalid. Earshot does not
+  derive transcript text from audio or other stage output. Under `full`, each supplied
+  line is stored with its span and appears in the Call transcript. Under `metadata_only`,
+  the attribute is removed before storage and transcript coverage is
+  `not_captured_by_preset`. The host decides whether a call's text may be sent; Earshot
+  stores only text it receives.
   Profile 0.1.0 does not define this attribute and remains accepted.
 - **Recordings.** A host sends its Recording with `POST /v1/recordings` as any producer
   does.

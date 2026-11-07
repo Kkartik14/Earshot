@@ -53,11 +53,15 @@ groups:
         type: string
         requirement_level: opt_in
         stability: development
-        brief: Source-provided transcript text for the speech stretch represented by a host-profile speech span.
+        brief: Final user transcription or the words actually spoken by the agent during a host-profile speech span.
         note: >-
           In host profile 0.2.0, this attribute is valid only on user_speech and
           agent_speech spans under the earshot.host instrumentation scope whose
-          version is 0.2.0. Use it at most once per span. The span name supplies the
+          version is exactly 0.2.0; an absent, unknown, or other version is not read as
+          0.2.0. Use it at most once per span, with a maximum of 64 KiB (65,536 UTF-8
+          bytes). For user_speech, supply final transcription only, never interim or
+          partial hypotheses. For agent_speech, supply only words actually spoken, not
+          generated response text that was not spoken. The span name supplies the
           speaker and its interval supplies the transcript line's timing. Omit it
           when no nonblank transcript was supplied; empty or whitespace-only values
           are invalid. Preserve the supplied text; do not derive it from audio or
