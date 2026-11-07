@@ -374,8 +374,7 @@ def _flag_snake_case_fields(value: Any, path: str, issues: list[HostProfileIssue
                 continue
             visited.add(identity)
             pending.extend(
-                (child, f"{current_path}[{index}]")
-                for index, child in enumerate(current)
+                (child, f"{current_path}[{index}]") for index, child in enumerate(current)
             )
 
 
