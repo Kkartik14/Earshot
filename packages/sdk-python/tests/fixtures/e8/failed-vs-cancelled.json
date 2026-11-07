@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "case": "direct_failure_is_error_and_cancellation_is_not",
+    "source_facts": {
+      "turn-failed": { "status": "error", "events": [] },
+      "turn-cancelled": { "status": "unset", "events": ["earshot.turn.cancelled"] }
+    }
+  },
+  "request": {
+    "resourceSpans": [
+      {
+        "resource": {
+          "attributes": [
+            { "key": "earshot.session.id", "value": { "stringValue": "e8-failure" } }
+          ]
+        },
+        "scopeSpans": [
+          {
+            "scope": { "name": "earshot.host", "version": "0.2.0" },
+            "spans": [
+              {
+                "traceId": "00000000000000000000000000000033",
+                "spanId": "0000000000000031",
+                "name": "turn",
+                "startTimeUnixNano": "5000000000",
+                "endTimeUnixNano": "5400000000",
+                "attributes": [
+                  { "key": "earshot.turn.id", "value": { "stringValue": "turn-failed" } }
+                ],
+                "status": { "code": 2 }
+              },
+              {
+                "traceId": "00000000000000000000000000000033",
+                "spanId": "0000000000000032",
+                "name": "turn",
+                "startTimeUnixNano": "6000000000",
+                "endTimeUnixNano": "6200000000",
+                "attributes": [
+                  {
+                    "key": "earshot.turn.id",
+                    "value": { "stringValue": "turn-cancelled" }
+                  },
+                  {
+                    "key": "earshot.call.ended",
+                    "value": { "boolValue": true }
+                  }
+                ],
+                "events": [
+                  { "timeUnixNano": "6150000000", "name": "earshot.turn.cancelled" }
+                ],
+                "status": { "code": 0 }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

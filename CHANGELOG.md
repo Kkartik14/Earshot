@@ -19,6 +19,11 @@ are described in their [GitHub release notes](https://github.com/Kkartik14/Earsh
 
 ### Changed
 
+- **Host outcome evidence.** The host profile does not read interruption or cancellation
+  events in 0.5.0, and does not carry cancellation reasons. A valid
+  `earshot.call.outcome` label takes precedence; without one, any span with OTel status
+  `ERROR` makes the Call outcome `error`. Otherwise, an ended cancelled Call appears
+  `completed`.
 - **Host profile quantities.** Host-reported latency and per-request STT metering accept
   positive OTLP `doubleValue` or `intValue`; STT seconds are rounded to milliseconds per
   request before durable repricing. Older latency summaries read as `null` until rebuilt.
