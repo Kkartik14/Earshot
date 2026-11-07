@@ -123,9 +123,11 @@ unchanged. A 200 response contains `call_id`, `state` (`open` or `closed`), `rev
 (null while open; the latest Revision number after close) and `turns[]`. Each turn has
 the same fields and meaning as `projection.turns[]` above. The response also carries
 `axis_origin_unix_nano` and `axis_origin`, which define the origin for its `*_ms` values.
-While a Call is open, a later-arriving span with an earlier timestamp can move the origin,
-so times may re-base between responses; render each response against the origin it carries. `state` describes
-the Call; there is no separate per-turn `finished` flag.
+Both are null for a closed Call without a Revision, whose response has no projection. While
+a Call is open, newly stored Recordings can change which evidence defines the origin, and
+later evidence may have an earlier timestamp. Times may therefore re-base between
+responses; render each response against its own origin. `state` describes the Call; there
+is no separate per-turn `finished` flag.
 
 While the Call is open, the route runs the existing Call projector over the Call's
 accepted, stored spans after the project's capture-preset filtering. It returns a turn
@@ -147,7 +149,7 @@ route.
 
 Responses are `Cache-Control: no-store` and carry a strong `ETag`; matching
 `If-None-Match` answers 304. The validator is tied to the same input snapshot as the
-response and changes when any span is accepted for the Call, including a later child
+response and changes when a new span is stored for the Call, including a later child
 that enriches an already returned turn, even if that child does not change the current
 JSON fields. Hosts can poll every two seconds. The ETag rarely matches while a Call is
 live and spans continue to arrive; it is most useful when the input snapshot is quiet.
