@@ -156,6 +156,30 @@ live and spans continue to arrive; it is most useful when the input snapshot is 
 The target is at most 1 s p95 from accepted span to route visibility and at most 5 s p95
 from runtime turn end to the host UI at that polling interval.
 
+**Local capacity measurement (2026-11-07).** On SQLite, each Call held 300 or 1,000
+synthetic turns. For 12 seconds, an emitter accepted one additional unprojected child
+span per second while 16 or 32 viewers polled every two seconds, with poll start times
+staggered evenly across each two-second interval. Route latency is the HTTP request
+through reading the full 200 body; emitter latency includes in-process synthetic
+span/request construction, conversion and `CallStore.record_spans` acceptance, but
+excludes the OTLP/HTTP ingest path.
+
+| Turns | Viewers | Route 200 p95 | Route 200 max | Emitter ack p95 | Emitter ack max |
+| ----: | ------: | ------------: | ------------: | --------------: | --------------: |
+|   300 |      16 |       43.5 ms |       65.4 ms |          8.5 ms |          8.6 ms |
+|   300 |      32 |       37.8 ms |       71.6 ms |          8.6 ms |          8.7 ms |
+| 1,000 |      16 |      143.8 ms |      159.5 ms |         13.5 ms |         14.0 ms |
+| 1,000 |      32 |      193.5 ms |      299.1 ms |         59.8 ms |         60.6 ms |
+
+The live-turn bodies were 249,257 bytes (243.4 KiB) at 300 turns and 833,058 bytes
+(813.5 KiB) at 1,000. With a stable input snapshot, cached 200 responses had a 0.8–1.3 ms
+median and conditional 304 responses had a 0.7–1.1 ms median. Nearly all concurrent polls
+returned 200 because the emitter changed the ETag between polls. In the 1,000-turn, 32-viewer
+case, the 191 full bodies over 12 seconds represent about 106 Mbps of response-body egress
+per continuously changing Call, before HTTP overhead. This short local SQLite run describes
+the measured workstation envelope; it does not model a hosted deployment or replace the
+accepted-span visibility target above.
+
 The bundled viewer polls this route every two seconds while `state` is `open`. When it
 becomes `closed`, the viewer stops live polling and refreshes Call detail. It keeps
 showing these Revision turns while detail's projection is absent or stale, then switches
