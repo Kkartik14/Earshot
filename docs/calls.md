@@ -121,8 +121,11 @@ The target is API 0.17.0 in the 0.5.0 line. This additive, read-only route requi
 `earshot:calls:read` in hosted mode; the existing detail route and its response stay
 unchanged. A 200 response contains `call_id`, `state` (`open` or `closed`), `revision`
 (null while open; the latest Revision number after close) and `turns[]`. Each turn has
-the same fields and meaning as `projection.turns[]` above. `state` describes the Call;
-there is no separate per-turn `finished` flag.
+the same fields and meaning as `projection.turns[]` above. The response also carries
+`axis_origin_unix_nano` and `axis_origin`, which define the origin for its `*_ms` values.
+While a Call is open, earlier-arriving evidence can move the origin, so times may re-base
+between responses; render each response against the origin it carries. `state` describes
+the Call; there is no separate per-turn `finished` flag.
 
 While the Call is open, the route runs the existing Call projector over the Call's
 accepted, stored spans after the project's capture-preset filtering. It returns a turn
@@ -146,8 +149,9 @@ Responses are `Cache-Control: no-store` and carry a strong `ETag`; matching
 `If-None-Match` answers 304. The validator is tied to the same input snapshot as the
 response and changes when any span is accepted for the Call, including a later child
 that enriches an already returned turn, even if that child does not change the current
-JSON fields. Hosts can poll every two seconds. The
-target is at most 1 s p95 from accepted span to route visibility and at most 5 s p95
+JSON fields. Hosts can poll every two seconds. The ETag rarely matches while a Call is
+live and spans continue to arrive; it is most useful when the input snapshot is quiet.
+The target is at most 1 s p95 from accepted span to route visibility and at most 5 s p95
 from runtime turn end to the host UI at that polling interval.
 
 The bundled viewer polls this route every two seconds while `state` is `open`. When it
