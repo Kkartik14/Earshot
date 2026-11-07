@@ -31,8 +31,10 @@ See the [0.5.0 release notes](docs/release-notes-0.5.0.md) for compatibility det
   summary. Responses link to the successor and version-pinned migration guide; 0.6.0 has
   no dated `Sunset` header yet.
 - **Host outcome evidence.** The host profile does not read interruption or cancellation
-  events in 0.5.0, and does not carry cancellation reasons. The Call outcome is `error` if
-  any span has OTel status `ERROR`; otherwise an ended cancelled Call appears `completed`.
+  events in 0.5.0, and does not carry cancellation reasons. An explicit
+  `earshot.call.outcome` value takes precedence; without one, any span with OTel status
+  `ERROR` makes the Call outcome `error`. Otherwise, an ended cancelled Call appears
+  `completed`.
 - **Host profile quantities.** Host-reported latency and per-request STT metering accept
   positive OTLP `doubleValue` or `intValue`; STT seconds are rounded to milliseconds per
   request before durable repricing. Older latency summaries read as `null` until rebuilt.
