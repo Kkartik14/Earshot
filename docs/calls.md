@@ -208,19 +208,20 @@ serialization happen before the timer starts.
 
 | Turns | Viewers | Route 200 p95 | Route 200 max | Emitter ack p95 | Emitter ack max |
 | ----: | ------: | ------------: | ------------: | --------------: | --------------: |
-|   300 |      16 |       43.5 ms |       65.4 ms |          8.5 ms |          8.6 ms |
-|   300 |      32 |       37.8 ms |       71.6 ms |          8.6 ms |          8.7 ms |
-| 1,000 |      16 |      143.8 ms |      159.5 ms |         13.5 ms |         14.0 ms |
-| 1,000 |      32 |      193.5 ms |      299.1 ms |         59.8 ms |         60.6 ms |
+|   300 |      16 |       37.9 ms |       65.4 ms |          9.0 ms |         20.1 ms |
+|   300 |      32 |       30.7 ms |       60.3 ms |          7.7 ms |         11.9 ms |
+| 1,000 |      16 |      108.6 ms |      126.4 ms |         16.5 ms |         35.2 ms |
+| 1,000 |      32 |      101.6 ms |      222.8 ms |         12.3 ms |         17.0 ms |
 
-The live-turn bodies were 249,257 bytes (243.4 KiB) at 300 turns and 833,058 bytes
-(813.5 KiB) at 1,000. With a stable input snapshot, cached 200 responses had a 0.8–1.3 ms
-median and conditional 304 responses had a 0.7–1.1 ms median. Nearly all concurrent polls
-returned 200 because the emitter changed the ETag between polls. In the 1,000-turn, 32-viewer
-case, the 191 full bodies over 12 seconds represent about 106 Mbps of response-body egress
-per continuously changing Call, before HTTP overhead. This short local SQLite run describes
-the measured workstation envelope; it does not model a hosted deployment or replace the
-accepted-span visibility target above.
+The live-turn bodies were 250,460 bytes (244.6 KiB) at 300 turns and 837,061 bytes
+(817.4 KiB) at 1,000. With a stable input snapshot, cached 200 responses had a 1.4 ms
+median at 300 turns and 1.6 ms at 1,000; conditional 304 responses had 1.10 ms and
+1.08 ms medians, respectively. Every poll in the concurrent runs returned 200 because
+the emitter changed the ETag between polls. In the 1,000-turn, 32-viewer case, 192 full
+bodies over 12 seconds represent about 107 Mbps of response-body egress per continuously
+changing Call, before HTTP overhead. This short local SQLite run describes the measured
+workstation envelope; it does not model a hosted deployment or replace the accepted-span
+visibility target above.
 
 ### The audible gap at the agent
 
