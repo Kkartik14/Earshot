@@ -591,6 +591,19 @@ def test_a_materializer_process_that_dies_is_a_failed_attempt_and_is_replaced(
     assert _call(world, call_id)["materialize_attempts"] == 0
 
 
+def test_materializer_pid_tolerates_a_closed_process_race() -> None:
+    from earshot.storage_closer import MaterializerProcess
+
+    class ClosedProcess:
+        def is_alive(self) -> bool:
+            raise ValueError("process object is closed")
+
+    materializer = MaterializerProcess()
+    materializer._process = ClosedProcess()
+
+    assert materializer.pid is None
+
+
 @pytest.mark.parametrize("test_mode", ["1", "0"], ids=["fault", "inert"])
 def test_an_error_after_a_revision_is_stored_reports_the_revision_not_a_failure(
     tmp_path, monkeypatch, caplog, test_mode
@@ -1187,6 +1200,76 @@ def test_the_maintenance_loop_closes_due_calls_and_collects_parked_traces(tmp_pa
 
     assert [row[0] for row in _revisions(world, call_id)] == [1]
     assert world.calls.otlp_stats("default")["parked_traces_discarded"] == 1
+
+
+def test_a_failed_maintenance_job_uses_its_configured_retry_backoff() -> None:
+    import asyncio
+    import time
+
+    from earshot.maintenance import MaintenanceLoop
+
+    class Metrics:
+        def __init__(self) -> None:
+            self.outcomes: list[tuple[str, str | None]] = []
+
+        def maintenance_job(
+            self, _name: str, _duration: float, outcome: str, error_type: str | None = None
+        ) -> None:
+            self.outcomes.append((outcome, error_type))
+
+        def maintenance_delay(self, _name: str, _delay: float) -> None:
+            pass
+
+    async def scenario() -> tuple[list[float], Metrics]:
+        stop = asyncio.Event()
+        calls: list[float] = []
+        metrics = Metrics()
+        loop = MaintenanceLoop(tick_seconds=0.001, metrics=metrics)
+
+        async def fail_once(_now: int) -> None:
+            calls.append(time.monotonic())
+            if len(calls) == 1:
+                raise OSError("database is unavailable")
+            stop.set()
+
+        loop.add_job("queue-depth-snapshot", fail_once, failure_backoff_seconds=0.05)
+        await loop.run(stop)
+        return calls, metrics
+
+    calls, metrics = asyncio.run(scenario())
+
+    assert len(calls) == 2
+    assert calls[1] - calls[0] >= 0.04
+    assert metrics.outcomes == [("failure", "io"), ("success", None)]
+
+
+def test_an_idle_closer_tick_restarts_a_dead_materializer(tmp_path) -> None:
+    import asyncio
+    import multiprocessing
+
+    from earshot.storage_closer import MaterializerProcess, call_closer_job
+
+    world = _world(tmp_path)
+    materializer = MaterializerProcess()
+    closer = _closer_with(world, materializer)
+    job = call_closer_job(closer)
+    try:
+        assert asyncio.run(job(world.clock.wall)) is None
+        first_pid = materializer.pid
+        assert first_pid is not None
+        (first,) = [child for child in multiprocessing.active_children() if child.pid == first_pid]
+
+        first.kill()
+        first.join(timeout=5)
+        assert not first.is_alive()
+        assert materializer.pid is None
+
+        # No call is due, so recovery must come from the idle maintenance tick.
+        assert asyncio.run(job(world.clock.wall + SECOND)) is None
+
+        assert materializer.pid is not None
+    finally:
+        closer.close()
 
 
 def test_a_lease_left_by_a_dead_process_is_released_when_the_loop_starts(tmp_path) -> None:

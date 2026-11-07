@@ -48,5 +48,12 @@ from this evidence without creating a transcript. See [the host span profile](ca
   projection versions, plus hosted-JWT and `signals` capability flags.
 - `earshot.call.ended` is recorded as safe revision metadata under both `full` and
   `metadata_only` capture policies.
+- `/readyz` reports bounded catalog, blob-store and materializer states. A healthy catalog
+  remains available with HTTP 200 and `status: "degraded"` during a partial blob-store or
+  materializer outage; catalog failure returns 503.
+- Server maintenance and durable-work measurements use the OpenTelemetry API. A host
+  installs and configures its own SDK/exporter to export them; see the [production guide](production.md#export-earshot-server-metrics).
+- The Postgres and S3 integration lane verifies a completed Recording survives a forced
+  server-process kill and restart with the same catalog and object-store configuration.
 
 The [changelog](../CHANGELOG.md) lists the complete set of changes.

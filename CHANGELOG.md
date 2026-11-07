@@ -10,6 +10,14 @@ See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility det
 
 ### Changed
 
+- **Durable exporter flush waits for delivery accounting.** A successful `flush()` does not
+  return while a replayed record is still in flight, even if its spool file was removed.
+- **`/readyz` reports components and degraded service.** `components` is now required, and
+  `status` can be `degraded`. When the blob store is unavailable, the endpoint answers 200
+  with `degraded` instead of the 0.3.0 503 response. An application mounted without its
+  lifespan also remains `degraded` because its component state is unknown.
+- **Server metrics.** The server exports storage queue depths and readiness/probe state.
+- **The `server` extra includes `opentelemetry-api`** for metric instrumentation.
 - **API version 0.16.0.** Hosted authorization is a closed table, and the hosted
   Calls, project provisioning and `GET /version` routes are added. Regenerate clients
   from `spec/backend-api.openapi.json`.

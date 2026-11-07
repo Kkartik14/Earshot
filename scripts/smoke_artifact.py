@@ -93,7 +93,15 @@ def _smoke_server(
         base_url = f"http://127.0.0.1:{port}"
         readiness = json.loads(_read_when_ready(f"{base_url}/readyz", process))
         # A fresh store has nothing to re-project.
-        if readiness != {"status": "ready", "projections_pending": 0}:
+        if readiness != {
+            "status": "ready",
+            "components": {
+                "catalog": "ready",
+                "blob_store": "ready",
+                "materializer": "ready",
+            },
+            "projections_pending": 0,
+        }:
             raise RuntimeError(f"unexpected readiness response: {readiness!r}")
         incidents = json.loads(_read_when_ready(f"{base_url}/v1/incidents", process))
         if incidents.get("items") != []:

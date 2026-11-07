@@ -8295,9 +8295,36 @@
         "title": "QualitySample",
         "type": "object"
       },
+      "ReadinessComponents": {
+        "additionalProperties": true,
+        "properties": {
+          "blob_store": {
+            "title": "Blob Store",
+            "type": "string"
+          },
+          "catalog": {
+            "title": "Catalog",
+            "type": "string"
+          },
+          "materializer": {
+            "title": "Materializer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "catalog",
+          "blob_store",
+          "materializer"
+        ],
+        "title": "ReadinessComponents",
+        "type": "object"
+      },
       "ReadinessResponse": {
         "additionalProperties": false,
         "properties": {
+          "components": {
+            "$ref": "#/components/schemas/ReadinessComponents"
+          },
           "projections_pending": {
             "anyOf": [
               {
@@ -8310,12 +8337,18 @@
             "title": "Projections Pending"
           },
           "status": {
+            "enum": [
+              "ready",
+              "degraded",
+              "unavailable"
+            ],
             "title": "Status",
             "type": "string"
           }
         },
         "required": [
-          "status"
+          "status",
+          "components"
         ],
         "title": "ReadinessResponse",
         "type": "object"

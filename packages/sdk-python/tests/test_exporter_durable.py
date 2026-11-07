@@ -95,6 +95,24 @@ def test_restart_replays_exact_payload_content_type_and_idempotency_key(tmp_path
         assert second.shutdown()
 
 
+def test_flush_does_not_miss_work_added_between_idle_checks(tmp_path, monkeypatch) -> None:
+    exporter = _durable(_Recording(), tmp_path)
+    original_spool_files = exporter._spool_files
+
+    def add_in_flight_after_snapshot() -> list[Path]:
+        if threading.current_thread() is threading.main_thread():
+            exporter._in_flight_files.add("replayed.spool")
+            return []
+        return original_spool_files()
+
+    monkeypatch.setattr(exporter, "_spool_files", add_in_flight_after_snapshot)
+    try:
+        assert not exporter.flush(timeout=0)
+    finally:
+        exporter._in_flight_files.clear()
+        assert exporter.shutdown()
+
+
 def test_corrupt_record_is_quarantined_and_observable(tmp_path) -> None:
     corrupt = tmp_path / f"{_STANDALONE_FINGERPRINT}-broken.spool"
     corrupt.write_bytes(b"not-json")

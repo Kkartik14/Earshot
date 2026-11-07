@@ -95,6 +95,7 @@ packages/sdk-python/src/earshot/recording_fetcher.py
 packages/sdk-python/src/earshot/recordings.py
 packages/sdk-python/src/earshot/sdk.py
 packages/sdk-python/src/earshot/server_config.py
+packages/sdk-python/src/earshot/server_metrics.py
 packages/sdk-python/src/earshot/signals/__init__.py
 packages/sdk-python/src/earshot/signals/analyzer.py
 packages/sdk-python/src/earshot/signals/audio.py

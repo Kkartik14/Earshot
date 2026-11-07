@@ -75,6 +75,108 @@ def test_a_committed_blob_round_trips_with_its_exact_sha256_and_size(
     assert blob_backend.leftovers() == []
 
 
+def test_health_check_reads_the_configured_namespace_without_mutating_it(
+    blob_backend: BlobBackend,
+) -> None:
+    before = blob_backend.objects()
+
+    blob_backend.store.health_check()
+
+    assert blob_backend.objects() == before
+    assert blob_backend.leftovers() == []
+
+
+def test_s3_health_check_lists_only_the_configured_prefix(monkeypatch) -> None:
+    from botocore.stub import Stubber
+
+    from earshot.blobstore import S3BlobStore
+    from earshot.server_config import S3BlobLocation
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    blobs = S3BlobStore(
+        S3BlobLocation(
+            bucket="earshot-test",
+            prefix="service/tenant",
+            endpoint="http://127.0.0.1:9000",
+            region="us-east-1",
+            path_style=True,
+        )
+    )
+    expected = {
+        "Bucket": "earshot-test",
+        "Prefix": "service/tenant/",
+        "MaxKeys": 1,
+    }
+    response = {
+        "IsTruncated": False,
+        "Name": "earshot-test",
+        "Prefix": "service/tenant/",
+        "MaxKeys": 1,
+        "KeyCount": 0,
+    }
+
+    with Stubber(blobs._health_client) as stubber:
+        stubber.add_response("list_objects_v2", response, expected)
+        blobs.health_check()
+
+    stubber.assert_no_pending_responses()
+
+
+def test_s3_health_check_times_out_when_endpoint_accepts_without_a_response(monkeypatch) -> None:
+    import socketserver
+    import time
+
+    from botocore.exceptions import ReadTimeoutError
+
+    from earshot.blobstore import S3BlobStore
+    from earshot.server_config import S3BlobLocation
+
+    class SilentServer(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+        def __init__(self):
+            self.request_seen = threading.Event()
+            super().__init__(("127.0.0.1", 0), SilentHandler)
+
+    class SilentHandler(socketserver.BaseRequestHandler):
+        def handle(self) -> None:
+            self.server.request_seen.set()
+            self.request.recv(4096)
+            threading.Event().wait(3)
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    server = SilentServer()
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        endpoint = f"http://{server.server_address[0]}:{server.server_address[1]}"
+        blobs = S3BlobStore(
+            S3BlobLocation(
+                bucket="earshot-test",
+                prefix="service/tenant",
+                endpoint=endpoint,
+                region="us-east-1",
+                path_style=True,
+            )
+        )
+        started = time.monotonic()
+        with pytest.raises(ReadTimeoutError):
+            blobs.health_check()
+        elapsed = time.monotonic() - started
+
+        assert server.request_seen.is_set()
+        assert 1.5 <= elapsed < 4.0
+    finally:
+        server.shutdown()
+        worker.join(timeout=1)
+        server.server_close()
+
+
 def test_range_reads_are_exact_at_part_boundaries(blob_backend: BlobBackend) -> None:
     size = 2 * PART + 3
     data = _payload(size)

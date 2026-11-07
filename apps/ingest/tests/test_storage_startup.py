@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import multiprocessing
+import os
 import socket
 import threading
 import time
@@ -24,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from bulk_ingest import ingest_in_parallel
 from earshot.api import create_app
+from earshot.blobstore import LocalBlobStore
 from earshot.cli import main
 from earshot.contract import ExportPolicy, RetentionPolicy
 from earshot.maintenance import FAILED_REPROJECTION_RETRY_SECONDS, reprojection_job
@@ -204,6 +207,100 @@ def test_reprojection_leaves_expired_incidents_to_the_retention_reaper(tmp_path)
     assert store.projections_pending() == 0
 
 
+def test_create_app_exports_queue_snapshot_failure_and_recovers(tmp_path, monkeypatch) -> None:
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from earshot import api as api_module
+    from earshot.maintenance import MaintenanceLoop
+    from earshot.server_metrics import ServerMetrics
+
+    store = make_store(tmp_path / "catalog")
+    original_snapshot = store.operational_queue_depths
+    calls: list[int] = []
+    calls_lock = threading.Lock()
+    failed = threading.Event()
+    recovered = threading.Event()
+
+    def flaky_snapshot(**kwargs):
+        with calls_lock:
+            calls.append(len(calls) + 1)
+            attempt = len(calls)
+        if attempt == 1:
+            failed.set()
+            raise OSError("private database path")
+        result = original_snapshot(**kwargs)
+        recovered.set()
+        return result
+
+    monkeypatch.setattr(store, "operational_queue_depths", flaky_snapshot)
+    original_add_job = MaintenanceLoop.add_job
+
+    def speed_up_snapshot_retry(
+        loop, name, job, *, failure_backoff_seconds: float | None = None
+    ) -> None:
+        if name == "queue-depth-snapshot":
+            assert failure_backoff_seconds == 30.0
+            failure_backoff_seconds = 3.1
+        original_add_job(loop, name, job, failure_backoff_seconds=failure_backoff_seconds)
+
+    monkeypatch.setattr(MaintenanceLoop, "add_job", speed_up_snapshot_retry)
+
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    metrics = ServerMetrics(meter=provider.get_meter("earshot.server.create-app-test"))
+    app = api_module.create_app(
+        store=store,
+        blob_store=LocalBlobStore(tmp_path / "blobs"),
+        server_metrics=metrics,
+    )
+
+    try:
+        with TestClient(app):
+            assert failed.wait(timeout=2)
+            time.sleep(2.0)
+            with calls_lock:
+                assert calls == [1]
+
+            failed_metrics = reader.get_metrics_data()
+            failure_points = [
+                point
+                for resource in failed_metrics.resource_metrics
+                for scope in resource.scope_metrics
+                for metric in scope.metrics
+                if metric.name == "earshot.maintenance.job.failures"
+                for point in metric.data.data_points
+            ]
+            assert [(dict(point.attributes), point.value) for point in failure_points] == [
+                ({"error.type": "io", "job.name": "queue-depth-snapshot"}, 1)
+            ]
+
+            assert recovered.wait(timeout=4)
+            with calls_lock:
+                assert calls == [1, 2]
+
+        recovered_metrics = reader.get_metrics_data()
+        queue_depth_points = [
+            point
+            for resource in recovered_metrics.resource_metrics
+            for scope in resource.scope_metrics
+            for metric in scope.metrics
+            if metric.name == "earshot.storage.queue.depth"
+            for point in metric.data.data_points
+        ]
+        assert {point.attributes["queue.name"] for point in queue_depth_points} == {
+            "call_closer",
+            "recording_analysis",
+            "recording_fetch",
+            "blob_deletions",
+            "incident_reprojection",
+            "parked_traces",
+        }
+    finally:
+        provider.shutdown()
+        store.close()
+
+
 def test_readiness_reports_pending_projections_without_failing_on_them(tmp_path) -> None:
     ingest_incidents(tmp_path, 2)
     mark_stale(tmp_path)
@@ -213,7 +310,407 @@ def test_readiness_reports_pending_projections_without_failing_on_them(tmp_path)
     response = TestClient(create_app(store=store)).get("/readyz")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ready", "projections_pending": 2}
+    assert response.json() == {
+        "status": "degraded",
+        "components": {
+            "catalog": "ready",
+            "blob_store": "ready",
+            "materializer": "unknown",
+        },
+        "projections_pending": 2,
+    }
+
+
+def test_readiness_only_reports_the_materializer_during_its_lifespan(tmp_path) -> None:
+    app = create_app(store=make_store(tmp_path))
+
+    before = TestClient(app).get("/readyz")
+    assert before.status_code == 200
+    assert before.json()["components"]["materializer"] == "unknown"
+
+    with TestClient(app) as client:
+        active = client.get("/readyz")
+        assert active.status_code == 200
+        assert active.json()["components"]["materializer"] == "ready"
+
+    after = TestClient(app).get("/readyz")
+    assert after.status_code == 200
+    assert after.json()["components"]["materializer"] == "unknown"
+
+
+def test_a_disabled_blob_store_does_not_degrade_readiness(tmp_path, monkeypatch) -> None:
+    from earshot import api as api_module
+
+    app = create_app(store=make_store(tmp_path))
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "status", lambda _self: "disabled")
+
+    with TestClient(app) as client:
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "components": {
+            "catalog": "ready",
+            "blob_store": "disabled",
+            "materializer": "ready",
+        },
+        "projections_pending": 0,
+    }
+
+
+def test_readiness_reports_blob_failure_as_degraded_while_catalog_is_ready(tmp_path) -> None:
+    store = make_store(tmp_path / "catalog")
+    blob_root = tmp_path / "blobs"
+    blobs = LocalBlobStore(blob_root)
+    moved_root = tmp_path / "blobs-moved"
+    blob_root.rename(moved_root)
+    blob_root.write_text("not a directory")
+
+    response = TestClient(create_app(store=store, blob_store=blobs)).get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "degraded",
+        "components": {
+            "catalog": "ready",
+            "blob_store": "unavailable",
+            "materializer": "unknown",
+        },
+        "projections_pending": 0,
+    }
+
+
+@pytest.mark.parametrize("fails", [False, True], ids=["ready", "unavailable"])
+def test_remote_blob_readiness_is_cached_and_hides_provider_errors(
+    tmp_path, monkeypatch, caplog, fails: bool
+) -> None:
+    from botocore.exceptions import ClientError
+
+    import earshot.api as api_module
+
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "_INTERVAL_SECONDS", 0.2)
+
+    class RemoteBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.checked = threading.Event()
+
+        def health_check(self) -> None:
+            self.calls += 1
+            self.checked.set()
+            if fails:
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "AccessDenied",
+                            "Message": "private endpoint and credential details",
+                        }
+                    },
+                    "ListObjectsV2",
+                )
+
+        def sweep(self) -> int:
+            return 0
+
+        def delete(self, _key: str) -> None:
+            return None
+
+    store = make_store(tmp_path / "catalog")
+    blobs = RemoteBlobs()
+    app = create_app(store=store, blob_store=blobs)
+
+    # A remote store has no result until the background probe has run.
+    initial = TestClient(app).get("/readyz")
+    assert initial.status_code == 200
+    assert initial.json()["components"]["blob_store"] == "unknown"
+
+    with TestClient(app) as client:
+        assert blobs.checked.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            response = client.get("/readyz")
+            if response.json()["components"]["blob_store"] != "unknown":
+                break
+            time.sleep(0.01)
+
+        assert response.status_code == 200
+        expected_component = "unavailable" if fails else "ready"
+        assert response.json()["status"] == ("degraded" if fails else "ready")
+        assert response.json()["components"]["blob_store"] == expected_component
+        if fails:
+            assert "private endpoint" not in response.text + caplog.text
+            assert "AccessDenied" in caplog.text
+            assert caplog.text.count("EARSHOT_BLOB_HEALTHCHECK_FAILED") == 1
+            assert blobs.calls == 2
+        else:
+            assert blobs.calls == 1
+
+
+def test_one_remote_blob_probe_failure_preserves_ready_state(tmp_path, monkeypatch, caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    import earshot.api as api_module
+
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "_INTERVAL_SECONDS", 0.05)
+
+    class FlakyBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.failed = threading.Event()
+
+        def health_check(self) -> None:
+            self.calls += 1
+            if self.calls == 2:
+                self.failed.set()
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+        def sweep(self) -> int:
+            return 0
+
+        def delete(self, _key: str) -> None:
+            return None
+
+    blobs = FlakyBlobs()
+    app = create_app(store=make_store(tmp_path / "catalog"), blob_store=blobs)
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            response = client.get("/readyz")
+            if response.json()["components"]["blob_store"] == "ready":
+                break
+            time.sleep(0.01)
+        else:
+            pytest.fail("the first remote blob probe did not become ready")
+
+        assert blobs.failed.wait(timeout=5)
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json()["components"]["blob_store"] == "ready"
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED" not in caplog.text
+
+
+def test_ready_fail_success_fail_keeps_blob_store_ready(caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _BlobStoreReadiness
+
+    class FlakyBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def health_check(self) -> None:
+            self.calls += 1
+            if self.calls in {2, 4}:
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+    blobs = FlakyBlobs()
+    readiness = _BlobStoreReadiness(blobs)
+
+    for expected_calls in range(1, 5):
+        asyncio.run(readiness.probe(0))
+        assert blobs.calls == expected_calls
+        assert readiness.status() == "ready"
+
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED" not in caplog.text
+
+
+def test_three_consecutive_blob_probe_failures_log_once(caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _BlobStoreReadiness
+
+    class FailingBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def health_check(self) -> None:
+            self.calls += 1
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+    blobs = FailingBlobs()
+    readiness = _BlobStoreReadiness(blobs)
+
+    for _ in range(3):
+        asyncio.run(readiness.probe(0))
+
+    assert blobs.calls == 3
+    assert readiness.status() == "unavailable"
+    assert caplog.text.count("EARSHOT_BLOB_HEALTHCHECK_FAILED") == 1
+
+
+def test_unknown_blob_provider_code_logs_as_other(caplog) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _BlobStoreReadiness
+
+    class UnknownFailure:
+        def health_check(self) -> None:
+            raise ClientError({"Error": {"Code": "FutureProviderCode"}}, "ListObjectsV2")
+
+    readiness = _BlobStoreReadiness(UnknownFailure())
+    asyncio.run(readiness.probe(0))
+    asyncio.run(readiness.probe(0))
+
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED (other)" in caplog.text
+    assert "FutureProviderCode" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "code", ["ExpiredToken", "AuthorizationHeaderMalformed", "PermanentRedirect"]
+)
+def test_known_blob_provider_codes_remain_bounded_in_logs(code: str) -> None:
+    from botocore.exceptions import ClientError
+
+    from earshot.api import _bounded_blob_store_error_code
+
+    error = ClientError({"Error": {"Code": code}}, "ListObjectsV2")
+
+    assert _bounded_blob_store_error_code(error) == code
+
+
+def test_local_blob_store_health_is_not_probed_by_the_maintenance_job(
+    tmp_path, monkeypatch
+) -> None:
+    from earshot.api import _BlobStoreReadiness
+
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    monkeypatch.setattr(
+        blobs, "health_check", lambda: pytest.fail("local stores are checked in /readyz")
+    )
+
+    assert asyncio.run(_BlobStoreReadiness(blobs).probe(0)) == 30.0
+
+
+def test_failed_remote_blob_probe_does_not_revive_an_expired_ready_state(
+    monkeypatch, caplog
+) -> None:
+    from botocore.exceptions import ClientError
+
+    import earshot.api as api_module
+
+    monkeypatch.setattr(api_module._BlobStoreReadiness, "_MAX_AGE_SECONDS", 0.01)
+
+    class FlakyBlobs:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def health_check(self) -> None:
+            self.calls += 1
+            if self.calls > 1:
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+
+    readiness = api_module._BlobStoreReadiness(FlakyBlobs())
+
+    asyncio.run(readiness.probe(0))
+    assert readiness.status() == "ready"
+
+    time.sleep(0.02)
+    assert readiness.status() == "unknown"
+
+    asyncio.run(readiness.probe(0))
+    assert readiness.status() == "unknown"
+    assert "EARSHOT_BLOB_HEALTHCHECK_FAILED" not in caplog.text
+
+    asyncio.run(readiness.probe(0))
+    assert readiness.status() == "unavailable"
+    assert caplog.text.count("EARSHOT_BLOB_HEALTHCHECK_FAILED") == 1
+
+
+def test_remote_blob_readiness_probe_times_out_against_a_stalled_endpoint(monkeypatch) -> None:
+    pytest.importorskip("boto3")
+
+    from urllib.parse import urlencode
+
+    from earshot.api import _BlobStoreReadiness
+    from earshot.blobstore import open_blob_store
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("AWS_CONFIG_FILE", os.devnull)
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", os.devnull)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    host, port = listener.getsockname()
+    accepted = threading.Event()
+    release = threading.Event()
+
+    def stall_response() -> None:
+        try:
+            peer, _ = listener.accept()
+        except OSError:
+            return
+        accepted.set()
+        release.wait(timeout=10)
+        peer.close()
+
+    server = threading.Thread(target=stall_response, daemon=True)
+    endpoint = f"http://{host}:{port}"
+    url = "s3://readiness-test?" + urlencode(
+        {"endpoint": endpoint, "region": "us-east-1", "path_style": "1"}
+    )
+    blobs = open_blob_store(url)
+    readiness = _BlobStoreReadiness(blobs)
+    assert blobs._health_client.meta.config.connect_timeout == 2
+    assert blobs._health_client.meta.config.read_timeout == 2
+
+    result: dict[str, object] = {}
+    completed = threading.Event()
+    started_at = time.monotonic()
+
+    def run_probe() -> None:
+        try:
+            result["next_delay"] = asyncio.run(readiness.probe(0))
+        except BaseException as error:
+            result["error"] = error
+        finally:
+            result["elapsed"] = time.monotonic() - started_at
+            completed.set()
+
+    probe = threading.Thread(target=run_probe, daemon=True)
+    server.start()
+    probe.start()
+    try:
+        assert accepted.wait(timeout=3), "the S3 readiness request never reached the endpoint"
+        assert completed.wait(timeout=4.5), "the S3 readiness probe exceeded its two-second timeout"
+        assert "error" not in result
+        assert 1.5 <= result["elapsed"] < 4.5
+        assert result["next_delay"] == 30.0
+        assert readiness.status() == "unknown"
+    finally:
+        release.set()
+        listener.close()
+        server.join(timeout=1)
+        probe.join(timeout=2)
+        blobs._health_client.close()
+        blobs._client.close()
+
+
+def test_readiness_reports_a_killed_materializer_as_degraded(tmp_path) -> None:
+    store = make_store(tmp_path / "catalog")
+    app = create_app(store=store, blob_store=LocalBlobStore(tmp_path / "blobs"))
+
+    with TestClient(app) as client:
+        assert client.get("/readyz").json()["components"]["materializer"] == "ready"
+        (worker,) = [
+            process
+            for process in multiprocessing.active_children()
+            if process.name == "earshot-materializer"
+        ]
+        worker.kill()
+        worker.join(timeout=5)
+
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+    assert response.json()["components"]["materializer"] == "unavailable"
 
 
 def test_the_background_job_drains_stale_projections_batch_by_batch(tmp_path) -> None:

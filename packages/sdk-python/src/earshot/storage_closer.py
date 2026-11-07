@@ -10,7 +10,7 @@ or expired; no pending recording holds it (the one pending deadline,
 ``storage_recordings.pending_deadline``, checked per candidate in the claim's
 query) and no upload of its recordings is in flight
 (``RecordingStore.uploading_calls``, read under the claim's write lock); and it is
-not at the revision cap (``UNCAPPED_SQL``). The claim clears
+not at the revision cap, except for its first end-signal close (``UNCAPPED_SQL``). The claim clears
 ``dirty``, sets ``pending_revision`` to the latest revision plus one, leases the
 call for ``LEASE_SECONDS`` under a new ``lease_token``, and snapshots the call: its
 span keys and stored recordings, each marked with the revision it first belongs to
@@ -91,6 +91,8 @@ MATERIALIZE_TIMEOUT_SECONDS = 600.0
 MATERIALIZER_START_TIMEOUT_SECONDS = 60.0
 # How long closing waits for a build in progress before it kills the child.
 MATERIALIZER_CLOSE_GRACE_SECONDS = 10.0
+MATERIALIZER_RESTART_INITIAL_BACKOFF_SECONDS = 1.0
+MATERIALIZER_RESTART_MAX_BACKOFF_SECONDS = 60.0
 
 # A claim's snapshot: its span keys (read inside the claim's write mutation), the
 # resources those spans name, and the spans' payloads (read outside every lock).
@@ -131,7 +133,8 @@ def claim_candidate_queries(
     A call is a candidate when it has a revision pending from a claim that never
     finished (the first read), or is dirty and due (the second), each by due time,
     ``limit`` rows. Its lease must be free or expired; it is not set aside
-    (``CALL_INTEGRITY``) or at the revision cap (``UNCAPPED_SQL``); its project is
+    (``CALL_INTEGRITY``) or at the revision cap, except for its first end-signal close
+    (``UNCAPPED_SQL``); its project is
     active (a project being deleted takes its calls with it, unrevised); and
     no pending recording holds it. A pending recording holds its call while ``now``
     is before its pending deadline, ``max(created, last_evidence, end_signal or 0) +
@@ -244,6 +247,12 @@ class RevisionMaterializer(Protocol):
     def close(self) -> None: ...
 
 
+class CallCloserMetrics(Protocol):
+    """The bounded failure counter used at the server maintenance boundary."""
+
+    def closer_failure(self, failure_code: str | None) -> None: ...
+
+
 class InProcessMaterializer:
     """Revisions built in the calling thread (a closer used outside the server)."""
 
@@ -325,13 +334,22 @@ class MaterializerProcess:
         self._process: Any = None
         self._connection: Any = None
         self._closed = False
+        self._start_failure_logged = False
 
     @property
     def pid(self) -> int | None:
         """The child's process ID while one runs."""
 
         process = self._process
-        return None if process is None or not process.is_alive() else int(process.pid)
+        try:
+            if process is None or not process.is_alive():
+                return None
+            pid = process.pid
+        except ValueError:
+            # A readiness request can observe the process just as another thread
+            # discards and closes it after the worker exits.
+            return None
+        return None if pid is None else int(pid)
 
     def start(self) -> None:
         with self._lock:
@@ -368,12 +386,26 @@ class MaterializerProcess:
         self._connection = parent
         if not ready:
             self._discard()
+            self._log_start_transition(failed=True, cause=cause)
+            raise MaterializerWorkerError(
+                "EARSHOT_MATERIALIZER_START_FAILED: the materializer process did not start"
+                + ("" if cause is None else f" ({cause})")
+            )
+        self._log_start_transition(failed=False)
+
+    def _log_start_transition(self, *, failed: bool, cause: str | None = None) -> None:
+        """Log a materializer start failure or recovery once per state transition."""
+
+        if failed:
+            if self._start_failure_logged:
+                return
+            self._start_failure_logged = True
             if cause is None:
                 _LOGGER.error(
                     "EARSHOT_MATERIALIZER_START_FAILED: the closer's materializer process did "
                     "not start, so calls are not closed; a program that starts the server "
-                    'itself must guard its entry point with `if __name__ == "__main__":` (the '
-                    "process is spawned, which imports the program's main module again)"
+                    'itself must guard its entry point with `if __name__ == "__main__":` '
+                    "(the process is spawned, which imports the program's main module again)"
                 )
             else:
                 _LOGGER.error(
@@ -382,10 +414,9 @@ class MaterializerProcess:
                     "processes and open files",
                     cause,
                 )
-            raise MaterializerWorkerError(
-                "EARSHOT_MATERIALIZER_START_FAILED: the materializer process did not start"
-                + ("" if cause is None else f" ({cause})")
-            )
+        elif self._start_failure_logged:
+            self._start_failure_logged = False
+            _LOGGER.info("EARSHOT_MATERIALIZER_RECOVERED: the materializer process is ready")
 
     def _discard(self) -> None:
         """Kill the child (if any) and forget it."""
@@ -951,9 +982,11 @@ class Closer:
 class _CloserJob:
     """``call_closer_job``'s job: a maintenance job the loop also closes."""
 
-    def __init__(self, closer: Closer) -> None:
+    def __init__(self, closer: Closer, metrics: CallCloserMetrics | None = None) -> None:
         self.closer = closer
+        self.metrics = metrics
         self._started = False
+        self._materializer_restart_backoff_seconds = MATERIALIZER_RESTART_INITIAL_BACKOFF_SECONDS
 
     async def __call__(self, now_unix_nano: int) -> float | None:
         try:
@@ -962,12 +995,22 @@ class _CloserJob:
                     self.closer.release_leases, budget_s=MAINTENANCE_LOCK_BUDGET_SECONDS
                 )
                 self._started = True
-                # The server's lifespan has started the child already (and refused to
-                # start without one). A loop a host composes itself starts it here; a
-                # child that cannot start is logged, and each build tries again under
-                # its call's backoff.
-                with contextlib.suppress(MaterializerWorkerError):
-                    await asyncio.to_thread(self.closer.start)
+            # Lifespan starts the child before serving; hosts composing the loop
+            # themselves start it here. Rechecking recovers a worker killed after a
+            # timeout or OOM, even when no call is due. Repeated failures back off
+            # exponentially and the process logs only state transitions.
+            try:
+                await asyncio.to_thread(self.closer.start)
+            except MaterializerWorkerError:
+                delay = self._materializer_restart_backoff_seconds
+                self._materializer_restart_backoff_seconds = min(
+                    delay * 2, MATERIALIZER_RESTART_MAX_BACKOFF_SECONDS
+                )
+                return delay
+            else:
+                self._materializer_restart_backoff_seconds = (
+                    MATERIALIZER_RESTART_INITIAL_BACKOFF_SECONDS
+                )
             outcome = await asyncio.to_thread(
                 self.closer.close_next,
                 now_unix_nano=now_unix_nano,
@@ -977,13 +1020,18 @@ class _CloserJob:
             # Busy: the next tick tries again. Closed: the server is stopping, and a
             # claim left leased is released when the next server starts.
             return None
+        if outcome is not None and outcome.result == "failed" and self.metrics is not None:
+            try:
+                self.metrics.closer_failure(outcome.error)
+            except Exception as error:
+                _LOGGER.debug("call closer metrics failed (%s)", type(error).__name__)
         return None if outcome is None else 0.0
 
     async def aclose(self) -> None:
         await asyncio.to_thread(self.closer.close)
 
 
-def call_closer_job(closer: Closer) -> MaintenanceJob:
+def call_closer_job(closer: Closer, *, metrics: CallCloserMetrics | None = None) -> MaintenanceJob:
     """A maintenance job: close due calls one at a time, at the tick's time.
 
     Its first run releases the leases a previous server process left and starts
@@ -993,4 +1041,4 @@ def call_closer_job(closer: Closer) -> MaintenanceJob:
     and its own ingest, so no mutation batches several revisions.
     """
 
-    return _CloserJob(closer)
+    return _CloserJob(closer, metrics=metrics)

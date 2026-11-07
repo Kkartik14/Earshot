@@ -289,6 +289,12 @@ jobs:
           apps/ingest/tests/test_catalog_parity.py
           apps/ingest/tests/test_storage_postgres.py
           apps/ingest/tests/test_postgres_server.py
+          packages/sdk-python/tests/test_server_metrics.py
+      - name: Check the remote blob readiness probe timeout
+        if: github.event_name != 'workflow_dispatch'
+        run: >-
+          pytest -q
+          apps/ingest/tests/test_storage_startup.py::test_remote_blob_readiness_probe_times_out_against_a_stalled_endpoint
       - name: Check Postgres-only application contracts
         if: github.event_name != 'workflow_dispatch'
         run: >-

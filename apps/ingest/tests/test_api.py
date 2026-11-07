@@ -88,7 +88,15 @@ def test_health_and_readiness_are_available_without_incident_auth(tmp_path) -> N
     config = ApiConfig(token="test-token")
     _, client = app_client(tmp_path, config=config)
     assert client.get("/healthz").json() == {"status": "ok"}
-    assert client.get("/readyz").json() == {"status": "ready", "projections_pending": 0}
+    assert client.get("/readyz").json() == {
+        "status": "degraded",
+        "components": {
+            "catalog": "ready",
+            "blob_store": "ready",
+            "materializer": "unknown",
+        },
+        "projections_pending": 0,
+    }
 
 
 @pytest.mark.asyncio
