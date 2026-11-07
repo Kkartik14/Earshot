@@ -62,10 +62,12 @@ unknown, not proof of durability: Earshot records the observed terminal metadata
 marks the incident incomplete. Closing a session while a turn remains open also marks
 the final incident incomplete, even when TVIC reports the session as completed.
 
-`first_token_ms` and `first_audio_ms` are relative to TVIC's turn endpoint. Earshot
-places `earshot.response.first_token` and
-`earshot.response.first_audio_generated` events relative to that endpoint. These are
-end-to-end response timeline facts, not provider-reported `earshot.llm.ttft` metrics.
+Numeric `first_token_ms` and `first_audio_ms` values are relative to TVIC's turn
+endpoint. Earshot places `earshot.response.first_token` and
+`earshot.response.first_audio_generated` events relative to that endpoint. A bounded
+safe string is accepted as metadata for compatibility but does not produce either event.
+These are end-to-end response timeline facts, not provider-reported
+`earshot.llm.ttft` metrics.
 Timeout interruptions are not attributed to the user; explicit, DTMF, and barge-in
 facts are.
 

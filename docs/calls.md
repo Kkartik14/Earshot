@@ -237,8 +237,9 @@ registered in [`semconv/earshot.yaml`](../semconv/earshot.yaml).
   Unicode scalar values, or grapheme clusters. The profile 0.2.0 additions do not change
   existing provider, model, stage-boundary, LLM-usage, or turn semantics. When no STT
   request for a provider/model reports seconds, the existing call-level audio estimate
-  remains. A streaming STT session total reported at close is not request usage and is
-  omitted, so it does not replace that estimate. If only some requests report seconds,
+  remains. Hosts must omit a streaming STT session total reported at close from this
+  per-request attribute; it is not request usage and cannot replace that estimate. If
+  only some requests report seconds,
   Earshot sums those reported quantities and leaves missing requests unknown; it does not
   add a call-wide estimate over the reported requests. Missing TTS counts remain unknown.
 - **No transcript.** The profile defines no text, so a host call has no transcript lines

@@ -44,6 +44,7 @@ groups:
         type: double
         requirement_level: opt_in
         brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; a present value is a positive finite OTLP doubleValue or intValue. Absent or invalid values are unknown, never 0."
+        note: The semantic type is double; a positive OTLP intValue is also permitted by the host profile as numeric input.
       - id: earshot.turn.timeline_continuous
         type: boolean
         requirement_level: opt_in
@@ -101,7 +102,7 @@ groups:
         requirement_level: opt_in
         stability: development
         brief: Provider-metered STT input audio quantity in seconds for one request.
-        note: Omit when unknown. A present value is a positive finite OTLP doubleValue or positive intValue. Do not infer it from span duration or the caller's speech window.
+        note: The semantic type is double; a positive OTLP intValue is also permitted by the host profile as numeric input. Omit when unknown. A present value is positive and finite. This value is per request; hosts omit streaming-session totals reported at close. Do not infer it from span duration or the caller's speech window.
       - id: earshot.tts.usage.character_count
         type: int
         requirement_level: opt_in
