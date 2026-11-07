@@ -228,7 +228,9 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install backend and pinned framework lanes
-        run: python -m pip install -e '.[dev,pipecat-groq,livekit]'
+        run: >-
+          python -m pip install -e '.[dev,pipecat-groq,livekit]'
+          'pipecat-ai[deepgram]>=1.6.0,<1.7'
       - name: Test the full suite on SQLite with branch coverage
         run: pytest --cov=earshot --cov-report= --cov-fail-under=0 -q
       - name: Keep SQLite coverage data
