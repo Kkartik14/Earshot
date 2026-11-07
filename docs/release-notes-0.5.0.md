@@ -60,9 +60,10 @@ New Recordings are not stored under `metadata_only`. Switching an existing Proje
 
 In 0.5.0, `earshot.interruption.accepted` and `earshot.turn.cancelled` are reserved event
 names, not host-profile 0.2.0 fields that Earshot reads or validates. Cancellation reasons
-are not carried. A cancelled turn looks completed in the Call view unless another span has
-status `ERROR`; any `ERROR` span, including a stage, makes the Call outcome `error`. Hosted
-tokens cannot read raw span detail. See [outcome mapping](calls.md#mapping-interruption-turn-and-stage-outcomes).
+are not carried. An explicit `earshot.call.outcome` value takes precedence. When none is
+present, any span with status `ERROR`, including a stage span, makes the Call outcome
+`error`; otherwise, an ended cancelled Call appears `completed`. Hosted tokens cannot read
+raw span detail. See [outcome mapping](calls.md#mapping-interruption-turn-and-stage-outcomes).
 
 ## Platform Observe summary deprecation
 
