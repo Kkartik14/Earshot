@@ -355,6 +355,71 @@ describe("turns table", () => {
     expect(screen.getByRole("button", { name: "Play turn 2 from 0:11.8" })).toHaveFocus();
   });
 
+  it("moves focus to Turns when an open turn disappears on close without a Revision", () => {
+    const openCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(
+      openCall,
+      baseProjection.turns,
+      null,
+      "first_evidence",
+      base.first_evidence_unix_nano,
+    );
+    const opener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    opener.focus();
+    expect(opener).toHaveFocus();
+
+    const closedCall: CallDetail = { ...openCall, state: "closed" };
+    rerender(<CallViewBody call={closedCall} liveTurns={[]} liveRevision={null} />);
+
+    expect(screen.getByRole("heading", { name: "Turns" })).toHaveFocus();
+    expect(
+      screen.getByText(
+        "Turns are unavailable until a Revision captures the accepted evidence.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("restores focus when a closed Call moves turns into its current projection", async () => {
+    const openCall: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+    };
+    const { rerender } = renderCall(
+      openCall,
+      baseProjection.turns,
+      null,
+      baseProjection.axis_origin,
+      baseProjection.axis_origin_unix_nano,
+    );
+    const opener = within(rows()[0]).getByRole("button", { name: "LLM llm" });
+    opener.focus();
+    expect(opener).toHaveFocus();
+
+    const currentCall = withProjection({});
+    rerender(
+      <CallViewBody
+        call={currentCall}
+        liveRevision={currentCall.projection!.revision}
+        liveTurns={baseProjection.turns}
+        liveAxisOrigin={baseProjection.axis_origin}
+        liveAxisOriginUnixNano={baseProjection.axis_origin_unix_nano}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Turns" })).toHaveFocus(),
+    );
+  });
+
   it("keeps live turns on their own axis until matching audio and transcript are projected", () => {
     const staleCall = withProjection({ axis_origin: "recording_start" });
     staleCall.projection_state = "stale";

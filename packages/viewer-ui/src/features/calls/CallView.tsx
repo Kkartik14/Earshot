@@ -375,6 +375,7 @@ export function CallViewBody({
   const layout = useRef<HTMLDivElement>(null);
   const callTimeline = useRef<HTMLDivElement>(null);
   const unalignedNotice = useRef<HTMLParagraphElement>(null);
+  const hadProjection = useRef(projection != null);
   const timelineHadFocus = useRef(false);
   const wasUnaligned = useRef(false);
   const previousLiveAxisOrigin = useRef<string | null>(null);
@@ -426,6 +427,17 @@ export function CallViewBody({
     wasUnaligned.current = showUnalignedLiveTurns;
   }, [liveTurnsMatchProjection, projection?.revision, showUnalignedLiveTurns]);
   useEffect(() => {
+    const hasProjection = projection != null;
+    const projectionArrived = !hadProjection.current && hasProjection;
+    if (projectionArrived && timelineHadFocus.current) {
+      const active = document.activeElement;
+      if (active === document.body || active == null || !active.isConnected) {
+        callTimeline.current?.querySelector<HTMLElement>("[data-turns-heading]")?.focus();
+      }
+    }
+    hadProjection.current = hasProjection;
+  }, [projection != null]);
+  useEffect(() => {
     const origin = liveAxisOriginUnixNano;
     if (origin == null) return;
     const previous = previousLiveAxisOrigin.current;
@@ -451,7 +463,11 @@ export function CallViewBody({
       onBlurCapture={(event) => {
         const nextTarget = event.relatedTarget;
         const alignmentTransition = showUnalignedLiveTurns !== wasUnaligned.current;
-        if (alignmentTransition && (nextTarget == null || nextTarget === document.body)) {
+        const projectionTransition = hadProjection.current !== (projection != null);
+        if (
+          (alignmentTransition || projectionTransition) &&
+          (nextTarget == null || nextTarget === document.body)
+        ) {
           return;
         }
         if (nextTarget instanceof Node) {
