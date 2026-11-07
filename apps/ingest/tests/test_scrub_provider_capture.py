@@ -72,16 +72,18 @@ def test_guard_scans_distinct_values_for_duplicate_env_keys(tmp_path, monkeypatc
     assert not output.exists()
 
 
-def test_guard_scans_process_environment_credentials(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("fixture_secret", ["file-env-key-12345678", "process-env-key-123456789"])
+def test_guard_scans_same_name_file_and_process_credentials(
+    tmp_path, monkeypatch, fixture_secret: str
+) -> None:
     module = load_scrubber_module()
     env_file = tmp_path / "provider.env"
     env_file.write_text("CARTESIA_API_KEY=file-env-key-12345678\n")
     output = tmp_path / "fixture"
     output.mkdir()
-    secret = "process-env-key-123456789"
-    (output / "payload.json").write_text(secret)
+    (output / "payload.json").write_text(fixture_secret)
     monkeypatch.setattr(module, "ENV_FILES", [env_file])
-    monkeypatch.setenv("CARTESIA_API_KEY", secret)
+    monkeypatch.setenv("CARTESIA_API_KEY", "process-env-key-123456789")
 
     with pytest.raises(SystemExit, match="refusing to write"):
         module._guard(output, set())
