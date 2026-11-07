@@ -9,16 +9,24 @@ revisions, which are incidents, are hidden from a token that may not read calls.
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
+
+import pytest
 
 from captured_otlp import captured_requests
 from earshot.api import create_app
-from earshot.blobstore import LocalBlobStore
+from earshot.blobstore import BlobNotFoundError, LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
 from earshot.clock import ManualClock
+from earshot.signals.peaks import PeaksHeader
+from earshot.storage_analysis import AnalysisStore
+from earshot.storage_call_purge import CallPurger
 from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_closer import Closer
-from earshot.storage_recordings import RecordingStore
+from earshot.storage_recordings import RecordingManifest, RecordingStore
 from otlp_support import request, serve
 from store_support import catalog_rows, make_store
 from test_hosted_jwt import _hosted_config, _token, issuer  # noqa: F401  (issuer is a fixture)
@@ -48,9 +56,13 @@ CALL_OPERATIONS = (
     ("POST", "/v1/recordings", CALLS_WRITE),
     ("PUT", "/v1/recordings/user-1/content", CALLS_WRITE),
     ("GET", "/v1/recordings/user-1/content", CALLS_READ),
+    ("HEAD", "/v1/recordings/user-1/content", CALLS_READ),
     ("GET", "/v1/recordings/user-1/peaks", CALLS_READ),
+    ("HEAD", "/v1/recordings/user-1/peaks", CALLS_READ),
     ("GET", "/v1/recordings/user-1/rendition", CALLS_READ),
+    ("HEAD", "/v1/recordings/user-1/rendition", CALLS_READ),
     ("GET", "/v1/recordings/user-1/rendition/peaks", CALLS_READ),
+    ("HEAD", "/v1/recordings/user-1/rendition/peaks", CALLS_READ),
     ("GET", "/v1/calls", CALLS_READ),
     ("GET", f"/v1/calls/{CALL}", CALLS_READ),
     ("GET", f"/v1/calls/{CALL}/live-turns", CALLS_READ),
@@ -83,6 +95,72 @@ def _error_code(reply) -> str | None:
         return None
 
 
+def _store_recording(
+    store,
+    blobs: LocalBlobStore,
+    *,
+    project_id: str,
+    recording_id: str,
+    speaker: str,
+    session_key: str,
+    started_at_unix_nano: str = str(START),
+) -> str:
+    calls = CallStore(store)
+    recordings = RecordingStore(store, calls=calls, blobs=blobs)
+    recordings.create(
+        project_id,
+        RecordingManifest(
+            recording_id=recording_id,
+            session_key=session_key,
+            speaker=speaker,
+            content_type="audio/wav",
+            started_at_unix_nano=started_at_unix_nano,
+        ),
+    )
+    attempt = recordings.begin_upload(project_id, recording_id)
+    assert attempt.blob_key is not None
+    try:
+        body = wav(channels=1, seconds=0.5)
+        digest, size = put_stream(blobs, attempt.blob_key, [body])
+        stored = recordings.finish_upload(
+            project_id,
+            recording_id,
+            attempt.blob_key,
+            sha256=digest,
+            size=size,
+            duration_ms=500,
+        )
+        assert stored is not None
+        return stored.call_id
+    finally:
+        recordings.end_upload(project_id, attempt.blob_key)
+
+
+def _store_analysis_outputs(
+    store,
+    blobs: LocalBlobStore,
+    *,
+    peaks: bytes | None = None,
+) -> int:
+    analyses = AnalysisStore(store)
+    mono_peaks = peaks or PeaksHeader(16_000, 256, 1, 1).pack() + b"\x01\x02"
+    stored = 0
+    while (claim := analyses.claim()) is not None:
+        keys = analyses.output_keys(claim)
+        assert analyses.reserve_outputs(claim, keys)
+        put_stream(blobs, keys.peaks, [mono_peaks])
+        if keys.rendition is not None:
+            put_stream(blobs, keys.rendition, [b"fLaC\x00hosted-rendition"])
+        assert analyses.store_result(
+            claim,
+            keys,
+            {"peaks": {"channels": len(claim.recording.speakers)}},
+            rendition=keys.rendition is not None,
+        )
+        stored += 1
+    return stored
+
+
 def test_each_call_operation_is_granted_by_its_own_calls_scope_only(tmp_path, issuer) -> None:  # noqa: F811
     store = make_store(tmp_path)
     store.create_project("project-a", display_name="Project A")
@@ -95,7 +173,8 @@ def test_each_call_operation_is_granted_by_its_own_calls_scope_only(tmp_path, is
             others = [*GENERIC_SCOPES, *(other for other in CALL_SCOPES if other != scope)]
             refused = request(port, method, path, b"{}", headers=_headers(issuer, others))
             assert refused.status == 403, (method, path)
-            assert _error_code(refused) == "EARSHOT_SCOPE_REQUIRED", (method, path)
+            if method != "HEAD":
+                assert _error_code(refused) == "EARSHOT_SCOPE_REQUIRED", (method, path)
             assert f'scope="{scope}"' in refused.headers["www-authenticate"]
 
 
@@ -115,97 +194,163 @@ def test_the_closed_call_surfaces_stay_closed_whatever_the_token_grants(tmp_path
             assert _error_code(reply) == "EARSHOT_OPERATION_UNAVAILABLE", (method, path)
 
 
-def test_calls_read_does_not_make_a_metadata_only_recording_available(
+def test_a_recording_stays_readable_after_switching_to_metadata_only(
     tmp_path,
     issuer,  # noqa: F811
 ) -> None:
     store = make_store(tmp_path)
     store.create_project("project-a", display_name="Project A")
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    call_id = _store_recording(
+        store,
+        blobs,
+        project_id="project-a",
+        recording_id="user-1",
+        speaker="user",
+        session_key="call-private",
+    )
     store.set_capture_preset("project-a", "metadata_only")
-    writer = _headers(issuer, [CALLS_WRITE])
     reader = _headers(issuer, [CALLS_READ])
-    manifest = {
-        "recording_id": "user-1",
-        "session_key": "call-private",
-        "speaker": "user",
-        "content_type": "audio/wav",
-        "started_at_unix_nano": str(START),
-    }
 
-    with serve(create_app(store=store, config=_hosted_config(issuer))) as port:
-        created = request(
-            port,
-            "POST",
-            "/v1/recordings",
-            json.dumps(manifest).encode(),
-            headers=writer,
+    with serve(create_app(store=store, config=_hosted_config(issuer), blob_store=blobs)) as port:
+        content = request(port, "GET", "/v1/recordings/user-1/content", headers=reader)
+
+    assert call_id
+    assert content.status == 200 and content.body == wav(channels=1, seconds=0.5)
+
+
+def test_hosted_reads_stream_peaks_and_stereo_renditions(tmp_path, issuer) -> None:  # noqa: F811
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    call_id = _store_recording(
+        store,
+        blobs,
+        project_id="project-a",
+        recording_id="user-1",
+        speaker="user",
+        session_key="paired-call",
+    )
+    assert (
+        _store_recording(
+            store,
+            blobs,
+            project_id="project-a",
+            recording_id="agent-1",
+            speaker="agent",
+            session_key="paired-call",
         )
-        content = request(
+        == call_id
+    )
+    assert _store_analysis_outputs(store, blobs) == 2
+    reader = _headers(issuer, [CALLS_READ])
+    expected_peaks = PeaksHeader(16_000, 256, 1, 1).pack() + b"\x01\x02"
+    expected_pair_peaks = PeaksHeader(16_000, 256, 1, 2).pack() + b"\x01\x02\x01\x02"
+
+    with serve(create_app(store=store, config=_hosted_config(issuer), blob_store=blobs)) as port:
+        content = request(port, "GET", "/v1/recordings/user-1/content", headers=reader)
+        peaks = request(port, "GET", "/v1/recordings/user-1/peaks", headers=reader)
+        rendition = request(port, "GET", "/v1/recordings/user-1/rendition", headers=reader)
+        rendition_peaks = request(
+            port, "GET", "/v1/recordings/user-1/rendition/peaks", headers=reader
+        )
+        head_content = request(port, "HEAD", "/v1/recordings/user-1/content", headers=reader)
+        head_peaks = request(port, "HEAD", "/v1/recordings/user-1/peaks", headers=reader)
+        head_rendition = request(port, "HEAD", "/v1/recordings/user-1/rendition", headers=reader)
+        head_rendition_peaks = request(
+            port, "HEAD", "/v1/recordings/user-1/rendition/peaks", headers=reader
+        )
+
+    assert content.status == 200 and content.body == wav(channels=1, seconds=0.5)
+    assert content.headers["cache-control"] == "no-store"
+    assert content.headers["x-content-type-options"] == "nosniff"
+    assert peaks.status == 200 and peaks.body == expected_peaks
+    assert rendition.status == 200 and rendition.body == b"fLaC\x00hosted-rendition"
+    assert rendition.headers["x-content-type-options"] == "nosniff"
+    assert rendition_peaks.status == 200 and rendition_peaks.body == expected_pair_peaks
+    for head, reply in (
+        (head_content, content),
+        (head_peaks, peaks),
+        (head_rendition, rendition),
+        (head_rendition_peaks, rendition_peaks),
+    ):
+        assert head.status == reply.status == 200 and head.body == b""
+        for header in ("content-type", "content-length", "cache-control", "etag"):
+            assert head.headers.get(header) == reply.headers.get(header), header
+
+
+def test_rendition_reads_are_scoped_to_the_recording_project(tmp_path, issuer) -> None:  # noqa: F811
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    store.create_project("project-b", display_name="Project B")
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    _store_recording(
+        store,
+        blobs,
+        project_id="project-b",
+        recording_id="user-1",
+        speaker="user",
+        session_key="project-b-call",
+    )
+    _store_recording(
+        store,
+        blobs,
+        project_id="project-b",
+        recording_id="agent-1",
+        speaker="agent",
+        session_key="project-b-call",
+    )
+    _store_analysis_outputs(store, blobs)
+
+    def project_headers(project_id: str):
+        return {
+            "Authorization": f"Bearer {_token(issuer, project_id=project_id, scope=CALLS_READ)}"
+        }
+
+    with serve(create_app(store=store, config=_hosted_config(issuer), blob_store=blobs)) as port:
+        allowed = request(
             port,
             "GET",
-            "/v1/recordings/user-1/content",
-            headers=reader,
+            "/v1/recordings/user-1/rendition",
+            headers=project_headers("project-b"),
         )
-        peaks = request(
+        hidden = request(
             port,
             "GET",
-            "/v1/recordings/user-1/peaks",
-            headers=reader,
+            "/v1/recordings/user-1/rendition",
+            headers=project_headers("project-a"),
         )
 
-    assert created.status == 422 and _error_code(created) == "EARSHOT_PRESET_FORBIDS_MEDIA"
-    assert (content.status, content.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
-    assert (peaks.status, peaks.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
-    assert catalog_rows(tmp_path, "SELECT count(*) FROM calls") == [(0,)]
-    assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
+    assert allowed.status == 200 and allowed.body == b"fLaC\x00hosted-rendition"
+    assert (hidden.status, hidden.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
 
 
 def test_call_delete_removes_hosted_audio_reads_and_the_blob(tmp_path, issuer) -> None:  # noqa: F811
     store = make_store(tmp_path)
     store.create_project("project-a", display_name="Project A")
     blob_root = tmp_path / "blobs"
-    app = create_app(
-        store=store,
-        config=_hosted_config(issuer),
-        blob_store=LocalBlobStore(blob_root),
+    blobs = LocalBlobStore(blob_root)
+    call_id = _store_recording(
+        store,
+        blobs,
+        project_id="project-a",
+        recording_id="user-1",
+        speaker="user",
+        session_key="call-audio",
     )
-    writer = _headers(issuer, [CALLS_WRITE])
+    assert _store_analysis_outputs(store, blobs) == 1
+    app = create_app(store=store, config=_hosted_config(issuer), blob_store=blobs)
     reader = _headers(issuer, [CALLS_READ])
     deleter = _headers(issuer, [CALLS_DELETE])
-    manifest = {
-        "recording_id": "user-1",
-        "session_key": "call-audio",
-        "speaker": "user",
-        "content_type": "audio/wav",
-        "started_at_unix_nano": str(START),
-    }
 
     with serve(app) as port:
-        created = request(
-            port,
-            "POST",
-            "/v1/recordings",
-            json.dumps(manifest).encode(),
-            headers=writer,
-        )
-        uploaded = request(
-            port,
-            "PUT",
-            created.json()["upload_path"],
-            wav(channels=1, seconds=0.5),
-            headers={**writer, "Content-Type": "audio/wav"},
-        )
-        [(call_id,)] = catalog_rows(
-            tmp_path,
-            "SELECT call_id FROM recordings WHERE project_id = ? AND recording_id = ?",
-            ("project-a", "user-1"),
-        )
         before = request(
             port,
             "GET",
             "/v1/recordings/user-1/content",
             headers=reader,
         )
+        peaks_before = request(port, "GET", "/v1/recordings/user-1/peaks", headers=reader)
         deleted = request(port, "DELETE", f"/v1/calls/{call_id}", headers=deleter)
         after = request(
             port,
@@ -213,14 +358,134 @@ def test_call_delete_removes_hosted_audio_reads_and_the_blob(tmp_path, issuer) -
             "/v1/recordings/user-1/content",
             headers=reader,
         )
+        peaks_after = request(port, "GET", "/v1/recordings/user-1/peaks", headers=reader)
 
-    assert created.status == 201, created.body
-    assert uploaded.status == 200, uploaded.body
     assert before.status == 200 and before.body
+    assert peaks_before.status == 200 and peaks_before.body
     assert (deleted.status, deleted.body) == (204, b"")
     assert (after.status, after.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
+    assert (peaks_after.status, peaks_after.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND")
     assert catalog_rows(tmp_path, "SELECT count(*) FROM recordings") == [(0,)]
     assert not [path for path in blob_root.rglob("*") if path.is_file()]
+
+
+@pytest.mark.parametrize("media", ["content", "peaks"])
+def test_a_media_read_racing_call_purge_answers_404(
+    tmp_path,
+    issuer,  # noqa: F811
+    monkeypatch,
+    media,
+) -> None:
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    call_id = _store_recording(
+        store,
+        blobs,
+        project_id="project-a",
+        recording_id="user-1",
+        speaker="user",
+        session_key="purge-race",
+    )
+    assert _store_analysis_outputs(store, blobs) == 1
+    purger = CallPurger(
+        store,
+        calls=CallStore(store),
+        recordings=RecordingStore(store, calls=CallStore(store), blobs=blobs),
+    )
+
+    def deleted_before_blob_open(_self, _key, _start, _end):
+        purger.purge_call("project-a", call_id)
+        raise BlobNotFoundError("concurrent Call deletion")
+
+    monkeypatch.setattr(LocalBlobStore, "open_range", deleted_before_blob_open)
+    path = f"/v1/recordings/user-1/{media}"
+    with serve(create_app(store=store, config=_hosted_config(issuer), blob_store=blobs)) as port:
+        reply = request(port, "GET", path, headers=_headers(issuer, [CALLS_READ]))
+
+    assert (reply.status, reply.problem_code()) == (404, "EARSHOT_RECORDING_NOT_FOUND"), reply.body
+
+
+def test_peaks_response_refuses_an_oversized_derived_blob(tmp_path, issuer) -> None:  # noqa: F811
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    _store_recording(
+        store,
+        blobs,
+        project_id="project-a",
+        recording_id="user-1",
+        speaker="user",
+        session_key="oversized-peaks",
+    )
+    oversized_peaks = b"x" * (8 * 1024 * 1024 + 1)
+    assert _store_analysis_outputs(store, blobs, peaks=oversized_peaks) == 1
+
+    with serve(create_app(store=store, config=_hosted_config(issuer), blob_store=blobs)) as port:
+        reply = request(
+            port,
+            "GET",
+            "/v1/recordings/user-1/peaks",
+            headers=_headers(issuer, [CALLS_READ]),
+        )
+
+    assert (reply.status, reply.problem_code()) == (500, "EARSHOT_PEAKS_TOO_LARGE")
+
+
+def test_media_reads_have_a_configured_concurrency_limit(
+    tmp_path,
+    issuer,  # noqa: F811
+    monkeypatch,
+) -> None:
+    store = make_store(tmp_path)
+    store.create_project("project-a", display_name="Project A")
+    blobs = LocalBlobStore(tmp_path / "blobs")
+    _store_recording(
+        store,
+        blobs,
+        project_id="project-a",
+        recording_id="user-1",
+        speaker="user",
+        session_key="limited-reads",
+    )
+    config = replace(_hosted_config(issuer), media_read_max_concurrent_requests=1)
+    entered = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+    opens = 0
+    open_range = LocalBlobStore.open_range
+
+    def hold_first_read(self, key, start, end):
+        nonlocal opens
+        with lock:
+            opens += 1
+            first = opens == 1
+        if first:
+            entered.set()
+            assert release.wait(5)
+        return open_range(self, key, start, end)
+
+    monkeypatch.setattr(LocalBlobStore, "open_range", hold_first_read)
+    headers = _headers(issuer, [CALLS_READ])
+    with (
+        serve(create_app(store=store, config=config, blob_store=blobs)) as port,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        pending = executor.submit(
+            request, port, "GET", "/v1/recordings/user-1/content", headers=headers
+        )
+        assert entered.wait(5)
+        try:
+            second = request(port, "GET", "/v1/recordings/user-1/content", headers=headers)
+        finally:
+            release.set()
+        first = pending.result(timeout=5)
+        after = request(port, "GET", "/v1/recordings/user-1/content", headers=headers)
+
+    assert first.status == 200
+    assert (second.status, second.problem_code()) == (503, "EARSHOT_MEDIA_READ_LIMIT")
+    assert second.headers["retry-after"] == "1"
+    assert after.status == 200
 
 
 def test_an_operation_missing_from_the_table_fails_closed(tmp_path, issuer) -> None:  # noqa: F811
@@ -259,6 +524,15 @@ def test_the_hosted_contract_lists_the_call_operations_with_their_scopes(tmp_pat
     }
     for (method, path), scope in templates.items():
         assert paths[path][method]["x-required-scope"] == scope, (method, path)
+    media_paths = (
+        "/v1/recordings/{recording_id}/content",
+        "/v1/recordings/{recording_id}/peaks",
+        "/v1/recordings/{recording_id}/rendition",
+        "/v1/recordings/{recording_id}/rendition/peaks",
+    )
+    for path in media_paths:
+        retry_after = paths[path]["get"]["responses"]["503"]["headers"]["Retry-After"]
+        assert retry_after["schema"]["minimum"] == 1, path
     for path in (
         "/v1/calls/{call_id}/spans/{trace_id}/{span_id}",
         "/v1/recordings/{recording_id}",

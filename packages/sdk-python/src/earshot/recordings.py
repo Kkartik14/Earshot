@@ -465,6 +465,10 @@ class RangeNotSatisfiable(ValueError):
     """The one requested range lies past the end of the object (416)."""
 
 
+class EmptySuffixRange(RangeNotSatisfiable):
+    """A suffix range asked for zero bytes, so it cannot select any bytes."""
+
+
 class RangeTooLong(RangeNotSatisfiable):
     """The ``Range`` header is longer than ``MAX_RANGE_HEADER_LENGTH`` (416): no
     single range needs that much, so it is refused before it is read."""
@@ -517,7 +521,9 @@ def parse_byte_range(header: str | None, size: int) -> ByteRange | None:
         return None
     if first == "":
         suffix = _position(last)
-        if suffix == 0 or size == 0:
+        if suffix == 0:
+            raise EmptySuffixRange("a suffix range must request at least one byte")
+        if size == 0:
             raise RangeNotSatisfiable("an empty suffix range")
         return ByteRange(max(0, size - suffix), size)
     start = _position(first)

@@ -80,9 +80,10 @@ waveform peaks, or a generated stereo rendition only from the token's signed Pro
 These routes do not expose blob-store URLs. A `metadata_only` Project refuses Recordings
 before they are stored; a read scope cannot bypass that preset. Previously stored
 full-capture audio remains available until retention or explicit deletion; changing a
-preset does not retroactively purge it. Call and Project deletion remove the recording
-blobs, peaks, analyses and their catalog rows, and subsequent reads cannot retrieve the
-deleted data.
+preset does not retroactively purge it. Earshot does not record end-user media-read audit
+events; the host proxy is responsible for that audit trail. Call and Project deletion
+remove the recording blobs, peaks, analyses and their catalog rows, and subsequent reads
+cannot retrieve the deleted data.
 
 `redacted` is reserved. Asking for it is refused with `EARSHOT_PRESET_UNAVAILABLE`. There
 is no redaction engine, and a regex masker would give a false sense of safety. A Project

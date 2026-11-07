@@ -486,6 +486,16 @@ preset kept when the span arrived. `Cache-Control: no-store`.
 
 Use the paths `projection.media[]` gives rather than building them.
 
+Hosted reads require `earshot:calls:read` and stay scoped to the token's signed Project.
+Successful audio and rendition streams use `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff`; range errors also use `no-store`. Peaks are private
+and revalidated by ETag. A peaks response is limited to 8 MiB, and concurrent media reads
+are bounded. A `HEAD` request uses the same authorization and response headers as its
+`GET`, without a response body.
+Stored audio remains readable after a switch to `metadata_only`; the preset applies to
+new evidence and does not retroactively erase a Recording. Earshot does not create
+end-user access audit records for these reads; the host proxy owns that audit trail.
+
 ## Prices
 
 Built-in prices ship with Earshot: regular, dated list prices for Deepgram, Groq, OpenAI,
