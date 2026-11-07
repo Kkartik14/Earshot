@@ -115,6 +115,80 @@ Every 0.2.0 field is kept. `projection` adds:
 Unknown is `null`, never `0`. The response is `Cache-Control: no-store` with a strong
 `ETag`; `If-None-Match` with it answers 304.
 
+## Live turns for an open Call: `GET /v1/calls/<call_id>/live-turns`
+
+The target is API 0.17.0 in the 0.5.0 line. This additive, read-only route requires
+`earshot:calls:read` in hosted mode; the existing detail route and its response stay
+unchanged. A 200 response contains `call_id`, `state` (`open` or `closed`), `revision`
+(null while open; the latest Revision number after close) and `turns[]`. Each turn has
+the same fields and meaning as `projection.turns[]` above. The response also carries
+`axis_origin_unix_nano` and `axis_origin`, which define the origin for its `*_ms` values.
+Both are null for a closed Call without a Revision, whose response has no projection. While
+a Call is open, newly stored Recordings can change which evidence defines the origin, and
+later evidence may have an earlier timestamp. Times may therefore re-base between
+responses; render each response against its own origin. `state` describes the Call; there
+is no separate per-turn `finished` flag.
+
+While the Call is open, the route runs the existing Call projector over the Call's
+accepted, stored spans after the project's capture-preset filtering. It returns a turn
+only when its parent turn span has arrived: `turn` for Pipecat and the host profile, or
+`agent_turn` for LiveKit. It does not infer turns from child spans. The parent span is
+final when exported; later accepted children may fill in more projected fields. Until
+those children arrive, unobserved values keep the projector's existing null or
+`not_measurable` meanings. The route does not persist a provisional projection or create
+a Revision.
+
+After the Call closes, the route uses the same projector over only the evidence held by
+the latest durable Revision; it does not include evidence that the Revision did not
+capture. Once the durable projection is current, the route's `turns[]` match it field
+for field. A turn's `spans[]` contains only the existing projected summaries (IDs, name,
+role, status and times); it never includes
+raw span attributes or events. The route never includes audio, transcript or prices.
+Missing and purged Calls answer the same 404 `EARSHOT_CALL_NOT_FOUND` as the detail
+route.
+
+Responses are `Cache-Control: no-store` and carry a strong `ETag`; matching
+`If-None-Match` answers 304. The validator is tied to the same input snapshot as the
+response and changes when a new span is stored for the Call, including a later child
+that enriches an already returned turn, even if that child does not change the current
+JSON fields. Hosts can poll every two seconds. The ETag rarely matches while a Call is
+live and spans continue to arrive; it is most useful when the input snapshot is quiet.
+The target is at most 1 s p95 from accepted span to route visibility and at most 5 s p95
+from runtime turn end to the host UI at that polling interval.
+
+**Local capacity measurement (2026-11-07).** On SQLite, each Call held 300 or 1,000
+synthetic turns. For 12 seconds, an emitter accepted about one additional unprojected
+six-span turn per second while 16 or 32 viewers polled every two seconds, with poll start times
+staggered evenly across each two-second interval. Route latency is the HTTP request
+through reading the full 200 body. Emitter latency starts immediately before the
+loopback `/v1/traces` POST and ends after reading its response body, so it includes
+the OTLP/HTTP request and server ingestion; protobuf request construction and
+serialization happen before the timer starts.
+
+| Turns | Viewers | Route 200 p95 | Route 200 max | Emitter ack p95 | Emitter ack max |
+| ----: | ------: | ------------: | ------------: | --------------: | --------------: |
+|   300 |      16 |       35.8 ms |       70.2 ms |         19.5 ms |         23.9 ms |
+|   300 |      32 |       32.9 ms |       56.9 ms |          8.8 ms |         11.8 ms |
+| 1,000 |      16 |      105.9 ms |      116.4 ms |         10.0 ms |         12.3 ms |
+| 1,000 |      32 |      109.4 ms |      173.5 ms |         11.9 ms |         15.5 ms |
+
+Percentiles use inclusive linear interpolation. Each emitter case has 12 acknowledgements;
+the route cases have 96 or 192 complete 200 responses. All emitter requests returned 200.
+The live-turn bodies were 250,460 bytes (244.6 KiB) at 300 turns and 837,061 bytes
+(817.4 KiB) at 1,000. With a stable input snapshot, cached 200 responses had a 1.4 ms
+median at 300 turns and 1.6 ms at 1,000; conditional 304 responses had 1.12 ms and
+1.28 ms medians, respectively. Every poll in the concurrent runs returned 200 because
+the emitter changed the ETag between polls. In the 1,000-turn, 32-viewer case, 192 full
+bodies over 12 seconds represent about 107 Mbps of response-body egress per continuously
+changing Call, before HTTP overhead. This short local SQLite run describes the measured
+workstation envelope; it does not model a hosted deployment or replace the accepted-span
+visibility target above.
+
+The bundled viewer polls this route every two seconds while `state` is `open`. When it
+becomes `closed`, the viewer stops live polling and refreshes Call detail. It keeps
+showing these Revision turns while detail's projection is absent or stale, then switches
+to the durable detail projection when `projection_state` is `current`.
+
 ### The audible gap at the agent
 
 For each turn, the gap from the end of the user's speech to the start of the agent's
@@ -335,11 +409,11 @@ new row reprices the affected calls in the background.
 In `hosted_jwt` mode a host reaches the Calls with three scopes of their own, which the
 generic incident scopes never grant:
 
-| Scope                  | Operations                                                                                |
-| ---------------------- | ----------------------------------------------------------------------------------------- |
-| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`     |
-| `earshot:calls:read`   | `GET /v1/calls`, `GET /v1/calls/{call_id}`, `POST /v1/calls:resolve`, `GET /v1/dashboard` |
-| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                              |
+| Scope                  | Operations                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`                                           |
+| `earshot:calls:read`   | `GET /v1/calls`, `GET /v1/calls/{call_id}`, `GET /v1/calls/{call_id}/live-turns`, `POST /v1/calls:resolve`, `GET /v1/dashboard` |
+| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                                                                    |
 
 Every other Call surface stays closed in hosted mode and answers 403
 `EARSHOT_OPERATION_UNAVAILABLE` for every method: a span's raw attributes
