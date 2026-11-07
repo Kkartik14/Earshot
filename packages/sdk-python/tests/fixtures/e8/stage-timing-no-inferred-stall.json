@@ -2,13 +2,24 @@
   "metadata": {
     "case": "direct_stage_windows_and_errors_only",
     "source_facts": {
-      "llm-span": { "duration_ms": 5000, "status": "unset" },
-      "tts-span": { "duration_ms": 500, "status": "error" }
+      "turn-stages": {
+        "status": "unset",
+        "events": [],
+        "stages": {
+          "llm": { "duration_ms": 5000, "status": "unset" },
+          "tts": { "duration_ms": 500, "status": "error" }
+        }
+      }
     }
   },
   "request": {
     "resourceSpans": [
       {
+        "resource": {
+          "attributes": [
+            { "key": "earshot.session.id", "value": { "stringValue": "e8-stages" } }
+          ]
+        },
         "scopeSpans": [
           {
             "scope": { "name": "earshot.host", "version": "0.2.0" },
@@ -20,7 +31,8 @@
                 "startTimeUnixNano": "7000000000",
                 "endTimeUnixNano": "14000000000",
                 "attributes": [
-                  { "key": "earshot.turn.id", "value": { "stringValue": "turn-stages" } }
+                  { "key": "earshot.turn.id", "value": { "stringValue": "turn-stages" } },
+                  { "key": "earshot.call.ended", "value": { "boolValue": true } }
                 ],
                 "status": { "code": 0 }
               },

@@ -4,11 +4,20 @@
     "source_configuration": {
       "turn-allow": { "interruption_policy_mode": "allow" },
       "turn-graceful": { "interruption_policy_mode": "graceful" }
+    },
+    "source_facts": {
+      "turn-allow": { "status": "unset", "events": ["earshot.interruption.accepted"] },
+      "turn-graceful": { "status": "unset", "events": ["earshot.interruption.accepted"] }
     }
   },
   "request": {
     "resourceSpans": [
       {
+        "resource": {
+          "attributes": [
+            { "key": "earshot.session.id", "value": { "stringValue": "e8-policy" } }
+          ]
+        },
         "scopeSpans": [
           {
             "scope": { "name": "earshot.host", "version": "0.2.0" },
@@ -40,6 +49,10 @@
                   {
                     "key": "earshot.turn.id",
                     "value": { "stringValue": "turn-graceful" }
+                  },
+                  {
+                    "key": "earshot.call.ended",
+                    "value": { "boolValue": true }
                   }
                 ],
                 "events": [

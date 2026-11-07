@@ -1,11 +1,19 @@
 {
   "metadata": {
     "case": "direct_failure_is_error_and_cancellation_is_not",
-    "source_facts": { "turn-failed": "failed", "turn-cancelled": "cancelled" }
+    "source_facts": {
+      "turn-failed": { "status": "error", "events": [] },
+      "turn-cancelled": { "status": "unset", "events": ["earshot.turn.cancelled"] }
+    }
   },
   "request": {
     "resourceSpans": [
       {
+        "resource": {
+          "attributes": [
+            { "key": "earshot.session.id", "value": { "stringValue": "e8-failure" } }
+          ]
+        },
         "scopeSpans": [
           {
             "scope": { "name": "earshot.host", "version": "0.2.0" },
@@ -31,6 +39,10 @@
                   {
                     "key": "earshot.turn.id",
                     "value": { "stringValue": "turn-cancelled" }
+                  },
+                  {
+                    "key": "earshot.call.ended",
+                    "value": { "boolValue": true }
                   }
                 ],
                 "events": [

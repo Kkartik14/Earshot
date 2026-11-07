@@ -2,13 +2,21 @@
   "metadata": {
     "case": "accepted_barge_in_and_unobserved_acceptance",
     "source_facts": {
-      "turn-accepted": { "interruption": "accepted:barge_in", "terminal": "cancelled" },
-      "turn-unobserved": { "interruption": "not_observed", "terminal": "cancelled" }
+      "turn-accepted": {
+        "status": "unset",
+        "events": ["earshot.interruption.accepted", "earshot.turn.cancelled"]
+      },
+      "turn-unobserved": { "status": "unset", "events": ["earshot.turn.cancelled"] }
     }
   },
   "request": {
     "resourceSpans": [
       {
+        "resource": {
+          "attributes": [
+            { "key": "earshot.session.id", "value": { "stringValue": "e8-barge-in" } }
+          ]
+        },
         "scopeSpans": [
           {
             "scope": { "name": "earshot.host", "version": "0.2.0" },
@@ -48,6 +56,10 @@
                   {
                     "key": "earshot.turn.id",
                     "value": { "stringValue": "turn-unobserved" }
+                  },
+                  {
+                    "key": "earshot.call.ended",
+                    "value": { "boolValue": true }
                   }
                 ],
                 "events": [

@@ -54,6 +54,14 @@ If TVIC can no longer use its local monotonic session clock at terminalization, 
 estimate elapsed time from persisted wall timestamps; the resulting evidence is marked
 `estimated` and has no asserted clock uncertainty.
 
+## TVIC interruption policy settings
+
+In the current TVIC runtime, `allow` and `graceful` use the same interrupt path;
+`ignore` is the special case. `minSpeechMs` and `trimOutputOnInterrupt` are separate
+settings. These are TVIC source-configuration details, not host-profile outcomes: a
+policy setting does not prove that an interruption was accepted. Earshot 0.5.0 does not
+read the reserved `earshot.interruption.accepted` or `earshot.turn.cancelled` events.
+
 A `turn.end` with `terminal_persisted: false` records partial terminal-persistence
 coverage but does not close the observed turn or emit its canonical end/latency events.
 A later persisted `turn.end` supplies those events; if none arrives, close retains the

@@ -18,13 +18,25 @@ CASES = (
     "stage-timing-no-inferred-stall.json",
 )
 PAYLOAD_KEYS = {
+    "speech.text",
+    "gen_ai.input",
+    "gen_ai.output",
+    "gen_ai.input.user_message",
+    "gen_ai.input.system_instruction",
     "earshot.transcript.text",
     "gen_ai.input.messages",
     "gen_ai.output.messages",
     "gen_ai.prompt",
     "gen_ai.completion",
+    "gen_ai.request.prompt",
+    "gen_ai.response.content",
     "audio.content",
     "recording.content",
+    "text",
+    "input",
+    "output",
+    "prompt",
+    "completion",
 }
 
 
@@ -63,6 +75,8 @@ def _attribute_keys(case: dict[str, Any]) -> set[str]:
                 keys.update(attribute["key"] for attribute in span.get("attributes", []))
                 for event in span.get("events", []):
                     keys.update(attribute["key"] for attribute in event.get("attributes", []))
+                for link in span.get("links", []):
+                    keys.update(attribute["key"] for attribute in link.get("attributes", []))
     return keys
 
 
@@ -74,10 +88,12 @@ def test_each_e8_case_is_valid_profile_0_2_and_payload_free(name: str) -> None:
     assert report.valid, (name, report.as_dict())
     assert report.host_profile_versions == ("0.2.0",)
     assert all(span["name"] in {"turn", "llm", "tts"} for span in _spans(case))
-    assert not _attribute_keys(case).intersection(PAYLOAD_KEYS), name
+    keys = _attribute_keys(case)
+    assert not keys.intersection(PAYLOAD_KEYS), name
+    assert not any(key.startswith("lk.pii.") for key in keys), name
 
 
-def test_barge_in_and_cancellation_remain_separate_observations() -> None:
+def test_reserved_event_labels_remain_distinct_in_raw_fixtures() -> None:
     by_turn = {_turn_id(span): span for span in _spans(_load(CASES[0]))}
 
     assert {event["name"] for event in by_turn["turn-accepted"]["events"]} == {
