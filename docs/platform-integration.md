@@ -135,9 +135,12 @@ contains retained session metadata without Platform-specific labels or links. Th
 Platform Observe adapter is optional and remains disabled unless explicitly enabled in
 `hosted_jwt` mode.
 
+The Platform route accepts an optional `record_id` filter for one source session; the
+generic route does not accept this filter.
+
 Starting with API 0.17.0 (Earshot 0.5.0), the Platform-specific route is deprecated in
 favor of the generic summary route. It remains available through 0.5.x; removal is
-planned for 0.6.0. No calendar removal date has been set, so Earshot does not send a
+planned for 0.6.0 ([#77](https://github.com/Kkartik14/Earshot/issues/77)). No calendar removal date has been set, so Earshot does not send a
 `Sunset` header. The route's `Link` response header points here on every GET response,
 including authentication failures. The RFC 9745 `Deprecation` header is
 `@1794528000` (2026-11-13T00:00:00Z), the proposed 0.5.0 release date. Earshot

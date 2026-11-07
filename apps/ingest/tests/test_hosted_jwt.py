@@ -1861,8 +1861,9 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
 
     assert response.status_code == 200
     assert response.headers["Link"] == (
-        "<https://github.com/Kkartik14/Earshot/blob/main/docs/platform-integration.md"
-        '#generic-and-platform-summaries>; rel="deprecation"; type="text/html"'
+        "<https://github.com/Kkartik14/Earshot/blob/v0.5.0/docs/platform-integration.md"
+        '#generic-and-platform-summaries>; rel="deprecation"; type="text/html", '
+        f'</v1/projects/{project_id}/summary>; rel="successor-version"'
     )
     assert response.headers["Deprecation"] == "@1794528000"
     assert "Sunset" not in response.headers
@@ -1870,6 +1871,11 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     assert item["id"] == bundle.profile.session.session_id
     assert item["href"].startswith("/observe?")
     assert SECRET_SENTINEL not in response.text
+
+    generic = client.get(f"/v1/projects/{project_id}/summary", headers=headers)
+    assert generic.status_code == 200
+    assert "Deprecation" not in generic.headers
+    assert "Link" not in generic.headers
 
     unauthorized = client.get(f"/v1/platform/projects/{project_id}/observe/summary")
     assert unauthorized.status_code == 401
@@ -1919,6 +1925,14 @@ def test_platform_summary_adapter_is_opt_in_and_uses_signed_project_id(tmp_path,
     assert absent.status_code == 404
     assert "Link" not in absent.headers
     assert "Deprecation" not in absent.headers
+
+    prefixed_but_unmatched = client.get(
+        f"/v1/platform/projects/{project_id}/observe/summary/extra",
+        headers=headers,
+    )
+    assert prefixed_but_unmatched.status_code in (403, 404)
+    assert "Link" not in prefixed_but_unmatched.headers
+    assert "Deprecation" not in prefixed_but_unmatched.headers
 
 
 def test_hosted_openapi_publishes_scope_requirements_and_hides_operator_auth(

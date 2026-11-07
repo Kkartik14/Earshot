@@ -19,6 +19,9 @@ are described in their [GitHub release notes](https://github.com/Kkartik14/Earsh
 
 ### Changed
 
+- **Platform Observe summary route deprecated.** Migrate to the host-neutral project
+  summary. The deprecated route links to its successor and migration guide; the 0.6.0
+  removal date is not set, so it has no `Sunset` header.
 - **Host outcome evidence.** The host profile does not read interruption or cancellation
   events in 0.5.0, and does not carry cancellation reasons. The Call outcome is `error` if
   any span has OTel status `ERROR`; otherwise an ended cancelled Call appears `completed`.
