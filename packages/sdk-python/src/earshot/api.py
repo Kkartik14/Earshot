@@ -38,6 +38,7 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
+    WithJsonSchema,
 )
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -598,14 +599,20 @@ class CostItemResponse(ApiModel):
     """One cost item. ``priced`` and ``estimated`` items cost ``quantity`` units of
     ``unit`` at the price row ``price_id`` (``price_nano_usd`` per ``per_quantity``),
     rounded half up to a whole nano-USD; ``no_price`` has usage and no price row;
-    ``not_reported`` has no usage. ``span`` is where the usage was read, if one span."""
+    ``not_reported`` has no usage. ``quantity`` is null when the exact stored quantity
+    cannot round-trip through a finite API number, or while a legacy projection awaits
+    recomputation with exact quantity conversion. ``span`` is where the usage was read,
+    if one span."""
 
     status: Literal["priced", "no_price", "not_reported", "estimated"]
     operation: Literal["llm", "stt", "tts", "realtime"]
     provider: str | None
     model: str | None
     unit: str | None
-    quantity: float | None
+    quantity: Annotated[
+        int | float | None,
+        WithJsonSchema({"anyOf": [{"type": "number"}, {"type": "null"}], "title": "Quantity"}),
+    ]
     price_id: int | None
     price_nano_usd: int | None
     per_quantity: int | None

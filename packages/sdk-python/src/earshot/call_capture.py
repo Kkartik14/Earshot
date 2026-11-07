@@ -53,6 +53,7 @@ from .privacy import (
     is_safe_metadata_key,
     memoize_short_keys,
 )
+from .versions import LEGACY_HOST_PROFILE_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Hashable, Iterable
@@ -111,6 +112,16 @@ SESSION_SPANS = frozenset(
 LIVEKIT_SCOPE = "livekit-agents"
 # The host span profile (``call_span_facts``).
 HOST_SCOPE = "earshot.host"
+
+
+def host_profile_scope_version(scope: Any) -> str | None:
+    """The version declared by a host scope; OTLP's empty default is legacy 0.1.0."""
+
+    if getattr(scope, "name", None) != HOST_SCOPE:
+        return None
+    return getattr(scope, "version", "") or LEGACY_HOST_PROFILE_VERSION
+
+
 LIVEKIT_KEY_PREFIX = "lk."
 # Post-call LiveKit job/session spans are stored but cannot dirty or extend a closed call.
 # ``agent_session`` remains an end marker for versions without ``session_close``.

@@ -12,7 +12,6 @@ One test makes the database refuse a call's projection with a real trigger on
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -32,28 +31,23 @@ from captured_livekit_otlp import (
 from captured_otlp import CAPTURED_SESSION_KEY, captured_manifest, captured_requests
 from earshot import storage_schema
 from earshot.api import _live_turns_etag, create_app
-from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
 from earshot.call_projection import CALL_PROJECTION_VERSION, compute_projection
-from earshot.clock import ManualClock
 from earshot.pricing_defaults import BUILTIN_PRICES
-from earshot.storage_analysis import AnalysisRunner, AnalysisStore
 from earshot.storage_call_projections import (
     COLUMN_RANGES,
     PROJECTION_RETRY_SECONDS,
     PROJECTION_WRITE_REFUSED,
     TRANSCRIPT_TIME_RANGE,
-    CallProjector,
-    projection_job,
 )
 from earshot.storage_call_purge import CallPurger
-from earshot.storage_call_reads import CallFilters, CallReads
-from earshot.storage_calls import CallStore, CallTimings
-from earshot.storage_closer import Closer
+from earshot.storage_call_reads import CallFilters
+from earshot.storage_calls import CallTimings
+from earshot.storage_dashboard import DashboardQuery, DashboardReads
 from earshot.storage_prices import NewPrice, PriceStore
-from earshot.storage_recordings import RecordingManifest, RecordingStore
 from otlp_support import make_request, make_span, serve, string_attribute
 from otlp_support import request as http_request
+from projection_job_support import SECOND, World, gaps
 from store_support import catalog, catalog_rows, current_dialect, make_store, stored_needles
 
 pytestmark = pytest.mark.integration
@@ -61,85 +55,6 @@ pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parents[3]
 PIPECAT_AUDIO = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5" / "audio"
 LIVEKIT_AUDIO = ROOT / "fixtures" / "captured" / "livekit-otlp-1.8" / "audio" / "recording.ogg"
-SECOND = 1_000_000_000
-START = 1_800_000_000 * SECOND
-
-
-class World:
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self.clock = ManualClock(wall=START, monotonic=START)
-        self.store = make_store(path, clock=self.clock)
-        self.calls = CallStore(self.store)
-        self.blobs = LocalBlobStore(path / "blobs")
-        self.recordings = RecordingStore(self.store, calls=self.calls, blobs=self.blobs)
-        self.closer = Closer(self.store, calls=self.calls, recordings=self.recordings)
-        self.runner = AnalysisRunner(
-            AnalysisStore(self.store), blobs=self.blobs, spool_root=path / "analysis-tmp"
-        )
-        self.projector = CallProjector(self.store)
-        self.job = projection_job(self.projector)
-        self.reads = CallReads(self.store)
-
-    def replay(self, requests, *, project_id: str = "default") -> str:
-        call_ids: set[str] = set()
-        for item in requests:
-            call_ids.update(self.calls.record_spans(project_id, spans_from_request(item)).call_ids)
-            self.clock.advance(5 * SECOND)
-        [call_id] = call_ids
-        return call_id
-
-    def store_recording(
-        self, recording_id: str, body: bytes, manifest: dict, *, duration_ms: int
-    ) -> None:
-        self.recordings.create("default", RecordingManifest(recording_id=recording_id, **manifest))
-        attempt = self.recordings.begin_upload("default", recording_id)
-        try:
-            sha256, size = put_stream(self.blobs, attempt.blob_key, [body])
-            self.recordings.finish_upload(
-                "default",
-                recording_id,
-                attempt.blob_key,
-                sha256=sha256,
-                size=size,
-                duration_ms=duration_ms,
-            )
-        finally:
-            self.recordings.end_upload("default", attempt.blob_key)
-
-    def close(self) -> None:
-        self.clock.advance(CallTimings().long_quiet_nano)
-        while self.closer.close_next() is not None:
-            pass
-
-    def analyse(self) -> None:
-        while self.runner.run_next() is not None:
-            pass
-
-    def project(self) -> int:
-        """Run the server's projection job until it has nothing left; the calls it
-        wrote a projection for."""
-
-        before = self.written()
-        while asyncio.run(self.job(self.clock.unix_nano())) is not None:
-            pass
-        return len(self.written() - before)
-
-    def written(self) -> set[tuple]:
-        return set(
-            catalog_rows(
-                self.path, "SELECT call_id, input_digest, source_seq FROM call_projections"
-            )
-        )
-
-    def projection(self, call_id: str) -> dict:
-        detail = self.reads.get_call("default", call_id)
-        assert detail is not None
-        return {
-            "state": detail.summary.projection_state,
-            "summary": detail.summary.projection,
-            "detail": detail.projection_detail,
-        }
 
 
 def _pipecat_world(path: Path) -> tuple[World, str]:
@@ -160,18 +75,6 @@ def _pipecat_world(path: Path) -> tuple[World, str]:
         )
     world.close()
     return world, call_id
-
-
-def _gaps(world: World, call_id: str) -> list[tuple]:
-    turns = world.projection(call_id)["detail"]["turns"]
-    return [
-        (
-            turn["audible_gap"]["status"],
-            turn["audible_gap"]["value_ms"],
-            turn["audible_gap"]["bound_ms"],
-        )
-        for turn in turns
-    ]
 
 
 # --- the job end to end ------------------------------------------------------------------------
@@ -195,7 +98,7 @@ def test_a_closed_call_is_projected_once_its_analyses_are_stored(tmp_path) -> No
     assert early["summary"].analysis_state == "pending"
     assert stale == "stale"
     assert projected["state"] == "current"
-    assert _gaps(world, call_id) == [
+    assert gaps(world, call_id) == [
         ("not_measurable", None, 3080),
         ("measured", 1510, None),
         ("measured", 1490, None),
@@ -289,20 +192,12 @@ def test_open_live_turns_etag_changes_when_recording_analysis_changes_turns(tmp_
     assert before_etag != after_etag
 
 
-@pytest.mark.parametrize("fixture", ["pipecat", "livekit", "host"])
+@pytest.mark.parametrize("fixture", ["pipecat", "livekit"])
 def test_live_turns_before_close_match_each_captured_fixture_revision(
     tmp_path, fixture: str
 ) -> None:
-    from host_profile_support import host_request
-
     world = World(tmp_path)
-    requests = (
-        captured_requests()
-        if fixture == "pipecat"
-        else livekit_requests()
-        if fixture == "livekit"
-        else [host_request(_host_turns())]
-    )
+    requests = captured_requests() if fixture == "pipecat" else livekit_requests()
     call_id = world.replay(requests)
 
     with serve(create_app(store=world.store)) as port:
@@ -374,7 +269,7 @@ def test_a_livekit_call_with_its_stereo_ogg_is_projected_with_measured_turns(tmp
     world.analyse()
     world.project()
 
-    assert _gaps(world, call_id) == [
+    assert gaps(world, call_id) == [
         ("measured", 1290, None),
         ("measured", 1660, None),
         ("measured", 1250, None),
@@ -411,6 +306,93 @@ def test_a_new_revision_makes_a_projection_stale_until_it_is_recomputed(tmp_path
     world.project()
     assert world.projection(call_id)["state"] == "current"
     assert world.projection(call_id)["summary"].revision == 2
+
+
+def test_stale_v7_projection_treats_nonpositive_latency_as_unknown_on_public_reads(
+    tmp_path,
+) -> None:
+    world = World(tmp_path)
+    call_id = world.replay(captured_requests())
+    world.close()
+    world.project()
+    [(detail_json, started_unix_nano)] = catalog_rows(
+        tmp_path,
+        "SELECT detail_json, started_unix_nano FROM call_projections "
+        "WHERE project_id = ? AND call_id = ?",
+        ("default", call_id),
+    )
+    detail = json.loads(detail_json)
+    turns = detail["turns"]
+    assert len(turns) == 3
+    turns[0]["reported_latency_ms"] = 0
+    turns[1]["reported_latency_ms"] = 1000
+    turns[2]["reported_latency_ms"] = 1100
+    fourth = dict(turns[2], index=max(turn["index"] for turn in turns) + 1)
+    fourth["reported_latency_ms"] = 1200
+    turns.append(fourth)
+    with catalog(tmp_path) as connection:
+        connection.execute(
+            "UPDATE call_projections SET projection_version = 7, turn_count = 4, "
+            "reported_latency_p50_ms = 1000, reported_latency_max_ms = 1200, detail_json = ? "
+            "WHERE project_id = ? AND call_id = ?",
+            (json.dumps(detail), "default", call_id),
+        )
+
+    call = world.reads.get_call("default", call_id)
+    assert call is not None
+    assert call.summary.projection_state == "stale"
+    assert call.summary.projection is not None
+    assert (
+        call.summary.projection.reported_latency_p50_ms,
+        call.summary.projection.reported_latency_max_ms,
+    ) == (None, None)
+    assert [turn["reported_latency_ms"] for turn in call.projection_detail["turns"]] == [
+        None,
+        1000,
+        1100,
+        1200,
+    ]
+
+    page = world.reads.list_calls("default")
+    [listed] = page.items
+    assert listed.projection_state == "stale"
+    assert listed.projection is not None
+    assert (
+        listed.projection.reported_latency_p50_ms,
+        listed.projection.reported_latency_max_ms,
+    ) == (None, None)
+    assert not world.reads.list_calls(
+        "default", filters=CallFilters(min_reported_latency_ms=1000)
+    ).items
+    assert not world.reads.list_calls(
+        "default", filters=CallFilters(max_reported_latency_ms=1000)
+    ).items
+
+    dashboard = DashboardReads(world.store).dashboard(
+        "default", DashboardQuery(started_unix_nano, started_unix_nano + 1, bucket="day")
+    )
+    assert dashboard["overall"]["reported_latency"] == {
+        "p50_ms": 1100,
+        "p95_ms": 1200,
+        "turns": 3,
+        "of_turns": 4,
+        "calls": 1,
+        "of_calls": 1,
+    }
+
+    world.project()
+    recomputed = world.reads.get_call("default", call_id)
+    assert recomputed is not None
+    assert recomputed.summary.projection_state == "current"
+    assert recomputed.summary.projection is not None
+    assert recomputed.summary.projection.reported_latency_p50_ms > 0
+    assert recomputed.summary.projection.reported_latency_max_ms > 0
+    assert all(
+        latency is None or latency > 0
+        for latency in (
+            turn["reported_latency_ms"] for turn in recomputed.projection_detail["turns"]
+        )
+    )
 
 
 def test_a_projection_computed_while_its_call_changed_is_discarded(tmp_path) -> None:
@@ -848,128 +830,3 @@ def test_a_projection_row_records_the_versions_it_was_computed_from(tmp_path) ->
         "estimate",
         "not_reported",
     }
-
-
-# --- the host profile --------------------------------------------------------------------------
-
-
-def _host_turns(**stage_attributes):
-    """LiveKit's three turns at their own anchors, as a host exports them."""
-
-    from earshot.call_span_facts import turn_anchors
-    from host_profile_support import HostStage, HostTurn
-
-    turns = []
-    livekit = [span for item in livekit_requests() for span in spans_from_request(item)]
-    for number, anchor in enumerate(turn_anchors(livekit), start=1):
-        user_on = min(anchor.user_on_unix_nano)
-        turns.append(
-            HostTurn(
-                f"turn-{number}",
-                user_on,
-                anchor.agent_on_unix_nano + SECOND,
-                user_speech=((user_on, anchor.user_off_unix_nano),),
-                agent_speech=(anchor.agent_on_unix_nano, anchor.agent_on_unix_nano + SECOND),
-                stages=(
-                    HostStage(
-                        "llm",
-                        anchor.user_off_unix_nano,
-                        anchor.agent_on_unix_nano,
-                        {"gen_ai.provider.name": "openai", **stage_attributes},
-                    ),
-                ),
-                reported_latency_ms=anchor.reported_latency_ms,
-            )
-        )
-    return turns
-
-
-def test_a_host_call_with_its_stereo_recording_is_projected_with_measured_turns(tmp_path) -> None:
-    from host_profile_support import HOST_SESSION_KEY, host_request
-
-    world = World(tmp_path)
-    call_id = world.replay([host_request(_host_turns())])
-    audio = livekit_manifest()["audio"]
-    world.store_recording(
-        "host.stereo",
-        LIVEKIT_AUDIO.read_bytes(),
-        {
-            "session_key": HOST_SESSION_KEY,
-            "speaker": "mixed",
-            "channel_speakers": ("user", "agent"),
-            "content_type": "audio/ogg",
-            "started_at_unix_nano": audio["started_at_unix_nano"],
-        },
-        duration_ms=34_004,
-    )
-    world.close()
-    world.analyse()
-    world.project()
-
-    # The gaps the LiveKit call measures from the same audio and the same anchors.
-    assert _gaps(world, call_id) == [
-        ("measured", 1290, None),
-        ("measured", 1660, None),
-        ("measured", 1250, None),
-    ]
-    projection = world.projection(call_id)
-    assert projection["state"] == "current"
-    assert projection["summary"].framework == "host"
-    assert [turn["turn_id"] for turn in projection["detail"]["turns"]] == [
-        "turn-1",
-        "turn-2",
-        "turn-3",
-    ]
-    assert projection["detail"]["transcript"] == []
-    assert catalog_rows(tmp_path, "SELECT count(*) FROM call_transcripts") == [(0,)]
-    [(finality, completeness)] = catalog_rows(
-        tmp_path, "SELECT finality, completeness FROM incidents"
-    )
-    assert (finality, completeness) == ("final", "complete")
-
-
-def test_a_host_call_delivered_twice_is_the_same_call_with_the_same_projection(tmp_path) -> None:
-    from host_profile_support import host_request
-
-    once, twice = World(tmp_path / "once"), World(tmp_path / "twice")
-    first = once.replay([host_request(_host_turns())])
-    second = twice.replay([host_request(_host_turns()), host_request(_host_turns())])
-    for world in (once, twice):
-        world.close()
-        world.project()
-
-    def projected(world: World, call_id: str) -> dict:
-        detail = world.projection(call_id)["detail"]
-        return {key: detail[key] for key in ("turns", "signals", "cost_items", "transcript")}
-
-    assert projected(twice, second) == projected(once, first)
-    for world in (once, twice):
-        assert catalog_rows(world.path, "SELECT count(*) FROM calls") == [(1,)]
-        assert catalog_rows(world.path, "SELECT count(*) FROM call_revisions") == [(1,)]
-    assert catalog_rows(twice.path, "SELECT count(*) FROM spans") == catalog_rows(
-        once.path, "SELECT count(*) FROM spans"
-    )
-
-
-# Content a host must not send, on host spans: under metadata_only none of it, and not
-# the session key, is stored anywhere.
-_STRAY_REPLY = "A reply the agent spoke, which a host must not export"
-
-
-@pytest.mark.parametrize("preset", ["full", "metadata_only"])
-def test_metadata_only_stores_no_stray_content_from_host_spans(tmp_path, preset) -> None:
-    from host_profile_support import HOST_SESSION_KEY, host_request
-
-    world = World(tmp_path)
-    world.store.set_capture_preset("default", preset)
-    world.replay([host_request(_host_turns(**{"gen_ai.output.messages": _STRAY_REPLY}))])
-    world.close()
-    world.project()
-    world.store.close()
-
-    needles = [HOST_SESSION_KEY.encode(), _STRAY_REPLY.encode()]
-    found = stored_needles(tmp_path, needles)
-    if preset == "metadata_only":
-        assert found == set()
-    else:  # the control: the same search finds both when they are stored
-        assert found == set(needles)

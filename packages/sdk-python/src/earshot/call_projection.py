@@ -102,8 +102,9 @@ if TYPE_CHECKING:
     from .call_span_facts import TurnAnchors
 
 # Bumped when the projection's computation or shape changes: every stored
-# projection then reads as stale until the job recomputes it.
-CALL_PROJECTION_VERSION = 8
+# projection then reads as stale until the job recomputes it. This version also
+# marks when the current latency and millisecond cost-quantity semantics began.
+CALL_PROJECTION_VERSION = 10
 PROJECTION_STATES = ("none", "stale", "current")
 
 
@@ -716,6 +717,13 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
                 children_by_parent,
             )
         )
+        reported_latency_ms = (
+            None if anchor.reported_latency_ms is None else round(anchor.reported_latency_ms)
+        )
+        if reported_latency_ms == 0:
+            # The API stores whole milliseconds; a rounded zero would claim no
+            # latency, which the host profile reserves to mean unknown.
+            reported_latency_ms = None
         turns.append(
             {
                 "index": index,
@@ -734,9 +742,7 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
                 "end_ms": None
                 if turn_span is None
                 else placed_ms(turn_span.span.end_time_unix_nano, gap.offset_ms),
-                "reported_latency_ms": None
-                if anchor.reported_latency_ms is None
-                else round(anchor.reported_latency_ms),
+                "reported_latency_ms": reported_latency_ms,
                 "audible_gap": {
                     "status": gap.status,
                     "value_ms": gap.value_ms,

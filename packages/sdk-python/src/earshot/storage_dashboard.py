@@ -315,7 +315,9 @@ def _read_calls(
     for row in connection.execute(turns, in_range).fetchall():
         call = calls[row["call_id"]]
         if row["reported_ms"] is not None:
-            call.reported_ms.append(int(row["reported_ms"]))
+            reported_ms = int(row["reported_ms"])
+            if reported_ms > 0:
+                call.reported_ms.append(reported_ms)
         if row["gap_ms"] is not None:
             call.gap_ms.append(int(row["gap_ms"]))
     for row in connection.execute(_LLM_SQL, in_range).fetchall():

@@ -37,7 +37,9 @@ class HostTurn:
     start: int
     end: int
     user_speech: tuple[tuple[int, int], ...] = ()
+    user_transcripts: tuple[str | None, ...] = ()
     agent_speech: tuple[int, int] | None = None
+    agent_transcript: str | None = None
     stages: tuple[HostStage, ...] = ()
     reported_latency_ms: float | None = None
     timeline_continuous: bool | None = None
@@ -97,12 +99,20 @@ def host_spans(
         spans.append(_span(turn_span, "turn", turn.start, turn.end, 1, turn_attributes))
         child = turn_span
         own = {"earshot.turn.id": turn.turn_id}
-        for speech_start, speech_end in turn.user_speech:
+        for index, (speech_start, speech_end) in enumerate(turn.user_speech):
             child += 1
-            spans.append(_span(child, "user_speech", speech_start, speech_end, turn_span, own))
+            attributes = dict(own)
+            if index < len(turn.user_transcripts) and turn.user_transcripts[index] is not None:
+                attributes["earshot.transcript.text"] = turn.user_transcripts[index]
+            spans.append(
+                _span(child, "user_speech", speech_start, speech_end, turn_span, attributes)
+            )
         if turn.agent_speech is not None:
             child += 1
-            spans.append(_span(child, "agent_speech", *turn.agent_speech, turn_span, own))
+            attributes = dict(own)
+            if turn.agent_transcript is not None:
+                attributes["earshot.transcript.text"] = turn.agent_transcript
+            spans.append(_span(child, "agent_speech", *turn.agent_speech, turn_span, attributes))
         for stage in turn.stages:
             child += 1
             spans.append(
@@ -124,6 +134,7 @@ def host_request(
     ended: bool = True,
     session_key: str = HOST_SESSION_KEY,
     call: Mapping[str, Any] | None = None,
+    scope_version: str = "0.1.0",
 ) -> ExportTraceServiceRequest:
     return ExportTraceServiceRequest(
         resource_spans=[
@@ -131,7 +142,7 @@ def host_request(
                 resource=Resource(attributes=[attribute("earshot.session.id", session_key)]),
                 scope_spans=[
                     ScopeSpans(
-                        scope=InstrumentationScope(name=HOST_SCOPE, version="0.1.0"),
+                        scope=InstrumentationScope(name=HOST_SCOPE, version=scope_version),
                         spans=host_spans(turns, ended=ended, call=call),
                     )
                 ],

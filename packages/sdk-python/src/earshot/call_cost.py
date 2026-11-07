@@ -5,16 +5,22 @@ so a price change reprices a call without decoding anything: one entry per bille
 request meter, from ``call_span_facts.usage_items`` (the usage-to-meter table):
 
 - ``reported``: the requests' known quantities, summed per (operation, provider,
-  model, unit); ``span`` names the request when there is one;
+  model, unit); STT requests with the same provider and model are summed, and
+  ``span`` names the request when there is one;
 - ``not_reported``: one entry per request that left a meter unknown (a cancelled LLM
-  request reports nothing; LiveKit writes 0 for what it did not get);
-- ``estimate``: STT audio seconds, which no framework reports on a span: once per
-  call and (provider, model), the user audio's duration (the recording's, else the
-  call's), as a streaming STT bills connected time. With no duration it is
-  ``not_reported``.
+  request reports nothing; LiveKit writes 0 for what it did not get; a host STT
+  request missing usage remains unknown if another request for that provider/model
+  reported seconds);
+- ``estimate``: STT audio seconds, which Pipecat and LiveKit do not report on a span:
+  once per call and (provider, model), the user audio's duration (the recording's,
+  else the call's), as a streaming STT bills connected time. A host provider/model
+  gets this estimate only when none of its requests reported seconds. With no
+  duration it is ``not_reported``.
 
-Quantities are integers in thousandths of the unit (``quantity_milli``), so seconds
-measured in milliseconds stay exact.
+Usage quantities are integers in thousandths of the unit (``quantity_milli``).
+Reported host STT seconds are rounded to milliseconds per request, with a one
+millisecond minimum for a positive report. Estimated STT seconds come from integer
+milliseconds too.
 
 **Pricing** (``price_usage``). The price of (provider, model, unit) for a call is the
 project's own row with the latest ``effective_from_unix_nano`` at or before the call's
@@ -33,8 +39,11 @@ complete. Nothing is clamped.
 
 from __future__ import annotations
 
+import math
+import sys
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from decimal import Decimal, localcontext
 from typing import Any
 
 from .call_span_facts import AUDIO_SECOND, UsageItem
@@ -43,6 +52,8 @@ REPORTED = "reported"
 NOT_REPORTED = "not_reported"
 ESTIMATE = "estimate"
 _INT64_MAX = 2**63 - 1
+_MAX_SAFE_API_INTEGER = 2**53 - 1
+_MAX_FINITE_API_QUANTITY = Decimal.from_float(sys.float_info.max)
 # Each request's meters that are always reported: one missing makes the request
 # ``not_reported`` (the other meters are emitted only when reported).
 _PRIMARY_METERS = {"llm": ("input_token", "output_token"), "tts": ("character",)}
@@ -71,11 +82,11 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
 
     reported: dict[tuple, dict[str, Any]] = {}
     unreported: list[dict[str, Any]] = []
-    stt: dict[tuple, None] = {}
+    stt: dict[tuple, list[UsageItem]] = {}
     by_request: dict[tuple, list[UsageItem]] = {}
     for item in items:
         if item.operation == "stt":
-            stt.setdefault((item.provider, item.model), None)
+            stt.setdefault((item.provider, item.model), []).append(item)
             continue
         by_request.setdefault((item.trace_id, item.span_id, item.operation), []).append(item)
     for (_, _, operation), request in by_request.items():
@@ -120,7 +131,37 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
         spans = entry.pop("spans")
         entry["span"] = spans[0] if len(spans) == 1 else None
         usage.append(entry)
-    for provider, model in stt:
+    for (provider, model), requests in stt.items():
+        reported = [item for item in requests if item.quantity is not None]
+        if reported:
+            quantity_milli = sum(_audio_seconds_milli(item.quantity) for item in reported)
+            spans = [_span(item) for item in reported]
+            usage.append(
+                {
+                    "kind": REPORTED,
+                    "operation": "stt",
+                    "provider": provider,
+                    "model": model,
+                    "unit": AUDIO_SECOND,
+                    "quantity_milli": quantity_milli,
+                    "span": spans[0] if len(spans) == 1 else None,
+                }
+            )
+            for item in requests:
+                if item.quantity is not None:
+                    continue
+                unreported.append(
+                    {
+                        "kind": NOT_REPORTED,
+                        "operation": "stt",
+                        "provider": item.provider,
+                        "model": item.model,
+                        "unit": AUDIO_SECOND,
+                        "quantity_milli": None,
+                        "span": _span(item),
+                    }
+                )
+            continue
         usage.append(
             {
                 "kind": NOT_REPORTED if user_audio_ms is None else ESTIMATE,
@@ -146,6 +187,19 @@ def call_usage(items: Iterable[UsageItem], *, user_audio_ms: int | None) -> list
             (entry["span"] or {}).get("span_id", ""),
         ),
     )
+
+
+def _audio_seconds_milli(seconds: int | float) -> int:
+    """Round one finite positive STT report to milli-seconds without overflow."""
+
+    if isinstance(seconds, int):
+        return max(1, seconds * 1000)
+    scaled = seconds * 1000
+    if math.isfinite(scaled):
+        return max(1, round(scaled))
+    # A finite float can overflow only when multiplied by 1,000. At that size it
+    # has no fractional component, so rounding first preserves its represented value.
+    return max(1, round(seconds) * 1000)
 
 
 def match_price(
@@ -183,7 +237,24 @@ def _quantity(quantity_milli: int | None) -> int | float | None:
     if quantity_milli is None:
         return None
     whole, part = divmod(quantity_milli, 1000)
-    return whole if part == 0 else quantity_milli / 1000
+    if part == 0 and whole <= _MAX_SAFE_API_INTEGER:
+        return whole
+    decimal_quantity = Decimal(quantity_milli)
+    with localcontext() as context:
+        context.prec = max(context.prec, len(decimal_quantity.as_tuple().digits) + 3)
+        seconds = decimal_quantity / Decimal(1000)
+    if seconds > _MAX_FINITE_API_QUANTITY:
+        return None
+    try:
+        api_quantity = float(seconds)
+    except OverflowError:
+        return None
+    if not math.isfinite(api_quantity):
+        return None
+    # Python's shortest JSON float spelling can round large exact integers (for
+    # example, 2**53 + 1) to a different quantity. Keep the API truthful by
+    # returning null when that wire number would not round-trip through Decimal.
+    return api_quantity if Decimal(str(api_quantity)) == seconds else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,13 +279,14 @@ def price_usage(
     any_estimated = False
     unknown = 0
     for entry in usage:
-        quantity = entry["quantity_milli"]
+        quantity_milli = entry.get("quantity_milli")
+        api_quantity = _quantity(quantity_milli)
         price = None
         if entry["kind"] != NOT_REPORTED:
             price = match_price(
                 prices, project_id, entry["provider"], entry["model"], entry["unit"], at_unix_nano
             )
-        cost = None if price is None or quantity is None else _cost(quantity, price)
+        cost = None if price is None or quantity_milli is None else _cost(quantity_milli, price)
         if cost is not None and cost > _INT64_MAX:
             # Beyond what the catalog stores: unknown, never a clamped number.
             price, cost = None, None
@@ -238,7 +310,7 @@ def price_usage(
                 "provider": entry["provider"],
                 "model": entry["model"],
                 "unit": entry["unit"],
-                "quantity": _quantity(quantity),
+                "quantity": api_quantity,
                 "price_id": None if price is None else price.id,
                 "price_nano_usd": None if price is None else price.price_nano_usd,
                 "per_quantity": None if price is None else price.per_quantity,

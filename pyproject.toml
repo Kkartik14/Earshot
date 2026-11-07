@@ -120,7 +120,10 @@ earshot = "earshot.cli:main"
 packages = ["packages/sdk-python/src/earshot"]
 # The viewer SPA is built into src/earshot/web by `pnpm bundle` (git-ignored);
 # ship it in the wheel so `pip install earshot` serves the UI out of the box.
-artifacts = ["packages/sdk-python/src/earshot/web/**"]
+artifacts = [
+  "packages/sdk-python/src/earshot/host_profile_fixtures/*.json",
+  "packages/sdk-python/src/earshot/web/**",
+]
 
 [tool.hatch.build.targets.sdist]
 only-include = [
@@ -136,6 +139,7 @@ exclude = [
   "/**/*.pyo",
 ]
 artifacts = [
+  "packages/sdk-python/src/earshot/host_profile_fixtures/*.json",
   "packages/sdk-python/src/earshot/web/**",
   "!packages/sdk-python/src/earshot/web/**/*.map",
 ]

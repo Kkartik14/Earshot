@@ -17,8 +17,8 @@ attribute used is metadata, so both work under the ``metadata_only`` preset.
 | LiveKit | ``tts_request`` | tts | ``character``; ``input_token``/``output_token`` if reported |
 | LiveKit | ``user_turn`` | stt | ``audio_second`` (never reported) |
 | Host | ``llm`` | llm | as Pipecat ``llm`` |
-| Host | ``tts`` | tts | ``character`` (not reported in profile 0.1.0) |
-| Host | ``stt`` | stt | ``audio_second`` (never reported) |
+| Host | ``tts`` | tts | ``character`` (profile 0.2.0 provider report) |
+| Host | ``stt`` | stt | ``audio_second`` (profile 0.2.0 provider report) |
 
 LiveKit's ``llm_node``, ``agent_turn``, ``tts_node``, ``*_run`` and
 ``llm_fallback_adapter`` spans repeat a request's usage and never bill. Every
@@ -48,6 +48,8 @@ emitted, with ``quantity`` ``None`` (not reported) when unknown, and the other m
 only when reported. STT seconds are on no span (Pipecat 1.5, LiveKit 1.6 to 1.8): each
 STT span gives one ``audio_second`` item, not reported, naming the provider and model
 whose audio a projection estimates once per call from the recording or call duration.
+Host profile 0.2.0 instead reads the finite positive per-request seconds and TTS
+character count on its host stage spans. Host 0.1.0 retains the legacy unknown usage.
 
 **Provider and model.** ``gen_ai.provider.name``, else the metric JSON's
 ``metadata.model_provider``, normalized by ``provider_name`` (LiveKit's host-and-name
@@ -90,16 +92,18 @@ the clock its recordings' ``started_at_unix_nano`` is on:
   recording timeline was not continuous across the turn: frames were dropped or
   placed late, so the turn's audible gap is not measurable).
 - ``user_speech``, ``agent_speech``: children of a ``turn``, one per stretch of the
-  caller's and of the agent's speech, by its window.
+  caller's and of the agent's speech, by its window; profile 0.2.0 may also provide
+  that stretch's transcript text.
 - ``stt``, ``llm``, ``tts``: children of a ``turn``, one per stage request by its
   window, carrying ``gen_ai.provider.name``, ``gen_ai.request.model`` and, for
-  ``llm``, the ``gen_ai.usage.*`` counts. A stage the host did not time has no span.
+  ``llm``, the ``gen_ai.usage.*`` counts; profile 0.2.0 may provide STT seconds and
+  TTS characters as well. A stage the host did not time has no span.
 
 Any span may carry the call attributes the receiver reads (``earshot.call.ended``,
-``earshot.agent.name``, ``earshot.call.outcome``, ``earshot.call.tags``). The profile
-carries no transcript text and no content, so a ``metadata_only`` project keeps all
-of it. Its recordings are placed by the host's wall clock, so its gaps are measured
-on the ``continuous_timeline_assumed`` basis.
+``earshot.agent.name``, ``earshot.call.outcome``, ``earshot.call.tags``). Profile
+0.2.0 transcript text is content, so ``metadata_only`` removes it while keeping the
+host's timing and usage metadata. Its recordings are placed by the host's wall clock,
+so its gaps are measured on the ``continuous_timeline_assumed`` basis.
 """
 
 from __future__ import annotations
@@ -111,7 +115,15 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from .call_capture import HOST_SCOPE, LIVEKIT_SCOPE, NOT_GIVEN, OtlpSpan, any_value
+from .call_capture import (
+    HOST_SCOPE,
+    LIVEKIT_SCOPE,
+    NOT_GIVEN,
+    OtlpSpan,
+    any_value,
+    host_profile_scope_version,
+)
+from .host_profile import host_value
 
 FRAMEWORK_PIPECAT = "pipecat"
 FRAMEWORK_LIVEKIT = "livekit"
@@ -146,6 +158,9 @@ _CACHED_TOKENS = (
 )
 _OUTPUT_TOKENS = ("gen_ai.usage.output_tokens", ("completion_tokens",))
 _CHARACTERS = ("metrics.character_count", ("characters_count",))
+_HOST_STT_AUDIO_SECONDS = "earshot.stt.usage.audio_seconds"
+_HOST_TTS_CHARACTER_COUNT = "earshot.tts.usage.character_count"
+_HOST_MAX_JSON_SAFE_INTEGER = 2**53 - 1
 _TTS_INPUT_TOKENS = (("input_tokens",),)
 _TTS_OUTPUT_TOKENS = (("output_tokens",),)
 _PROVIDER = ("gen_ai.provider.name", ("metadata", "model_provider"))
@@ -153,7 +168,15 @@ _MODEL = ("gen_ai.request.model", "gen_ai.response.model", ("metadata", "model_n
 # The span attributes usage is read from (the metric JSON attribute is added per span).
 _USAGE_KEYS = frozenset(
     source
-    for sources in (_INPUT_TOKENS, _CACHED_TOKENS, _OUTPUT_TOKENS, _CHARACTERS, _PROVIDER, _MODEL)
+    for sources in (
+        _INPUT_TOKENS,
+        _CACHED_TOKENS,
+        _OUTPUT_TOKENS,
+        _CHARACTERS,
+        _PROVIDER,
+        _MODEL,
+        (_HOST_STT_AUDIO_SECONDS, _HOST_TTS_CHARACTER_COUNT),
+    )
     for source in sources
     if isinstance(source, str)
 )
@@ -173,7 +196,7 @@ class UsageItem:
     provider: str | None
     model: str | None
     meter: str
-    quantity: int | None
+    quantity: int | float | None
     trace_id: str
     span_id: str
 
@@ -239,13 +262,24 @@ def _first(attributes: Mapping[str, Any], metrics: Mapping[str, Any], sources: t
     return None
 
 
-def _count(attributes: Mapping[str, Any], metrics: Mapping[str, Any], sources: tuple) -> int | None:
+def _count(
+    attributes: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+    sources: tuple,
+    *,
+    maximum: int | None = None,
+) -> int | None:
     """The first source's positive integer count; 0 and anything else are unknown, and
     an unknown source never hides a later one."""
 
     for source in sources:
         value = _first(attributes, metrics, (source,))
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and value > 0
+            and (maximum is None or value <= maximum)
+        ):
             return value
     return None
 
@@ -262,6 +296,15 @@ def usage_items(spans: Iterable[OtlpSpan]) -> list[UsageItem]:
         metrics_key = _METRICS_ATTRIBUTE.get(operation)
         attributes = _values(span, _USAGE_KEYS | ({metrics_key} if metrics_key else set()))
         metrics = _metrics(attributes.get(metrics_key)) if metrics_key else {}
+        if framework == FRAMEWORK_HOST:
+            version = host_profile_scope_version(span.scope)
+            for key in (_HOST_STT_AUDIO_SECONDS, _HOST_TTS_CHARACTER_COUNT):
+                if key in attributes:
+                    decoded = host_value(key, span.span.name, version, attributes[key])
+                    if decoded is None:
+                        attributes.pop(key)
+                    else:
+                        attributes[key] = decoded
         provider = _first(attributes, metrics, _PROVIDER)
         model = _first(attributes, metrics, _MODEL)
         request = {
@@ -274,14 +317,23 @@ def usage_items(spans: Iterable[OtlpSpan]) -> list[UsageItem]:
         }
         items.extend(
             UsageItem(**request, meter=meter, quantity=quantity)
-            for meter, quantity in _meters(operation, attributes, metrics)
+            for meter, quantity in _meters(
+                operation,
+                attributes,
+                metrics,
+                host_profile=framework == FRAMEWORK_HOST,
+            )
         )
     return items
 
 
 def _meters(
-    operation: str, attributes: Mapping[str, Any], metrics: Mapping[str, Any]
-) -> list[tuple[str, int | None]]:
+    operation: str,
+    attributes: Mapping[str, Any],
+    metrics: Mapping[str, Any],
+    *,
+    host_profile: bool,
+) -> list[tuple[str, int | float | None]]:
     """One request's ``(meter, quantity)`` pairs, by the rules above."""
 
     if operation == "llm":
@@ -295,7 +347,16 @@ def _meters(
             meters.append((CACHED_INPUT_TOKEN, cached))
         return [*meters, (OUTPUT_TOKEN, _count(attributes, metrics, _OUTPUT_TOKENS))]
     if operation == "tts":
-        meters = [(CHARACTER, _count(attributes, metrics, _CHARACTERS))]
+        if host_profile:
+            character_count = _count(
+                attributes,
+                metrics,
+                (_HOST_TTS_CHARACTER_COUNT,),
+                maximum=_HOST_MAX_JSON_SAFE_INTEGER,
+            )
+        else:
+            character_count = _count(attributes, metrics, _CHARACTERS)
+        meters = [(CHARACTER, character_count)]
         for meter, sources in (
             (INPUT_TOKEN, _TTS_INPUT_TOKENS),
             (OUTPUT_TOKEN, _TTS_OUTPUT_TOKENS),
@@ -304,6 +365,14 @@ def _meters(
             if quantity is not None:
                 meters.append((meter, quantity))
         return meters
+    audio_seconds = attributes.get(_HOST_STT_AUDIO_SECONDS) if host_profile else None
+    if (
+        isinstance(audio_seconds, (int, float))
+        and not isinstance(audio_seconds, bool)
+        and math.isfinite(audio_seconds)
+        and audio_seconds > 0
+    ):
+        return [(AUDIO_SECOND, audio_seconds)]
     return [(AUDIO_SECOND, None)]
 
 
@@ -502,7 +571,14 @@ def _host_anchors(spans: Sequence[OtlpSpan], children: dict) -> list[TurnAnchors
         user = _named(kids, (HOST_SCOPE,), "user_speech")
         agent = _named(kids, (HOST_SCOPE,), "agent_speech")
         attributes = _values(turn, (_HOST_LATENCY, _HOST_CONTINUITY))
-        latency = _milliseconds(attributes.get(_HOST_LATENCY))
+        latency = _milliseconds(
+            host_value(
+                _HOST_LATENCY,
+                turn.span.name,
+                host_profile_scope_version(turn.scope),
+                attributes.get(_HOST_LATENCY),
+            )
+        )
         continuous = attributes.get(_HOST_CONTINUITY)
         anchors.append(
             TurnAnchors(
@@ -525,14 +601,16 @@ def _host_anchors(spans: Sequence[OtlpSpan], children: dict) -> list[TurnAnchors
 
 
 def _milliseconds(value: object) -> float | None:
-    """A producer-reported duration in milliseconds, kept as sent, or ``None`` on the
-    rule ``_seconds`` applies: not a number, negative or non-finite, or nanoseconds
-    outside ``[0, 2**63 - 1]``."""
+    """A positive producer-reported duration in milliseconds, kept as sent, or ``None``
+    when it is not numeric, finite, positive, or its nanoseconds exceed int64."""
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    nanoseconds = float(value) * 1_000_000
-    if not math.isfinite(nanoseconds) or not 0 <= nanoseconds <= _MAX_INT64:
+    try:
+        nanoseconds = float(value) * 1_000_000
+    except OverflowError:
+        return None
+    if value <= 0 or not math.isfinite(nanoseconds) or nanoseconds > _MAX_INT64:
         return None
     return float(value)
 

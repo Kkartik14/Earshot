@@ -610,6 +610,23 @@ def test_a_cost_total_beyond_the_catalogs_64_bit_range_is_unknown_never_clamped(
     assert (cost.lower_bound_nano_usd, cost.estimated_nano_usd) == (None, None)
 
 
+def test_a_half_nano_usd_cost_rounds_up_to_one_nano_usd() -> None:
+    price = PriceRow(1, None, "deepgram", "nova-3", "audio_second", 500, 1, 0)
+    entry = {
+        "kind": "reported",
+        "operation": "stt",
+        "provider": "deepgram",
+        "model": "nova-3",
+        "unit": "audio_second",
+        "quantity_milli": 1,
+        "span": None,
+    }
+
+    cost = price_usage([entry], [price], project_id="default", at_unix_nano=1)
+
+    assert cost.items[0]["cost_nano_usd"] == 1
+
+
 def test_repricing_from_the_stored_usage_equals_a_full_projection_at_the_new_prices() -> None:
     projection = _pipecat()
     cheaper = [
@@ -920,6 +937,16 @@ def test_host_turns_measure_the_gaps_livekit_measures_on_the_same_audio() -> Non
         turn["reported_latency_ms"] for turn in livekit.detail["turns"]
     ]
     assert host.columns["measurable_turns"] == 3
+
+
+def test_a_positive_submillisecond_host_latency_is_not_projected_as_zero() -> None:
+    from dataclasses import replace
+
+    turns = _host_turns_at_livekits_anchors()
+    turns[0] = replace(turns[0], reported_latency_ms=0.1)
+    projection = _host(turns)
+
+    assert projection.detail["turns"][0]["reported_latency_ms"] is None
 
 
 def test_a_turn_the_host_declares_discontinuous_is_not_measurable() -> None:

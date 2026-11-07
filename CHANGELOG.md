@@ -19,6 +19,10 @@ are described in their [GitHub release notes](https://github.com/Kkartik14/Earsh
 
 ### Changed
 
+- **Host profile quantities.** Host-reported latency and per-request STT metering accept
+  positive OTLP `doubleValue` or `intValue`; STT seconds are rounded to milliseconds per
+  request before durable repricing. Older latency summaries read as `null` until rebuilt.
+
 - Pipecat support starts at 1.6.0. Earshot's LiveKit range is
   `livekit-agents>=1.6.5,<1.9`.
 

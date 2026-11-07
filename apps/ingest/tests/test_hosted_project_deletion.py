@@ -28,7 +28,7 @@ from earshot.storage_calls import CallStore, CallTimings
 from earshot.storage_recordings import RecordingManifest, RecordingStore
 from host_profile_support import HostStage, HostTurn, host_request
 from otlp_support import post_otlp, request, serve
-from store_support import catalog_rows, make_store
+from store_support import catalog_rows, current_dialect, make_store, stored_needles
 from test_hosted_jwt import _hosted_config, _token, issuer  # noqa: F401  (issuer is a fixture)
 from test_recordings_api import wav
 
@@ -44,6 +44,7 @@ CALL_EVIDENCE_TABLES = (
     "call_traces",
     "spans",
     "call_revisions",
+    "call_transcripts",
     "recordings",
     "audio_analysis",
     "call_projections",
@@ -57,13 +58,14 @@ def _headers(issuer, project: str, *scopes: str) -> dict[str, str]:  # noqa: F81
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def _turns() -> list[HostTurn]:
+def _turns(*, transcript: str | None = None) -> list[HostTurn]:
     return [
         HostTurn(
             "turn-1",
             START,
             START + 3 * SECOND,
             user_speech=((START, START + SECOND),),
+            user_transcripts=() if transcript is None else (transcript,),
             agent_speech=(START + 2 * SECOND, START + 3 * SECOND),
             stages=(HostStage("llm", START + SECOND, START + 2 * SECOND),),
         )
@@ -82,7 +84,11 @@ def _send_call(port: int, issuer, project: str) -> None:  # noqa: F811
     writer = _headers(issuer, project, "earshot:calls:write")
     sent = post_otlp(
         port,
-        host_request(_turns(), session_key="call-1").SerializeToString(),
+        host_request(
+            _turns(transcript=f"HOST_PROJECT_DELETE_TRANSCRIPT_{project}"),
+            session_key="call-1",
+            scope_version="0.2.0",
+        ).SerializeToString(),
         credential=writer["Authorization"].removeprefix("Bearer "),
     )
     assert sent.status == 200, sent.body
@@ -138,6 +144,13 @@ def _blobs(root: Path, project: str) -> list[str]:
     )
 
 
+def _object_needles(root: Path, needles: list[bytes]) -> set[bytes]:
+    data = b"".join(
+        path.read_bytes() for path in (root / "objects" / "sha256").rglob("*") if path.is_file()
+    )
+    return {needle for needle in needles if needle in data}
+
+
 def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks(
     tmp_path,
     issuer,  # noqa: F811
@@ -150,15 +163,34 @@ def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks
         call_timings=CallTimings(end_grace_seconds=0.05),
         blob_store=LocalBlobStore(blobs),
     )
+    tenant_transcript = f"HOST_PROJECT_DELETE_TRANSCRIPT_{TENANT}".encode()
+    neighbour_transcript = f"HOST_PROJECT_DELETE_TRANSCRIPT_{NEIGHBOUR}".encode()
+    transcript_needles = [tenant_transcript, neighbour_transcript]
     with serve(app) as port:
         for project in (TENANT, NEIGHBOUR):
             _send_call(port, issuer, project)
         for project in (TENANT, NEIGHBOUR):
             _projected(port, issuer, project)
         tenant_before = _rows(tmp_path, TENANT)
+        tenant_transcripts = catalog_rows(
+            tmp_path,
+            "SELECT text FROM call_transcripts WHERE project_id = ?",
+            (TENANT,),
+        )
         tenant_blobs = _blobs(blobs, TENANT)
         neighbour_before = _rows(tmp_path, NEIGHBOUR)
+        neighbour_transcripts = catalog_rows(
+            tmp_path,
+            "SELECT text FROM call_transcripts WHERE project_id = ?",
+            (NEIGHBOUR,),
+        )
         neighbour_blobs = _blobs(blobs, NEIGHBOUR)
+        assert tenant_transcripts == [(tenant_transcript.decode(),)]
+        assert neighbour_transcripts == [(neighbour_transcript.decode(),)]
+        if current_dialect() == "sqlite":
+            assert _object_needles(tmp_path, transcript_needles) == set(transcript_needles)
+        else:
+            assert stored_needles(tmp_path, transcript_needles) == set(transcript_needles)
 
         deleter = _headers(issuer, TENANT, "earshot:project:delete")
         for _ in range(50):
@@ -171,10 +203,13 @@ def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks
         )
         neighbour_read = _projected(port, issuer, NEIGHBOUR)
 
+    store.close()
+
     # What there was to delete: a call with its evidence, a recording and its peaks.
     assert all(
         tenant_before[table] for table in CALL_EVIDENCE_TABLES if table != "pending_blob_deletions"
     ), tenant_before
+    assert tenant_before["call_transcripts"] == 1
     assert any(key.startswith("recordings/") for key in tenant_blobs), tenant_blobs
     assert any(key.startswith("analysis/") for key in tenant_blobs), tenant_blobs
 
@@ -183,6 +218,18 @@ def test_a_hosted_project_delete_removes_its_calls_recordings_analyses_and_peaks
     assert _blobs(blobs, TENANT) == []
     assert after.status == 410
     assert _rows(tmp_path, NEIGHBOUR) == neighbour_before
+    assert (
+        catalog_rows(
+            tmp_path,
+            "SELECT text FROM call_transcripts WHERE project_id = ?",
+            (NEIGHBOUR,),
+        )
+        == neighbour_transcripts
+    )
+    if current_dialect() == "sqlite":
+        assert _object_needles(tmp_path, transcript_needles) == {neighbour_transcript}
+    else:
+        assert stored_needles(tmp_path, transcript_needles) == {neighbour_transcript}
     assert _blobs(blobs, NEIGHBOUR) == neighbour_blobs
     assert neighbour_read["projection"]["framework"] == "host"
 
