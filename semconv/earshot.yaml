@@ -49,6 +49,24 @@ groups:
         type: boolean
         requirement_level: opt_in
         brief: "Host span profile: false when the host's recording timeline was not continuous across the turn (frames dropped or placed late), so its audible gap is not measurable; true or absent, the timeline is taken as continuous."
+      - id: earshot.transcript.text
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: Final user transcription or the words actually spoken by the agent during a host-profile speech span.
+        note: >-
+          In host profile 0.2.0, this attribute is valid only on user_speech and
+          agent_speech spans under the earshot.host instrumentation scope whose
+          version is exactly 0.2.0; an absent, unknown, or other version is not read as
+          0.2.0. Use it at most once per span, with a maximum of 64 KiB (65,536 UTF-8
+          bytes). For user_speech, supply final transcription only, never interim or
+          partial hypotheses. For agent_speech, supply only words actually spoken, not
+          generated response text that was not spoken. The span name supplies the
+          speaker and its interval supplies the transcript line's timing. Omit it
+          when no nonblank transcript was supplied; empty or whitespace-only values
+          are invalid. Preserve the supplied text; do not derive it from audio or
+          another stage's output. This is sensitive content and the host decides
+          whether to send it. Earshot's metadata_only preset removes it before storage.
       - id: earshot.operation.name
         type: string
         requirement_level: required
@@ -102,13 +120,23 @@ groups:
         requirement_level: opt_in
         stability: development
         brief: Provider-metered STT input audio quantity in seconds for one request.
-        note: The semantic type is double; a positive OTLP intValue is also permitted by the host profile as numeric input. Omit when unknown. A present value is positive and finite. This value is per request; hosts omit streaming-session totals reported at close. Do not infer it from span duration or the caller's speech window.
+        note: >-
+          The semantic type is double; a positive OTLP intValue is also permitted by
+          the host profile as numeric input. This attribute is defined by host profile
+          0.2.0 only when the earshot.host scope version is exactly 0.2.0. Omit when
+          unknown. A present value is positive and finite, per request. Hosts omit
+          streaming-session totals reported at close. Do not infer it from span
+          duration or the caller's speech window.
       - id: earshot.tts.usage.character_count
         type: int
         requirement_level: opt_in
         stability: development
         brief: Provider-metered TTS input character quantity for one request, in the provider's own metering units.
-        note: Omit when unknown. A present value is a positive integer. Do not infer it by counting text, bytes, Unicode scalar values, or grapheme clusters.
+        note: >-
+          This attribute is defined by host profile 0.2.0 when the earshot.host scope
+          version is exactly 0.2.0. Omit when unknown. A present value is a positive
+          integer. Do not infer it by counting text, bytes, Unicode scalar values, or
+          grapheme clusters.
       - id: earshot.conversation.item.id
         type: string
         requirement_level: opt_in
@@ -830,7 +858,7 @@ groups:
   - id: span.earshot.host.turn
     type: span
     span_kind: internal
-    brief: "Host span profile: one turn of a call a host runs on its own pipeline, under the earshot.host instrumentation scope, times on the clock of the host's recordings. Its children are its speech and stage spans. It carries no transcript text."
+    brief: "Host span profile: one turn of a call a host runs on its own pipeline, under the earshot.host instrumentation scope, times on the clock of the host's recordings. Its children are its speech and stage spans. Transcript text belongs on the speech span, never the turn."
     attributes:
       - ref: earshot.turn.id
         requirement_level: required
@@ -841,9 +869,11 @@ groups:
   - id: span.earshot.host.speech
     type: span
     span_kind: internal
-    brief: "Host span profile: a user_speech or agent_speech span, a child of its turn, by the window of one stretch of the caller's or the agent's speech. User on is the starts of a turn's user_speech spans, user off the latest of their ends, agent on the earliest start of its agent_speech spans."
+    brief: "Host span profile: a user_speech or agent_speech span, a child of its turn, by the window of one stretch of the caller's or the agent's speech. Profile 0.2.0 may attach that stretch's optional transcript text as earshot.transcript.text. User on is the starts of a turn's user_speech spans, user off the latest of their ends, agent on the earliest start of its agent_speech spans."
     attributes:
       - ref: earshot.turn.id
+      - ref: earshot.transcript.text
+        requirement_level: opt_in
 
   - id: span.earshot.host.stage
     type: span

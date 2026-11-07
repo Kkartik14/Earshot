@@ -44,7 +44,9 @@ transcript, model input, model output and tool definitions. LiveKit's keys are r
 through one table that names the class of every `lk.*` key of LiveKit 1.6 to 1.8 (a 1.6
 key and its 1.7 `lk.pii.*` name share one class); an `lk.*` key the table does not list,
 such as `lk.sip.*` or a key a later release adds, is dropped under `metadata_only`. The
-string `NOT_GIVEN`, which Pipecat emits for unset values, counts as absent.
+string `NOT_GIVEN`, which Pipecat emits for unset values, counts as absent. The host
+profile 0.2.0 attribute `earshot.transcript.text` is classified as transcript
+content and is removed before storage under `metadata_only`.
 
 The raw Session Key is stored nowhere under `metadata_only`: a Call created under it has
 a null `session_key`, and the call API returns `session_key: null` and an empty transcript
@@ -280,6 +282,14 @@ follow the preset **in force when the spans arrived**: a Call captured under
 `metadata_only` has no transcript content in its spans, and gets no lines. Each
 recomputation of the projection replaces its lines.
 
+In host profile 0.2.0, `earshot.transcript.text` is optional content on a
+`user_speech` or `agent_speech` span. The host decides whether it has permission to send
+that text; Earshot stores it only when received and permitted by the Project's Capture
+Preset. When the attribute is absent, no transcript line is created. Earshot does not
+write transcript text to logs, metrics, error responses, or analytics. Call purge removes
+the stored spans and derived transcript lines; Project deletion removes them with the
+Project's other Call data.
+
 The list's `q` parameter searches those lines as a case-insensitive substring. It
 follows the Project's **current** preset: under `metadata_only` it is refused with 422
 `EARSHOT_PRESET_FORBIDS_CONTENT_SEARCH`, even when older lines exist, so switching a
@@ -354,8 +364,9 @@ earshot call purge --project <project_id> <call_id>
 The route answers 204, or 404 for an unknown Call; the command exits 0, or 2 with
 `EARSHOT_CALL_NOT_FOUND`. `--project` defaults to `default`. In one transaction, a purge:
 
-- deletes the Call, its spans, its trace bindings, its Recording rows and its Revision
-  rows, so no raw Session Key survives and the Call is no longer listed;
+- deletes the Call, its spans (including transcript text), its trace bindings, its
+  Recording rows and its Revision rows, so no raw Session Key survives and the Call is
+  no longer listed;
 - deletes its projection, its transcript lines (`call_transcripts`), its tags and its
   Recordings' analysis results;
 - purges each Revision through the Incident purge above, leaving Incident tombstones;
