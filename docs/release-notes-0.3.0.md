@@ -22,8 +22,9 @@ and searches transcript text. LiveKit Agents 1.6 to 1.8 now get the same view as
   FLAC or Ogg Opus.
 - **LiveKit over OTLP**: LiveKit 1.6 to 1.8 spans become Revisions and call views, with
   the played text as the agent's transcript, and LiveKit's own stereo recording.
-- **Clients**: Python's `earshot.client` (in the base install) and the new npm package
-  `@earshot/node`. See the [quick start](./otlp-quickstart.md).
+- **Clients**: Python's `earshot.client` (in the base install) and the Node client, then
+  available from the source workspace. Its first npm release is 0.4.0 as
+  `earshot-observability`. See the [quick start](./otlp-quickstart.md).
 - **Pipecat 1.6**: the extras and the OTLP example move to Pipecat 1.6; a real 1.6.0 call
   passes the done-when e2e.
 - **TVIC runtime adapter**: a metadata-only, in-process receiver for TVIC's runtime

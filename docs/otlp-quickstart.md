@@ -8,7 +8,7 @@ Incident built from all of its spans and Recordings.
 This page covers Pipecat 1.6 and LiveKit Agents 1.6 to 1.8, the producers tested end to
 end in 0.4.0, and the two clients that upload a call's recording: Python's
 [`earshot.client`](#the-python-client-earshotclient) and Node's
-[`@earshot/node`](#node-earshotnode). Any OTLP/HTTP producer can send spans; see the
+[`earshot-observability`](#node-earshot-observability). Any OTLP/HTTP producer can send spans; see the
 [README](../README.md#what-earshot-receives-today) for what each source gets. Once a Call
 has closed, its [call view](./calls.md) shows its audio, transcript, latency, audible gap
 and cost.
@@ -554,10 +554,10 @@ and needs only the standard library; it uses httpx when installed.
 | `recording_id_for(session_key, name)`                                                                                      | A stable Recording ID for a Call's named Recording, so a retry names the same one.                                                                                                                                                                                                                                                                                                                                          |
 | `EarshotError`                                                                                                             | A refused request: `status` (0 when there was no answer) and Earshot's stable `code`. A redirect (never followed, so the key never leaves the server you named), an answer that is not JSON and an answer cut short are `EarshotError`s too. Its message never holds the API key; it names the request's path, and a Recording ID from `recording_id_for` shows the Session Key when the key is made only of ID characters. |
 
-## Node: `@earshot/node`
+## Node: `earshot-observability`
 
 A Node voice server, such as a Twilio Media Streams handler or a LiveKit Agents JS worker,
-uses [`@earshot/node`](../packages/node/README.md) (ESM, Node 22.12 or later, with
+uses [`earshot-observability`](../packages/node/README.md) (ESM, Node 22.12 or later, with
 `@opentelemetry/api` as its one peer):
 
 ```ts
@@ -568,7 +568,7 @@ import {
   EarshotSpanProcessor,
   recordingIdFor,
   withSessionKey,
-} from "@earshot/node";
+} from "earshot-observability";
 
 const provider = new NodeTracerProvider({
   spanProcessors: [

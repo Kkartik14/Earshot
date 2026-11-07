@@ -1,5 +1,5 @@
 {
-  "name": "@earshot/node",
+  "name": "earshot-observability",
   "version": "0.4.0",
   "description": "Earshot for Node voice agents: an OpenTelemetry span processor that keys spans to their call, and a client that uploads the call's recording and reads the call back.",
   "keywords": [

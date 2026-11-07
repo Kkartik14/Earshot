@@ -18,16 +18,12 @@ on the client; diagnosis happens on the server.
 > `packages/sdk-python/src/earshot/engines/webrtc.py`, `.../engines/device.py`,
 > and the endpoint in `packages/sdk-python/src/earshot/api.py`.
 
-## Install
+## Availability
 
-```bash
-npm install @earshot/browser
-```
-
-The package is ESM-only, has no runtime dependencies, and ships its type
-declarations. Releases carry npm provenance from the Earshot release workflow.
-Its version matches the Earshot server release whose `POST /v1/capture` shape
-it targets.
+This package is not published on npm yet. Build it from this repository with the
+pnpm workspace commands below. It is ESM-only, has no runtime dependencies, and
+ships its type declarations. Its workspace version tracks the Earshot server
+release whose `POST /v1/capture` shape it targets.
 
 ## Status
 

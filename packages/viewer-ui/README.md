@@ -5,14 +5,13 @@ for the Earshot API, and the generated API types. It is framework neutral: the
 host provides route IDs and a link component, and the package depends on neither
 React Router nor Next.js.
 
-## Install
+## Availability
 
-```bash
-npm install @earshot/viewer-ui react @tanstack/react-query
-```
+This package is not published on npm yet. Build it from this repository with the
+pnpm workspace commands below.
 
 React and React Query are peer dependencies, so the host and the feature share
-one React instance and one query cache. The package version matches the Earshot
+one React instance and one query cache. Its workspace version matches the Earshot
 server release whose API it was generated from.
 
 The package ships ES modules, type declarations and CSS Modules. Use a bundler

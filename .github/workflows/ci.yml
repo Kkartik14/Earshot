@@ -96,7 +96,7 @@ jobs:
       - name: Check generated viewer and Node API types
         run: |
           pnpm --filter @earshot/viewer-ui gen:api
-          pnpm --filter @earshot/node gen:api
+          pnpm --filter earshot-observability gen:api
           git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts packages/node/src/openapi.ts
       - name: Test, typecheck, and format
         run: |
@@ -601,7 +601,7 @@ jobs:
       - name: Check generated viewer API types
         run: |
           pnpm --filter @earshot/viewer-ui gen:api
-          pnpm --filter @earshot/node gen:api
+          pnpm --filter earshot-observability gen:api
           git diff --exit-code -- packages/viewer-ui/src/api/schema.d.ts packages/node/src/openapi.ts
       - name: Test, typecheck, build, and format
         run: |

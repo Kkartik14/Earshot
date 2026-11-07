@@ -117,23 +117,21 @@ Alembic must appear only behind extras including `server`, and psycopg and boto3
 behind optional extras; and the wheel must contain the `earshot/` import directory, the
 migration revisions, and the `earshot` console entry point.
 
-## npm packages
+## Node npm package
 
-`@earshot/browser`, `@earshot/viewer-ui` and `@earshot/node` are published from the same
-tag, at the same version as the Python distribution. In the workspace, `@earshot/viewer-ui` exports its
-TypeScript sources; its `publishConfig` points the published `exports` and `types` at
-`dist/`. Only `pnpm pack` and `pnpm publish` apply `publishConfig`, so always pack it with
-pnpm. Check the tarballs locally:
+`earshot-observability` is the only npm package published from a release tag, at the same
+version as the Python distribution. The browser capture and viewer React packages remain
+workspace source packages and are not published on npm. Build and inspect the Node tarball
+with pnpm so its `publishConfig` entry points target `dist/`:
 
 ```bash
-pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node build
-pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node \
-  pack --pack-destination "$DIST_DIR"
+pnpm --filter earshot-observability build
+pnpm --filter earshot-observability pack --pack-destination "$DIST_DIR"
 ```
 
-Each tarball must contain only `dist/`, `README.md`, `LICENSE` and `package.json`, every
+The tarball must contain only `dist/`, `README.md`, `LICENSE` and `package.json`, every
 `main`, `types` and `exports` target must exist, and no dependency may use a `workspace:`
-range. The release workflow checks all three.
+range. The release workflow checks the package name and version before publication.
 
 ## Container image
 
@@ -157,24 +155,25 @@ jobs, just like pushing that tag; never use a tag dispatch as a dry run. A tag p
 only when all of these identities agree:
 
 - the tag is exactly `v<project.version>`;
+- the SemVer version has no build metadata (`+...`), which the OCI tag generator cannot
+  preserve;
 - the tagged commit is contained in the repository's default branch;
 - the Python distribution is `earshot-observability`;
-- all three npm packages have the tag's version; and
+- the npm package is `earshot-observability` and has the tag's version; and
 - the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
 
-| Job                 | Runs on        | Does                                                                                                                                                  |
-| ------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `validate`          | tag and manual | Checks the tag, version and image identity, and that the tag is on the default branch.                                                                |
-| `build-python`      | tag and manual | Builds the viewer, wheel and sdist, and runs the wheel, sdist and smoke checks.                                                                       |
-| `build-npm`         | tag and manual | Checks all three package versions, builds and packs them with pnpm, inspects the tarballs, and runs npm's publish dry run.                            |
-| `publish-container` | tag            | Builds the Linux AMD64 image, pushes it to `ghcr.io/kkartik14/earshot` with SBOM and provenance (`mode=max`), and attests it.                         |
-| `publish-pypi`      | tag            | Publishes the inspected wheel and sdist to PyPI with OIDC, after the image.                                                                           |
-| `publish-npm`       | tag            | Publishes the inspected tarballs with `npm publish --provenance --access public`, after the image. A version containing `-` gets the `next` dist-tag. |
-| `github-release`    | tag            | Attests the Python files and creates a GitHub Release with generated notes.                                                                           |
+| Job                 | Runs on        | Does                                                                                                                                                          |
+| ------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `validate`          | tag and manual | Checks the tag, version and image identity, and that the tag is on the default branch.                                                                        |
+| `build-python`      | tag and manual | Builds the viewer, wheel and sdist, and runs the wheel, sdist and smoke checks.                                                                               |
+| `build-npm`         | tag and manual | Checks the Node package name and version, builds and packs it with pnpm, inspects the tarball, and runs npm's publish dry run.                                |
+| `publish-container` | tag            | Builds the Linux AMD64 image, pushes it to `ghcr.io/kkartik14/earshot` with SBOM and provenance (`mode=max`), and attests it.                                 |
+| `publish-pypi`      | tag            | Publishes the inspected wheel and sdist to PyPI with OIDC, after the image.                                                                                   |
+| `publish-npm`       | tag            | Publishes the inspected Node tarball with `npm publish --provenance --access public`, after the image. A SemVer pre-release version gets the `next` dist-tag. |
+| `github-release`    | tag            | Attests the Python files and creates a GitHub Release with generated notes.                                                                                   |
 
-No long-lived PyPI or GHCR credential is stored in GitHub. npm uses trusted publishing
-(OIDC) when it is configured; until then, the `NPM_TOKEN` secret is the fallback, and it
-should be a short-lived token deleted after the first release.
+No long-lived publishing credential is stored in GitHub. npm uses Trusted Publishing
+(OIDC) for `earshot-observability`.
 
 Before the first tag, create the PyPI pending trusted publisher with these exact claims:
 
@@ -186,13 +185,12 @@ Workflow:     release.yml
 Environment:  pypi
 ```
 
-The GitHub `pypi` and `npm` environments restrict deployments to release tags and should
-retain a required maintainer approval. Claim mismatches fail closed at PyPI. If the
-repository, workflow, or environment is renamed, update PyPI and npm before the next
-release.
+The GitHub `pypi` and `npm` environments restrict deployments to release tags and require
+a maintainer approval. If the repository, workflow, or environment is renamed, update the
+PyPI and npm publishers before the next release.
 
 [`release-checklist.md`](./release-checklist.md) is the owner's step-by-step list: the
-one-time npm and GitHub environment setup, the five package-version declarations, the
+one-time npm and GitHub environment setup, the release versions to set, the
 generated `uv.lock` entry, the `CHANGELOG.md` entry, and the checks after publishing.
 Prepare a release on `main`, update every intentionally coupled version, and let CI pass,
 including the `coverage` job. Then create and push the matching tag:
