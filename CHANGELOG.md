@@ -11,6 +11,12 @@ are described in their [GitHub release notes](https://github.com/Kkartik14/Earsh
 - Under `metadata_only`, Earshot now drops `lk.cloud_agent_id`, `lk.job.agent_id` and
   `gen_ai.agent.id`; spans stored before 0.5.0 still contain those attributes.
 
+### Added
+
+- **Live Call turns.** `GET /v1/calls/{call_id}/live-turns` exposes provisional turns while
+  a Call is open. The viewer refreshes live turns until the durable projection is current
+  and aligned with the live timeline.
+
 ### Changed
 
 - Pipecat support starts at 1.6.0. Earshot's LiveKit range is

@@ -31,10 +31,10 @@ from captured_livekit_otlp import (
 )
 from captured_otlp import CAPTURED_SESSION_KEY, captured_manifest, captured_requests
 from earshot import storage_schema
-from earshot.api import create_app
+from earshot.api import _live_turns_etag, create_app
 from earshot.blobstore import LocalBlobStore, put_stream
 from earshot.call_capture import spans_from_request
-from earshot.call_projection import CALL_PROJECTION_VERSION
+from earshot.call_projection import CALL_PROJECTION_VERSION, compute_projection
 from earshot.clock import ManualClock
 from earshot.pricing_defaults import BUILTIN_PRICES
 from earshot.storage_analysis import AnalysisRunner, AnalysisStore
@@ -257,12 +257,52 @@ def test_live_turns_after_close_match_the_durable_projection_with_recording_anal
     assert world.written() == rows_before
 
 
-@pytest.mark.parametrize("fixture", ["pipecat", "livekit"])
+def test_open_live_turns_etag_changes_when_recording_analysis_changes_turns(tmp_path) -> None:
+    world = World(tmp_path)
+    call_id = world.replay(captured_requests())
+    started = captured_manifest()["audio"]["started_at_unix_nano"]
+    for speaker in ("user", "agent"):
+        world.store_recording(
+            f"conv.{speaker}",
+            (PIPECAT_AUDIO / f"{speaker}.wav").read_bytes(),
+            {
+                "session_key": CAPTURED_SESSION_KEY,
+                "speaker": speaker,
+                "content_type": "audio/wav",
+                "started_at_unix_nano": started,
+            },
+            duration_ms=32_486,
+        )
+
+    def read_live_turns() -> tuple[str, str, list[dict]]:
+        with world.reads.live_turns_snapshot("default", call_id) as snapshot:
+            assert snapshot is not None
+            turns = compute_projection(snapshot.load_source(), ()).detail["turns"]
+            return snapshot.state, _live_turns_etag(snapshot), turns
+
+    before_state, before_etag, before_turns = read_live_turns()
+    world.analyse()
+    after_state, after_etag, after_turns = read_live_turns()
+
+    assert before_state == after_state == "open"
+    assert before_turns != after_turns
+    assert before_etag != after_etag
+
+
+@pytest.mark.parametrize("fixture", ["pipecat", "livekit", "host"])
 def test_live_turns_before_close_match_each_captured_fixture_revision(
     tmp_path, fixture: str
 ) -> None:
+    from host_profile_support import host_request
+
     world = World(tmp_path)
-    requests = captured_requests() if fixture == "pipecat" else livekit_requests()
+    requests = (
+        captured_requests()
+        if fixture == "pipecat"
+        else livekit_requests()
+        if fixture == "livekit"
+        else [host_request(_host_turns())]
+    )
     call_id = world.replay(requests)
 
     with serve(create_app(store=world.store)) as port:
@@ -279,6 +319,39 @@ def test_live_turns_before_close_match_each_captured_fixture_revision(
     assert after_close.json()["revision"] == detail.json()["latest_revision"]["revision"] == 1
     assert before_close.json()["turns"] == after_close.json()["turns"]
     assert after_close.json()["turns"] == detail.json()["projection"]["turns"]
+
+
+def test_open_live_turns_keep_pending_claim_recordings_in_the_projection(tmp_path) -> None:
+    world = World(tmp_path)
+    call_id = world.replay(captured_requests())
+    started = captured_manifest()["audio"]["started_at_unix_nano"]
+    for speaker in ("user", "agent"):
+        world.store_recording(
+            f"conv.{speaker}",
+            (PIPECAT_AUDIO / f"{speaker}.wav").read_bytes(),
+            {
+                "session_key": CAPTURED_SESSION_KEY,
+                "speaker": speaker,
+                "content_type": "audio/wav",
+                "started_at_unix_nano": started,
+            },
+            duration_ms=32_486,
+        )
+    world.analyse()
+    path = f"/v1/calls/{call_id}/live-turns"
+
+    with serve(create_app(store=world.store)) as port:
+        before_claim = http_request(port, "GET", path)
+        world.clock.advance(CallTimings().long_quiet_nano)
+        claim = world.closer.claim()
+        assert claim is not None and claim.revision == 1
+        during_claim = http_request(port, "GET", path)
+
+    assert before_claim.status == during_claim.status == 200
+    assert before_claim.json()["state"] == during_claim.json()["state"] == "open"
+    assert before_claim.json()["turns"] == during_claim.json()["turns"]
+    assert any(turn["audible_gap"]["status"] == "measured" for turn in before_claim.json()["turns"])
+    assert any(turn["audible_gap"]["status"] == "measured" for turn in during_claim.json()["turns"])
 
 
 def test_a_livekit_call_with_its_stereo_ogg_is_projected_with_measured_turns(tmp_path) -> None:

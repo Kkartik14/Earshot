@@ -103,7 +103,7 @@ if TYPE_CHECKING:
 
 # Bumped when the projection's computation or shape changes: every stored
 # projection then reads as stale until the job recomputes it.
-CALL_PROJECTION_VERSION = 7
+CALL_PROJECTION_VERSION = 8
 PROJECTION_STATES = ("none", "stale", "current")
 
 
@@ -720,6 +720,14 @@ def compute_projection(source: CallSource, prices: Sequence[PriceRow]) -> Projec
             {
                 "index": index,
                 "turn_id": _turn_id(turn_span),
+                "turn_span": (
+                    None
+                    if turn_span is None
+                    else {
+                        "trace_id": turn_span.span.trace_id.hex(),
+                        "span_id": turn_span.span.span_id.hex(),
+                    }
+                ),
                 "start_ms": None
                 if turn_span is None
                 else placed_ms(turn_span.span.start_time_unix_nano, gap.offset_ms),

@@ -378,14 +378,19 @@ describe("call view on a real server", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 2_200));
     });
-    expect(
-      observedLiveTurnFetches.filter((item) =>
-        item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
-      ),
-    ).toHaveLength(closedLiveFetchCount);
-    expect(client.getQueryState(liveKey)?.dataUpdatedAt).toBe(liveUpdatedAt);
+    const pendingProjectionFetches = observedLiveTurnFetches.filter((item) =>
+      item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
+    );
+    expect(pendingProjectionFetches).toHaveLength(closedLiveFetchCount + 1);
+    expect(pendingProjectionFetches.at(-1)?.status).toBe(304);
+    expect(pendingProjectionFetches.at(-1)?.requestHeaders.get("If-None-Match")).toBe(
+      closedCache?.etag,
+    );
     expect(client.getQueryData<CallLiveTurnsCache>(liveKey)?.body).toEqual(
       closedCache?.body,
+    );
+    expect(client.getQueryState(liveKey)?.dataUpdatedAt).toBeGreaterThanOrEqual(
+      liveUpdatedAt ?? 0,
     );
 
     await act(async () => {
@@ -400,7 +405,9 @@ describe("call view on a real server", () => {
     expect(durable?.projection?.turns).toEqual(liveTurns?.turns);
     expect(screen.getByRole("table", { name: /reported latency/i })).toBeInTheDocument();
 
-    const callUpdatedAt = client.getQueryState(callKey)?.dataUpdatedAt;
+    const settledLiveFetchCount = observedLiveTurnFetches.filter((item) =>
+      item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
+    ).length;
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 2_200));
     });
@@ -408,8 +415,7 @@ describe("call view on a real server", () => {
       observedLiveTurnFetches.filter((item) =>
         item.url.endsWith(`/v1/calls/${seed.livekit_call_id}/live-turns`),
       ),
-    ).toHaveLength(closedLiveFetchCount);
-    expect(client.getQueryState(callKey)?.dataUpdatedAt).toBe(callUpdatedAt);
+    ).toHaveLength(settledLiveFetchCount);
   }, 60_000);
 
   it("renders synthetic host-profile turns within the two-second polling budget", async () => {

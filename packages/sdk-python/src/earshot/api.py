@@ -18,6 +18,7 @@ import threading
 import time
 import uuid
 import zlib
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from itertools import pairwise
@@ -555,11 +556,23 @@ class TurnSpanResponse(ApiModel):
     end_ms: int
 
 
+class SpanRefResponse(ApiModel):
+    trace_id: str
+    span_id: str
+
+
 class CallTurnResponse(ApiModel):
-    """One turn: the framework-reported latency beside the audible gap."""
+    """One turn, its stable parent-span identity, reported latency and audible gap."""
 
     index: int
     turn_id: str | None
+    turn_span: SpanRefResponse | None = Field(
+        default=None,
+        description=(
+            "Stable parent turn-span identity when available; "
+            "null when the stored projection has no parent reference."
+        ),
+    )
     start_ms: int | None
     end_ms: int | None
     reported_latency_ms: int | None
@@ -579,11 +592,6 @@ class CallSignalsResponse(ApiModel):
     talk_over_count: int | None
     long_silence_count: int | None
     dead_air_ms: int | None
-
-
-class SpanRefResponse(ApiModel):
-    trace_id: str
-    span_id: str
 
 
 class CostItemResponse(ApiModel):
@@ -692,6 +700,17 @@ class CallLiveTurnsResponse(ApiModel):
     call_id: str
     state: Literal["open", "closed"]
     revision: int | None
+    axis_origin_unix_nano: str | None = Field(
+        description=(
+            "Integer nanosecond origin for relative times; "
+            "null only for a closed Call without a Revision."
+        )
+    )
+    axis_origin: Literal["recording_start", "first_evidence"] | None = Field(
+        description=(
+            "Evidence source for relative times; null only for a closed Call without a Revision."
+        )
+    )
     turns: list[CallTurnResponse]
 
 
@@ -1034,6 +1053,40 @@ def _live_turns_etag(snapshot: Any) -> str:
     ]
     encoded = json.dumps(source_version, ensure_ascii=True, separators=(",", ":")).encode()
     return f'"sha256:{hashlib.sha256(encoded).hexdigest()}"'
+
+
+class _LiveTurnsBodyCache:
+    """Bounded per-app LRU for immutable live-turn response bodies."""
+
+    def __init__(self, *, max_entries: int = 64, max_bytes: int = 16 * 1024 * 1024) -> None:
+        self._max_entries = max_entries
+        self._max_bytes = max_bytes
+        self._entries: OrderedDict[tuple[str, str, str], bytes] = OrderedDict()
+        self._size_bytes = 0
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple[str, str, str]) -> bytes | None:
+        with self._lock:
+            body = self._entries.get(key)
+            if body is not None:
+                self._entries.move_to_end(key)
+            return body
+
+    def put(self, key: tuple[str, str, str], body: bytes) -> None:
+        if self._max_entries < 1 or len(body) > self._max_bytes:
+            return
+        with self._lock:
+            previous = self._entries.pop(key, None)
+            if previous is not None:
+                self._size_bytes -= len(previous)
+            while self._entries and (
+                len(self._entries) >= self._max_entries
+                or self._size_bytes + len(body) > self._max_bytes
+            ):
+                _, evicted = self._entries.popitem(last=False)
+                self._size_bytes -= len(evicted)
+            self._entries[key] = body
+            self._size_bytes += len(body)
 
 
 def _lower_hex(value: str, length: int) -> bool:
@@ -3609,6 +3662,7 @@ def create_app(
 
     calls = CallStore(repository, timings=call_timings)
     call_reads = CallReads(repository)
+    live_turns_body_cache = _LiveTurnsBodyCache()
     prices = PriceStore(repository)
     dashboard = DashboardReads(repository)
     if blob_store is None and repository.data_dir is not None:
@@ -4757,7 +4811,9 @@ def create_app(
             "evidence. Stored "
             "Recording analyses may contribute audible-gap fields. The response includes "
             "no raw span attributes, recordings, transcript or prices. It carries a strong "
-            "ETag and Cache-Control: no-store."
+            "ETag and Cache-Control: no-store, plus the time-axis origin used by its "
+            "relative times; both origin fields are null for a closed Call without a "
+            "Revision. While open, the origin can re-base as evidence arrives."
         ),
     )
     def get_call_live_turns_endpoint(
@@ -4772,20 +4828,30 @@ def create_app(
             headers = {"ETag": etag, "Cache-Control": "no-store"}
             if _if_none_match(if_none_match, etag):
                 return Response(status_code=304, headers=headers)
+            cache_key = (snapshot.project_id, snapshot.call_id, etag)
+            cached_body = live_turns_body_cache.get(cache_key)
+            if cached_body is not None:
+                return Response(cached_body, headers=headers, media_type="application/json")
             state, revision = snapshot.state, snapshot.revision
             # A Call closed without a Revision can later receive evidence, but that
             # evidence belongs to its next durable Revision and is not yet visible.
             source = None if state == "closed" and revision is None else snapshot.load_source()
-        turns = [] if source is None else compute_projection(source, ()).detail["turns"]
-        return JSONResponse(
+        projection = None if source is None else compute_projection(source, ()).detail
+        response = JSONResponse(
             {
                 "call_id": call_id,
                 "state": state,
                 "revision": revision,
-                "turns": turns,
+                "axis_origin_unix_nano": (
+                    None if projection is None else projection["axis_origin_unix_nano"]
+                ),
+                "axis_origin": None if projection is None else projection["axis_origin"],
+                "turns": [] if projection is None else projection["turns"],
             },
             headers=headers,
         )
+        live_turns_body_cache.put(cache_key, response.body)
+        return response
 
     @app.get(
         "/v1/calls/{call_id}/spans/{trace_id}/{span_id}",

@@ -560,11 +560,10 @@ class CallReads:
             revision = None if row["latest_revision"] is None else int(row["latest_revision"])
             open_revision = None
             if row["state"] == "open":
-                open_revision = (
-                    int(row["pending_revision"])
-                    if row["pending_revision"] is not None
-                    else (1 if revision is None else revision + 1)
-                )
+                if row["pending_revision"] is not None:
+                    open_revision = int(row["pending_revision"])
+                elif revision is None:
+                    open_revision = 1
             finality = row["finality"]
             snapshot = LiveTurnsSnapshot(
                 project_id=project_id,

@@ -4,9 +4,16 @@ import { afterEach, vi } from "vitest";
 import { ApiError, api } from "../../api/client";
 import { ViewerQueryScopeProvider, viewerQueryKey } from "../../api/queryScope";
 import callDetailFixture from "./__fixtures__/call-detail.json";
+import spanFixture from "./__fixtures__/llm-span.json";
 import { fakeClocks } from "./__fixtures__/fakeMediaClock";
 import { CallView } from "./CallView";
-import { useCall, useLiveCallTurns, type CallDetail, type CallProjection } from "./api";
+import {
+  useCall,
+  useLiveCallTurns,
+  type CallDetail,
+  type CallProjection,
+  type CallSpan,
+} from "./api";
 import { MediaClockContext } from "./Player";
 
 afterEach(() => {
@@ -31,6 +38,7 @@ function ClosedCallProbe() {
   const live = useLiveCallTurns(
     "call_0123456789abcdef0123456789abcdef",
     call.data?.state,
+    call.data?.projection_state,
   );
   return (
     <output>
@@ -42,6 +50,18 @@ function ClosedCallProbe() {
 function CallQueryProbe() {
   const query = useCall("call_0123456789abcdef0123456789abcdef");
   return <output>{query.isError ? "error" : "pending"}</output>;
+}
+
+function CallAnalysisProbe() {
+  const query = useCall("call_0123456789abcdef0123456789abcdef");
+  const data = query.data;
+  return (
+    <output>
+      {data == null
+        ? "pending"
+        : `${data.projection_state}:${data.projection?.analysis_state ?? "none"}`}
+    </output>
+  );
 }
 
 describe("live call turn query", () => {
@@ -92,6 +112,204 @@ describe("live call turn query", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
     expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops polling a closed detail after a permanent error", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retryDelay: 0, gcTime: Infinity } },
+    });
+    const base = callDetailFixture as CallDetail;
+    const scope = { projectId: "default", authContextId: "test" };
+    client.setQueryData(viewerQueryKey(scope, ["call", base.call_id]), {
+      ...base,
+      state: "closed",
+      projection_state: "stale",
+    });
+    const get = vi.spyOn(api, "GET").mockResolvedValue({
+      error: { error: { code: "EARSHOT_CALL_NOT_FOUND" } },
+      response: new Response(null, { status: 404 }),
+    } as never);
+
+    render(
+      <QueryClientProvider client={client}>
+        <ViewerQueryScopeProvider scope={scope}>
+          <CallQueryProbe />
+        </ViewerQueryScopeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("error")).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_200));
+    });
+    expect(get).toHaveBeenCalledTimes(1);
+  }, 10_000);
+
+  it("clears the span drawer when navigating directly to another cached Call", async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Infinity, gcTime: Infinity },
+      },
+    });
+    const base = callDetailFixture as CallDetail;
+    const liveTurns = (base.projection as CallProjection).turns;
+    const first: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+      recordings: [],
+    };
+    const second: CallDetail = {
+      ...first,
+      call_id: "call_abcdef0123456789abcdef0123456789",
+    };
+    const scope = { projectId: "default", authContextId: "test" };
+    client.setQueryData(viewerQueryKey(scope, ["call", first.call_id]), first);
+    client.setQueryData(viewerQueryKey(scope, ["call", second.call_id]), second);
+    const bodyFor = (call: CallDetail) => ({
+      call_id: call.call_id,
+      state: "open",
+      revision: null,
+      axis_origin_unix_nano: base.first_evidence_unix_nano,
+      axis_origin: "first_evidence",
+      turns: liveTurns,
+    });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const call = String(input).includes(second.call_id) ? second : first;
+      return new Response(JSON.stringify(bodyFor(call)), {
+        status: 200,
+        headers: { ETag: `"${call.call_id}"` },
+      });
+    });
+    vi.spyOn(api, "GET").mockResolvedValue({
+      data: spanFixture as CallSpan,
+      response: new Response("{}", { status: 200 }),
+    } as never);
+    const { factory } = fakeClocks();
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ViewerQueryScopeProvider scope={scope}>
+          <MediaClockContext.Provider value={factory}>
+            <CallView callId={first.call_id} />
+          </MediaClockContext.Provider>
+        </ViewerQueryScopeProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "LLM llm" }))[0]);
+    expect(
+      await screen.findByRole("dialog", { name: "llm span detail" }),
+    ).toBeInTheDocument();
+
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <ViewerQueryScopeProvider scope={scope}>
+          <MediaClockContext.Provider value={factory}>
+            <CallView callId={second.call_id} />
+          </MediaClockContext.Provider>
+        </ViewerQueryScopeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(fetcher).toHaveBeenCalled();
+  });
+
+  it("keeps polling while a current closed projection has pending analysis", async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, staleTime: Infinity, gcTime: Infinity },
+      },
+    });
+    const base = callDetailFixture as CallDetail;
+    const currentPending: CallDetail = {
+      ...base,
+      state: "closed",
+      projection_state: "current",
+      projection: { ...base.projection!, analysis_state: "pending" },
+    };
+    const stalePending: CallDetail = {
+      ...currentPending,
+      projection_state: "stale",
+    };
+    const currentStored: CallDetail = {
+      ...base,
+      state: "closed",
+      projection_state: "current",
+      projection: { ...base.projection!, analysis_state: "stored" },
+    };
+    const get = vi.spyOn(api, "GET");
+    get
+      .mockResolvedValueOnce({
+        data: currentPending,
+        response: new Response("{}", { status: 200 }),
+      } as never)
+      .mockResolvedValueOnce({
+        data: stalePending,
+        response: new Response("{}", { status: 200 }),
+      } as never)
+      .mockResolvedValue({
+        data: currentStored,
+        response: new Response("{}", { status: 200 }),
+      } as never);
+
+    render(
+      <QueryClientProvider client={client}>
+        <ViewerQueryScopeProvider scope={{ projectId: "default", authContextId: "test" }}>
+          <CallAnalysisProbe />
+        </ViewerQueryScopeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("current:pending")).toBeInTheDocument();
+    expect(
+      await screen.findByText("stale:pending", {}, { timeout: 4_000 }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("current:stored", {}, { timeout: 4_000 }),
+    ).toBeInTheDocument();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_200));
+    });
+    expect(get).toHaveBeenCalledTimes(3);
+  }, 12_000);
+
+  it("shows a notice when live-turn polling fails but Call detail is still available", async () => {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retryDelay: 0, staleTime: Infinity, gcTime: Infinity },
+      },
+    });
+    const base = callDetailFixture as CallDetail;
+    const call: CallDetail = {
+      ...base,
+      state: "open",
+      latest_revision: null,
+      projection_state: "none",
+      projection: null,
+      recordings: [],
+    };
+    const scope = { projectId: "default", authContextId: "test" };
+    client.setQueryData(viewerQueryKey(scope, ["call", call.call_id]), call);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "TEMPORARY" } }), { status: 503 }),
+    );
+
+    render(
+      <QueryClientProvider client={client}>
+        <ViewerQueryScopeProvider scope={scope}>
+          <CallView callId={call.call_id} />
+        </ViewerQueryScopeProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByText(
+        "Live turn updates could not be refreshed; showing the latest available Call data.",
+      ),
+    ).toHaveAttribute("role", "status");
   });
 
   it("moves focus to the access denial after an open Call's span drawer is removed", async () => {
@@ -195,7 +413,7 @@ describe("live call turn query", () => {
     10_000,
   );
 
-  it("retries transient live failures while open and stops after the Call closes", async () => {
+  it("retries transient live failures while the Call is open", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retryDelay: 0, gcTime: Infinity } },
     });
@@ -214,18 +432,6 @@ describe("live call turn query", () => {
         { status: 200, headers: { ETag: '"revision-1"' } },
       ),
     );
-    fetcher.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          call_id: "call_0123456789abcdef0123456789abcdef",
-          state: "closed",
-          revision: 1,
-          turns: [{ index: 0 }],
-        }),
-        { status: 200, headers: { ETag: '"revision-2"' } },
-      ),
-    );
-
     render(
       <QueryClientProvider client={client}>
         <ViewerQueryScopeProvider scope={{ projectId: "default", authContextId: "test" }}>
@@ -242,16 +448,6 @@ describe("live call turn query", () => {
 
     expect(await screen.findByText("open:0")).toBeInTheDocument();
     expect(fetcher).toHaveBeenCalledTimes(5);
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2_200));
-    });
-
-    expect(await screen.findByText("closed:1")).toBeInTheDocument();
-    expect(fetcher).toHaveBeenCalledTimes(6);
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 2_200));
-    });
-    expect(fetcher).toHaveBeenCalledTimes(6);
   }, 10_000);
 
   it("retries a failed detail refresh until the newer Revision is current", async () => {
@@ -869,7 +1065,7 @@ describe("live call turn query", () => {
     expect(screen.getByText("open:1")).toBeInTheDocument();
   });
 
-  it("stops live polling after a closed response without a Revision", async () => {
+  it("keeps polling a closed Call until its projection is current", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: Infinity } },
     });
@@ -910,14 +1106,13 @@ describe("live call turn query", () => {
     );
 
     expect(await screen.findByText("closed:closed:none")).toBeInTheDocument();
-    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalled();
     expect(fetcher).toHaveBeenCalledTimes(1);
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 2_200));
     });
     expect(await screen.findByText("closed:closed:none")).toBeInTheDocument();
-    expect(get).toHaveBeenCalledTimes(1);
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   }, 10_000);
 
   it("switches from the closed live Revision turns to the durable projection", async () => {
@@ -983,9 +1178,12 @@ describe("live call turn query", () => {
       </QueryClientProvider>,
     );
 
-    expect(
-      await screen.findByRole("table", { name: /reported latency/i }),
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      const table = screen.getByRole("table", { name: /reported latency/i });
+      expect(within(table).getAllByRole("row")).toHaveLength(
+        durable.projection!.turns.length + 1,
+      );
+    });
     expect(get).toHaveBeenCalledTimes(2);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(

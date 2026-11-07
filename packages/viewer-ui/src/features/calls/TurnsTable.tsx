@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CallTurn, TurnSpan } from "./api";
 import { formatClock, formatSeconds, gapReadout, humanize } from "./format";
 import type { MediaClock } from "./mediaClock";
@@ -23,6 +23,17 @@ const BASIS_NOTE: Record<NonNullable<CallTurn["audible_gap"]["basis"]>, string> 
   continuous_timeline_assumed: "continuous recorder timeline assumed",
 };
 
+function turnRowKey(turn: CallTurn): string {
+  if (turn.turn_span != null) {
+    return `span:${turn.turn_span.trace_id}:${turn.turn_span.span_id}`;
+  }
+  if (turn.turn_id != null) return `id:${turn.turn_id}`;
+  const firstSpan = turn.spans[0];
+  return firstSpan == null
+    ? `index:${turn.index}`
+    : `span:${firstSpan.trace_id}:${firstSpan.span_id}`;
+}
+
 /** Per turn: the framework's reported latency beside the audible gap measured at
  * the agent from the recording. Neither is ever shown as 0 when it is unknown. */
 export function TurnsTable({
@@ -30,7 +41,7 @@ export function TurnsTable({
   clock,
   openSpanId,
   onOpenSpan,
-  emptyMessage = "The framework reported no turns for this call.",
+  emptyMessage = "No turns were received for this call.",
 }: {
   turns: CallTurn[];
   clock: MediaClock | null;
@@ -39,11 +50,26 @@ export function TurnsTable({
   emptyMessage?: string;
 }) {
   const headingId = useId();
+  const previousTurnCount = useRef(turns.length);
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    const added = turns.length - previousTurnCount.current;
+    previousTurnCount.current = turns.length;
+    if (added > 0) {
+      const total = turns.length === 1 ? "1 turn total." : `${turns.length} turns total.`;
+      setAnnouncement(
+        `${added} new ${added === 1 ? "turn" : "turns"} received. ${total}`,
+      );
+    }
+  }, [turns.length]);
   return (
     <section className={styles.panel} aria-labelledby={headingId}>
       <h2 id={headingId} className={styles.panelTitle}>
         Turns
       </h2>
+      <p className={styles.screenReaderOnly} role="status" aria-live="polite">
+        {announcement}
+      </p>
       {turns.length === 0 ? (
         <p className={styles.note}>{emptyMessage}</p>
       ) : (
@@ -70,11 +96,7 @@ export function TurnsTable({
                 const number = turn.index + 1;
                 const basis = turn.audible_gap.basis;
                 return (
-                  <tr
-                    key={
-                      turn.turn_id == null ? `index:${turn.index}` : `id:${turn.turn_id}`
-                    }
-                  >
+                  <tr key={turnRowKey(turn)}>
                     <th scope="row">{number}</th>
                     <td>
                       {turn.start_ms == null ? (

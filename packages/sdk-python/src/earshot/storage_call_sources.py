@@ -30,10 +30,8 @@ def _source_spans(
     if revision is not None:
         condition = "s.first_revision <= ?"
         parameters = (project_id, call_id, revision)
-    elif open_revision is None:
-        condition = "s.first_revision IS NULL"
-        parameters = (project_id, call_id)
     else:
+        assert open_revision is not None
         condition = "(s.first_revision IS NULL OR s.first_revision = ?)"
         parameters = (project_id, call_id, open_revision)
     resources = {
@@ -63,10 +61,8 @@ def _source_recordings(
     if revision is not None:
         revision_filter = "r.first_revision <= ?"
         parameters = (project_id, call_id, revision)
-    elif open_revision is None:
-        revision_filter = "r.first_revision IS NULL"
-        parameters = (project_id, call_id)
     else:
+        assert open_revision is not None
         revision_filter = "(r.first_revision IS NULL OR r.first_revision = ?)"
         parameters = (project_id, call_id, open_revision)
     rows = connection.execute(

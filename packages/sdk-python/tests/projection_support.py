@@ -135,6 +135,7 @@ def example_detail() -> dict[str, Any]:
             {
                 "index": 0,
                 "turn_id": "turn-1",
+                "turn_span": _span("1000000000000000"),
                 **_ms(1310, 7420),
                 "reported_latency_ms": 1800,
                 "audible_gap": {
@@ -155,6 +156,7 @@ def example_detail() -> dict[str, Any]:
             {
                 "index": 1,
                 "turn_id": "turn-2",
+                "turn_span": _span("1000000000000008"),
                 **_ms(11810, 19710),
                 "reported_latency_ms": 1352,
                 "audible_gap": {
@@ -169,6 +171,7 @@ def example_detail() -> dict[str, Any]:
             {
                 "index": 2,
                 "turn_id": "turn-3",
+                "turn_span": _span("1000000000000009"),
                 **_ms(22590, 28770),
                 "reported_latency_ms": 1334,
                 "audible_gap": {

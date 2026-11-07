@@ -94,9 +94,11 @@ export function useCall(callId: string) {
     retry: (failureCount, error) => failureCount < 3 && isRetryableCallApiError(error),
     refetchInterval: (query) => {
       if (!isRetryableCallApiError(query.state.error)) return false;
-      return query.state.data?.state === "closed" &&
-        query.state.data.latest_revision != null &&
-        query.state.data.projection_state !== "current"
+      const call = query.state.data;
+      const analysisPending = call?.projection?.analysis_state === "pending";
+      return call?.state === "closed" &&
+        call.latest_revision != null &&
+        (call.projection_state !== "current" || analysisPending)
         ? 2_000
         : false;
     },
@@ -107,6 +109,7 @@ export function useCall(callId: string) {
 export function useLiveCallTurns(
   callId: string,
   detailState: CallDetail["state"] | undefined,
+  detailProjectionState?: CallDetail["projection_state"],
 ) {
   const scope = useViewerQueryScope();
   const queryClient = useQueryClient();
@@ -123,10 +126,7 @@ export function useLiveCallTurns(
         signal,
       });
       if (response.status === 304) {
-        if (previous == null) {
-          throw new ApiError(304, "EARSHOT_LIVE_TURNS_CACHE_MISSING");
-        }
-        return previous;
+        return previous as CallLiveTurnsCache;
       }
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as {
@@ -147,8 +147,10 @@ export function useLiveCallTurns(
     retry: (failureCount, error) => failureCount < 3 && isRetryableCallApiError(error),
     refetchInterval: (query) => {
       if (!isRetryableCallApiError(query.state.error)) return false;
-      if (query.state.data?.body.state === "closed") return false;
-      return query.state.data != null || detailState != null ? 2_000 : false;
+      if (query.state.data?.body.state === "open" || detailState === "open") return 2_000;
+      return detailState === "closed" && detailProjectionState !== "current"
+        ? 2_000
+        : false;
     },
   });
 }

@@ -151,7 +151,7 @@ export interface paths {
     };
     /**
      * Get Call Live Turns Endpoint
-     * @description The current framework turns for an open Call, or for its latest Revision after close (revision is null when a closed Call has no Revision). A turn appears when its parent turn span arrives; later spans may enrich it. A closed Call without a Revision returns no turns, including unassigned late evidence. Stored Recording analyses may contribute audible-gap fields. The response includes no raw span attributes, recordings, transcript or prices. It carries a strong ETag and Cache-Control: no-store.
+     * @description The current framework turns for an open Call, or for its latest Revision after close (revision is null when a closed Call has no Revision). A turn appears when its parent turn span arrives; later spans may enrich it. A closed Call without a Revision returns no turns, including unassigned late evidence. Stored Recording analyses may contribute audible-gap fields. The response includes no raw span attributes, recordings, transcript or prices. It carries a strong ETag and Cache-Control: no-store, plus the time-axis origin used by its relative times; both origin fields are null for a closed Call without a Revision. While open, the origin can re-base as evidence arrives.
      */
     get: operations["get_call_live_turns_endpoint_v1_calls__call_id__live_turns_get"];
     put?: never;
@@ -1255,6 +1255,16 @@ export interface components {
      * @description The current parent-span-backed turns for an open Call or latest Revision.
      */
     CallLiveTurnsResponse: {
+      /**
+       * Axis Origin
+       * @description Evidence source for relative times; null only for a closed Call without a Revision.
+       */
+      axis_origin: ("recording_start" | "first_evidence") | null;
+      /**
+       * Axis Origin Unix Nano
+       * @description Integer nanosecond origin for relative times; null only for a closed Call without a Revision.
+       */
+      axis_origin_unix_nano: string | null;
       /** Call Id */
       call_id: string;
       /** Revision */
@@ -1555,7 +1565,7 @@ export interface components {
     };
     /**
      * CallTurnResponse
-     * @description One turn: the framework-reported latency beside the audible gap.
+     * @description One turn, its stable parent-span identity, reported latency and audible gap.
      */
     CallTurnResponse: {
       audible_gap: components["schemas"]["AudibleGapResponse"];
@@ -1571,6 +1581,8 @@ export interface components {
       start_ms: number | null;
       /** Turn Id */
       turn_id: string | null;
+      /** @description Stable parent turn-span identity when available; null when the stored projection has no parent reference. */
+      turn_span?: components["schemas"]["SpanRefResponse"] | null;
     };
     /**
      * CaptureAcceptedResponse
