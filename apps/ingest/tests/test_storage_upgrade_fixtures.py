@@ -95,6 +95,16 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _checkpoint_sqlite_wal(database: Path) -> None:
+    """Make the main-file digest include every committed WAL frame."""
+
+    with closing(sqlite3.connect(database)) as connection:
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    assert checkpoint is not None
+    busy, frames, checkpointed = checkpoint
+    assert busy == 0 and frames == checkpointed
+
+
 def _stored_objects(data_dir: Path) -> dict[str, int]:
     """The CAS objects on disk, by name; each file's content must hash to its name."""
 
@@ -288,7 +298,12 @@ def test_every_legacy_release_refuses_a_catalog_this_release_upgraded(tmp_path, 
     data_dir = copy_upgrade_fixture(name, tmp_path / name)
     IncidentStore(data_dir).close()
     database = data_dir / "earshot.sqlite3"
-    before = (_sha256_file(database), _row_counts(database))
+    # Reading counts or closing the old binary can checkpoint an existing WAL.
+    # Checkpoint explicitly before each digest so the file hash covers committed
+    # database state rather than depending on which connection closes last.
+    before_rows = _row_counts(database)
+    _checkpoint_sqlite_wal(database)
+    before = (_sha256_file(database), before_rows)
 
     outcome = _open_with_release(name, data_dir)
 
@@ -296,7 +311,10 @@ def test_every_legacy_release_refuses_a_catalog_this_release_upgraded(tmp_path, 
         "schema_version": upgrade_fixture(name)["schema_version"],
         "refused": "incident database schema is newer than this binary",
     }
-    assert (_sha256_file(database), _row_counts(database)) == before
+    after_rows = _row_counts(database)
+    _checkpoint_sqlite_wal(database)
+    after = (_sha256_file(database), after_rows)
+    assert after == before
     assert _alembic_state(database) == (ALEMBIC_SENTINEL, [HEAD], [])
 
 
