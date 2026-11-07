@@ -9,8 +9,8 @@ runs on a laptop with SQLite and local disk, or on a team server with Postgres a
 
 Status: pre-v1 alpha. 0.5.0 adds live-turn reads and host-profile transcripts and usage,
 plus scoped hosted reads for recordings. Hosted OTLP and Recording writes, Call and audio
-reads, and purge use the `earshot:calls:*` scopes; raw span details, prices and transcript
-uploads stay closed. The call view shows audio with a waveform, the transcript on the
+reads, and purge use the `earshot:calls:*` scopes; raw span details, prices and the
+standalone transcript-upload API stay closed. The call view shows audio with a waveform, the transcript on the
 audio, per-turn latency beside the audible gap at the agent, and cost for Pipecat, LiveKit
 and host-profile calls. Compatibility is limited to the versions documented for
 each release; see the [alpha compatibility policy](docs/release.md#alpha-compatibility-policy).
@@ -184,7 +184,7 @@ beyond localhost, drop that line, set `EARSHOT_TOKEN` or issue API keys, set
 - **Hosted mode** with short-lived, project-scoped JWTs (`EARSHOT_AUTH_MODE=hosted_jwt`).
   OTLP spans and Recording uploads use `earshot:calls:write`; Call and project-scoped
   recording reads use `earshot:calls:read`; purge uses `earshot:calls:delete`. Price
-  routes, transcript uploads, raw span attributes and receiver counters stay closed.
+  routes, the standalone transcript-upload API, raw span attributes and receiver counters stay closed.
 
 The Python distribution is `earshot-observability`; the import package and the CLI are
 `earshot`. The PyPI project named `earshot` is an unrelated VAD package. The base install
