@@ -215,8 +215,8 @@ registered in [`semconv/earshot.yaml`](../semconv/earshot.yaml).
 
 - **Turns.** One per `turn` span. User on is the starts of its `user_speech` spans, user
   off the latest of their ends, and agent on the earliest start of its `agent_speech`
-  spans. The reported latency is `earshot.turn.reported_latency_ms`; absent, or not a
-  finite non-negative number, it is unknown, never 0.
+  spans. The reported latency is `earshot.turn.reported_latency_ms`. A present value is
+  a positive finite OTLP `doubleValue` or `intValue`; otherwise it is unknown, never 0.
 - **The audible gap** is measured on the `continuous_timeline_assumed` basis, since the
   host places its Recording's frames by its wall clock. A turn with
   `earshot.turn.timeline_continuous=false` is `not_measurable` with
@@ -228,17 +228,19 @@ registered in [`semconv/earshot.yaml`](../semconv/earshot.yaml).
   stage the host did not time has no span: its time is unknown, never 0.
 - **Usage.** `llm` spans bill like Pipecat's `llm` (input, cached and output tokens).
   Profile 0.1.0 defines no STT or TTS quantity attributes. Profile 0.2.0 optionally adds
-  `earshot.stt.usage.audio_seconds`, a finite positive OTLP `double` of provider-metered
-  audio seconds for one STT request, and `earshot.tts.usage.character_count`, a positive
-  OTLP `int64` in the provider's own TTS character-metering units for one request. These
-  are request quantities, not cumulative counters. Hosts omit unknown values; zero is invalid. Do not
-  infer STT usage from span or speech duration, or TTS usage by counting text, bytes,
+  `earshot.stt.usage.audio_seconds`, a positive finite OTLP `doubleValue` or positive
+  `intValue` of provider-metered audio seconds for one STT request, and
+  `earshot.tts.usage.character_count`, a positive OTLP `int64` in the provider's own TTS
+  character-metering units for one request. These are request quantities, not cumulative
+  counters. Hosts omit unknown values; zero is invalid. Do not infer STT usage from span
+  or speech duration, or TTS usage by counting text, bytes,
   Unicode scalar values, or grapheme clusters. The profile 0.2.0 additions do not change
   existing provider, model, stage-boundary, LLM-usage, or turn semantics. When no STT
   request for a provider/model reports seconds, the existing call-level audio estimate
-  remains. If only some requests report seconds, Earshot sums those reported quantities
-  and leaves missing requests unknown; it does not add a call-wide estimate over the
-  reported requests. Missing TTS counts remain unknown.
+  remains. A streaming STT session total reported at close is not request usage and is
+  omitted, so it does not replace that estimate. If only some requests report seconds,
+  Earshot sums those reported quantities and leaves missing requests unknown; it does not
+  add a call-wide estimate over the reported requests. Missing TTS counts remain unknown.
 - **No transcript.** The profile defines no text, so a host call has no transcript lines
   (`not_observed`) and nothing of its own that a `metadata_only` project would drop. A
   host sends its

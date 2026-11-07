@@ -43,7 +43,7 @@ groups:
       - id: earshot.turn.reported_latency_ms
         type: double
         requirement_level: opt_in
-        brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; absent when the host has none, never 0. A value that is not a finite, non-negative number is unknown."
+        brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; a present value is a positive finite OTLP doubleValue or intValue. Absent or invalid values are unknown, never 0."
       - id: earshot.turn.timeline_continuous
         type: boolean
         requirement_level: opt_in
@@ -101,7 +101,7 @@ groups:
         requirement_level: opt_in
         stability: development
         brief: Provider-metered STT input audio quantity in seconds for one request.
-        note: Omit when unknown. A present value is finite and greater than zero. Do not infer it from span duration or the caller's speech window.
+        note: Omit when unknown. A present value is a positive finite OTLP doubleValue or positive intValue. Do not infer it from span duration or the caller's speech window.
       - id: earshot.tts.usage.character_count
         type: int
         requirement_level: opt_in
@@ -300,7 +300,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter endpointing delay in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter endpointing delay in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -308,7 +308,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter elapsed time to first audio in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter elapsed time to first audio in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -316,7 +316,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter elapsed time to first token in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter elapsed time to first token in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -324,7 +324,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter interruption-tail duration in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter interruption-tail duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -332,7 +332,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter listened duration in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter listened duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -340,7 +340,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter observed recovery gap in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter observed recovery gap in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -348,7 +348,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter elapsed session time in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter elapsed session time in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -356,7 +356,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter tool duration in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter tool duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
@@ -364,7 +364,7 @@ groups:
         type: any
         requirement_level: opt_in
         stability: development
-        brief: "Deprecated TVIC adapter total turn duration in milliseconds; a finite non-negative OTLP integer or floating-point number."
+        brief: "Deprecated TVIC adapter total turn duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
         deprecated:
           reason: uncategorized
           note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."

@@ -4,6 +4,12 @@ Status: implemented metadata-only receiver for TVIC's bounded runtime-observatio
 envelope. This is an in-process adapter contract, not the separate hosted outbox
 proposal in [`runtime-event-v1`](../contracts/runtime-event-v1.md).
 
+> **Deprecated for new emitters:** the TVIC-specific `earshot.integration.tvic.*`
+> attributes remain accepted for existing producers. New host integrations should use
+> the [host span profile](../calls.md#the-host-span-profile) where its semantics fit;
+> that profile does not replace this adapter's TVIC recovery and loss coverage. This
+> notice does not set a removal date; removal requires a separate deprecation.
+
 TVIC owns execution and emits enqueue-only session/turn facts; Earshot validates the
 envelope and maps accepted metadata into normalized events and coverage. The adapter
 is bound to one Earshot session. A host bridge must route events by `sessionId`, keep
