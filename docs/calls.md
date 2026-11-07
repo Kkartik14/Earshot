@@ -354,8 +354,9 @@ scope version is exactly `0.2.0`.
   `intValue` of provider-metered audio seconds for one STT request. Each report is
   rounded to milliseconds per request, with a one-millisecond minimum for positive
   values. Earshot reprices from that stored millisecond quantity. It also adds
-  `earshot.tts.usage.character_count`, a positive OTLP `int64` in the provider's own TTS
-  character-metering units for one request. These are request quantities, not cumulative
+  `earshot.tts.usage.character_count`, a positive JSON-safe OTLP `int64` from `1` through
+  `9,007,199,254,740,991` in the provider's own TTS character-metering units for one request.
+  These are request quantities, not cumulative
   counters. Hosts omit unknown values; zero is invalid. Do not infer STT usage from span
   or speech duration, or TTS usage by counting text, bytes,
   Unicode scalar values, or grapheme clusters. The profile 0.2.0 additions do not change
