@@ -159,7 +159,9 @@ only when all of these identities agree:
   preserve;
 - the tagged commit is contained in the repository's default branch;
 - the Python distribution is `earshot-observability`;
-- the npm package is `earshot-observability` and has the tag's version; and
+- the npm package is `earshot-observability` and has the tag's version;
+- the Node package's `repository.url` matches the current GitHub owner and repository;
+- pre-release versions use the canonical SemVer forms `-alpha.N`, `-beta.N`, or `-rc.N`;
 - the container identity is the lowercase `ghcr.io/<owner>/<repository>` path.
 
 | Job                 | Runs on        | Does                                                                                                                                                          |
@@ -167,13 +169,72 @@ only when all of these identities agree:
 | `validate`          | tag and manual | Checks the tag, version and image identity, and that the tag is on the default branch.                                                                        |
 | `build-python`      | tag and manual | Builds the viewer, wheel and sdist, and runs the wheel, sdist and smoke checks.                                                                               |
 | `build-npm`         | tag and manual | Checks the Node package name and version, builds and packs it with pnpm, inspects the tarball, and runs npm's publish dry run.                                |
-| `publish-container` | tag            | Builds the Linux AMD64 image, pushes it to `ghcr.io/kkartik14/earshot` with SBOM and provenance (`mode=max`), and attests it.                                 |
+| `publish-container` | tag            | Builds and attests the OCI image with SBOM and provenance (`mode=max`).                                                                                       |
 | `publish-pypi`      | tag            | Publishes the inspected wheel and sdist to PyPI with OIDC, after the image.                                                                                   |
 | `publish-npm`       | tag            | Publishes the inspected Node tarball with `npm publish --provenance --access public`, after the image. A SemVer pre-release version gets the `next` dist-tag. |
 | `github-release`    | tag            | Attests the Python files and creates a GitHub Release with generated notes.                                                                                   |
 
 No long-lived publishing credential is stored in GitHub. npm uses Trusted Publishing
 (OIDC) for `earshot-observability`.
+
+The inspected Python distributions and npm tarball are both retained for 30 days. For a
+partial PyPI upload, use GitHub's **Re-run failed jobs** on the same workflow run while its
+artifact is retained; this reuses the original wheel and sdist. The PyPI action keeps
+`skip-existing` disabled. Warehouse currently returns success for an exact
+filename-and-content duplicate and rejects a same-name upload with different contents, so
+Twine can continue past an accepted file and upload the missing one. The upload and its
+PEP 740 attestation are accepted together on the normal first attempt; Warehouse's duplicate
+response does not attach a new attestation to a file that was previously uploaded without
+one. This retry behavior follows Warehouse's current implementation; PyPI does not
+document it as an Upload API guarantee.
+
+For GHCR retries, the workflow resolves the exact version tag before building. If it
+already exists, the workflow inspects its manifest and image config, verifies the OCI
+version and source-revision labels against the tagged release, reuses its digest for
+attestation, and skips the image push. The workflow publishes that immutable version tag
+first, then promotes the SHA and stable aliases from the verified digest. Config metadata
+is read without downloading image layers. The workflow creates a missing SHA tag but
+refuses to retarget an existing one, and advances `major.minor` and `latest` only when
+their OCI version label is older than this release. A retry can finish an interrupted
+alias promotion, and a retry of an older release leaves newer aliases in place. The GHCR
+publisher is serialized across release tags and queues up to 100 pending image jobs in
+FIFO order. Lookup errors or mismatched labels stop the job; never rebuild over or retarget
+an existing version tag.
+
+Before the first upload for a version, confirm that PyPI has no files for that version. If
+any files are already present, compare the complete published file list with the release
+artifacts and audit each file's provenance before continuing. Stop if an expected file lacks
+its release attestation or if the version contains unexpected files; the workflow does not
+inventory or repair pre-existing files.
+
+If `npm publish` returns an error, the job checks the version already on npm before deciding
+whether the upload failed or only its success response was lost. It installs that exact
+public version in a temporary directory with lifecycle scripts and peer dependencies omitted,
+runs `npm audit signatures --json --include-attestations`, then verifies that the registry
+integrity matches the retained tarball, and that the npm publish attestation proves the
+registry accepted that package version and digest. It also verifies that SLSA provenance for
+the same digest names this repository, workflow file, release tag, source commit, and
+workflow run. Only that exact result lets the same workflow run continue to GitHub Release.
+If the registry has not propagated the version or attestations yet, or any identity does not
+match, the job fails closed; rerun the failed jobs on the same workflow run after
+propagation. A version published by another run or with different bytes/provenance requires
+manual investigation; never publish a replacement under the same name and version.
+
+Before publishing a stable npm version, the workflow reads the current `latest` dist-tag.
+It refuses to publish if that tag names a newer version, and fails closed if the registry
+lookup fails. Pre-releases use `next` and do not change `latest`.
+
+Release tags use stable SemVer or one of `-alpha.N`, `-beta.N`, and `-rc.N` for
+pre-releases. The validator rejects other prerelease spellings because PEP 440 maps
+aliases such as `-a.1` and `-alpha1` to the same PyPI version, while npm would treat them
+as distinct versions. The validator also caps the literal version at 128 characters for
+the OCI image tag. For these canonical versions, PEP 440 normalization leaves stable
+versions unchanged and shortens prerelease labels, which keeps the normalized PyPI
+version within PyPI's own 128-character limit ([PyPI version length limit](https://docs.pypi.org/project_metadata/#version-length-limit),
+[image tag rules](https://github.com/docker/metadata-action#image-name-and-tag-sanitization)).
+To keep every accepted version parseable by the pinned OCI tag generator, each major,
+minor, and patch number must also be at most `9007199254740991`; its SemVer parser rejects
+larger components when converting them to JavaScript numbers.
 
 Before the first tag, create the PyPI pending trusted publisher with these exact claims:
 
@@ -186,28 +247,42 @@ Environment:  pypi
 ```
 
 The GitHub `pypi` and `npm` environments restrict deployments to release tags and require
-a maintainer approval. If the repository, workflow, or environment is renamed, update the
-PyPI and npm publishers before the next release.
+a maintainer approval. Protect `v*` Git tags with two active repository tag rulesets: one
+restricts tag creation to the release maintainer; the other restricts updates and deletions
+with no bypass actor. Separate rulesets keep creation permission from allowing a release tag
+to be moved later. The tag ruleset controls are described in [GitHub's ruleset documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
+If the repository is renamed or transferred, update the PyPI and npm publishers and the
+Node package's `repository`, `homepage`, and `bugs` metadata before the next release.
 
 [`release-checklist.md`](./release-checklist.md) is the owner's step-by-step list: the
 one-time npm and GitHub environment setup, the release versions to set, the
 generated `uv.lock` entry, the `CHANGELOG.md` entry, and the checks after publishing.
-Prepare a release on `main`, update every intentionally coupled version, and let CI pass,
-including the `coverage` job. Then create and push the matching tag:
+The 0.4.0 release identity remains unchanged from #46 through #71, so
+`check_release.py --tag v0.4.0` must pass at every head in that range. `main` moves past
+0.4.0 as later changes merge; create its tag at the planned #57 merge commit, not at the
+current `main` head. After CI and the `coverage` job pass, set the target to the exact
+merge-commit SHA and verify it from a detached worktree at that commit:
 
 ```bash
-git switch main
-git pull --ff-only
-python scripts/check_release.py --tag v0.4.0 --repository Kkartik14/Earshot
-git tag -a v0.4.0 -m "Earshot 0.4.0"
-git push origin v0.4.0
+tag=v0.4.0
+target_sha="<the exact #57 merge-commit SHA>"
+git worktree add --detach ../earshot-release "$target_sha"
+cd ../earshot-release
+python scripts/check_release.py --tag "$tag" --repository Kkartik14/Earshot
+git tag -a "$tag" "$target_sha" -m "Earshot ${tag#v}"
+git push origin "$tag"
 ```
 
 The first GHCR package may require one visibility check in the package settings. It must
 be linked to this public repository and public before documenting anonymous `docker pull`
-support. Released PyPI and npm versions are immutable, and a pushed image tag must not be
-moved; never delete and recreate a version. Fix the problem, increment the package
-version, and publish a new release.
+support. Released PyPI and npm versions and version-specific GHCR tags (for example,
+`0.4.0`) are treated as immutable release policy; never retarget those tags or delete and
+recreate a release version. The workflow checks existing version tags and retries by
+digest, but GHCR permits any package writer to overwrite a tag, so keep package write
+access limited to the release maintainers and audited workflow. Git tag rulesets do not
+protect GHCR tags. The workflow's `major.minor` GHCR alias (for example, `0.4`) and
+`latest` tag intentionally advance on stable releases; prereleases do not move those
+aliases. Fix incorrect version-specific bytes and publish a new release version.
 
 ## Alpha compatibility policy
 

@@ -485,6 +485,7 @@ def test_hosted_continuous_capture_requires_durable_journal_storage(tmp_path, is
         assert connection.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 0
 
 
+@pytest.mark.sqlite_only
 def test_hosted_capture_retry_fails_closed_after_correlation_key_loss(tmp_path, issuer) -> None:
     project_id = "hosted-key-loss"
     store = make_store(tmp_path)

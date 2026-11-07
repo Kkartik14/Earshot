@@ -17,6 +17,7 @@ def write_project(
     project_name: str = "earshot-observability",
     node_name: str = "earshot-observability",
     node_version: str | None = None,
+    node_repository_url: str = "git+https://github.com/Kkartik14/Earshot.git",
 ) -> Path:
     project = path / "pyproject.toml"
     project.write_text(f'[project]\nname = "{project_name}"\nversion = "{version}"\n')
@@ -26,6 +27,7 @@ def write_project(
             {
                 "name": node_name,
                 "version": node_version or version,
+                "repository": {"type": "git", "url": node_repository_url},
             }
         )
     )
@@ -86,13 +88,101 @@ def test_release_identity_rejects_wrong_python_distribution_name(
     assert "Python distribution name must be 'earshot-observability'" in result.stderr
 
 
-def test_release_identity_marks_semver_prerelease(tmp_path: Path) -> None:
-    project = write_project(tmp_path, "0.1.0-rc.1")
+@pytest.mark.parametrize("version", ["0.1.0-alpha.1", "0.1.0-beta.2", "0.1.0-rc.1"])
+def test_release_identity_marks_semver_prerelease(tmp_path: Path, version: str) -> None:
+    project = write_project(tmp_path, version)
 
-    result = check_release(project, tag="v0.1.0-rc.1")
+    result = check_release(project, tag=f"v{version}")
 
     assert result.returncode == 0
     assert "prerelease=true" in result.stdout.splitlines()
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "0.1.0-a.1",
+        "0.1.0-alpha1",
+        "0.1.0-b.1",
+        "0.1.0-c.1",
+        "0.1.0-pre.1",
+        "0.1.0-preview.1",
+        "0.1.0-1",
+    ],
+)
+def test_release_identity_rejects_prerelease_spellings_that_alias_in_pypi(
+    tmp_path: Path, version: str
+) -> None:
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 2
+    assert "prerelease must use one of the canonical forms" in result.stderr
+
+
+@pytest.mark.parametrize(("label", "serial_length"), [("alpha", 116), ("beta", 117), ("rc", 119)])
+def test_release_identity_accepts_oci_tag_at_length_limit(
+    tmp_path: Path, label: str, serial_length: int
+) -> None:
+    version = f"0.1.0-{label}.{'1' * serial_length}"
+    assert len(version) == 128
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(("label", "serial_length"), [("alpha", 117), ("beta", 118), ("rc", 120)])
+def test_release_identity_rejects_oci_tag_over_length_limit(
+    tmp_path: Path, label: str, serial_length: int
+) -> None:
+    version = f"0.1.0-{label}.{'1' * serial_length}"
+    assert len(version) == 129
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 2
+    assert "exceeds the 128-character OCI tag limit" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "9007199254740991.0.0",
+        "0.9007199254740991.0",
+        "0.0.9007199254740991",
+    ],
+)
+def test_release_identity_accepts_safe_integer_semver_components(
+    tmp_path: Path, version: str
+) -> None:
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "9007199254740992.0.0",
+        "0.9007199254740992.0",
+        "0.0.9007199254740992",
+    ],
+)
+def test_release_identity_rejects_unsafe_integer_semver_components(
+    tmp_path: Path, version: str
+) -> None:
+    project = write_project(tmp_path, version)
+
+    result = check_release(project, tag=f"v{version}")
+
+    assert result.returncode == 2
+    assert "component exceeds the OCI tag generator's safe integer limit" in result.stderr
 
 
 def test_release_identity_rejects_semver_build_metadata(tmp_path: Path) -> None:
@@ -122,6 +212,21 @@ def test_release_identity_rejects_node_version_different_from_project(
 
     assert result.returncode == 2
     assert "does not match project version" in result.stderr
+
+
+def test_release_identity_rejects_node_repository_different_from_release_repository(
+    tmp_path: Path,
+) -> None:
+    project = write_project(
+        tmp_path,
+        "0.1.0",
+        node_repository_url="git+https://github.com/another-owner/another-repo.git",
+    )
+
+    result = check_release(project)
+
+    assert result.returncode == 2
+    assert "Node package repository URL must match" in result.stderr
 
 
 @pytest.mark.parametrize(

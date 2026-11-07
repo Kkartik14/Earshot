@@ -17,6 +17,9 @@ SEMVER = re.compile(
     rf"(?:-({PRERELEASE_IDENTIFIER}(?:\.{PRERELEASE_IDENTIFIER})*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
+PYPI_PRERELEASE = re.compile(r"(?P<label>alpha|beta|rc)\.(?P<number>0|[1-9][0-9]*)")
+OCI_MAX_TAG_LENGTH = 128
+SEMVER_MAX_SAFE_INTEGER = 9_007_199_254_740_991
 
 
 class ReleaseIdentityError(ValueError):
@@ -42,10 +45,23 @@ def project_identity(project_file: Path) -> tuple[str, bool]:
         raise ReleaseIdentityError("project.version must be an explicit semantic version")
     if version_match.group(5) is not None:
         raise ReleaseIdentityError("project.version build metadata is not supported for releases")
+    prerelease = version_match.group(4)
+    if prerelease is not None and PYPI_PRERELEASE.fullmatch(prerelease) is None:
+        raise ReleaseIdentityError(
+            "project.version prerelease must use one of the canonical forms "
+            "alpha.N, beta.N, or rc.N"
+        )
+    if any(int(component) > SEMVER_MAX_SAFE_INTEGER for component in version_match.groups()[:3]):
+        raise ReleaseIdentityError(
+            "project.version component exceeds the OCI tag generator's safe integer limit"
+        )
+    # The image uses this raw tag; allowed PEP 440 forms normalize to an equal or shorter string.
+    if len(version) > OCI_MAX_TAG_LENGTH:
+        raise ReleaseIdentityError("project.version exceeds the 128-character OCI tag limit")
     return version, version_match.group(4) is not None
 
 
-def node_package_identity(node_package_file: Path) -> tuple[str, str]:
+def node_package_identity(node_package_file: Path, *, repository: str) -> tuple[str, str]:
     document = json.loads(node_package_file.read_text())
     if not isinstance(document, dict):
         raise ReleaseIdentityError("Node package manifest must contain a JSON object")
@@ -55,6 +71,15 @@ def node_package_identity(node_package_file: Path) -> tuple[str, str]:
         raise ReleaseIdentityError(f"Node package name must be {PACKAGE_NAME!r}, got {name!r}")
     if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
         raise ReleaseIdentityError("Node package version must be an explicit semantic version")
+    repository_field = document.get("repository")
+    repository_url = (
+        repository_field.get("url") if isinstance(repository_field, dict) else repository_field
+    )
+    expected_repository_url = f"git+https://github.com/{repository}.git"
+    if repository_url != expected_repository_url:
+        raise ReleaseIdentityError(
+            f"Node package repository URL must match {expected_repository_url!r}"
+        )
     return name, version
 
 
@@ -66,7 +91,9 @@ def release_identity(
     repository: str,
 ) -> dict[str, str]:
     version, prerelease = project_identity(project_file)
-    npm_package, npm_version = node_package_identity(node_package_file)
+    if repository.count("/") != 1 or any(not part for part in repository.split("/")):
+        raise ReleaseIdentityError("repository must have the form owner/name")
+    npm_package, npm_version = node_package_identity(node_package_file, repository=repository)
     if npm_version != version:
         raise ReleaseIdentityError(
             f"Node package version {npm_version!r} does not match project version {version!r}"
@@ -75,8 +102,6 @@ def release_identity(
         raise ReleaseIdentityError(
             f"release tag {tag!r} does not match project version {version!r}; expected v{version}"
         )
-    if repository.count("/") != 1 or any(not part for part in repository.split("/")):
-        raise ReleaseIdentityError("repository must have the form owner/name")
     return {
         "image": f"ghcr.io/{repository.lower()}",
         "npm_package": npm_package,

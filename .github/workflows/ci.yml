@@ -93,6 +93,14 @@ jobs:
           .venv/bin/python -m pip install -e '.[dev,server]'
       - name: Install locked dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build, pack, and dry-run publish the Node SDK
+        run: |
+          pnpm --filter earshot-observability build
+          mkdir -p "$RUNNER_TEMP/node-sdk-pack"
+          npm pack --json --pack-destination "$RUNNER_TEMP/node-sdk-pack" \
+            > "$RUNNER_TEMP/node-sdk-pack.json"
+          npm publish --dry-run --access public
+        working-directory: packages/node
       - name: Check generated viewer and Node API types
         run: |
           pnpm --filter @earshot/viewer-ui gen:api
@@ -207,7 +215,7 @@ jobs:
     name: SQLite full suite with branch coverage
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       COVERAGE_FILE: .coverage.sqlite
       COVERAGE_RCFILE: ${{ github.workspace }}/pyproject.toml
@@ -220,7 +228,13 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install backend and pinned framework lanes
-        run: python -m pip install -e '.[dev,pipecat-groq,livekit]'
+        run: >-
+          python -m pip install -e '.[dev,pipecat-groq,livekit]'
+          'pipecat-ai[deepgram]>=1.6.0,<1.7'
+      - name: Verify stale projection startup budget without coverage
+        run: >-
+          pytest -q --db sqlite
+          apps/ingest/tests/test_storage_startup.py::test_a_boot_with_ten_thousand_stale_incidents_is_ready_within_a_second
       - name: Test the full suite on SQLite with branch coverage
         run: pytest --cov=earshot --cov-report= --cov-fail-under=0 -q
       - name: Keep SQLite coverage data
@@ -290,6 +304,8 @@ jobs:
           apps/ingest/tests/test_storage_postgres.py
           apps/ingest/tests/test_postgres_server.py
           packages/sdk-python/tests/test_server_metrics.py
+          apps/ingest/tests/test_hosted_jwt.py
+          apps/ingest/tests/test_hosted_calls.py
       - name: Check the remote blob readiness probe timeout
         if: github.event_name != 'workflow_dispatch'
         run: >-
@@ -369,6 +385,10 @@ jobs:
           done
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:9000/minio/health/live
           echo "EARSHOT_TEST_S3_URL=http://$s3_user:$s3_secret@127.0.0.1:9000" >> "$GITHUB_ENV"
+      - name: Verify stale projection startup budget without coverage
+        run: >-
+          pytest -q --db postgresql
+          apps/ingest/tests/test_storage_startup.py::test_a_boot_with_ten_thousand_stale_incidents_is_ready_within_a_second
       - name: Test the full storage modules on Postgres with branch coverage
         run: >-
           pytest -q --db postgresql

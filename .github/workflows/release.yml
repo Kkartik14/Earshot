@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       image: ${{ steps.release.outputs.image }}
+      npm_package: ${{ steps.release.outputs.npm_package }}
       prerelease: ${{ steps.release.outputs.prerelease }}
       version: ${{ steps.release.outputs.version }}
     steps:
@@ -84,10 +85,10 @@ jobs:
           name: python-distributions
           path: dist/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   build-npm:
-    name: Build and inspect npm packages
+    name: Build and inspect Node npm package
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -98,80 +99,101 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - name: Require the release version in every package
+      - name: Require the release identity in the Node package
         env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
           RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for package in packages/browser packages/viewer-ui packages/node; do
-            version="$(node -p "require('./$package/package.json').version")"
-            if [[ "$version" != "$RELEASE_VERSION" ]]; then
-              echo "$package is version $version; the release is $RELEASE_VERSION" >&2
-              exit 1
-            fi
-          done
-      - name: Build and pack the packages
-        # pnpm pack applies publishConfig (viewer-ui's dist entry points) and
-        # would replace workspace: ranges; npm pack does neither.
+          package=packages/node/package.json
+          version="$(node -p "require('./$package').version")"
+          if [[ "$version" != "$RELEASE_VERSION" ]]; then
+            echo "$package is version $version; the release is $RELEASE_VERSION" >&2
+            exit 1
+          fi
+          name="$(node -p "require('./$package').name")"
+          if [[ "$name" != "$RELEASE_PACKAGE" ]]; then
+            echo "$package is $name; expected $RELEASE_PACKAGE" >&2
+            exit 1
+          fi
+      - name: Build and pack the Node package
+        # pnpm pack applies the Node package's publishConfig entry points.
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node build
-          pnpm --filter @earshot/browser --filter @earshot/viewer-ui --filter @earshot/node pack \
-            --pack-destination "$PWD/npm-dist"
-      - name: Inspect the tarballs
+          pnpm --filter earshot-observability build
+          pnpm --filter earshot-observability pack --pack-destination "$PWD/npm-dist"
+      - name: Require and inspect the only Node tarball
+        env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for tarball in npm-dist/*.tgz; do
-            unexpected="$(tar -tzf "$tarball" \
-              | grep -Ev '^package/((dist/.*)?|README\.md|LICENSE|package\.json)$' || true)"
-            if [[ -n "$unexpected" ]]; then
-              printf '%s ships unexpected files:\n%s\n' "$tarball" "$unexpected" >&2
-              exit 1
-            fi
-            unpacked="$(mktemp -d)"
-            tar -xzf "$tarball" -C "$unpacked"
-            # shellcheck disable=SC2016 # a JavaScript program, not shell
-            node --input-type=module -e '
-              import { existsSync, readFileSync } from "node:fs";
-              import { join } from "node:path";
-              const root = process.argv[1];
-              const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-              const targets = [];
-              const collect = (value) =>
-                typeof value === "string"
-                  ? targets.push(value)
-                  : Object.values(value ?? {}).forEach(collect);
-              collect([manifest.main, manifest.types, manifest.exports]);
-              const missing = targets.filter((target) => !existsSync(join(root, target)));
-              const ranges = JSON.stringify([
-                manifest.dependencies,
-                manifest.peerDependencies,
-                manifest.optionalDependencies,
-              ]);
-              if (missing.length > 0 || ranges.includes("workspace:")) {
-                console.error(manifest.name, { missing, workspaceRanges: ranges.includes("workspace:") });
-                process.exit(1);
-              }
-              console.log(`${manifest.name}@${manifest.version}: ${targets.length} entry points present`);
-            ' "$unpacked/package"
-          done
+          expected="npm-dist/${RELEASE_PACKAGE}-${RELEASE_VERSION}.tgz"
+          shopt -s nullglob
+          tarballs=(npm-dist/*.tgz)
+          if [[ "${#tarballs[@]}" -ne 1 || "${tarballs[0]}" != "$expected" ]]; then
+            printf 'expected only %s; found: %s\n' "$expected" "${tarballs[*]}" >&2
+            exit 1
+          fi
+          unexpected="$(tar -tzf "$expected" \
+            | grep -Ev '^package/((dist/.*)?|README\.md|LICENSE|package\.json)$' || true)"
+          if [[ -n "$unexpected" ]]; then
+            printf '%s ships unexpected files:\n%s\n' "$expected" "$unexpected" >&2
+            exit 1
+          fi
+          unpacked="$(mktemp -d)"
+          tar -xzf "$expected" -C "$unpacked"
+          # shellcheck disable=SC2016 # a JavaScript program, not shell
+          node --input-type=module -e '
+            import { existsSync, readFileSync } from "node:fs";
+            import { join } from "node:path";
+            const root = process.argv[1];
+            const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+            if (manifest.name !== process.env.RELEASE_PACKAGE ||
+                manifest.version !== process.env.RELEASE_VERSION) {
+              console.error("unexpected package identity", manifest.name, manifest.version);
+              process.exit(1);
+            }
+            const targets = [];
+            const collect = (value) =>
+              typeof value === "string"
+                ? targets.push(value)
+                : Object.values(value ?? {}).forEach(collect);
+            collect([manifest.main, manifest.types, manifest.exports]);
+            const missing = targets.filter((target) => !existsSync(join(root, target)));
+            const ranges = JSON.stringify([
+              manifest.dependencies,
+              manifest.peerDependencies,
+              manifest.optionalDependencies,
+            ]);
+            if (missing.length > 0 || ranges.includes("workspace:")) {
+              console.error(manifest.name, { missing, workspaceRanges: ranges.includes("workspace:") });
+              process.exit(1);
+            }
+            console.log(`${manifest.name}@${manifest.version}: ${targets.length} entry points present`);
+          ' "$unpacked/package"
+          rm -rf "$unpacked"
       - name: Dry-run the publish command
-        # The same tarball paths as publish-npm, which runs only on a tag. npm
-        # reads a bare dir/name.tgz as a GitHub repository; ./ makes it a file.
+        # The explicit file path is also used by publish-npm, which runs only on a tag.
+        env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          for tarball in ./npm-dist/*.tgz; do
-            npm publish "$tarball" --dry-run --access public
-          done
+          npm publish "./npm-dist/${RELEASE_PACKAGE}-${RELEASE_VERSION}.tgz" --dry-run --access public
       - name: Upload immutable release inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: npm-packages
-          path: npm-dist/*.tgz
+          name: node-npm-package
+          path: npm-dist/${{ needs.validate.outputs.npm_package }}-${{ needs.validate.outputs.version }}.tgz
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
   publish-container:
     name: Publish GHCR image
     if: github.ref_type == 'tag'
-    needs: [validate, build-python]
+    needs: [validate, build-python, build-npm]
+    concurrency:
+      group: ghcr-release-tags-${{ github.repository }}
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
@@ -204,7 +226,15 @@ jobs:
             org.opencontainers.image.title=Earshot
             org.opencontainers.image.description=Self-hosted Earshot server and viewer for voice-agent observability
             org.opencontainers.image.licenses=Apache-2.0
+      - name: Resolve an existing immutable version tag for retry
+        id: existing
+        env:
+          RELEASE_IMAGE: ${{ needs.validate.outputs.image }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: python3 scripts/ghcr_image.py
       - name: Build and push the release image
+        if: steps.existing.outputs.exists != 'true'
         id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -214,18 +244,41 @@ jobs:
           push: true
           build-args: |
             EARSHOT_VERSION=${{ needs.validate.outputs.version }}
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ needs.validate.outputs.image }}:${{ needs.validate.outputs.version }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max
           sbom: true
+      - name: Select the immutable image digest
+        id: digest
+        env:
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+          PUSHED_DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          digest="$EXISTING_DIGEST"
+          if [[ -z "$digest" ]]; then
+            digest="$PUSHED_DIGEST"
+          fi
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "image publication produced no valid digest" >&2
+            exit 1
+          fi
+          echo "value=$digest" >> "$GITHUB_OUTPUT"
       - name: Attest the published image
         uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4.2.0
         with:
           subject-name: ${{ needs.validate.outputs.image }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.digest.outputs.value }}
           push-to-registry: true
+      - name: Promote release aliases from the verified digest
+        env:
+          RELEASE_IMAGE: ${{ needs.validate.outputs.image }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_DIGEST: ${{ steps.digest.outputs.value }}
+          RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: python3 scripts/promote_ghcr_tags.py <<<"$RELEASE_TAGS"
 
   publish-pypi:
     name: Publish to PyPI with OIDC
@@ -248,42 +301,107 @@ jobs:
         # v1.14.2 or later: hatchling 1.32 writes Metadata-Version 2.5, which the
         # twine bundled in earlier releases rejects.
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: false
 
   publish-npm:
-    name: Publish npm packages with provenance
+    name: Publish Node package with Trusted Publishing
     if: github.ref_type == 'tag'
     needs: [validate, build-npm, publish-container]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: npm
-      url: https://www.npmjs.com/org/earshot
+      url: https://www.npmjs.com/package/earshot-observability
     permissions:
+      contents: read
       id-token: write
     steps:
-      - name: Download the inspected packages
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Download the inspected Node tarball
         uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
-          name: npm-packages
+          name: node-npm-package
           path: npm-dist
-      # Node 24 bundles npm 11, which publishes through npm trusted publishing
-      # (OIDC) when it is configured and falls back to the NPM_TOKEN secret.
+      # Node 24.22.2 bundles npm 11.19.1, above npm's OIDC minimum of 11.5.1.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: "24"
-          registry-url: https://registry.npmjs.org
-      - name: Publish the packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          node-version: "24.22.2"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+      - name: Verify the npm Trusted Publishing runtime
         run: |
-          dist_tag=latest
-          if [[ "$PRERELEASE" == "true" ]]; then
-            dist_tag=next
+          node_version="$(node --version)"
+          npm_version="$(npm --version)"
+          if [[ "$node_version" != "v24.22.2" || "$npm_version" != "11.19.1" ]]; then
+            printf 'expected Node v24.22.2 with npm 11.19.1; found Node %s with npm %s\n' \
+              "$node_version" "$npm_version" >&2
+            exit 1
           fi
-          for tarball in ./npm-dist/*.tgz; do
-            npm publish "$tarball" --provenance --access public --tag "$dist_tag"
-          done
+      - name: Publish the Node package
+        env:
+          RELEASE_PACKAGE: ${{ needs.validate.outputs.npm_package }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          expected="./npm-dist/${RELEASE_PACKAGE}-${RELEASE_VERSION}.tgz"
+          shopt -s nullglob
+          tarballs=(npm-dist/*.tgz)
+          if [[ "${#tarballs[@]}" -ne 1 || "./${tarballs[0]}" != "$expected" ]]; then
+            printf 'expected only %s; found: %s\n' "$expected" "${tarballs[*]}" >&2
+            exit 1
+          fi
+          manifest="$(tar -xOf "$expected" package/package.json)"
+          node -e '
+            const manifest = JSON.parse(process.argv[1]);
+            const [name, version] = process.argv.slice(2);
+            if (manifest.name !== name || manifest.version !== version) {
+              console.error("unexpected package identity", manifest.name, manifest.version);
+              process.exit(1);
+            }
+          ' "$manifest" "$RELEASE_PACKAGE" "$RELEASE_VERSION"
+          dist_tag="$(python "$GITHUB_WORKSPACE/scripts/npm_publish_tag.py" \
+            --package "$RELEASE_PACKAGE" \
+            --version "$RELEASE_VERSION" \
+            --prerelease "$PRERELEASE")"
+          if npm publish "$expected" --provenance --access public --tag "$dist_tag"; then
+            exit 0
+          fi
+
+          # npm versions are immutable. A lost success response makes a plain rerun
+          # fail, so accept an existing version only after npm verifies its signatures
+          # and provenance matches these exact retained bytes and this workflow run.
+          verification_dir="$(mktemp -d)"
+          trap 'rm -rf "$verification_dir"' EXIT
+          printf '{"name":"earshot-release-verification","version":"1.0.0","private":true}\n' \
+            > "$verification_dir/package.json"
+          cd "$verification_dir"
+          npm install \
+            --ignore-scripts \
+            --omit=peer \
+            --no-audit \
+            --prefer-online \
+            --cache "$verification_dir/cache" \
+            --save-exact \
+            "${RELEASE_PACKAGE}@${RELEASE_VERSION}"
+          npm audit signatures --json --include-attestations > "$verification_dir/signatures.json"
+          python "$GITHUB_WORKSPACE/scripts/verify_npm_publish.py" \
+            --artifact "$GITHUB_WORKSPACE/$expected" \
+            --audit-report "$verification_dir/signatures.json" \
+            --package "$RELEASE_PACKAGE" \
+            --version "$RELEASE_VERSION" \
+            --repository "$RELEASE_REPOSITORY" \
+            --workflow-path .github/workflows/release.yml \
+            --ref "$RELEASE_REF" \
+            --commit "$RELEASE_SHA" \
+            --run-id "$RELEASE_RUN_ID" \
+            --run-attempt "$RELEASE_RUN_ATTEMPT"
 
   github-release:
     name: Publish GitHub Release

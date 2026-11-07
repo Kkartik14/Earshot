@@ -37,6 +37,8 @@ See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility det
 
 - **Node npm release.** The Node SDK first ships on npm as `earshot-observability`
   0.4.0. `@earshot/browser` and `@earshot/viewer-ui` remain private workspace packages.
+- **npm Trusted Publishing.** The release workflow publishes the inspected Node SDK tarball
+  with npm provenance and does not use a long-lived npm token.
 - **Hosted Calls.** A hosted JWT reaches the Calls under three scopes of their own:
   `earshot:calls:write` (OTLP spans and Recordings), `earshot:calls:read` (call list and
   detail, Session Key resolution, dashboard) and `earshot:calls:delete` (call purge). The

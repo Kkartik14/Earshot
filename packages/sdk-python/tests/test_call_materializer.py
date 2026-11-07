@@ -15,6 +15,7 @@ import os
 import random
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -339,6 +340,7 @@ def _snapshot_with(snapshot, **changes):
 _DIGEST_IN_A_NEW_PROCESS = """
 import hashlib, sys
 sys.path.insert(0, sys.argv[1])
+sys.path.insert(0, sys.argv[2])
 import test_call_materializer as module
 from earshot.codec import encode_incident_protobuf
 snapshot = module._snapshot(recordings=(module._recording("user"), module._recording("agent")))
@@ -351,10 +353,11 @@ def test_another_process_with_another_hash_seed_materializes_the_same_bytes(seed
     from earshot.codec import encode_incident_protobuf
 
     here = os.path.dirname(__file__)
+    sdk_src = str(Path(__file__).resolve().parents[1] / "src")
     snapshot = _snapshot(recordings=(_recording("user"), _recording("agent")))
     expected = hashlib.sha256(encode_incident_protobuf(_materialize(snapshot))).hexdigest()
     result = subprocess.run(
-        [sys.executable, "-c", _DIGEST_IN_A_NEW_PROCESS, here],
+        [sys.executable, "-c", _DIGEST_IN_A_NEW_PROCESS, here, sdk_src],
         env={**os.environ, "PYTHONHASHSEED": seed},
         capture_output=True,
         text=True,
