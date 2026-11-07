@@ -43,7 +43,8 @@ groups:
       - id: earshot.turn.reported_latency_ms
         type: double
         requirement_level: opt_in
-        brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; absent when the host has none, never 0. A value that is not a finite, non-negative number is unknown."
+        brief: "Host span profile: the host's own measure of a turn's latency, in milliseconds, on its turn span; a present value is a positive finite OTLP doubleValue or intValue. Absent or invalid values are unknown, never 0."
+        note: The semantic type is double; a positive OTLP intValue is also permitted by the host profile as numeric input.
       - id: earshot.turn.timeline_continuous
         type: boolean
         requirement_level: opt_in
@@ -96,6 +97,18 @@ groups:
         type: string
         requirement_level: opt_in
         brief: Governed speech-recognition mode such as transcribe, translate, verbatim, translit, or codemix.
+      - id: earshot.stt.usage.audio_seconds
+        type: double
+        requirement_level: opt_in
+        stability: development
+        brief: Provider-metered STT input audio quantity in seconds for one request.
+        note: The semantic type is double; a positive OTLP intValue is also permitted by the host profile as numeric input. Omit when unknown. A present value is positive and finite. This value is per request; hosts omit streaming-session totals reported at close. Do not infer it from span duration or the caller's speech window.
+      - id: earshot.tts.usage.character_count
+        type: int
+        requirement_level: opt_in
+        stability: development
+        brief: Provider-metered TTS input character quantity for one request, in the provider's own metering units.
+        note: Omit when unknown. A present value is a positive integer. Do not infer it by counting text, bytes, Unicode scalar values, or grapheme clusters.
       - id: earshot.conversation.item.id
         type: string
         requirement_level: opt_in
@@ -108,6 +121,254 @@ groups:
         type: string
         requirement_level: opt_in
         brief: Privacy-governed provider voice identifier selected for speech synthesis.
+      - id: earshot.integration.tvic.epoch
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter observation epoch identifier."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.sequence
+        type: int
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter observation sequence number."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.fact_id
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter opaque observation fact identifier."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.agent_id
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter opaque agent identifier."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.audio_error_code
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter audio delivery error code."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.cancel_reason
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter cancellation reason: caller_hangup, transport_lost, recovery_expired, operator_requested, shutdown, barge_in, dtmf, explicit, timeout, not_heard, lease_lost, or runtime_restarted."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.cause
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter interruption cause: barge_in, dtmf, explicit, or timeout."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.channel
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter channel classification: phone, web_audio, or simulated."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.drop_reason
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter observation-drop reason: queue_overflow or pending_session_limit."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.error_category
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter error category: validation, auth, provider, network, timeout, rate_limit, cancelled, interrupted, tool, media, or internal."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.error_code
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter error code."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.status
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter session or turn status: completed, failed, or cancelled."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.terminal_source
+        type: string
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter source of terminal session state: operator_stop, caller_abort, run_timeout, remote_transport, provider_runtime, normal_completion, runtime_recovery, runtime_shutdown, or legacy_unknown."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.error_retriable
+        type: boolean
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter flag for whether an error is retriable."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.at_ms_estimated
+        type: boolean
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter flag for whether an observation timestamp was estimated."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.sequence_discontinuity
+        type: boolean
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter flag for whether a sequence discontinuity was observed."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.audio_delivered
+        type: boolean
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter flag for whether audio was delivered."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.terminal_persisted
+        type: boolean
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter flag for whether terminal state was persisted."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.text_delivered
+        type: boolean
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter flag for whether text was delivered."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.dropped_count
+        type: int
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC-adapter count of observations dropped."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.queue_capacity
+        type: int
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter observation queue capacity."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.turn_sequence
+        type: int
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter producer sequence number for a turn."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.endpoint_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter endpointing delay in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.first_audio_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter elapsed time to first audio in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.first_token_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter elapsed time to first token in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.interruption_tail_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter interruption-tail duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.listened_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter listened duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.recovery_gap_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter observed recovery gap in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.session_elapsed_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter elapsed session time in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.tool_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter tool duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
+      - id: earshot.integration.tvic.total_ms
+        type: any
+        requirement_level: opt_in
+        stability: development
+        brief: "Deprecated TVIC adapter total turn duration in milliseconds; a finite non-negative OTLP integer or floating-point number; the current adapter also accepts a bounded safe string for compatibility."
+        deprecated:
+          reason: uncategorized
+          note: "Deprecated for new emitters. The TVIC adapter remains supported until Earshot ships host-neutral recovery, loss, estimated-time, and partial-persistence signals plus one further release; removal requires a separate declared deprecation. New host instrumentation should follow the host span profile in docs/calls.md#the-host-span-profile where its semantics match."
       - id: earshot.source.field
         type: string
         requirement_level: opt_in
@@ -587,6 +848,10 @@ groups:
   - id: span.earshot.host.stage
     type: span
     span_kind: internal
-    brief: "Host span profile: an stt, llm or tts span, a child of its turn, by the window of one stage request. It names the provider and model with gen_ai.provider.name and gen_ai.request.model; an llm span reports its gen_ai.usage.* counts. A stage the host did not time has no span."
+    brief: "Host span profile: an stt, llm or tts span, a child of its turn, by the window of one stage request. It names the provider and model with gen_ai.provider.name and gen_ai.request.model; an llm span reports its gen_ai.usage.* counts, while profile 0.2.0 may report provider-metered STT seconds or TTS characters. A stage the host did not time has no span."
     attributes:
       - ref: earshot.turn.id
+      - ref: earshot.stt.usage.audio_seconds
+        requirement_level: opt_in
+      - ref: earshot.tts.usage.character_count
+        requirement_level: opt_in

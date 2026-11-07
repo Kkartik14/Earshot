@@ -184,12 +184,12 @@ times are both present for `measured`, start only for `start_only`, and both nul
 
 ### Cost
 
-| Item `status`  | When                                                                                |
-| -------------- | ----------------------------------------------------------------------------------- |
-| `priced`       | The usage was reported, and a price matches.                                        |
-| `no_price`     | The usage was reported, and no price matches.                                       |
-| `not_reported` | A request left its usage unknown (one item per request).                            |
-| `estimated`    | STT seconds, which no framework reports: the user audio's duration, once per model. |
+| Item `status`  | When                                                                                                            |
+| -------------- | --------------------------------------------------------------------------------------------------------------- |
+| `priced`       | The usage was reported, and a price matches.                                                                    |
+| `no_price`     | The usage was reported, and no price matches.                                                                   |
+| `not_reported` | A request left its usage unknown (one item per request).                                                        |
+| `estimated`    | STT seconds estimated from user audio duration when no request for that provider/model reports metered seconds. |
 
 `lower_bound_nano_usd` sums the priced items; `estimated_nano_usd` sums the estimated
 ones; `unknown_items` counts the rest. A cost is `complete` when it has a lower bound and
@@ -202,20 +202,21 @@ integer nano-USD (10⁻⁹ USD). The rules below describe which spans are billed
 For a host that runs its own pipeline rather than Pipecat or LiveKit, and exports its
 calls' turns itself. Every span is under the instrumentation scope `earshot.host`, with
 times on the host's wall clock: the clock its Recordings' `started_at_unix_nano` is on.
-The profile's version is `host_profile_version` in [`GET /version`](./backend-api.md#get-version);
-this is 0.1.0. The attributes are registered in
-[`semconv/earshot.yaml`](../semconv/earshot.yaml).
+The profile's version is `host_profile_version` in [`GET /version`](./backend-api.md#get-version).
+The current implementation reports 0.1.0. Profile 0.2.0 adds optional provider-metered
+STT and TTS usage attributes; Earshot continues to accept 0.1.0 spans. The attributes are
+registered in [`semconv/earshot.yaml`](../semconv/earshot.yaml).
 
 | Span                          | Parent | Carries                                                                                                                                                                                                                                                                               |
 | ----------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `turn`                        | any    | `earshot.turn.id` (the host's turn ID); optionally `earshot.turn.index`, `earshot.turn.reported_latency_ms` (the host's own measure of the turn's latency, in milliseconds) and `earshot.turn.timeline_continuous` (`false` when frames were dropped or placed late during the turn). |
 | `user_speech`, `agent_speech` | `turn` | `earshot.turn.id`. Its window is one stretch of the caller's or the agent's speech.                                                                                                                                                                                                   |
-| `stt`, `llm`, `tts`           | `turn` | `earshot.turn.id`, `gen_ai.provider.name`, `gen_ai.request.model`; on `llm`, the `gen_ai.usage.*` counts. Its window is one stage request.                                                                                                                                            |
+| `stt`, `llm`, `tts`           | `turn` | `earshot.turn.id`, `gen_ai.provider.name`, `gen_ai.request.model`; on `llm`, the `gen_ai.usage.*` counts; in profile 0.2.0, optional provider-metered STT seconds or TTS characters. Its window is one stage request.                                                                 |
 
 - **Turns.** One per `turn` span. User on is the starts of its `user_speech` spans, user
   off the latest of their ends, and agent on the earliest start of its `agent_speech`
-  spans. The reported latency is `earshot.turn.reported_latency_ms`; absent, or not a
-  finite non-negative number, it is unknown, never 0.
+  spans. The reported latency is `earshot.turn.reported_latency_ms`. A present value is
+  a positive finite OTLP `doubleValue` or `intValue`; otherwise it is unknown, never 0.
 - **The audible gap** is measured on the `continuous_timeline_assumed` basis, since the
   host places its Recording's frames by its wall clock. A turn with
   `earshot.turn.timeline_continuous=false` is `not_measurable` with
@@ -226,9 +227,22 @@ this is 0.1.0. The attributes are registered in
 - **Stages.** The stage spans are listed on their turn (`turns[].spans`, by role). A
   stage the host did not time has no span: its time is unknown, never 0.
 - **Usage.** `llm` spans bill like Pipecat's `llm` (input, cached and output tokens).
-  `tts` and `stt` spans name their provider and model; their quantities are not reported
-  in 0.1.0, so their cost is unknown, or estimated from the audio for STT where a price
-  exists.
+  Profile 0.1.0 defines no STT or TTS quantity attributes. Profile 0.2.0 optionally adds
+  `earshot.stt.usage.audio_seconds`, a positive finite OTLP `doubleValue` or positive
+  `intValue` of provider-metered audio seconds for one STT request, and
+  `earshot.tts.usage.character_count`, a positive JSON-safe OTLP `int64` from `1` through
+  `9,007,199,254,740,991` in the provider's own TTS character-metering units for one request.
+  These are request quantities, not cumulative
+  counters. Hosts omit unknown values; zero is invalid. Do not infer STT usage from span
+  or speech duration, or TTS usage by counting text, bytes,
+  Unicode scalar values, or grapheme clusters. The profile 0.2.0 additions do not change
+  existing provider, model, stage-boundary, LLM-usage, or turn semantics. When no STT
+  request for a provider/model reports seconds, the existing call-level audio estimate
+  remains. Hosts must omit a streaming STT session total reported at close from this
+  per-request attribute; it is not request usage and cannot replace that estimate. If
+  only some requests report seconds,
+  Earshot sums those reported quantities and leaves missing requests unknown; it does not
+  add a call-wide estimate over the reported requests. Missing TTS counts remain unknown.
 - **No transcript.** The profile defines no text, so a host call has no transcript lines
   (`not_observed`) and nothing of its own that a `metadata_only` project would drop. A
   host sends its

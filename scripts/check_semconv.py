@@ -32,6 +32,7 @@ def main() -> None:
         raise SystemExit("unresolved semantic references: " + ", ".join(missing_references))
 
     sys.path.insert(0, str(SOURCE))
+    from earshot.adapters.tvic import _ALLOWED_ATTRIBUTES
     from earshot.call_capture import RECEIVER_ATTRIBUTES
     from earshot.privacy import _SAFE_EXACT
     from earshot.versions import SEMANTIC_PROFILE_VERSION
@@ -46,6 +47,9 @@ def main() -> None:
     required = {key for key in _SAFE_EXACT if key.startswith("earshot.")}
     # The attributes the OTLP receiver interprets (session key, end of call).
     required.update(key for key in RECEIVER_ATTRIBUTES if key.startswith("earshot."))
+    tvic_attributes = {"epoch", "sequence", "fact_id"}
+    tvic_attributes.update(key for keys in _ALLOWED_ATTRIBUTES.values() for key in keys)
+    required.update(f"earshot.integration.tvic.{key}" for key in tvic_attributes)
     pattern = re.compile(
         r'["\'](earshot\.(?:metric|duration)\.[a-z0-9_.]+'
         r'|earshot\.analysis\.synthetic_projection)["\']'
@@ -55,6 +59,21 @@ def main() -> None:
     missing_attributes = sorted(required - set(identifiers))
     if missing_attributes:
         raise SystemExit("unregistered emitted attributes: " + ", ".join(missing_attributes))
+
+    definitions = {attribute["id"]: attribute for attribute in registry.get("attributes", [])}
+    missing_deprecation = sorted(
+        key
+        for key in (f"earshot.integration.tvic.{name}" for name in tvic_attributes)
+        if not isinstance(definitions[key].get("deprecated"), dict)
+        or definitions[key]["deprecated"].get("reason") != "uncategorized"
+        or "docs/calls.md#the-host-span-profile"
+        not in definitions[key]["deprecated"].get("note", "")
+    )
+    if missing_deprecation:
+        raise SystemExit(
+            "TVIC attributes need uncategorized deprecation notes linking to the host profile: "
+            + ", ".join(missing_deprecation)
+        )
     print(f"semantic registry is self-contained ({len(identifiers)} attributes)")
 
 
