@@ -2,17 +2,46 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
-from starlette.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import JSONResponse, Response
 
 from ...auth import sees_call_revisions
 from ...storage import IncidentStore, InvalidCursorError
 from ...summary import summarize_project
+
+PLATFORM_SUMMARY_DEPRECATION_LINK = (
+    "<https://github.com/Kkartik14/Earshot/blob/v0.5.0/docs/platform-integration.md"
+    '#generic-and-platform-summaries>; rel="deprecation"; type="text/html"'
+)
+PLATFORM_SUMMARY_DEPRECATION = "@1794528000"
+
+
+class PlatformSummaryDeprecationMiddleware(BaseHTTPMiddleware):
+    """Attach migration links only to the deprecated Platform summary GET route."""
+
+    async def dispatch(
+        self, request: StarletteRequest, call_next: RequestResponseEndpoint
+    ) -> Response:
+        response = await call_next(request)
+        match = re.fullmatch(
+            r"/v1/platform/projects/(?P<project_id>[^/]+)/observe/summary",
+            request.url.path,
+        )
+        if request.method.upper() == "GET" and match is not None:
+            response.headers["Deprecation"] = PLATFORM_SUMMARY_DEPRECATION
+            response.headers["Link"] = (
+                f"{PLATFORM_SUMMARY_DEPRECATION_LINK}, "
+                f'</v1/projects/{match["project_id"]}/summary>; rel="successor-version"'
+            )
+        return response
 
 
 class PlatformObserveItem(BaseModel):
@@ -59,10 +88,13 @@ def create_platform_router(store: IncidentStore) -> APIRouter:
         response_model=PlatformObserveSummary,
         response_model_exclude_none=True,
         summary="Adapt the Earshot project summary to Platform Observe links",
+        deprecated=True,
         description=(
             "Platform authenticates the user and mints a short-lived Earshot JWT. "
             "The path project UUID must match its signed project claim. The adapter "
-            "returns metadata only and adds Platform-specific labels and links."
+            "returns metadata only and adds Platform-specific labels and links. "
+            "Deprecated in API 0.17.0 (Earshot 0.5.0); use the host-neutral "
+            "GET /v1/projects/{project_id}/summary operation."
         ),
     )
     def observe_summary(
@@ -123,7 +155,10 @@ def create_platform_router(store: IncidentStore) -> APIRouter:
 
 
 __all__ = [
+    "PLATFORM_SUMMARY_DEPRECATION",
+    "PLATFORM_SUMMARY_DEPRECATION_LINK",
     "PlatformObserveItem",
     "PlatformObserveSummary",
+    "PlatformSummaryDeprecationMiddleware",
     "create_platform_router",
 ]

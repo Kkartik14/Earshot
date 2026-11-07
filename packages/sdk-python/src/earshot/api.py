@@ -4435,6 +4435,11 @@ def create_app(
                 )
         return await call_next(request)
 
+    if enable_platform_adapter:
+        from .integrations.platform import PlatformSummaryDeprecationMiddleware
+
+        app.add_middleware(PlatformSummaryDeprecationMiddleware)
+
     @app.post(
         "/v1/auth/session",
         response_model=BrowserSessionResponse,
