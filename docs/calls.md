@@ -492,6 +492,16 @@ preset kept when the span arrived. `Cache-Control: no-store`.
 
 Use the paths `projection.media[]` gives rather than building them.
 
+Hosted reads require `earshot:calls:read` and stay scoped to the token's signed Project.
+Successful audio and rendition streams use `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff`; range errors also use `no-store`. Peaks are private
+and revalidated by ETag. A peaks response is limited to 8 MiB, and concurrent media reads
+are bounded. A `HEAD` request uses the same authorization and response headers as its
+`GET`, without a response body.
+Stored audio remains readable after a switch to `metadata_only`; the preset applies to
+new evidence and does not retroactively erase a Recording. Earshot does not create
+end-user access audit records for these reads; the host proxy owns that audit trail.
+
 ## Prices
 
 Built-in prices ship with Earshot: regular, dated list prices for Deepgram, Groq, OpenAI,
@@ -523,18 +533,24 @@ new row reprices the affected calls in the background.
 In `hosted_jwt` mode a host reaches the Calls with three scopes of their own, which the
 generic incident scopes never grant:
 
-| Scope                  | Operations                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`                                           |
-| `earshot:calls:read`   | `GET /v1/calls`, `GET /v1/calls/{call_id}`, `GET /v1/calls/{call_id}/live-turns`, `POST /v1/calls:resolve`, `GET /v1/dashboard` |
-| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                                                                    |
+| Scope                  | Operations                                                                                     |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| `earshot:calls:write`  | `POST /v1/traces`, `POST /v1/recordings`, `PUT /v1/recordings/{recording_id}/content`          |
+| `earshot:calls:read`   | Call list/detail, live turns, resolve, dashboard and the project-scoped Recording reads below. |
+| `earshot:calls:delete` | `DELETE /v1/calls/{call_id}`                                                                   |
 
 Every other Call surface stays closed in hosted mode and answers 403
 `EARSHOT_OPERATION_UNAVAILABLE` for every method: a span's raw attributes
-(`/v1/calls/{call_id}/spans/*`), Earshot's copy of the audio (every `GET /v1/recordings*`),
-transcript upload, `/v1/prices*` and `/v1/otlp/stats`. The hosted OpenAPI lists exactly
-the open operations. Hosted authorization is one closed table of (method, route) and scope:
-an operation not in it is refused, whatever the token grants.
+(`/v1/calls/{call_id}/spans/*`), recording metadata, transcript upload, `/v1/prices*` and
+`/v1/otlp/stats`. Recording content, waveform peaks and stereo renditions are
+project-scoped to the hosted token's signed project ID; no blob-store URL is returned. The
+read routes are `GET /v1/recordings/{recording_id}/content`,
+`GET /v1/recordings/{recording_id}/peaks`,
+`GET /v1/recordings/{recording_id}/rendition` and
+`GET /v1/recordings/{recording_id}/rendition/peaks`.
+The hosted OpenAPI lists exactly the open operations. Hosted authorization is one closed
+table of (method, route) and scope: an operation not in it is refused, whatever the token
+grants.
 
 A call's revisions are incidents. A hosted token without `earshot:calls:read` never sees
 one: incident list, turn metrics and summaries leave them out, and any incident route that

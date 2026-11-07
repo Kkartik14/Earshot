@@ -10274,7 +10274,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemResponse"];
                 };
             };
-            /** @description The range starts past the end. */
+            /** @description The range cannot select any bytes. */
             416: {
                 headers: {
                     [name: string]: unknown;
@@ -10310,9 +10310,11 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemResponse"];
                 };
             };
-            /** @description Service Unavailable */
+            /** @description The media read limit is reached; retry after the indicated seconds. */
             503: {
                 headers: {
+                    /** @description Whole seconds before retrying the media read. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -10597,9 +10599,11 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemResponse"];
                 };
             };
-            /** @description Service Unavailable */
+            /** @description The media read limit is reached; retry after the indicated seconds. */
             503: {
                 headers: {
+                    /** @description Whole seconds before retrying the media read. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -10709,7 +10713,7 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemResponse"];
                 };
             };
-            /** @description The range starts past the end. */
+            /** @description The range cannot select any bytes. */
             416: {
                 headers: {
                     [name: string]: unknown;
@@ -10745,9 +10749,11 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemResponse"];
                 };
             };
-            /** @description Service Unavailable */
+            /** @description The media read limit is reached; retry after the indicated seconds. */
             503: {
                 headers: {
+                    /** @description Whole seconds before retrying the media read. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -10882,9 +10888,11 @@ export interface operations {
                     "application/json": components["schemas"]["ProblemResponse"];
                 };
             };
-            /** @description Service Unavailable */
+            /** @description The media read limit is reached; retry after the indicated seconds. */
             503: {
                 headers: {
+                    /** @description Whole seconds before retrying the media read. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

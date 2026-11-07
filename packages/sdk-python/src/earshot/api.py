@@ -1982,6 +1982,17 @@ _ERROR_RESPONSES = {
     for status in (400, 401, 403, 404, 409, 410, 413, 415, 422, 429, 500, 503)
 }
 
+_MEDIA_READ_BUSY_RESPONSE = {
+    "model": ProblemResponse,
+    "description": "The media read limit is reached; retry after the indicated seconds.",
+    "headers": {
+        "Retry-After": {
+            "description": "Whole seconds before retrying the media read.",
+            "schema": {"type": "integer", "minimum": 1},
+        }
+    },
+}
+
 # A recording upload can also time out waiting for its body (408).
 _UPLOAD_ERROR_RESPONSES = {
     status: {"model": ProblemResponse}
@@ -2130,8 +2141,9 @@ _RECORDING_CONTENT_RESPONSES: dict[int | str, dict[str, Any]] = {
             media_type: _AUDIO_BINARY for media_type in recording_media.RECORDING_CONTENT_TYPES
         },
     },
-    416: {"model": ProblemResponse, "description": "The range starts past the end."},
+    416: {"model": ProblemResponse, "description": "The range cannot select any bytes."},
     **_ERROR_RESPONSES,
+    503: _MEDIA_READ_BUSY_RESPONSE,
 }
 
 _RECORDING_PEAKS_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -2141,6 +2153,7 @@ _RECORDING_PEAKS_RESPONSES: dict[int | str, dict[str, Any]] = {
     },
     304: {"description": "Not modified: the If-None-Match ETag is current."},
     **_ERROR_RESPONSES,
+    503: _MEDIA_READ_BUSY_RESPONSE,
 }
 _RECORDING_RENDITION_RESPONSES: dict[int | str, dict[str, Any]] = {
     200: {"description": "The whole rendition.", "content": {"audio/flac": _AUDIO_BINARY}},
@@ -2148,9 +2161,12 @@ _RECORDING_RENDITION_RESPONSES: dict[int | str, dict[str, Any]] = {
         "description": "The one byte range the Range header asked for.",
         "content": {"audio/flac": _AUDIO_BINARY},
     },
-    416: {"model": ProblemResponse, "description": "The range starts past the end."},
+    416: {"model": ProblemResponse, "description": "The range cannot select any bytes."},
     **_ERROR_RESPONSES,
+    503: _MEDIA_READ_BUSY_RESPONSE,
 }
+
+MAX_PEAKS_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
 def _blob_etag(*keys: str) -> str:
@@ -2322,6 +2338,7 @@ class ApiConfig:
     otlp_max_protobuf_bytes: int = 32 * 1024 * 1024
     otlp_max_json_bytes: int = 4 * 1024 * 1024
     otlp_max_concurrent_requests: int = 8
+    media_read_max_concurrent_requests: int = 4
     recording_max_bytes: int = 512 * 1024 * 1024
     default_page_size: int = 50
     analyzer_version: str = ANALYZER_VERSION
@@ -2395,6 +2412,7 @@ class ApiConfig:
             "otlp_max_protobuf_bytes",
             "otlp_max_json_bytes",
             "otlp_max_concurrent_requests",
+            "media_read_max_concurrent_requests",
             "recording_max_bytes",
         ):
             value = getattr(self, name)
@@ -2483,10 +2501,11 @@ def _authentication_required(settings: ApiConfig) -> bool:
 
 # Hosted authorization is one closed table: each operation a hosted JWT may perform, as
 # (method, route template), and the one scope that grants it. Anything not listed answers
-# 403 ``EARSHOT_OPERATION_UNAVAILABLE``, including the Call surfaces a host does not need: a
-# span's raw attributes, Earshot's copy of the audio, transcript upload, prices and the
-# receiver's counters. HEAD and OPTIONS take the scope of the same route's GET. The OpenAPI
-# document reads the same table, so the contract lists exactly what is open.
+# 403 ``EARSHOT_OPERATION_UNAVAILABLE``, including Call raw span attributes, recording
+# metadata, transcript upload, prices and the receiver's counters. Recording bytes, peaks,
+# and renditions are project-scoped Call reads. HEAD and OPTIONS take the scope of the same
+# route's GET. The OpenAPI document reads the same table, so the contract lists exactly what
+# is open.
 _HOSTED_OPERATION_SCOPES: tuple[tuple[str, str, str], ...] = (
     ("GET", "/v1/incidents", "earshot:read"),
     ("POST", "/v1/incidents", "earshot:write"),
@@ -2516,6 +2535,10 @@ _HOSTED_OPERATION_SCOPES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/v1/traces", CALLS_WRITE_SCOPE),
     ("POST", "/v1/recordings", CALLS_WRITE_SCOPE),
     ("PUT", "/v1/recordings/{recording_id}/content", CALLS_WRITE_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/content", CALLS_READ_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/peaks", CALLS_READ_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/rendition", CALLS_READ_SCOPE),
+    ("GET", "/v1/recordings/{recording_id}/rendition/peaks", CALLS_READ_SCOPE),
     ("GET", "/v1/calls", CALLS_READ_SCOPE),
     ("GET", "/v1/calls/{call_id}", CALLS_READ_SCOPE),
     ("GET", "/v1/calls/{call_id}/live-turns", CALLS_READ_SCOPE),
@@ -3811,6 +3834,9 @@ def create_app(
     app.state.calls = calls
     app.state.recordings = recordings
     otlp_admission = otlp_receiver.AdmissionLimiter(settings.otlp_max_concurrent_requests)
+    media_read_admission = otlp_receiver.AdmissionLimiter(
+        settings.media_read_max_concurrent_requests
+    )
     app.state.hosted_jwt_verifier = (
         HostedJwtVerifier(
             issuer=settings.jwt_issuer or "",
@@ -5353,7 +5379,14 @@ def create_app(
                 recordings.end_upload(project_id, blob_key)
 
     async def stream_audio(
-        request: Request, *, blob_key: str, size: int, media_type: str, etag: str
+        request: Request,
+        *,
+        project_id: str,
+        recording_id: str,
+        blob_key: str,
+        size: int,
+        media_type: str,
+        etag: str,
     ) -> Response:
         """Stream stored audio, whole or one Range (206), never cached by the client."""
 
@@ -5368,50 +5401,141 @@ def create_app(
                     f"the Range header is longer than "
                     f"{recording_media.MAX_RANGE_HEADER_LENGTH} bytes"
                     if isinstance(error, recording_media.RangeTooLong)
+                    else "a suffix range must request at least one byte"
+                    if isinstance(error, recording_media.EmptySuffixRange)
                     else "the range starts past the end of the recording"
                 ),
-                headers={"Content-Range": f"bytes */{size}"},
+                headers={
+                    "Content-Range": f"bytes */{size}",
+                    "Cache-Control": "no-store",
+                },
             ) from error
         start, end = (0, size) if byte_range is None else (byte_range.start, byte_range.end)
-        try:
-            reader = await run_in_threadpool(blobs.open_range, blob_key, start, end)
-        except BlobNotFoundError as error:
+        if not media_read_admission.try_acquire():
             raise ApiProblem(
-                500, "EARSHOT_RECORDING_CONTENT_MISSING", "the stored recording is missing"
-            ) from error
-        headers = {
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(end - start),
-            "ETag": etag,
-            "Cache-Control": "no-store",
-        }
-        if byte_range is not None:
-            headers["Content-Range"] = byte_range.content_range(size)
-        return StreamingResponse(
-            reader,
-            status_code=206 if byte_range is not None else 200,
-            media_type=media_type,
-            headers=headers,
-            background=BackgroundTask(reader.close),
-        )
+                503,
+                "EARSHOT_MEDIA_READ_LIMIT",
+                "too many recording media reads are in progress",
+                headers={"Retry-After": "1"},
+            )
 
-    def read_blob(key: str) -> bytes:
-        """A derived blob's bytes (peaks are small: about 1 MB for a 60-minute call)."""
+        async def missing_blob(code: str, message: str) -> None:
+            current = await run_in_threadpool(recordings.get, project_id, recording_id)
+            if current is None:
+                raise ApiProblem(404, "EARSHOT_RECORDING_NOT_FOUND", "recording not found")
+            raise ApiProblem(500, code, message)
+
+        reader = None
+        transferred = False
+        try:
+            headers = {
+                "Accept-Ranges": "bytes",
+                "Content-Length": str(end - start),
+                "ETag": etag,
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            }
+            if byte_range is not None:
+                headers["Content-Range"] = byte_range.content_range(size)
+            if request.method == "HEAD":
+                info = await run_in_threadpool(blobs.head, blob_key)
+                if info is None:
+                    await missing_blob(
+                        "EARSHOT_RECORDING_CONTENT_MISSING", "the stored recording is missing"
+                    )
+                return Response(
+                    status_code=206 if byte_range is not None else 200,
+                    media_type=media_type,
+                    headers=headers,
+                )
+            try:
+                reader = await run_in_threadpool(blobs.open_range, blob_key, start, end)
+            except BlobNotFoundError:
+                await missing_blob(
+                    "EARSHOT_RECORDING_CONTENT_MISSING", "the stored recording is missing"
+                )
+
+            def close_reader() -> None:
+                try:
+                    reader.close()
+                finally:
+                    media_read_admission.release()
+
+            response = StreamingResponse(
+                reader,
+                status_code=206 if byte_range is not None else 200,
+                media_type=media_type,
+                headers=headers,
+                background=BackgroundTask(close_reader),
+            )
+            transferred = True
+            return response
+        finally:
+            if not transferred:
+                if reader is None:
+                    media_read_admission.release()
+                else:
+                    try:
+                        reader.close()
+                    finally:
+                        media_read_admission.release()
+
+    def read_blob(
+        key: str,
+        *,
+        project_id: str,
+        recording_id: str,
+        max_bytes: int = MAX_PEAKS_RESPONSE_BYTES,
+    ) -> bytes:
+        """Read one bounded derived peaks blob, recognizing a concurrent Call purge."""
 
         blobs = recording_blobs()
-        info = blobs.head(key)
-        if info is None:
-            raise ApiProblem(500, "EARSHOT_PEAKS_MISSING", "the stored peaks are missing")
-        with blobs.open_range(key, 0, info.size) as reader:
-            return b"".join(reader)
+
+        def missing(cause: Exception | None = None) -> None:
+            if recordings.get(project_id, recording_id) is None:
+                error = ApiProblem(404, "EARSHOT_RECORDING_NOT_FOUND", "recording not found")
+            else:
+                error = ApiProblem(500, "EARSHOT_PEAKS_MISSING", "the stored peaks are missing")
+            if cause is None:
+                raise error
+            raise error from cause
+
+        try:
+            info = blobs.head(key)
+            if info is None:
+                missing()
+            if info.size > max_bytes:
+                raise ApiProblem(
+                    500,
+                    "EARSHOT_PEAKS_TOO_LARGE",
+                    "the stored peaks exceed the media read limit",
+                )
+            with blobs.open_range(key, 0, info.size) as reader:
+                return b"".join(reader)
+        except BlobNotFoundError as error:
+            missing(error)
 
     async def peaks_response(request: Request, etag: str, body: Callable[[], bytes]) -> Response:
         # Peaks hold no call content: a browser may keep them, revalidating each use.
         headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
         if _if_none_match(request.headers.get("if-none-match"), etag):
             return Response(status_code=304, headers=headers)
+        if not media_read_admission.try_acquire():
+            raise ApiProblem(
+                503,
+                "EARSHOT_MEDIA_READ_LIMIT",
+                "too many recording media reads are in progress",
+                headers={"Retry-After": "1"},
+            )
+        try:
+            content = await run_in_threadpool(body)
+        finally:
+            media_read_admission.release()
+        headers["Content-Length"] = str(len(content))
         return Response(
-            await run_in_threadpool(body), media_type=signal_peaks.CONTENT_TYPE, headers=headers
+            content=b"" if request.method == "HEAD" else content,
+            media_type=signal_peaks.CONTENT_TYPE,
+            headers=headers,
         )
 
     @app.get(
@@ -5432,11 +5556,23 @@ def create_app(
             )
         return await stream_audio(
             request,
+            project_id=recording.project_id,
+            recording_id=recording.recording_id,
             blob_key=recording.blob_key,
             size=recording.size,
             media_type=recording.content_type,
             etag=f'"{recording.sha256}"',
         )
+
+    @app.api_route(
+        "/v1/recordings/{recording_id}/content",
+        methods=["HEAD"],
+        response_class=Response,
+        include_in_schema=False,
+        responses=_RECORDING_CONTENT_RESPONSES,
+    )
+    async def recording_content_head_endpoint(recording_id: str, request: Request) -> Response:
+        return await recording_content_endpoint(recording_id, request)
 
     @app.get(
         "/v1/recordings/{recording_id}/peaks",
@@ -5458,7 +5594,25 @@ def create_app(
         if analysis is None or analysis.peaks_blob_key is None:
             raise ApiProblem(404, "EARSHOT_PEAKS_NOT_FOUND", "the recording has no peaks yet")
         key = analysis.peaks_blob_key
-        return await peaks_response(request, _blob_etag(key), lambda: read_blob(key))
+        return await peaks_response(
+            request,
+            _blob_etag(key),
+            lambda: read_blob(
+                key,
+                project_id=recording.project_id,
+                recording_id=recording.recording_id,
+            ),
+        )
+
+    @app.api_route(
+        "/v1/recordings/{recording_id}/peaks",
+        methods=["HEAD"],
+        response_class=Response,
+        include_in_schema=False,
+        responses=_RECORDING_PEAKS_RESPONSES,
+    )
+    async def recording_peaks_head_endpoint(recording_id: str, request: Request) -> Response:
+        return await recording_peaks_endpoint(recording_id, request)
 
     @app.get(
         "/v1/recordings/{recording_id}/rendition",
@@ -5485,11 +5639,23 @@ def create_app(
             raise ApiProblem(404, "EARSHOT_RENDITION_NOT_FOUND", "the recording holds no rendition")
         return await stream_audio(
             request,
+            project_id=recording.project_id,
+            recording_id=recording.recording_id,
             blob_key=rendition.blob_key,
             size=info.size,
             media_type="audio/flac",
             etag=_blob_etag(rendition.blob_key),
         )
+
+    @app.api_route(
+        "/v1/recordings/{recording_id}/rendition",
+        methods=["HEAD"],
+        response_class=Response,
+        include_in_schema=False,
+        responses=_RECORDING_RENDITION_RESPONSES,
+    )
+    async def recording_rendition_head_endpoint(recording_id: str, request: Request) -> Response:
+        return await recording_rendition_endpoint(recording_id, request)
 
     @app.get(
         "/v1/recordings/{recording_id}/rendition/peaks",
@@ -5513,9 +5679,34 @@ def create_app(
             raise ApiProblem(404, "EARSHOT_PEAKS_NOT_FOUND", "the rendition has no peaks yet")
 
         def paired() -> bytes:
-            return signal_peaks.interleave(read_blob(user_key), read_blob(agent_key))
+            return signal_peaks.interleave(
+                read_blob(
+                    user_key,
+                    project_id=recording.project_id,
+                    recording_id=recording.recording_id,
+                    max_bytes=MAX_PEAKS_RESPONSE_BYTES // 2,
+                ),
+                read_blob(
+                    agent_key,
+                    project_id=recording.project_id,
+                    recording_id=recording.recording_id,
+                    max_bytes=MAX_PEAKS_RESPONSE_BYTES // 2,
+                ),
+            )
 
         return await peaks_response(request, _blob_etag(user_key, agent_key), paired)
+
+    @app.api_route(
+        "/v1/recordings/{recording_id}/rendition/peaks",
+        methods=["HEAD"],
+        response_class=Response,
+        include_in_schema=False,
+        responses=_RECORDING_PEAKS_RESPONSES,
+    )
+    async def recording_rendition_peaks_head_endpoint(
+        recording_id: str, request: Request
+    ) -> Response:
+        return await recording_rendition_peaks_endpoint(recording_id, request)
 
     transcript_store = TranscriptStore(repository, calls=calls)
 

@@ -17276,7 +17276,7 @@
                 }
               }
             },
-            "description": "The range starts past the end."
+            "description": "The range cannot select any bytes."
           },
           "422": {
             "content": {
@@ -17316,7 +17316,16 @@
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "The media read limit is reached; retry after the indicated seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds before retrying the media read.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -17690,7 +17699,16 @@
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "The media read limit is reached; retry after the indicated seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds before retrying the media read.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -17831,7 +17849,7 @@
                 }
               }
             },
-            "description": "The range starts past the end."
+            "description": "The range cannot select any bytes."
           },
           "422": {
             "content": {
@@ -17871,7 +17889,16 @@
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "The media read limit is reached; retry after the indicated seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds before retrying the media read.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -18034,7 +18061,16 @@
                 }
               }
             },
-            "description": "Service Unavailable"
+            "description": "The media read limit is reached; retry after the indicated seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Whole seconds before retrying the media read.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "security": [

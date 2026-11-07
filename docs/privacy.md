@@ -75,6 +75,16 @@ suite replays the scripted Pipecat and LiveKit samples under `metadata_only`, th
 searches stored bytes for session keys, identities, and content that the preset should
 drop.
 
+In hosted mode, `earshot:calls:read` permits a host to stream a stored Recording, its
+waveform peaks, or a generated stereo rendition only from the token's signed Project.
+These routes do not expose blob-store URLs. A `metadata_only` Project refuses Recordings
+before they are stored; a read scope cannot bypass that preset. Previously stored
+full-capture audio remains available until retention or explicit deletion; changing a
+preset does not retroactively purge it. Earshot does not record end-user media-read audit
+events; the host proxy is responsible for that audit trail. Call and Project deletion
+remove the recording blobs, peaks, analyses and their catalog rows, and subsequent reads
+cannot retrieve the deleted data.
+
 `redacted` is reserved. Asking for it is refused with `EARSHOT_PRESET_UNAVAILABLE`. There
 is no redaction engine, and a regex masker would give a false sense of safety. A Project
 that needs masking must use `metadata_only` until one exists.
@@ -116,10 +126,12 @@ In `hosted_jwt` mode a host sends and reads Calls only under the `earshot:calls:
 (see [hosted mode in the Calls guide](./calls.md#hosted-mode)); the generic incident scopes
 never reach them, and a token without `earshot:calls:read` never sees a call's revisions as
 incidents. The project's capture preset applies to hosted Calls exactly as to any other:
-under `metadata_only` no transcript text or Recording is kept. A span's raw attributes,
-Earshot's copy of the audio and transcript upload stay closed in hosted mode, so a host
-reads back only the call view's JSON. Hosted Incident ingest keeps its closed metadata-only
-profile, which rejects media and raw OTLP; see [the backend API](./backend-api.md).
+under `metadata_only` no transcript text or Recording is kept. A token with
+`earshot:calls:read` can read the call view and stream stored audio, waveform peaks and a
+generated stereo rendition from its signed Project; Earshot returns no blob-store URL.
+Raw span attributes and transcript upload stay closed in hosted mode. Hosted Incident
+ingest keeps its closed metadata-only profile, which rejects media and raw OTLP; see
+[the backend API](./backend-api.md).
 
 ## Producer capture policy
 

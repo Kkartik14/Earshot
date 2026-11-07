@@ -424,23 +424,28 @@ literal vocabulary is implemented by Earshot. The hosted product's token issuer 
 the Calls and project-management scopes shown here; another host's issuer must grant the
 scopes that host uses.
 
-| Operation                                                                  | Required scope              |
-| -------------------------------------------------------------------------- | --------------------------- |
-| List/read incidents, references, analyses, exports, live sessions, and SSE | `earshot:read`              |
-| Ingest incidents/captures/checkpoints and write references                 | `earshot:write`             |
-| Delete a reference                                                         | `earshot:delete`            |
-| Delete an immutable incident artifact                                      | `earshot:artifact:delete`   |
-| Read either summary endpoint                                               | `earshot:summary:read`      |
-| Create the signed project, or confirm it                                   | `earshot:project:provision` |
-| Delete a project                                                           | `earshot:project:delete`    |
-| Send OTLP spans and Recordings of Calls                                    | `earshot:calls:write`       |
-| List and read Calls, resolve a Session Key, read the dashboard             | `earshot:calls:read`        |
-| Purge a Call                                                               | `earshot:calls:delete`      |
+| Operation                                                                                                                              | Required scope              |
+| -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| List/read incidents, references, analyses, exports, live sessions, and SSE                                                             | `earshot:read`              |
+| Ingest incidents/captures/checkpoints and write references                                                                             | `earshot:write`             |
+| Delete a reference                                                                                                                     | `earshot:delete`            |
+| Delete an immutable incident artifact                                                                                                  | `earshot:artifact:delete`   |
+| Read either summary endpoint                                                                                                           | `earshot:summary:read`      |
+| Create the signed project, or confirm it                                                                                               | `earshot:project:provision` |
+| Delete a project                                                                                                                       | `earshot:project:delete`    |
+| Send OTLP spans and Recordings of Calls                                                                                                | `earshot:calls:write`       |
+| List/read Calls, resolve a Session Key, read the dashboard and live turns, and GET/HEAD the four project-scoped Recording media routes | `earshot:calls:read`        |
+| Purge a Call                                                                                                                           | `earshot:calls:delete`      |
 
 The table is closed: any other operation answers 403 `EARSHOT_OPERATION_UNAVAILABLE` to a
 hosted JWT, whatever it grants. See [hosted mode in the Calls guide](./calls.md#hosted-mode)
 for the Call surfaces that stay closed, and for how a call's revisions are hidden from a
 token without `earshot:calls:read`.
+
+The hosted `/openapi.json` is the source of truth for its listed operations and their
+`x-required-scope` values. It lists the four Recording media GET routes; their matching
+HEAD routes use the same hosted authorization and return the corresponding read headers
+without a body.
 
 ### Hosted detail and live APIs
 

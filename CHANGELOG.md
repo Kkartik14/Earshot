@@ -22,6 +22,9 @@ are described in their [GitHub release notes](https://github.com/Kkartik14/Earsh
 - **Host profile quantities.** Host-reported latency and per-request STT metering accept
   positive OTLP `doubleValue` or `intValue`; STT seconds are rounded to milliseconds per
   request before durable repricing. Older latency summaries read as `null` until rebuilt.
+- **Hosted Recording reads.** `earshot:calls:read` can stream project-scoped Recording
+  audio, peaks and generated renditions. Tokens minted for 0.4.0 gain this access; a
+  `metadata_only` preset does not retroactively remove previously stored audio.
 
 - Pipecat support starts at 1.6.0. Earshot's LiveKit range is
   `livekit-agents>=1.6.5,<1.9`.

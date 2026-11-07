@@ -175,6 +175,7 @@ def test_ranges_are_answered_from_the_blob_store_with_206_and_416(blob_backend, 
         ranged("bytes=0-1,5-6"),
         ranged(f"bytes={len(body)}-"),
     )
+    empty_suffix = ranged("bytes=-0")
     # Positions past any object: never a 500.
     huge_end, huge_start = ranged("bytes=0-" + "9" * 200), ranged("bytes=" + "9" * 200 + "-")
     too_long = ranged("x" * (MAX_RANGE_HEADER_LENGTH + 1))
@@ -188,6 +189,12 @@ def test_ranges_are_answered_from_the_blob_store_with_206_and_416(blob_backend, 
     assert past.status == 416
     assert past.headers["content-range"] == f"bytes */{len(body)}"
     assert past.problem_code() == "EARSHOT_RANGE_NOT_SATISFIABLE"
+    assert past.headers["cache-control"] == "no-store"
+    assert empty_suffix.status == 416
+    assert empty_suffix.headers["cache-control"] == "no-store"
+    assert json.loads(empty_suffix.body)["error"]["message"] == (
+        "a suffix range must request at least one byte"
+    )
     assert (huge_end.status, huge_end.body) == (206, body)
     assert (huge_start.status, huge_start.problem_code()) == (416, "EARSHOT_RANGE_NOT_SATISFIABLE")
     assert too_long.status == 416

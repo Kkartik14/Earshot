@@ -98,9 +98,11 @@ If a recording is permitted by the project's `full` preset, create it with
 `POST /v1/recordings` and upload its bytes to the returned `upload_path` with
 `PUT /v1/recordings/{recording_id}/content`; both require `earshot:calls:write`. A
 Recording gives Earshot audio evidence for analysis and call metrics. In hosted JWT mode,
-the host cannot fetch Earshot's stored audio, raw spans, or transcript upload endpoints;
-the API exposes only the permitted Call JSON surfaces. Install the `signals` extra (or
-use the container image that includes it) if recordings should be analysed. The
+tokens with `earshot:calls:read` can read stored audio, waveform peaks and a generated
+stereo rendition only for their signed project; the API streams those bytes and never
+returns a blob-store URL. `metadata_only` refuses new recording storage. Raw spans and
+transcript upload remain closed to hosted tokens. Install the `signals` extra (or use the
+container image that includes it) if recordings should be analysed. The
 [recording workflow](./otlp-quickstart.md#recordings) and
 [hosted Call surfaces](./calls.md#hosted-mode) describe the details.
 
@@ -108,21 +110,23 @@ use the container image that includes it) if recordings should be analysed. The
 
 Use a server-side token with `earshot:calls:read` for:
 
-| Operation                                       | Route                     |
-| ----------------------------------------------- | ------------------------- |
-| List calls and filter summaries                 | `GET /v1/calls`           |
-| Read one Call and its current view              | `GET /v1/calls/{call_id}` |
-| Resolve a host Session Key to Earshot's Call ID | `POST /v1/calls:resolve`  |
-| Read the dashboard summary                      | `GET /v1/dashboard`       |
+| Operation                                       | Route                                                                                   |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------- |
+| List calls and filter summaries                 | `GET /v1/calls`                                                                         |
+| Read one Call and its current view              | `GET /v1/calls/{call_id}`                                                               |
+| Read live turns                                 | `GET /v1/calls/{call_id}/live-turns`                                                    |
+| Resolve a host Session Key to Earshot's Call ID | `POST /v1/calls:resolve`                                                                |
+| Read the dashboard summary                      | `GET /v1/dashboard`                                                                     |
+| Read a Recording and its peaks or rendition     | `GET /v1/recordings/{recording_id}/content`, `/peaks`, `/rendition`, `/rendition/peaks` |
 
 The host can use the returned call data to render its own UI. A Call's projection is
 created from a Revision; while a Call is open, `projection` can be `null` and the detail
 response may contain only the span transcript. Follow the
 [Call projection lifecycle](./calls.md#how-a-call-gets-its-view) and do not treat a
-transcript refresh as a completed turn projection. Audio, raw-span detail, prices,
-transcript uploads, and OTLP statistics remain closed to hosted JWT clients. Consult
-the exact [hosted mode surface](./calls.md#hosted-mode) before exposing any additional
-route through the host.
+transcript refresh as a completed turn projection. Raw-span detail, prices, transcript
+uploads, and OTLP statistics remain closed to hosted JWT clients. Consult the exact
+[hosted mode surface](./calls.md#hosted-mode) before exposing any additional route through
+the host.
 
 ## Keep ownership boundaries clear
 
