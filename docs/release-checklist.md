@@ -30,8 +30,9 @@ One tag publishes four things:
 
 1. Set the same version in `pyproject.toml`, `packages/sdk-python/src/earshot/versions.py`,
    `packages/browser/package.json`, `packages/viewer-ui/package.json` and
-   `packages/node/package.json`, and add the `CHANGELOG.md` entry. The `validate` job rejects a tag that differs from
-   `pyproject.toml`, and `build-npm` rejects a package that differs from it.
+   `packages/node/package.json`, regenerate `uv.lock` so its root package entry stays
+   aligned, and add the `CHANGELOG.md` entry. The `validate` job rejects a tag that differs
+   from `pyproject.toml`, and `build-npm` rejects any package that differs from it.
 2. Wait for the comprehensive CI run on `main` to pass. Then start the `ci` workflow
    manually on `main` and wait for its `coverage` job to enforce the combined SQLite
    and Postgres branch-coverage floor.
@@ -49,15 +50,16 @@ One tag publishes four things:
      serves both replayed calls and prints their URLs. On each, the lanes render,
      playback starts, a transcript click seeks within 100 ms and the highlight follows
      playback. The LiveKit call checks Safari with Ogg Opus.
-4. Optional dry run: start the `release` workflow by hand on `main`. It builds and
-   inspects the wheel, sdist and npm tarballs, and publishes nothing.
+4. Optional dry run: dispatch the `release` workflow on a branch such as `main`. It builds
+   and inspects the wheel, sdist and npm tarballs, and publishes nothing. Dispatching on a
+   tag runs the publishing jobs, so never use a tag dispatch as a dry run.
 5. Tag and push, as in `release.md`. Approve the `pypi` and `npm` deployments when
    asked. A version containing `-` is published to npm under the `next` dist-tag.
 
 ## After publishing
 
 ```bash
-version=0.3.0   # the released version
+version=0.4.0   # replace with the released version
 npm view "@earshot/viewer-ui@$version" dist.attestations --json
 npm view "@earshot/browser@$version" dist.attestations --json
 npm view "@earshot/node@$version" dist.attestations --json

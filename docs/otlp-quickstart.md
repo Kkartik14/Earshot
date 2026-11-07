@@ -5,8 +5,8 @@ A Call is one voice session: every span that shares a Session Key in a Project, 
 Recordings uploaded for it. When a Call closes, Earshot stores a Revision, an ordinary
 Incident built from all of its spans and Recordings.
 
-This page covers Pipecat 1.5 and LiveKit Agents 1.6 to 1.8, the producers tested end to
-end in 0.3.0, and the two clients that upload a call's recording: Python's
+This page covers Pipecat 1.6 and LiveKit Agents 1.6 to 1.8, the producers tested end to
+end in 0.4.0, and the two clients that upload a call's recording: Python's
 [`earshot.client`](#the-python-client-earshotclient) and Node's
 [`@earshot/node`](#node-earshotnode). Any OTLP/HTTP producer can send spans; see the
 [README](../README.md#what-earshot-receives-today) for what each source gets. Once a Call
@@ -14,7 +14,7 @@ has closed, its [call view](./calls.md) shows its audio, transcript, latency, au
 and cost.
 
 Everything on this page about `/v1/traces`, `/v1/recordings*`, `/v1/calls*` and
-`/v1/otlp/stats` describes the 0.3.0 receiver, recordings and call APIs.
+`/v1/otlp/stats` describes the 0.4.0 receiver, recordings and call APIs.
 
 ## Start the server
 
@@ -31,12 +31,12 @@ server runs, and every analysis is `unavailable` with `EARSHOT_SIGNALS_EXTRA_REQ
 
 ## Use the HTTP exporter, not gRPC
 
-Earshot implements OTLP over HTTP only. There is no gRPC listener in 0.3.0. Pipecat's own
+Earshot implements OTLP over HTTP only. There is no gRPC listener in 0.4.0. Pipecat's own
 tracing examples use the gRPC exporter (`opentelemetry-exporter-otlp-proto-grpc`); switch
 to the HTTP one:
 
 ```bash
-pip install 'pipecat-ai[tracing]>=1.5,<1.6' opentelemetry-exporter-otlp-proto-http
+pip install 'pipecat-ai[tracing]>=1.6.0,<1.7.0' opentelemetry-exporter-otlp-proto-http
 ```
 
 ```python
@@ -149,12 +149,12 @@ carries `conversation.id` and the attributes you pass in `additional_span_attrib
 span in the same trace that names a different key still joins the bound Call, and is
 counted as a `key_disagreements` event.
 
-**Pipecat 1.5: use one value for both keys.** Pass the same ID as `conversation_id` and
-as `earshot.session.id`, as the [snippet](#pipecat-snippet) does. This is a known
-limitation of 0.3.0. Pipecat 1.5 puts `conversation.id` on every `turn` span, but puts
-`additional_span_attributes` only on the `conversation` span, which it exports when the
-call ends. The `turn` spans arrive first, so the trace is already bound to the
-`conversation.id` key when `earshot.session.id` arrives. If the two values differ:
+**Pipecat: use one value for both keys.** Pass the same ID as `conversation_id` and
+as `earshot.session.id`, as the [snippet](#pipecat-snippet) does. Pipecat puts
+`conversation.id` on its `turn` spans and `additional_span_attributes` on the
+`conversation` span, which it exports when the call ends. The `turn` spans arrive first,
+so the trace is already bound to the `conversation.id` key when `earshot.session.id`
+arrives. If the two values differ:
 
 - the Call is keyed by the `conversation_id` value (`key_source: conversation.id`), and a
   `key_disagreements` event is counted;
@@ -326,7 +326,7 @@ new `PUT` before it passes.
 **Read it back.** `GET /v1/recordings/<id>` returns the metadata, and
 `GET /v1/recordings/<id>/content` streams the bytes through the server, with `Range`
 support (206). A `pending` Recording gives 409 `EARSHOT_RECORDING_NOT_STORED`. There are
-no presigned URLs in 0.3.0. Once the server has analysed it,
+no presigned URLs in 0.4.0. Once the server has analysed it,
 `GET /v1/recordings/<id>/peaks` serves its waveform peaks; see
 [the call view](./calls.md#audio-content-peaks-and-renditions).
 

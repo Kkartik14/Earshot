@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "earshot-observability"
-version = "0.3.0"
+version = "0.4.0"
 description = "The open-source Voice Observability SDK for real-time voice AI"
 readme = "README.md"
 requires-python = ">=3.11"

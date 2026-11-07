@@ -1,6 +1,6 @@
 """One registry for independently evolvable Earshot compatibility layers."""
 
-PACKAGE_VERSION = "0.3.0"
+PACKAGE_VERSION = "0.4.0"
 CONTRACT_VERSION = "0.2.0"
 SEMANTIC_PROFILE_VERSION = "0.2.0"
 # Producers emit the current version; readers accept every version they can
