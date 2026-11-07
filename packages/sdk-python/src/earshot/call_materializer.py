@@ -60,7 +60,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -94,11 +93,12 @@ from .contract import (
     TimePoint,
     TimeRange,
 )
+from .host_profile import HOST_PROFILE_0_2_VERSIONS, HOST_PROFILE_VALUE_KEYS, host_value
 from .privacy import CaptureClass, CapturePolicy, classify_attribute
 from .recorder import IncidentRecorder, RecorderConfig
 from .recordings import verified_channel_speakers
 from .validation import assert_valid_incident
-from .versions import HOST_PROFILE_VERSION, PACKAGE_VERSION
+from .versions import PACKAGE_VERSION
 
 if TYPE_CHECKING:
     from .storage_recordings import Recording
@@ -182,7 +182,7 @@ def _line_source(span: OtlpSpan) -> tuple[str | None, tuple[str, ...]] | None:
 
     if (
         span.scope.name == HOST_SCOPE
-        and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
+        and host_profile_scope_version(span.scope) in HOST_PROFILE_0_2_VERSIONS
         and span.span.name in {"user_speech", "agent_speech"}
     ):
         speaker = "user" if span.span.name == "user_speech" else "agent"
@@ -229,6 +229,17 @@ def transcript_text(span: OtlpSpan) -> tuple[str, str] | None:
         return None
     text = _attribute_value(span.span.attributes, attributes)
     if not isinstance(text, str):
+        return None
+    if (
+        span.scope.name == HOST_SCOPE
+        and host_value(
+            "earshot.transcript.text",
+            span.span.name,
+            host_profile_scope_version(span.scope),
+            text,
+        )
+        is None
+    ):
         return None
     text = text.replace("\x00", "")
     if not text.strip():
@@ -583,7 +594,7 @@ def _reconcile_host_transcript_capture(
         (span.span.trace_id.hex(), span.span.span_id.hex()): span
         for span in spans
         if span.scope.name == HOST_SCOPE
-        and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
+        and host_profile_scope_version(span.scope) in HOST_PROFILE_0_2_VERSIONS
         and span.span.name in {"user_speech", "agent_speech"}
     }
     expected = {}
@@ -669,34 +680,28 @@ def _semantic_input(recorder: IncidentRecorder, span: OtlpSpan) -> dict[str, Any
     kept: dict[str, Any] = {}
     duplicated_host_transcript = (
         span.scope.name == HOST_SCOPE
-        and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
+        and host_profile_scope_version(span.scope) in HOST_PROFILE_0_2_VERSIONS
         and sum(item.key == "earshot.transcript.text" for item in span.span.attributes) > 1
     )
     for key, value in converted["attributes"].items():
         expected = attribute_capture_class(key)
         recorded_as = canonical_attribute_key(key)
-        invalid_host_latency = (
+        invalid_host_value = (
             span.scope.name == HOST_SCOPE
-            and recorded_as == _HOST_REPORTED_LATENCY
-            and (
-                span.span.name != "turn"
-                or isinstance(value, bool)
-                or not isinstance(value, (int, float))
-                or not math.isfinite(value)
-                or value <= 0
+            and key in HOST_PROFILE_VALUE_KEYS
+            and host_value(
+                recorded_as,
+                span.span.name,
+                host_profile_scope_version(span.scope),
+                value,
             )
-        )
-        wrong_profile_version = (
-            span.scope.name == HOST_SCOPE
-            and host_profile_scope_version(span.scope) != HOST_PROFILE_VERSION
-            and key in _HOST_PROFILE_0_2_FIELDS
+            is None
         )
         if (
             recorded_as in _INPUT_HISTORY_KEYS
             or not recorder_agrees(recorded_as, expected)
-            or wrong_profile_version
+            or invalid_host_value
             or (duplicated_host_transcript and key == "earshot.transcript.text")
-            or invalid_host_latency
         ):
             recorder.record_omission(key, capture_class=expected)
             continue

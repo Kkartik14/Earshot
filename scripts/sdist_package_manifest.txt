@@ -77,10 +77,12 @@ packages/sdk-python/src/earshot/generated/earshot/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/__init__.py
 packages/sdk-python/src/earshot/generated/earshot/v1alpha1/incident_pb2.py
 packages/sdk-python/src/earshot/host_profile.py
+packages/sdk-python/src/earshot/host_profile_fixtures/__init__.py
 packages/sdk-python/src/earshot/integrations/__init__.py
 packages/sdk-python/src/earshot/integrations/platform/__init__.py
 packages/sdk-python/src/earshot/integrations/platform/adapter.py
 packages/sdk-python/src/earshot/leased_jobs.py
+packages/sdk-python/src/earshot/limits.py
 packages/sdk-python/src/earshot/live.py
 packages/sdk-python/src/earshot/maintenance.py
 packages/sdk-python/src/earshot/measurement_semantics.py

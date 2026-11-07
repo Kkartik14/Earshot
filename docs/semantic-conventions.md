@@ -13,8 +13,9 @@ is checked with `python scripts/check_semconv.py`; exact provenance is recorded 
 - Durations use seconds in telemetry and UCUM units in metrics.
 - Exact authored timestamps remain unsigned nanoseconds.
 - Milliseconds are presentation units used by analysis/API output only.
-- OTLP/JSON uses lowerCamelCase Protobuf field names; original proto field names are
-  ignored as unknown fields. Earshot's authored attribute names keep their own casing.
+- OTLP/JSON uses lowerCamelCase Protobuf field names. The host-profile checker reports
+  original proto snake_case aliases as nonconformant. Earshot's authored attribute
+  names keep their own casing.
 - Open semantic labels are producer-controlled metadata, not arbitrary source text or
   automatic proof of anonymization. Adapters retain unknown raw labels as exact
   SHA-256 labels when they are not allowlisted.

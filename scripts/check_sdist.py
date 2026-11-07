@@ -52,6 +52,11 @@ PACKAGE_DATA_FILES = frozenset(
     {
         f"{ALLOWED_PACKAGE_PREFIX}signals/model/LICENSE",
         f"{ALLOWED_PACKAGE_PREFIX}signals/model/silero_vad.onnx",
+        f"{ALLOWED_PACKAGE_PREFIX}host_profile_fixtures/0.1.0.json",
+        f"{ALLOWED_PACKAGE_PREFIX}host_profile_fixtures/0.2.0-reported.json",
+        f"{ALLOWED_PACKAGE_PREFIX}host_profile_fixtures/0.2.0-omitted.json",
+        f"{ALLOWED_PACKAGE_PREFIX}host_profile_fixtures/0.2.0-int-values.json",
+        f"{ALLOWED_PACKAGE_PREFIX}host_profile_fixtures/0.2.0-invalid.json",
     }
 )
 VIEWER_DIRECTORY = "packages/sdk-python/src/earshot/web"

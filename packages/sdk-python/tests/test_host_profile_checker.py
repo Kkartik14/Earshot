@@ -4,28 +4,33 @@ import copy
 import io
 import json
 import math
-from pathlib import Path
+from importlib.resources import files
 
 import pytest
 
 from earshot.cli import main
 from earshot.host_profile import check_host_profile
 
-FIXTURES = Path(__file__).parent / "fixtures" / "host_profile"
+FIXTURES = files("earshot.host_profile_fixtures")
+
+
+def _fixture(name: str):
+    return FIXTURES.joinpath(name)
 
 
 @pytest.mark.parametrize(
     ("fixture", "versions", "span_count"),
     [
-        ("0.1.0.json", ["0.1.0"], 1),
+        ("0.1.0.json", ["0.1.0"], 4),
         ("0.2.0-reported.json", ["0.2.0"], 4),
         ("0.2.0-omitted.json", ["0.2.0"], 3),
+        ("0.2.0-int-values.json", ["0.2.0"], 4),
     ],
 )
 def test_supported_profiles_accept_baseline_reported_and_omitted_values(
     fixture: str, versions: list[str], span_count: int
 ) -> None:
-    report = check_host_profile((FIXTURES / fixture).read_bytes())
+    report = check_host_profile(_fixture(fixture).read_bytes())
 
     assert report.valid
     assert report.host_profile_versions == tuple(versions)
@@ -33,7 +38,7 @@ def test_supported_profiles_accept_baseline_reported_and_omitted_values(
 
 
 def _reported_request() -> dict:
-    return json.loads((FIXTURES / "0.2.0-reported.json").read_text())
+    return json.loads(_fixture("0.2.0-reported.json").read_text())
 
 
 def _attributes(span: dict) -> list[dict]:
@@ -51,9 +56,8 @@ def test_checker_ignores_nonstandard_original_proto_field_names() -> None:
 
     report = check_host_profile(json.dumps(request))
 
-    assert report.valid
-    assert report.host_profile_versions == ()
-    assert report.spans_checked == 0
+    assert not report.valid
+    assert "snake_case_proto_field" in {issue.code for issue in report.issues}
 
 
 def test_checker_does_not_accept_snake_case_any_value_field_names() -> None:
@@ -168,30 +172,29 @@ def test_checker_treats_omitted_or_null_repeated_envelope_fields_as_empty(
 ) -> None:
     report = check_host_profile(payload)
 
-    assert report.valid
+    assert not report.valid
     assert report.host_profile_versions == versions
     assert report.spans_checked == span_count
+    assert "no_host_spans" in {issue.code for issue in report.issues}
 
 
 def test_checker_treats_null_repeated_attributes_as_empty() -> None:
     request = _reported_request()
-    for resource_span in request["resourceSpans"]:
-        for scope_span in resource_span["scopeSpans"]:
-            for span in scope_span["spans"]:
-                span["attributes"] = None
+    request["resourceSpans"][0]["scopeSpans"][0]["spans"][1]["attributes"] = None
 
     report = check_host_profile(request)
 
-    assert report.valid
+    assert not report.valid
     assert report.host_profile_versions == ("0.2.0",)
     assert report.spans_checked == 4
+    codes = {issue.code for issue in report.issues}
+    assert "missing_turn_id" in codes
+    assert "invalid_attributes" not in codes
 
 
 def test_checker_uses_last_value_for_duplicate_json_field_names() -> None:
-    payload = (
-        '{"resourceSpans": [], "resourceSpans": '
-        '[{"scopeSpans": [{"scope": {"name": "earshot.host", "version": "0.2.0"}}]}]}'
-    )
+    resource_spans = json.loads(_fixture("0.2.0-reported.json").read_text())["resourceSpans"]
+    payload = '{"resourceSpans": [], "resourceSpans": ' + json.dumps(resource_spans) + "}"
 
     report = check_host_profile(payload)
 
@@ -223,7 +226,7 @@ def test_checker_uses_last_value_for_duplicate_json_field_names() -> None:
             lambda request: _attribute(
                 request["resourceSpans"][0]["scopeSpans"][0]["spans"][2],
                 "earshot.stt.usage.audio_seconds",
-            ).update(value={"intValue": "375"}),
+            ).update(value={"stringValue": "375"}),
             "wrong_attribute_type",
         ),
         (
@@ -282,6 +285,13 @@ def test_invalid_profile_fixtures_report_stable_codes(case: str, mutate, code: s
     assert code in {issue.code for issue in report.issues}, case
 
 
+def test_packaged_invalid_fixture_reports_its_stable_code() -> None:
+    report = check_host_profile(_fixture("0.2.0-invalid.json").read_bytes())
+
+    assert not report.valid
+    assert "missing_parent" in {issue.code for issue in report.issues}
+
+
 def test_checker_ignores_unknown_extensions_but_rejects_unsupported_profile_versions() -> None:
     request = _reported_request()
     request["resourceSpans"][0]["scopeSpans"][0]["scope"]["version"] = "0.3.0"
@@ -310,7 +320,7 @@ def test_checker_rejects_non_object_otlp_envelope_members(payload: dict, code: s
 
 
 def test_checker_rejects_non_utf8_json_bytes() -> None:
-    payload = (FIXTURES / "0.1.0.json").read_text().encode("utf-16")
+    payload = _fixture("0.1.0.json").read_text().encode("utf-16")
 
     report = check_host_profile(payload)
 
@@ -390,7 +400,7 @@ def test_checker_rejects_tts_count_above_json_safe_range(tts_value) -> None:
 )
 def test_checker_rejects_lossy_or_non_protojson_tts_integer_forms(wire_value) -> None:
     payload = (
-        (FIXTURES / "0.2.0-reported.json")
+        _fixture("0.2.0-reported.json")
         .read_text()
         .replace('"intValue": "217"', f'"intValue": {wire_value}')
     )
@@ -462,6 +472,17 @@ def test_checker_reports_deeply_nested_json_as_invalid_without_raising() -> None
     assert {issue.code for issue in report.issues} == {"invalid_json"}
 
 
+def test_checker_traverses_deep_python_mappings_without_recursion_error() -> None:
+    nested: object = 0
+    for _ in range(1500):
+        nested = [nested]
+
+    report = check_host_profile({"resourceSpans": [], "vendor.extension": nested})
+
+    assert not report.valid
+    assert "no_host_spans" in {issue.code for issue in report.issues}
+
+
 def test_checker_accepts_integral_python_float_for_tts_integer_mapping() -> None:
     request = _reported_request()
     tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
@@ -474,7 +495,7 @@ def test_checker_accepts_integral_python_float_for_tts_integer_mapping() -> None
 
 def test_checker_accepts_exact_integral_protojson_exponent() -> None:
     payload = (
-        (FIXTURES / "0.2.0-reported.json")
+        _fixture("0.2.0-reported.json")
         .read_text()
         .replace('"intValue": "217"', '"intValue": 2.17e2')
     )
@@ -487,7 +508,7 @@ def test_checker_rejects_tts_int64_values_that_exceed_python_integer_parse_limit
     tts = request["resourceSpans"][0]["scopeSpans"][0]["spans"][3]
     _attribute(tts, "earshot.tts.usage.character_count")["value"]["intValue"] = "1" * 5000
     numeric_payload = (
-        (FIXTURES / "0.2.0-reported.json")
+        _fixture("0.2.0-reported.json")
         .read_text()
         .replace('"intValue": "217"', '"intValue": ' + "1" * 5000)
     )
@@ -545,13 +566,246 @@ def test_checker_requires_reported_host_latency_to_be_a_positive_double(mutate, 
 
 
 def test_checker_accepts_positive_reported_latency_in_the_legacy_profile() -> None:
-    request = json.loads((FIXTURES / "0.1.0.json").read_text())
+    request = json.loads(_fixture("0.1.0.json").read_text())
     turn = request["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
-    turn["attributes"].append(
-        {"key": "earshot.turn.reported_latency_ms", "value": {"doubleValue": 1.0}}
-    )
+    _attribute(turn, "earshot.turn.reported_latency_ms")["value"] = {"doubleValue": 1.0}
 
     assert check_host_profile(request).valid
+
+
+def test_checker_and_projection_accept_integer_latency_and_stt_values() -> None:
+    from earshot.call_capture import spans_from_request
+    from earshot.call_span_facts import turn_anchors, usage_items
+    from earshot.otlp_receiver import JSON_MEDIA_TYPE, decode_export_request
+
+    payload = _fixture("0.2.0-reported.json").read_text()
+    request_json = json.loads(payload)
+    turn, _, stt, _ = request_json["resourceSpans"][0]["scopeSpans"][0]["spans"]
+    _attribute(turn, "earshot.turn.reported_latency_ms")["value"] = {"intValue": "850"}
+    _attribute(stt, "earshot.stt.usage.audio_seconds")["value"] = {"intValue": "3"}
+    payload = json.dumps(request_json)
+
+    report = check_host_profile(payload)
+    request = decode_export_request(payload.encode(), JSON_MEDIA_TYPE)
+    spans = spans_from_request(request)
+
+    assert report.valid
+    [turn_fact] = turn_anchors(spans)
+    assert turn_fact.reported_latency_ms == 850
+    [stt_fact] = [item for item in usage_items(spans) if item.operation == "stt"]
+    assert stt_fact.quantity == 3
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    ["0.1.0.json", "0.2.0-reported.json", "0.2.0-omitted.json", "0.2.0-int-values.json"],
+)
+def test_checker_and_projection_agree_for_every_packaged_valid_fixture(fixture: str) -> None:
+    from earshot.call_capture import HOST_SCOPE, any_value, spans_from_request
+    from earshot.call_cost import call_usage
+    from earshot.call_materializer import transcript_text
+    from earshot.call_span_facts import turn_anchors, usage_items
+    from earshot.otlp_receiver import JSON_MEDIA_TYPE, decode_export_request
+
+    payload = _fixture(fixture).read_bytes()
+    assert check_host_profile(payload).valid
+    spans = spans_from_request(decode_export_request(payload, JSON_MEDIA_TYPE))
+    anchors = {anchor.turn_span_id: anchor for anchor in turn_anchors(spans)}
+    usage = {
+        (item.span_id, item.operation, item.meter): item
+        for item in usage_items(spans)
+        if item.framework == "host"
+    }
+
+    for span in spans:
+        if span.scope.name != HOST_SCOPE:
+            continue
+        attributes = {item.key: any_value(item.value) for item in span.span.attributes}
+        span_id = span.span.span_id.hex()
+        latency_key = "earshot.turn.reported_latency_ms"
+        if latency_key in attributes:
+            assert anchors[span_id].reported_latency_ms == attributes[latency_key]
+        for operation, meter, key in (
+            ("stt", "audio_second", "earshot.stt.usage.audio_seconds"),
+            ("tts", "character", "earshot.tts.usage.character_count"),
+        ):
+            if span.span.name == operation:
+                fact = usage[(span_id, operation, meter)]
+                expected = attributes.get(key)
+                assert fact.quantity == expected
+                if operation == "stt" and expected is not None:
+                    [entry] = [
+                        item
+                        for item in call_usage([fact], user_audio_ms=None)
+                        if item["kind"] == "reported"
+                    ]
+                    assert entry["quantity_milli"] == max(1, round(expected * 1000))
+        transcript = attributes.get("earshot.transcript.text")
+        if transcript is not None:
+            assert transcript_text(span) == (
+                "user" if span.span.name == "user_speech" else "agent",
+                transcript,
+            )
+
+
+def test_checker_rejects_transcript_over_64_kib_utf8() -> None:
+    request = _reported_request()
+    user_speech = request["resourceSpans"][0]["scopeSpans"][0]["spans"][1]
+    _attribute(user_speech, "earshot.transcript.text")["value"]["stringValue"] = "é" * 32_769
+
+    report = check_host_profile(request)
+
+    assert not report.valid
+    assert "invalid_transcript_text" in {issue.code for issue in report.issues}
+
+
+@pytest.mark.parametrize(
+    ("case", "mutate", "code"),
+    [
+        ("no host spans", lambda request: request.clear(), "no_host_spans"),
+        (
+            "wrong host scope",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["scope"].update(
+                name="earshot-host"
+            ),
+            "wrong_scope",
+        ),
+        (
+            "unknown span name",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][1].update(
+                name="userSpeech"
+            ),
+            "unknown_span_name",
+        ),
+        (
+            "missing turn id",
+            lambda request: _attributes(
+                request["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+            ).clear(),
+            "missing_turn_id",
+        ),
+        (
+            "missing parent",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][1].update(
+                parentSpanId="0000000000000099"
+            ),
+            "missing_parent",
+        ),
+        (
+            "end before start",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][1].update(
+                endTimeUnixNano="1000000000"
+            ),
+            "span_time_order",
+        ),
+        (
+            "short span id",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][1].update(
+                spanId="01"
+            ),
+            "invalid_span_id",
+        ),
+        (
+            "STT without provider",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][2][
+                "attributes"
+            ].__setitem__(
+                slice(None),
+                [
+                    item
+                    for item in request["resourceSpans"][0]["scopeSpans"][0]["spans"][2][
+                        "attributes"
+                    ]
+                    if item["key"] != "gen_ai.provider.name"
+                ],
+            ),
+            "missing_stt_provider",
+        ),
+    ],
+)
+def test_checker_rejects_broken_host_structure(case: str, mutate, code: str) -> None:
+    request = _reported_request()
+    mutate(request)
+
+    report = check_host_profile(request)
+
+    assert not report.valid, case
+    assert code in {issue.code for issue in report.issues}, case
+
+
+def _legacy_request() -> dict:
+    return json.loads(_fixture("0.1.0.json").read_text())
+
+
+def _remove_attribute(span: dict, key: str) -> None:
+    span["attributes"] = [item for item in span["attributes"] if item["key"] != key]
+
+
+@pytest.mark.parametrize(
+    ("case", "mutate", "code"),
+    [
+        (
+            "required turn id",
+            lambda request: _remove_attribute(
+                request["resourceSpans"][0]["scopeSpans"][0]["spans"][0],
+                "earshot.turn.id",
+            ),
+            "missing_turn_id",
+        ),
+        (
+            "parent must exist",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][1].update(
+                parentSpanId="0000000000000099"
+            ),
+            "missing_parent",
+        ),
+        (
+            "start precedes end",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][1].update(
+                endTimeUnixNano="1000000000"
+            ),
+            "span_time_order",
+        ),
+        (
+            "trace ID has 32 hex chars",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][0].update(
+                traceId="01"
+            ),
+            "invalid_trace_id",
+        ),
+        (
+            "span ID has 16 hex chars",
+            lambda request: request["resourceSpans"][0]["scopeSpans"][0]["spans"][0].update(
+                spanId="01"
+            ),
+            "invalid_span_id",
+        ),
+        (
+            "STT has provider",
+            lambda request: _remove_attribute(
+                request["resourceSpans"][0]["scopeSpans"][0]["spans"][2],
+                "gen_ai.provider.name",
+            ),
+            "missing_stt_provider",
+        ),
+        (
+            "STT has model",
+            lambda request: _remove_attribute(
+                request["resourceSpans"][0]["scopeSpans"][0]["spans"][2],
+                "gen_ai.request.model",
+            ),
+            "missing_stt_model",
+        ),
+    ],
+)
+def test_checker_enforces_structural_contract_for_profile_0_1(case: str, mutate, code: str) -> None:
+    request = _legacy_request()
+    mutate(request)
+
+    report = check_host_profile(request)
+
+    assert not report.valid, case
+    assert code in {issue.code for issue in report.issues}, case
 
 
 def test_missing_scope_version_retains_legacy_profile_0_1_behavior() -> None:
@@ -571,7 +825,7 @@ def test_missing_scope_version_retains_legacy_profile_0_1_behavior() -> None:
 
 def test_cli_checks_an_offline_otlp_json_file(tmp_path, capsys) -> None:
     valid = tmp_path / "valid.json"
-    valid.write_bytes((FIXTURES / "0.2.0-reported.json").read_bytes())
+    valid.write_bytes(_fixture("0.2.0-reported.json").read_bytes())
 
     assert main(["check-host-profile", str(valid)]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
@@ -588,14 +842,34 @@ def test_cli_checks_an_offline_otlp_json_file(tmp_path, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["valid"] is False
 
 
+def test_cli_rejects_a_request_with_zero_host_spans(tmp_path, capsys) -> None:
+    empty = tmp_path / "empty.json"
+    empty.write_text('{"resourceSpans": []}')
+
+    assert main(["check-host-profile", str(empty)]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["valid"] is False
+    assert "no_host_spans" in {issue["code"] for issue in output["issues"]}
+
+
 def test_cli_reads_an_otlp_json_request_from_stdin(monkeypatch, capsys) -> None:
     import sys
 
     monkeypatch.setattr(
         sys,
         "stdin",
-        type("Stdin", (), {"buffer": io.BytesIO((FIXTURES / "0.1.0.json").read_bytes())})(),
+        type("Stdin", (), {"buffer": io.BytesIO(_fixture("0.1.0.json").read_bytes())})(),
     )
 
     assert main(["check-host-profile", "-"]) == 0
     assert json.loads(capsys.readouterr().out)["host_profile_versions"] == ["0.1.0"]
+
+
+def test_cli_reports_file_read_errors_with_exit_code_two(tmp_path, capsys) -> None:
+    missing = tmp_path / "missing.json"
+
+    assert main(["check-host-profile", str(missing)]) == 2
+
+    captured = capsys.readouterr()
+    assert not captured.out
+    assert f"cannot read {missing}" in captured.err

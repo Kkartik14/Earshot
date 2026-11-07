@@ -53,8 +53,7 @@ from .call_materializer import (
     transcript_text_json_from_stored_span,
 )
 from .call_projection import (
-    EXACT_COST_QUANTITY_PROJECTION_VERSION,
-    POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION,
+    CALL_PROJECTION_VERSION,
     CallSource,
     ProjectionInputs,
     ProjectionStamps,
@@ -159,12 +158,12 @@ class CallFilters:
 _RANGES = (
     (
         "min_reported_latency_ms",
-        f"p.projection_version >= {POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION} "
+        f"p.projection_version >= {CALL_PROJECTION_VERSION} "
         "AND p.reported_latency_p50_ms > 0 AND p.reported_latency_p50_ms >= ?",
     ),
     (
         "max_reported_latency_ms",
-        f"p.projection_version >= {POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION} "
+        f"p.projection_version >= {CALL_PROJECTION_VERSION} "
         "AND p.reported_latency_p50_ms > 0 AND p.reported_latency_p50_ms <= ?",
     ),
     ("min_audible_gap_ms", "p.audible_gap_p50_ms >= ?"),
@@ -346,7 +345,7 @@ def _projection(row: Any, tags: tuple[str, ...]) -> CallProjectionSummary | None
         return None if value is None else int(value)
 
     def known_reported_latency(name: str) -> int | None:
-        if int(row["projection_version"]) < POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION:
+        if int(row["projection_version"]) < CALL_PROJECTION_VERSION:
             return None
         value = row[name]
         if value is None:
@@ -451,20 +450,6 @@ def _positive_reported_latencies(detail: Any) -> Any:
             not isinstance(latency, int) or isinstance(latency, bool) or latency <= 0
         ):
             turn["reported_latency_ms"] = None
-    return detail
-
-
-def _null_legacy_cost_quantities(detail: Any) -> Any:
-    """Withhold quantities from v8 details, whose finite floats could be rounded."""
-
-    if not isinstance(detail, dict):
-        return detail
-    cost_items = detail.get("cost_items")
-    if not isinstance(cost_items, list):
-        return detail
-    for item in cost_items:
-        if isinstance(item, dict) and "quantity" in item:
-            item["quantity"] = None
     return detail
 
 
@@ -699,8 +684,6 @@ class CallReads:
                 (project_id, call_id),
             ).fetchone()
             detail = _positive_reported_latencies(json.loads(detail_json))
-            if int(row["projection_version"]) < EXACT_COST_QUANTITY_PROJECTION_VERSION:
-                detail = _null_legacy_cost_quantities(detail)
         return CallDetail(
             summary=summary,
             revisions=revisions,

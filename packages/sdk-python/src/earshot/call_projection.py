@@ -102,14 +102,9 @@ if TYPE_CHECKING:
     from .call_span_facts import TurnAnchors
 
 # Bumped when the projection's computation or shape changes: every stored
-# projection then reads as stale until the job recomputes it.
-# Keep this semantic introduction point fixed when ``CALL_PROJECTION_VERSION`` is
-# bumped for unrelated projection changes.
-POSITIVE_REPORTED_LATENCY_PROJECTION_VERSION = 8
+# projection then reads as stale until the job recomputes it. This version also
+# marks when the current latency and millisecond cost-quantity semantics began.
 CALL_PROJECTION_VERSION = 10
-# Earlier projections may have rounded reported STT seconds to milliseconds. Until
-# they are rebuilt from source spans, their cost quantities are unknown at read time.
-EXACT_COST_QUANTITY_PROJECTION_VERSION = 10
 PROJECTION_STATES = ("none", "stale", "current")
 
 

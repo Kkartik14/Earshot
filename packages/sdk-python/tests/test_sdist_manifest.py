@@ -18,6 +18,11 @@ PACKAGE_NAMES = (ROOT / "scripts" / "sdist_package_manifest.txt").read_text().sp
 PACKAGE_DATA_NAMES = [
     "packages/sdk-python/src/earshot/signals/model/LICENSE",
     "packages/sdk-python/src/earshot/signals/model/silero_vad.onnx",
+    "packages/sdk-python/src/earshot/host_profile_fixtures/0.1.0.json",
+    "packages/sdk-python/src/earshot/host_profile_fixtures/0.2.0-reported.json",
+    "packages/sdk-python/src/earshot/host_profile_fixtures/0.2.0-omitted.json",
+    "packages/sdk-python/src/earshot/host_profile_fixtures/0.2.0-int-values.json",
+    "packages/sdk-python/src/earshot/host_profile_fixtures/0.2.0-invalid.json",
 ]
 REQUIRED_NAMES = [
     "pyproject.toml",

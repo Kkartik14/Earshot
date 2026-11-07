@@ -59,6 +59,7 @@ from .contract import (
     Omission as ContractOmission,
 )
 from .exporter import BoundedAsyncExporter, ExportItem
+from .limits import DEFAULT_MAX_VALUE_BYTES
 from .privacy import (
     CaptureClass,
     CaptureGovernance,
@@ -94,7 +95,6 @@ _ModelT = TypeVar("_ModelT", bound=BaseModel)
 DEFAULT_MAX_RECORDS = 10_000
 DEFAULT_MAX_CAPTURE_BYTES = 16 * 1024 * 1024
 DEFAULT_MAX_RAW_OTLP_BYTES = 8 * 1024 * 1024
-DEFAULT_MAX_VALUE_BYTES = 64 * 1024
 # Defensive bounds on declared clock metadata (one browser domain + a handful of
 # calibrations per session is normal; these only guard against pathological input).
 _MAX_EXTRA_CLOCK_DOMAINS = 16

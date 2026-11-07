@@ -361,6 +361,26 @@ def test_a_projection_from_an_older_projection_version_is_stale() -> None:
     assert projection_state(None, inputs) == "none"
 
 
+def test_an_older_projection_keeps_its_reported_cost_quantities(tmp_path) -> None:
+    store, ids = _projected_world(tmp_path)
+    call_id = ids["projected"]
+    with catalog(tmp_path) as connection:
+        connection.execute(
+            "UPDATE call_projections SET projection_version = ? "
+            "WHERE project_id = ? AND call_id = ?",
+            (CALL_PROJECTION_VERSION - 1, "default", call_id),
+        )
+
+    detail = CallReads(store).get_call("default", call_id)
+
+    assert detail is not None
+    assert detail.summary.projection_state == "stale"
+    stt = next(
+        item for item in detail.projection_detail["cost_items"] if item["operation"] == "stt"
+    )
+    assert stt["quantity"] == 32.486
+
+
 def _make_current(path: Path) -> None:
     """Stamp every projection with the versions it would be computed from now."""
 

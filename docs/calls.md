@@ -57,10 +57,9 @@ A call detail and every list item carry `projection_state`:
 | `stale`            | The Call, its Project's prices, the built-in prices or the projection algorithm changed since it was computed. It is still served until it is recomputed. |
 | `current`          | Up to date.                                                                                                                                               |
 
-Until an older projection is recomputed, its reported-latency summary is `null` if
-its projection semantics predate positive-only latencies, and its cost-item quantities
-are `null` if it predates exact quantity conversion. Nonpositive per-turn values are
-`null` as well, and latency filters never match unknown values.
+Until an older projection is recomputed, its reported-latency summary is `null` if its
+projection version predates the current latency semantics. Nonpositive per-turn values
+are `null` as well, and latency filters never match unknown values.
 
 `projection.analysis_state` summarizes the Revision's Recordings: `none` (no Recording),
 `pending` (an analysis is still running), `stored` (all stored), `partial` (all finished,
@@ -87,10 +86,13 @@ nanoseconds do not fit it, are unknown (`null`). So is a cost whose total does n
 fit 64 bits, which also makes the cost incomplete. A label (agent, outcome or tag)
 holding U+0000 is absent. U+0000 is removed from the normalized transcript used by the
 call view and search. With full capture, the original transcript remains in the stored
-source span and Call transcript. A Revision holds it only while it fits the recorder's
-64 KiB per-value and aggregate capture budgets; an oversized transcript is omitted
-from the Revision and marks `call.transcript` unavailable with reason
-`recorder_capture_truncated`. `metadata_only` removes transcript content before storage.
+source span and full-capture Revision; the normalized Call transcript removes U+0000.
+A Revision holds it only while it fits the recorder's
+64 KiB per-value and aggregate capture budgets. A host-profile transcript over 64 KiB
+is invalid: the offline checker reports it, and Earshot does not index it as a Call
+transcript or copy it into a Revision. The original source span remains available under
+`full`, subject to recorder capture budgets. `metadata_only` removes transcript content
+before storage.
 
 **One bad Call does not stop the others.** A Call whose projection cannot be stored is
 logged with `EARSHOT_PROJECTION_FAILED` and one of these codes, then set aside and retried
@@ -296,7 +298,9 @@ times are both present for `measured`, start only for `start_only`, and both nul
 
 When an exact quantity cannot round-trip through a finite JSON number, `quantity` is
 `null`, never clamped or rounded to a different value. The projection retains its exact
-reported decimal STT seconds or integer-milli quantity for repricing.
+integer-milli quantity for repricing. Host-reported STT seconds are rounded to
+milliseconds per request, with at least one millisecond for any positive report; cost
+itself is rounded half up to a whole nano-USD.
 
 `lower_bound_nano_usd` sums the priced items; `estimated_nano_usd` sums the estimated
 ones; `unknown_items` counts the rest. A cost is `complete` when it has a lower bound and
@@ -342,7 +346,9 @@ scope version is exactly `0.2.0`.
 - **Usage.** `llm` spans bill like Pipecat's `llm` (input, cached and output tokens).
   Profile 0.1.0 defines no STT or TTS quantity attributes. Profile 0.2.0 optionally adds
   `earshot.stt.usage.audio_seconds`, a positive finite OTLP `doubleValue` or positive
-  `intValue` of provider-metered audio seconds for one STT request, and
+  `intValue` of provider-metered audio seconds for one STT request. Each report is
+  rounded to milliseconds per request, with a one-millisecond minimum for positive
+  values. Earshot reprices from that stored millisecond quantity. It also adds
   `earshot.tts.usage.character_count`, a positive OTLP `int64` in the provider's own TTS
   character-metering units for one request. These are request quantities, not cumulative
   counters. Hosts omit unknown values; zero is invalid. Do not infer STT usage from span
@@ -367,7 +373,9 @@ scope version is exactly `0.2.0`.
   line is stored with its span and appears in the Call transcript. Under `metadata_only`,
   the attribute is removed before storage and transcript coverage is
   `not_captured_by_preset`. The host decides whether a call's text may be sent; Earshot
-  stores only text it receives.
+  stores only text it receives. U+0000 is removed from the normalized Call transcript
+  for Postgres compatibility; the source span and a full-capture Revision keep the
+  received value, subject to capture budgets.
   Profile 0.1.0 does not define this attribute and remains accepted.
 - **Recordings.** A host sends its Recording with `POST /v1/recordings` as any producer
   does.
@@ -383,6 +391,56 @@ The profile is a convention, not an allowlist: Earshot keeps whatever else a hos
 to its spans as it does for any producer, under `full` as sent (declared by capture
 class in the Revision) and under `metadata_only` without content keys. A host that
 must not export text keeps it off its spans.
+
+### Offline conformance checker
+
+Run the standard-library-only checker before exporting a host-profile request:
+
+```sh
+earshot check-host-profile request.json
+cat request.json | earshot check-host-profile -
+```
+
+It prints JSON with `valid`, `host_profile_versions`, `spans_checked`, and `issues`;
+each issue has a stable `code`, JSON `path`, and explanation. Exit status is `0` for a
+valid request, `1` for a request that fails the profile, and `2` when the input cannot
+be read or the command line is invalid. The valid and invalid examples are packaged at
+`earshot.host_profile_fixtures`; for example,
+`importlib.resources.files("earshot.host_profile_fixtures").joinpath("0.2.0-reported.json")`
+locates the reported-value example after installation.
+
+Every issue code:
+
+| Code                                                                                                        | Meaning                                                                        |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `invalid_json`                                                                                              | Input is not strict UTF-8 JSON.                                                |
+| `invalid_request`                                                                                           | The root request or `resourceSpans` has the wrong shape.                       |
+| `invalid_resource_span`, `invalid_scope_spans`, `invalid_scope_span`, `invalid_scope`, `invalid_scope_name` | An OTLP resource/scope envelope member has the wrong shape.                    |
+| `wrong_scope`                                                                                               | A host-profile scope or field uses a scope other than `earshot.host`.          |
+| `unsupported_version`                                                                                       | The `earshot.host` scope version is not supported.                             |
+| `invalid_spans`, `invalid_span`, `no_host_spans`                                                            | The scope's spans have the wrong shape, or no host spans were supplied.        |
+| `unknown_span_name`                                                                                         | A host span name is outside the host-profile vocabulary.                       |
+| `snake_case_proto_field`                                                                                    | An OTLP/JSON property uses its original proto snake_case spelling.             |
+| `invalid_trace_id`, `invalid_span_id`, `invalid_parent_span_id`                                             | A trace or span ID has the wrong hexadecimal length.                           |
+| `missing_parent`, `parent_not_turn`                                                                         | A child has no parent in the request, or its parent is not a host `turn`.      |
+| `invalid_span_time`, `span_time_order`                                                                      | A timestamp is not unsigned 64-bit nanoseconds, or the end precedes the start. |
+| `invalid_attributes`, `invalid_attribute`, `invalid_any_value`                                              | An attribute list, entry, or OTLP `AnyValue` has the wrong shape.              |
+| `duplicate_attribute`                                                                                       | A host-profile attribute appears more than once on a span.                     |
+| `wrong_scope_version`                                                                                       | A 0.2.0 field is used under another supported profile version.                 |
+| `wrong_span`                                                                                                | A host-profile attribute is attached to a span role that does not define it.   |
+| `wrong_attribute_type`                                                                                      | A host-profile value uses the wrong OTLP `AnyValue` kind.                      |
+| `invalid_transcript_text`                                                                                   | Transcript text is blank, invalid UTF-8, or larger than 65,536 UTF-8 bytes.    |
+| `invalid_turn_reported_latency`                                                                             | Reported latency is not a finite positive double or int64.                     |
+| `invalid_stt_audio_seconds`                                                                                 | STT audio seconds are not a finite positive double or int64.                   |
+| `invalid_tts_character_count`                                                                               | TTS characters are not a positive JSON-safe int64.                             |
+| `missing_turn_id`, `invalid_turn_id`                                                                        | A non-call host span lacks a nonblank `earshot.turn.id`.                       |
+| `missing_stt_provider`, `invalid_stt_provider`                                                              | An STT span lacks a nonblank `gen_ai.provider.name`.                           |
+| `missing_stt_model`, `invalid_stt_model`                                                                    | An STT span lacks a nonblank `gen_ai.request.model`.                           |
+
+The checker validates one request's OTLP/JSON structure and host-profile fields. It
+does not establish that reported values match the live audio, that a transcript is
+final or authorized for export, or that the host meets a runtime latency target. It
+also ignores non-host scopes and unknown extension attributes.
 
 ## The calls list: `GET /v1/calls`
 

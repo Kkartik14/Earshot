@@ -123,7 +123,7 @@ from .call_capture import (
     any_value,
     host_profile_scope_version,
 )
-from .versions import HOST_PROFILE_VERSION
+from .host_profile import host_value
 
 FRAMEWORK_PIPECAT = "pipecat"
 FRAMEWORK_LIVEKIT = "livekit"
@@ -296,6 +296,15 @@ def usage_items(spans: Iterable[OtlpSpan]) -> list[UsageItem]:
         metrics_key = _METRICS_ATTRIBUTE.get(operation)
         attributes = _values(span, _USAGE_KEYS | ({metrics_key} if metrics_key else set()))
         metrics = _metrics(attributes.get(metrics_key)) if metrics_key else {}
+        if framework == FRAMEWORK_HOST:
+            version = host_profile_scope_version(span.scope)
+            for key in (_HOST_STT_AUDIO_SECONDS, _HOST_TTS_CHARACTER_COUNT):
+                if key in attributes:
+                    decoded = host_value(key, span.span.name, version, attributes[key])
+                    if decoded is None:
+                        attributes.pop(key)
+                    else:
+                        attributes[key] = decoded
         provider = _first(attributes, metrics, _PROVIDER)
         model = _first(attributes, metrics, _MODEL)
         request = {
@@ -313,10 +322,6 @@ def usage_items(spans: Iterable[OtlpSpan]) -> list[UsageItem]:
                 attributes,
                 metrics,
                 host_profile=framework == FRAMEWORK_HOST,
-                host_profile_v2=(
-                    framework == FRAMEWORK_HOST
-                    and host_profile_scope_version(span.scope) == HOST_PROFILE_VERSION
-                ),
             )
         )
     return items
@@ -328,7 +333,6 @@ def _meters(
     metrics: Mapping[str, Any],
     *,
     host_profile: bool,
-    host_profile_v2: bool,
 ) -> list[tuple[str, int | float | None]]:
     """One request's ``(meter, quantity)`` pairs, by the rules above."""
 
@@ -344,15 +348,11 @@ def _meters(
         return [*meters, (OUTPUT_TOKEN, _count(attributes, metrics, _OUTPUT_TOKENS))]
     if operation == "tts":
         if host_profile:
-            character_count = (
-                _count(
-                    attributes,
-                    metrics,
-                    (_HOST_TTS_CHARACTER_COUNT,),
-                    maximum=_HOST_MAX_JSON_SAFE_INTEGER,
-                )
-                if host_profile_v2
-                else None
+            character_count = _count(
+                attributes,
+                metrics,
+                (_HOST_TTS_CHARACTER_COUNT,),
+                maximum=_HOST_MAX_JSON_SAFE_INTEGER,
             )
         else:
             character_count = _count(attributes, metrics, _CHARACTERS)
@@ -365,8 +365,13 @@ def _meters(
             if quantity is not None:
                 meters.append((meter, quantity))
         return meters
-    audio_seconds = attributes.get(_HOST_STT_AUDIO_SECONDS) if host_profile_v2 else None
-    if isinstance(audio_seconds, float) and math.isfinite(audio_seconds) and audio_seconds > 0:
+    audio_seconds = attributes.get(_HOST_STT_AUDIO_SECONDS) if host_profile else None
+    if (
+        isinstance(audio_seconds, (int, float))
+        and not isinstance(audio_seconds, bool)
+        and math.isfinite(audio_seconds)
+        and audio_seconds > 0
+    ):
         return [(AUDIO_SECOND, audio_seconds)]
     return [(AUDIO_SECOND, None)]
 
@@ -566,7 +571,14 @@ def _host_anchors(spans: Sequence[OtlpSpan], children: dict) -> list[TurnAnchors
         user = _named(kids, (HOST_SCOPE,), "user_speech")
         agent = _named(kids, (HOST_SCOPE,), "agent_speech")
         attributes = _values(turn, (_HOST_LATENCY, _HOST_CONTINUITY))
-        latency = _milliseconds(attributes.get(_HOST_LATENCY))
+        latency = _milliseconds(
+            host_value(
+                _HOST_LATENCY,
+                turn.span.name,
+                host_profile_scope_version(turn.scope),
+                attributes.get(_HOST_LATENCY),
+            )
+        )
         continuous = attributes.get(_HOST_CONTINUITY)
         anchors.append(
             TurnAnchors(

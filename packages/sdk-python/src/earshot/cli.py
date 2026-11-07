@@ -121,9 +121,15 @@ def _validate_command(arguments: argparse.Namespace) -> int:
 def _check_host_profile_command(arguments: argparse.Namespace) -> int:
     """Check one standard OTLP/JSON host-profile request without opening the store."""
 
-    payload = (
-        sys.stdin.buffer.read() if arguments.path == "-" else Path(arguments.path).read_bytes()
-    )
+    try:
+        payload = (
+            sys.stdin.buffer.read() if arguments.path == "-" else Path(arguments.path).read_bytes()
+        )
+    except OSError as exc:
+        source = "stdin" if arguments.path == "-" else arguments.path
+        detail = exc.strerror or str(exc)
+        print(f"earshot: cannot read {source}: {detail}", file=sys.stderr)
+        return 2
     report = check_host_profile(payload)
     _print_json(report.as_dict())
     return 0 if report.valid else 1

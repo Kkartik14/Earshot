@@ -849,6 +849,37 @@ def test_host_transcript_nul_normalization_does_not_mark_the_source_missing() ->
     assert legacy_coverage.availability == "not_observed"
 
 
+def test_duplicate_host_transcript_is_omitted_from_revision_and_transcript_index() -> None:
+    from earshot.call_capture import apply_capture_preset
+    from earshot.call_materializer import transcript_text_json
+    from host_profile_support import HostTurn, host_request
+
+    turn = HostTurn(
+        "turn-duplicate-transcript",
+        SYNTHETIC_CALL_START,
+        SYNTHETIC_CALL_START + 2_000_000_000,
+        user_speech=((SYNTHETIC_CALL_START, SYNTHETIC_CALL_START + 500_000_000),),
+        user_transcripts=("Do not choose between duplicate values.",),
+    )
+    spans = [
+        apply_capture_preset("full", span)
+        for span in spans_from_request(host_request([turn], scope_version="0.2.0"))
+    ]
+    [speech] = [span for span in spans if span.span.name == "user_speech"]
+    duplicate = speech.span.attributes.add()
+    duplicate.CopyFrom(
+        next(item for item in speech.span.attributes if item.key == "earshot.transcript.text")
+    )
+
+    bundle = _materialize(_snapshot(spans))
+
+    assert transcript_text_json(speech) is None
+    [operation] = [
+        item for item in bundle.profile.operations if item.operation_name == "user_speech"
+    ]
+    assert "earshot.transcript.text" not in operation.attributes
+
+
 @pytest.mark.parametrize("preset", ["full", "metadata_only"])
 @pytest.mark.parametrize("latency", [0.0, -1.0, float("inf"), float("nan")])
 def test_invalid_host_reported_latency_is_omitted_from_the_revision(preset, latency) -> None:
@@ -880,12 +911,12 @@ def test_invalid_host_reported_latency_is_omitted_from_the_revision(preset, late
     )
 
 
-def test_oversized_host_transcript_makes_revision_transcript_coverage_unavailable() -> None:
+def test_oversized_host_transcript_is_omitted_from_revision_and_index() -> None:
     from earshot.call_capture import apply_capture_preset
     from earshot.call_materializer import transcript_text_json
     from host_profile_support import HostTurn, host_request
 
-    text = "x" * (70 * 1024)
+    text = "é" * 32_769
     turn = HostTurn(
         "turn-1",
         SYNTHETIC_CALL_START,
@@ -903,17 +934,51 @@ def test_oversized_host_transcript_makes_revision_transcript_coverage_unavailabl
     [omission] = [
         item
         for item in bundle.profile.privacy.omissions
-        if item.capture_class == "transcript" and item.reason == "recorder_capture_truncated"
+        if item.capture_class == "transcript"
+        and item.attributes.get("field_key_sha256")
+        == hashlib.sha256(b"earshot.transcript.text").hexdigest()
     ]
 
-    assert len(json.loads(transcript_text_json(speech_span))["text"]) == len(text)
+    assert transcript_text_json(speech_span) is None
     assert not any(
         operation.attributes.get("earshot.transcript.text") == text
         for operation in bundle.profile.operations
     )
-    assert (coverage.availability, coverage.reason, coverage.dropped_count) == (
-        "unavailable",
-        "recorder_capture_truncated",
-        1,
+    assert coverage.availability == "not_observed"
+    assert (omission.reason, omission.count) == ("adapter_payload_omitted", 1)
+
+
+def test_host_transcript_on_wrong_span_or_with_only_whitespace_is_omitted() -> None:
+    from earshot.call_capture import apply_capture_preset
+    from earshot.call_materializer import transcript_text_json
+    from host_profile_support import HostStage, HostTurn, host_request
+
+    turn = HostTurn(
+        "turn-invalid-transcripts",
+        SYNTHETIC_CALL_START,
+        SYNTHETIC_CALL_START + 3_000_000_000,
+        user_speech=((SYNTHETIC_CALL_START, SYNTHETIC_CALL_START + 500_000_000),),
+        user_transcripts=(" \t\n ",),
+        stages=(
+            HostStage(
+                "stt",
+                SYNTHETIC_CALL_START + 1_000_000_000,
+                SYNTHETIC_CALL_START + 2_000_000_000,
+                {"earshot.transcript.text": "A transcript on the wrong span."},
+            ),
+        ),
     )
-    assert omission.count == 1
+    spans = [
+        apply_capture_preset("full", span)
+        for span in spans_from_request(host_request([turn], scope_version="0.2.0"))
+    ]
+    bundle = _materialize(_snapshot(spans))
+
+    assert all(
+        transcript_text_json(span) is None
+        for span in spans
+        if span.span.name in {"user_speech", "stt"}
+    )
+    assert not any(
+        "earshot.transcript.text" in operation.attributes for operation in bundle.profile.operations
+    )

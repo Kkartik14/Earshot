@@ -401,6 +401,14 @@ def test_a_host_latency_is_kept_exactly_as_the_host_sent_it(latency) -> None:
     assert turn_anchors(_host(turn))[0].reported_latency_ms == latency
 
 
+def test_a_whole_number_host_latency_is_accepted_from_otlp_int_value() -> None:
+    from host_profile_support import HostTurn
+
+    turn = HostTurn("turn-int-latency", T0, T0 + SECOND, reported_latency_ms=850)
+
+    assert turn_anchors(_host(turn, scope_version="0.2.0"))[0].reported_latency_ms == 850
+
+
 @pytest.mark.parametrize("latency", [-1.0, 0.0, float("inf"), "812", True])
 def test_a_host_latency_that_is_not_a_finite_positive_number_is_unknown(latency) -> None:
     from host_profile_support import HostTurn
@@ -539,7 +547,8 @@ def test_host_profile_0_2_reports_stt_and_tts_usage_and_keeps_fractional_reprici
         entry for entry in usage if entry["operation"] == "stt" and entry["kind"] == "not_reported"
     ]
     [reported_tts, unknown_tts] = [entry for entry in usage if entry["operation"] == "tts"]
-    assert reported_stt["quantity_decimal"] == "1.000"
+    assert reported_stt["quantity_milli"] == 1_000
+    assert "quantity_decimal" not in reported_stt
     assert reported_stt["span"] is None
     assert unknown_stt["quantity_milli"] is None
     assert unknown_stt["span"] is not None
@@ -550,6 +559,71 @@ def test_host_profile_0_2_reports_stt_and_tts_usage_and_keeps_fractional_reprici
     cost = price_usage([reported_stt], [price], project_id="default", at_unix_nano=1)
     assert cost.items[0]["quantity"] == 1
     assert cost.items[0]["cost_nano_usd"] == 100_000_000
+
+
+@pytest.mark.parametrize("seconds", [0.0, -0.1, float("inf"), float("nan")])
+def test_host_stt_usage_requires_a_finite_positive_report(seconds) -> None:
+    from host_profile_support import HostStage, HostTurn
+
+    turn = HostTurn(
+        "turn-invalid-stt-usage",
+        T0,
+        T0 + 2 * SECOND,
+        stages=(
+            HostStage(
+                "stt",
+                T0,
+                T0 + SECOND,
+                {
+                    "gen_ai.provider.name": "deepgram",
+                    "gen_ai.request.model": "nova-3",
+                    "earshot.stt.usage.audio_seconds": seconds,
+                },
+            ),
+        ),
+    )
+
+    [stt] = [
+        item for item in usage_items(_host(turn, scope_version="0.2.0")) if item.operation == "stt"
+    ]
+
+    assert stt.quantity is None
+
+
+def test_host_stt_usage_accepts_otlp_int_value() -> None:
+    from earshot.call_cost import call_usage
+    from host_profile_support import HostStage, HostTurn
+
+    turn = HostTurn(
+        "turn-int-stt-usage",
+        T0,
+        T0 + 2 * SECOND,
+        stages=(
+            HostStage(
+                "stt",
+                T0,
+                T0 + SECOND,
+                {
+                    "gen_ai.provider.name": "deepgram",
+                    "gen_ai.request.model": "nova-3",
+                    "earshot.stt.usage.audio_seconds": 3,
+                },
+            ),
+        ),
+    )
+
+    [stt] = [
+        item for item in usage_items(_host(turn, scope_version="0.2.0")) if item.operation == "stt"
+    ]
+    [reported] = [
+        item
+        for item in call_usage([stt], user_audio_ms=None)
+        if item["operation"] == "stt" and item["kind"] == "reported"
+    ]
+
+    assert stt.quantity == 3
+    assert reported["quantity_milli"] == 3_000
+    assert "quantity_decimal" not in reported
 
 
 def test_host_profile_0_1_does_not_interpret_profile_0_2_usage_attributes() -> None:
