@@ -198,8 +198,8 @@ and the viewer retries every two seconds. Other 4xx responses stop retries and r
 polling.
 
 **Local capacity measurement (2026-11-07).** On SQLite, each Call held 300 or 1,000
-synthetic turns. For 12 seconds, an emitter accepted one additional unprojected six-span
-turn per second while 16 or 32 viewers polled every two seconds, with poll start times
+synthetic turns. For 12 seconds, an emitter accepted about one additional unprojected
+six-span turn per second while 16 or 32 viewers polled every two seconds, with poll start times
 staggered evenly across each two-second interval. Route latency is the HTTP request
 through reading the full 200 body. Emitter latency starts immediately before the
 loopback `/v1/traces` POST and ends after reading its response body, so it includes
@@ -208,15 +208,17 @@ serialization happen before the timer starts.
 
 | Turns | Viewers | Route 200 p95 | Route 200 max | Emitter ack p95 | Emitter ack max |
 | ----: | ------: | ------------: | ------------: | --------------: | --------------: |
-|   300 |      16 |       37.9 ms |       65.4 ms |          9.0 ms |         20.1 ms |
-|   300 |      32 |       30.7 ms |       60.3 ms |          7.7 ms |         11.9 ms |
-| 1,000 |      16 |      108.6 ms |      126.4 ms |         16.5 ms |         35.2 ms |
-| 1,000 |      32 |      101.6 ms |      222.8 ms |         12.3 ms |         17.0 ms |
+|   300 |      16 |       35.8 ms |       70.2 ms |         19.5 ms |         23.9 ms |
+|   300 |      32 |       32.9 ms |       56.9 ms |          8.8 ms |         11.8 ms |
+| 1,000 |      16 |      105.9 ms |      116.4 ms |         10.0 ms |         12.3 ms |
+| 1,000 |      32 |      109.4 ms |      173.5 ms |         11.9 ms |         15.5 ms |
 
+Percentiles use inclusive linear interpolation. Each emitter case has 12 acknowledgements;
+the route cases have 96 or 192 complete 200 responses. All emitter requests returned 200.
 The live-turn bodies were 250,460 bytes (244.6 KiB) at 300 turns and 837,061 bytes
 (817.4 KiB) at 1,000. With a stable input snapshot, cached 200 responses had a 1.4 ms
-median at 300 turns and 1.6 ms at 1,000; conditional 304 responses had 1.10 ms and
-1.08 ms medians, respectively. Every poll in the concurrent runs returned 200 because
+median at 300 turns and 1.6 ms at 1,000; conditional 304 responses had 1.12 ms and
+1.28 ms medians, respectively. Every poll in the concurrent runs returned 200 because
 the emitter changed the ETag between polls. In the 1,000-turn, 32-viewer case, 192 full
 bodies over 12 seconds represent about 107 Mbps of response-body egress per continuously
 changing Call, before HTTP overhead. This short local SQLite run describes the measured
