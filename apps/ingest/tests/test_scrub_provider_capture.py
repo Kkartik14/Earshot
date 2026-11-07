@@ -249,3 +249,42 @@ def test_failed_concurrent_install_preserves_previous_backup(monkeypatch, tmp_pa
     assert len(backups) == 1
     assert (backups[0] / "manifest.json").read_text() == "complete previous fixture"
     assert any(str(backups[0]) in note for note in raised.value.__notes__)
+
+
+def test_concurrent_empty_destination_preserves_previous_backup(monkeypatch, tmp_path) -> None:
+    module = load_scrubber_module()
+    fixtures = tmp_path / "fixtures"
+    previous = fixtures / "elevenlabs"
+    previous.mkdir(parents=True)
+    (previous / "manifest.json").write_text("complete previous fixture")
+    monkeypatch.setattr(module, "FIXTURES", fixtures)
+    monkeypatch.setattr(module, "ENV_FILES", [])
+    monkeypatch.setattr(
+        sys, "argv", ["scrub_provider_capture.py", "elevenlabs", "--env", str(tmp_path / "e")]
+    )
+    monkeypatch.setenv("CARTESIA_API_KEY", "synthetic-cartesia-key-123456")
+    monkeypatch.setenv("CARTESIA_VOICE_ID", "synthetic-cartesia-voice-123456")
+
+    def build(out: Path) -> tuple[int, int]:
+        out.mkdir(parents=True)
+        (out / "manifest.json").write_text("complete new fixture")
+        return 1, 1
+
+    real_replace = module.os.replace
+
+    def race_install(source: str | Path, destination: str | Path) -> None:
+        real_replace(source, destination)
+        if Path(source) == previous:
+            previous.mkdir()
+
+    monkeypatch.setattr(module, "build_elevenlabs", build)
+    monkeypatch.setattr(module.os, "replace", race_install)
+
+    with pytest.raises(FileExistsError, match="destination appeared during install") as raised:
+        module.main()
+
+    backups = [path for path in fixtures.iterdir() if path != previous]
+    assert len(backups) == 1
+    assert (backups[0] / "manifest.json").read_text() == "complete previous fixture"
+    assert list(previous.iterdir()) == []
+    assert any(str(backups[0]) in note for note in raised.value.__notes__)

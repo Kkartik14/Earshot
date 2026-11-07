@@ -837,6 +837,8 @@ def _build_fixture_atomically(provider: str, build: Callable[[Path], tuple[int, 
         try:
             if destination.exists():
                 os.replace(destination, previous)
+            if os.path.lexists(destination):
+                raise FileExistsError(f"{provider} fixture destination appeared during install")
             os.replace(staged, destination)
         except BaseException as error:
             if previous.exists() and not destination.exists():
