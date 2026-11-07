@@ -17,7 +17,7 @@ the server in `hosted_jwt` mode. The host's token issuer must mint short-lived E
 audience tokens with the signed project claim and the scopes needed for each operation.
 Tokens may live for at most five minutes.
 Hosted mode rejects project API keys, the operator token, and browser-cookie exchange;
-health, readiness and version endpoints remain unauthenticated. See the [hosted API contract](./backend-api.md#hosted-scope-proposal)
+health, readiness and version endpoints remain unauthenticated. See the [hosted API contract](./backend-api.md#hosted-scopes)
 for token claims and the current scope vocabulary.
 
 Configure these values in the service environment. Keep database, blob-store and

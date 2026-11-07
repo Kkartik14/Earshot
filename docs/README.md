@@ -24,6 +24,8 @@ features and compatibility details.
   calls.
 - [Backend API](./backend-api.md): send evidence, read stored Incidents, follow live
   sessions, and manage projects.
+- [Hosted Calls integration](./platform-integration.md): connect a host to Earshot's
+  project-scoped Calls API, authorization scopes, and host span profile.
 - [Hosted-provider connectors](./connectors.md): understand signature checks,
   normalization, and provider evidence limits.
 - [Pipecat adapter](./adapters/pipecat.md), [LiveKit adapter](./adapters/livekit.md),
