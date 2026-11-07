@@ -57,5 +57,6 @@ packages/sdk-python/src/earshot/web/
 !.claude/skills/
 !.claude/skills/**
 
-# Personal working files stay local.
+# development notes
+# personal notes, not part of the shipped docs — never commit.
 local/
