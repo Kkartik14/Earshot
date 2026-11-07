@@ -134,6 +134,30 @@ def test_guard_and_loader_share_dotenv_value_parsing(
     assert module.load_keys(env_file, ["CARTESIA_API_KEY"]) == {"CARTESIA_API_KEY": secret}
 
 
+@pytest.mark.parametrize(
+    ("entry", "secret"),
+    [
+        ("CARTESIA_API_KEY= # local note", None),
+        ("CARTESIA_API_KEY=#literal-env-key-12345678", "#literal-env-key-12345678"),
+    ],
+)
+def test_env_comment_requires_space_after_assignment(
+    tmp_path, monkeypatch, entry: str, secret: str | None
+) -> None:
+    module = load_scrubber_module()
+    env_file = tmp_path / "provider.env"
+    env_file.write_text(entry + "\n")
+    monkeypatch.delenv("CARTESIA_API_KEY", raising=False)
+
+    if secret is None:
+        with pytest.raises(SystemExit, match="missing env keys: CARTESIA_API_KEY"):
+            module.load_keys(env_file, ["CARTESIA_API_KEY"])
+        assert "CARTESIA_API_KEY" not in module.env_secret_values([env_file])
+    else:
+        assert module.load_keys(env_file, ["CARTESIA_API_KEY"]) == {"CARTESIA_API_KEY": secret}
+        assert module.env_secret_values([env_file])["CARTESIA_API_KEY"] == secret
+
+
 @pytest.mark.parametrize("provider", ["elevenlabs", "twilio"])
 def test_failed_fixture_build_preserves_previous_output(monkeypatch, tmp_path, provider) -> None:
     module = load_scrubber_module()

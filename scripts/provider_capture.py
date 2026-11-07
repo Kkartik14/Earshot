@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = ROOT / ".earshot" / "raw-captures"
 DEFAULT_ENV = ROOT.parent / "TVIC" / ".env"
 USER_AGENT = "earshot-capture/0.1"
-_ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+_ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*?)\s*$")
 _SINGLE_QUOTED_ESCAPES = re.compile(r"\\([\\'])")
 _DOUBLE_QUOTED_ESCAPES = re.compile(r'\\([\\\'"abfnrtv])')
 _ENV_ESCAPE_VALUES = {
@@ -59,6 +59,7 @@ def load_keys(env_file: Path, names: list[str]) -> dict[str, str]:
 
 def _parse_env_value(raw: str) -> str:
     """Parse one dotenv-style value, including its supported quoted escapes."""
+    leading_whitespace = len(raw) != len(raw.lstrip())
     value = raw.strip()
     if not value:
         return value
@@ -76,6 +77,8 @@ def _parse_env_value(raw: str) -> str:
                 return escapes.sub(lambda match: _ENV_ESCAPE_VALUES[match.group(1)], content)
             escaped = character == "\\" and not escaped
         raise ValueError("unterminated quoted env-file value")
+    if leading_whitespace and value.startswith("#"):
+        return ""
     return re.sub(r"\s+#.*$", "", value).strip()
 
 
