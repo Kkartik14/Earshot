@@ -147,12 +147,12 @@ def _own_names(capture_class: CaptureClass, keys: Iterable[str]) -> dict[str, Ke
 _MODEL = CaptureClass.MODEL_PAYLOAD
 # Allowlisted LiveKit metadata excludes transcript text, retaining only timing and lengths.
 _LIVEKIT_METADATA_KEYS = (
-    *("lk.agent_label", "lk.agent_name", "lk.callback.name", "lk.cloud_agent_id"),
+    *("lk.agent_label", "lk.agent_name", "lk.callback.name"),
     *("lk.deployment_id", "lk.dispatch_id", "lk.fallback.index", "lk.fallback.label"),
     *("lk.fallback.recovery", "lk.function_tool.id", "lk.function_tool.is_error"),
     *("lk.function_tool.name", "lk.generation_count", "lk.generation_id"),
     *("lk.input.base_span_id", "lk.input.delta", "lk.input.dropped_from_base"),
-    *("lk.job.agent_id", "lk.job.worker_id", "lk.job_id", "lk.parent_generation_id"),
+    *("lk.job.worker_id", "lk.job_id", "lk.parent_generation_id"),
     *("lk.participant_id", "lk.participant_kind", "lk.previous_agent_label"),
     *("lk.provider_request_ids", "lk.room_sid", "lk.speech_id", "lk.track_sid"),
     *("lk.track_source", "lk.tts.label"),
@@ -260,6 +260,8 @@ ATTRIBUTE_KEYS: dict[str, KeyRule] = {
     **_rules(
         CaptureClass.IDENTITY,
         {
+            "lk.cloud_agent_id": "lk.cloud_agent_id",
+            "lk.job.agent_id": "lk.job.agent_id",
             "lk.participant_identity": "participant.name",
             "lk.pii.participant_identity": "participant.name",
             "lk.pii.sip.phoneNumber": "sip.phone_number",
@@ -293,7 +295,13 @@ ATTRIBUTE_KEYS: dict[str, KeyRule] = {
 # Identity keys by shape (``_identity_key``): last segments, and whole keys that may
 # carry a further suffix (``sip.from.uri``).
 _IDENTITY_LAST_SEGMENTS = frozenset({"phone", "phone_number", "phonenumber", "msisdn"})
-_IDENTITY_KEYS = ("caller.number", "callee.number", "sip.from", "sip.to")
+_IDENTITY_KEYS = (
+    "caller.number",
+    "callee.number",
+    "gen_ai.agent.id",
+    "sip.from",
+    "sip.to",
+)
 # Span events that carry message bodies in generic attributes (``content``); under
 # metadata_only they are dropped whole. LiveKit 1.6 emits the first five.
 _CONTENT_EVENTS = frozenset(
@@ -332,10 +340,7 @@ def recorder_agrees(key: str, capture_class: CaptureClass) -> bool:
 
 
 def _identity_key(canonical: str) -> bool:
-    """Phone and caller identifiers ``classify_attribute`` reads as metadata: a key
-    whose last segment is a phone number (``phone``, ``user.phone``), a caller or SIP
-    endpoint (``caller.number``, ``sip.from``, ``sip.to``) and OpenTelemetry's
-    ``enduser.*``."""
+    """Known identity keys that the general classifier otherwise reads as metadata."""
 
     lowered = canonical.lower()
     return (

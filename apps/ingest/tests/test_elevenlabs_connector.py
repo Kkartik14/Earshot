@@ -111,11 +111,24 @@ def test_a_real_conversation_becomes_a_call_with_start_only_lines(world) -> None
     )
     [cost] = _by_name(world, "earshot.connector.cost")
     assert (cost["earshot.connector.cost.amount"], cost["earshot.connector.cost.unit"]) == (
-        386.0,
+        CONVERSATION["metadata"]["cost"],
         "credit",
     )
     # The audio needs an API key: without one, no recording is held.
     assert world.fetches() == []
+
+
+def test_cost_span_uses_the_provider_reported_amount(world) -> None:
+    conversation = copy.deepcopy(CONVERSATION)
+    conversation["metadata"]["cost"] = 123
+
+    world.deliver(_event("post_call_transcription", conversation))
+
+    [cost] = _by_name(world, "earshot.connector.cost")
+    assert (cost["earshot.connector.cost.amount"], cost["earshot.connector.cost.unit"]) == (
+        123,
+        "credit",
+    )
 
 
 def test_with_an_api_key_the_audio_is_fetched_from_the_conversations_api(tmp_path) -> None:

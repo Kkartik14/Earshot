@@ -319,9 +319,10 @@ This release tests CPython 3.11, 3.12, and 3.13. Linux is the primary full-suite
 the compatibility workflow also runs a framework smoke on macOS. The `Requires-Python`
 floor remains `>=3.11`; newer interpreters outside the tested matrix are unverified, not
 prohibited. Pipecat support is `>=1.6.0,<1.7`, LiveKit Agents support is
-`>=1.6.5,<1.7`, and standalone OpenTelemetry API/SDK support is `>=1.30,<2`. CI tests
+`>=1.6.5,<1.9`, and standalone OpenTelemetry API/SDK support is `>=1.30,<2`. CI tests
 the exact Pipecat/LiveKit lower bounds and the newest resolver-selected versions within
-those ranges in separate jobs. Framework dependencies can impose a higher effective
+those ranges in separate jobs; for LiveKit that currently includes the 1.8.x line.
+Framework dependencies can impose a higher effective
 OpenTelemetry floor than the standalone extra. A release must not claim compatibility
 from a developer's single local environment alone.
 

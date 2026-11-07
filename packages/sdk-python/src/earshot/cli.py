@@ -776,7 +776,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     connector_create.add_argument("--project", required=True)
     connector_create.add_argument(
-        "--provider", required=True, choices=("elevenlabs", "vapi", "retell", "ringg")
+        "--provider",
+        required=True,
+        choices=("elevenlabs", "vapi", "retell", "ringg"),
+        help="Vapi and Retell adapters are synthetic-only and not production-supported",
     )
     connector_create.add_argument("--secret-env", required=True)
     _add_store_arguments(connector_create)

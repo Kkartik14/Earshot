@@ -1,6 +1,6 @@
 """Run one real LiveKit Agents 1.8 voice call headless and export its traces over OTLP/HTTP.
 
-    export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # Earshot, or any OTLP receiver
+    export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4319   # Earshot, or any OTLP receiver
     python examples/livekit_otlp/run_call.py --out .earshot/livekit_otlp/run
 
 No LiveKit server and no WebRTC. ``AgentServer.simulate_job(fake_job=True)`` runs the
@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import json
 import logging
 import os
@@ -67,13 +68,13 @@ from make_caller_audio import (
     CALLER_SCRIPT,
     DEFAULT_CARTESIA_MODEL,
     SAMPLE_RATE,
-    ensure_caller_wav,
+    load_caller_wav_and_metadata,
 )
 
 SERVICE_NAME = "earshot-livekit-otlp-example"
 ROOM_NAME = "earshot-livekit-otlp"
 DEEPGRAM_MODEL = "nova-3"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 SYSTEM_PROMPT = (
     "You are the host at a small restaurant, taking a booking on the phone. "
     "Answer in one or two short spoken sentences, without lists or emojis."
@@ -333,10 +334,10 @@ def _unix_nano(seconds: float) -> str:
     return str(round(seconds * 1e6) * 1000)
 
 
-def _read_pcm(path: Path) -> bytes:
-    with wave.open(str(path), "rb") as wav:
+def _read_pcm(wav_bytes: bytes) -> bytes:
+    with wave.open(io.BytesIO(wav_bytes), "rb") as wav:
         if (wav.getnchannels(), wav.getsampwidth(), wav.getframerate()) != (1, 2, SAMPLE_RATE):
-            raise ValueError(f"{path} must be {SAMPLE_RATE} Hz mono PCM16")
+            raise ValueError(f"caller audio must be {SAMPLE_RATE} Hz mono PCM16")
         return wav.readframes(wav.getnframes())
 
 
@@ -367,13 +368,13 @@ def main() -> int:
 
     if args.out.exists():
         shutil.rmtree(args.out)
-    caller_wav = ensure_caller_wav()
+    caller_wav, caller_metadata = load_caller_wav_and_metadata()
     earshot = None
     if args.upload is not None:
         base_url = args.upload or os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]
         earshot = EarshotClient(base_url, authorization=authorization_from_environment())
     CALL = Call(args.session_key, args.out, _read_pcm(caller_wav), earshot)
-    CALL.manifest["caller_lines"] = json.loads(caller_wav.with_suffix(".json").read_text())["lines"]
+    CALL.manifest["caller_lines"] = caller_metadata["lines"]
     manifest = asyncio.run(run_call(CALL))
     summary = ("session_key", "exported_span_count", "exported_span_names")
     print(

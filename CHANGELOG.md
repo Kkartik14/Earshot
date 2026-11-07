@@ -4,6 +4,18 @@ Notable changes to Earshot. Versions follow the
 [alpha compatibility policy](docs/release.md#alpha-compatibility-policy). Earlier releases
 are described in their [GitHub release notes](https://github.com/Kkartik14/Earshot/releases).
 
+## 0.5.0 (2026-11-13)
+
+### Breaking
+
+- Under `metadata_only`, Earshot now drops `lk.cloud_agent_id`, `lk.job.agent_id` and
+  `gen_ai.agent.id`; spans stored before 0.5.0 still contain those attributes.
+
+### Changed
+
+- Pipecat support starts at 1.6.0. Earshot's LiveKit range is
+  `livekit-agents>=1.6.5,<1.9`.
+
 ## 0.4.0 (2026-11-13)
 
 See the [0.4.0 release notes](docs/release-notes-0.4.0.md) for compatibility details.

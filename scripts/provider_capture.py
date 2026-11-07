@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -24,7 +25,21 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW_ROOT = ROOT / ".earshot" / "raw-captures"
 DEFAULT_ENV = ROOT.parent / "TVIC" / ".env"
 USER_AGENT = "earshot-capture/0.1"
-_ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+_ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*?)\s*$")
+_SINGLE_QUOTED_ESCAPES = re.compile(r"\\([\\'])")
+_DOUBLE_QUOTED_ESCAPES = re.compile(r'\\([\\\'"abfnrtv])')
+_ENV_ESCAPE_VALUES = {
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+}
 
 
 def load_keys(env_file: Path, names: list[str]) -> dict[str, str]:
@@ -34,14 +49,37 @@ def load_keys(env_file: Path, names: list[str]) -> dict[str, str]:
         match = _ENV_LINE.match(line)
         if not match or match.group(1) not in names:
             continue
-        raw = match.group(2)
-        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
-            raw = raw[1:-1]
+        raw = _parse_env_value(match.group(2))
         values[match.group(1)] = raw
     missing = [name for name in names if not values.get(name)]
     if missing:
         raise SystemExit(f"missing env keys: {', '.join(missing)}")
     return values
+
+
+def _parse_env_value(raw: str) -> str:
+    """Parse one dotenv-style value, including its supported quoted escapes."""
+    leading_whitespace = len(raw) != len(raw.lstrip())
+    value = raw.strip()
+    if not value:
+        return value
+    if value[0] in "'\"":
+        quote = value[0]
+        escaped = False
+        for index in range(1, len(value)):
+            character = value[index]
+            if character == quote and not escaped:
+                suffix = value[index + 1 :].lstrip()
+                if suffix and not suffix.startswith("#"):
+                    raise ValueError("invalid text after quoted env-file value")
+                content = value[1:index]
+                escapes = _SINGLE_QUOTED_ESCAPES if quote == "'" else _DOUBLE_QUOTED_ESCAPES
+                return escapes.sub(lambda match: _ENV_ESCAPE_VALUES[match.group(1)], content)
+            escaped = character == "\\" and not escaped
+        raise ValueError("unterminated quoted env-file value")
+    if leading_whitespace and value.startswith("#"):
+        return ""
+    return re.sub(r"\s+#.*$", "", value).strip()
 
 
 _REDACT = (
@@ -144,9 +182,22 @@ def secret_variants(value: str) -> set[str]:
 
 
 def env_secret_values(env_files: list[Path]) -> dict[str, str]:
-    """Secret-bearing values from the env files: keys, tokens, SIDs, numbers, voice IDs."""
+    """Distinct secret-bearing values from env files and the process environment."""
     secret_name = re.compile(r"(_API_KEY|_TOKEN|_SID|_NUMBER|_VOICE_ID|_SECRET|_URL)$")
     values: dict[str, str] = {}
+    seen: set[str] = set()
+
+    def add(name: str, value: str) -> None:
+        if len(value) < 8 or value in seen:
+            return
+        key = name
+        suffix = 2
+        while key in values:
+            key = f"{name}#{suffix}"
+            suffix += 1
+        values[key] = value
+        seen.add(value)
+
     for env_file in env_files:
         if not env_file.is_file():
             continue
@@ -154,9 +205,10 @@ def env_secret_values(env_files: list[Path]) -> dict[str, str]:
             match = _ENV_LINE.match(line)
             if not match or not secret_name.search(match.group(1)):
                 continue
-            raw = match.group(2).strip("'\"")
-            if len(raw) >= 8:
-                values.setdefault(match.group(1), raw)
+            add(match.group(1), _parse_env_value(match.group(2)))
+    for name, value in os.environ.items():
+        if secret_name.search(name):
+            add(f"process:{name}", value)
     return values
 
 

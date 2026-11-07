@@ -13,7 +13,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -24,7 +23,17 @@ ROOT = Path(__file__).resolve().parents[3]
 FIXTURE = ROOT / "fixtures" / "captured" / "elevenlabs"
 RAW = ROOT / ".earshot" / "raw-captures" / "elevenlabs" / "conversation-run"
 ENV_FILES = [ROOT / ".env", ROOT.parent / "TVIC" / ".env"]
-ID_KEYS = {"agent_id", "conversation_id", "branch_id", "version_id", "voice_id", "user_id"}
+ID_KEYS = {
+    "agent_id",
+    "conversation_id",
+    "branch_id",
+    "version_id",
+    "voice_id",
+    "user_id",
+    "traceId",
+    "spanId",
+    "parentSpanId",
+}
 # MPEG-2 Layer III tables (ISO/IEC 13818-3): bitrate index -> kbps, rate index -> Hz.
 MPEG2_L3_KBPS = (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)
 MPEG2_RATES = (22050, 24000, 16000)
@@ -101,10 +110,22 @@ def test_manifest_lists_every_committed_file_with_matching_digests() -> None:
     listed = {entry["file"]: entry for entry in manifest["files"]}
     assert set(listed) | {"manifest.json"} == set(_committed_bytes())
     for name, entry in listed.items():
+        assert entry["bytes"] == len((FIXTURE / name).read_bytes()), name
         if entry["kind"] == "json":
             assert _canonical_sha256(_json(name)) == entry["canonical_sha256"], name
         else:
             assert hashlib.sha256((FIXTURE / name).read_bytes()).hexdigest() == entry["sha256"]
+
+
+def test_manifest_reflects_the_refreshed_capture_provenance() -> None:
+    manifest = _manifest()
+
+    assert manifest["provenance"]["captured_on"] == "2026-11-07"
+    assert manifest["timing"]["observed"] == (
+        "Transcript timestamps are provider-reported whole-second start-only values; "
+        "detected audio speech onsets, when available, are listed separately in "
+        "audio_speech_segments_s."
+    )
 
 
 def test_conversation_carries_the_fields_the_import_reads() -> None:
@@ -151,11 +172,18 @@ def test_otel_variant_derives_each_end_from_the_next_start() -> None:
     assert resource["elevenlabs.agent_id"] == conversation["agent_id"]
     (root,) = [s for s in scope_spans["spans"] if s["name"] == "elevenlabs.conversation"]
     root_start, root_end = int(root["startTimeUnixNano"]), int(root["endTimeUnixNano"])
+    assert re.fullmatch(r"[0-9a-f]{32}", root["traceId"])
+    assert re.fullmatch(r"[0-9a-f]{16}", root["spanId"])
+    assert re.fullmatch(r"0+[1-9a-f][0-9a-f]{0,3}", root["traceId"])
+    assert re.fullmatch(r"0+[1-9a-f][0-9a-f]{0,3}", root["spanId"])
     assert root_start == conversation["metadata"]["start_time_unix_secs"] * 10**9
     turns = [s for s in scope_spans["spans"] if s is not root]
     assert len(turns) == len(conversation["transcript"])
     for index, span in enumerate(turns):
         turn = conversation["transcript"][index]
+        assert span["traceId"] == root["traceId"]
+        assert re.fullmatch(r"[0-9a-f]{16}", span["spanId"])
+        assert re.fullmatch(r"0+[1-9a-f][0-9a-f]{0,3}", span["spanId"])
         assert span["parentSpanId"] == root["spanId"]
         event = "agent_response" if turn["role"] == "agent" else "user_transcript"
         assert span["name"] == f"elevenlabs.recv.{event}"
@@ -204,7 +232,6 @@ def test_fixture_bytes_break_no_leak_rule() -> None:
 def test_fixture_bytes_contain_no_env_secret() -> None:
     rules = _leak_rules()
     secrets = rules.env_secret_values(ENV_FILES)
-    secrets.update({k: v for k, v in os.environ.items() if k.endswith("_API_KEY") and len(v) >= 8})
     if not secrets:
         pytest.skip("no env file with provider secrets on this machine")
     prefixes = rules.sha256_prefixes(secrets)

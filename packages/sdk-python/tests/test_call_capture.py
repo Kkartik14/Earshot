@@ -77,6 +77,7 @@ CLASSIFICATION = [
     # identity
     ("enduser.id", M, ID),
     ("user.id", M, ID),
+    ("gen_ai.agent.id", M, ID),
     # phone and caller identifiers
     ("phone", M, ID),
     ("user.phone", M, ID),
@@ -150,7 +151,6 @@ LIVEKIT_METADATA_KEYS = (
     "lk.agent_label",
     "lk.agent_name",
     "lk.callback.name",
-    "lk.cloud_agent_id",
     "lk.deployment_id",
     "lk.dispatch_id",
     "lk.fallback.index",
@@ -164,7 +164,6 @@ LIVEKIT_METADATA_KEYS = (
     "lk.input.base_span_id",
     "lk.input.delta",
     "lk.input.dropped_from_base",
-    "lk.job.agent_id",
     "lk.job.worker_id",
     "lk.job_id",
     "lk.parent_generation_id",
@@ -291,6 +290,8 @@ LIVEKIT_KEYS = [
     ("lk.pii.function_tool.output", "tool.result", TOOL),
     ("lk.participant_identity", "participant.name", ID),
     ("lk.pii.participant_identity", "participant.name", ID),
+    ("lk.cloud_agent_id", "lk.cloud_agent_id", ID),
+    ("lk.job.agent_id", "lk.job.agent_id", ID),
     ("lk.pii.sip.phoneNumber", "sip.phone_number", ID),
     ("lk.rpc.caller_identity", "rpc.caller.participant.name", ID),
     ("lk.rpc.destination_identity", "rpc.destination.participant.name", ID),
@@ -360,6 +361,8 @@ def test_every_livekit_key_of_the_real_1_8_capture_is_in_the_table() -> None:
 SDK_CLASSIFIER_DIFFERENCES = {
     "user_id": (ID, M),
     "user.id": (ID, M),
+    "lk.cloud_agent_id": (ID, M),
+    "lk.job.agent_id": (ID, M),
     "gen_ai.tool.definitions": (MODEL, M),
     "gen_ai.tool.description": (MODEL, M),
     "gen_ai.tool.call.arguments": (TOOL, M),
@@ -373,6 +376,7 @@ SDK_CLASSIFIER_DIFFERENCES = {
 # Keys outside the table that the OTLP path classifies by shape (identity, ``pii``).
 SDK_CLASSIFIER_SHAPE_DIFFERENCES = {
     "enduser.id": (ID, M),
+    "gen_ai.agent.id": (ID, M),
     "caller.number": (ID, M),
     "callee.number": (ID, M),
     "user.phone": (ID, M),
@@ -631,6 +635,28 @@ def test_metadata_only_drops_phone_and_caller_identifiers() -> None:
     assert _attributes(filtered.span) == {"sip.method": "string_value"}
     assert [value for value in identifiers.values() if value.encode() in stored] == []
     assert b"+14155550107" not in stored
+
+
+def test_metadata_only_drops_agent_identifiers_from_supported_runtime_spans() -> None:
+    identifiers = {
+        "gen_ai.agent.id": "assistant-sentinel-7",
+        "lk.job.agent_id": "job-agent-sentinel-8",
+        "lk.cloud_agent_id": "cloud-agent-sentinel-9",
+    }
+    span = Span(
+        trace_id=b"\x01" * 16,
+        span_id=b"\x02" * 8,
+        name="agent_turn",
+        attributes=[_string(key, value) for key, value in identifiers.items()],
+    )
+
+    filtered = apply_capture_preset(
+        "metadata_only", OtlpSpan(resource=Resource(), scope=InstrumentationScope(), span=span)
+    )
+
+    stored = span_payload(filtered.span) + resource_payload(filtered)
+    assert _attributes(filtered.span) == {}
+    assert all(value.encode() not in stored for value in identifiers.values())
 
 
 def test_classifying_sender_chosen_long_keys_retains_none_of_them() -> None:

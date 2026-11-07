@@ -121,7 +121,7 @@ command specifies `-m 'not slow'`.
 The release gate runs plain `pytest`, so no `slow` test is skipped there.
 
 Two tests still skip in CI: the real-provider e2e (`apps/ingest/tests/e2e_real/`,
-marked `real_providers`). Each runs one real call, Pipecat 1.5 or LiveKit Agents 1.8,
+marked `real_providers`). Each runs one real call, Pipecat 1.6 or LiveKit Agents 1.8,
 into Earshot on Postgres and S3, waits for the server to analyse and project it, and
 checks its call view. They need `DEEPGRAM_API_KEY`, `GROQ_API_KEY`, `CARTESIA_API_KEY`
 and `CARTESIA_VOICE_ID` in the environment, the examples' `requirements.txt`, and the S3

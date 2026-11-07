@@ -1,12 +1,13 @@
 """Scrub a raw hosted-provider capture into ``fixtures/captured/<provider>/``.
 
-    python scripts/scrub_provider_capture.py elevenlabs
+    python scripts/scrub_provider_capture.py elevenlabs --env ../TVIC/.env
     python scripts/scrub_provider_capture.py twilio
 
 Reads ``.earshot/raw-captures/<provider>/`` (git-ignored) and writes the scrubbed REST
-responses, the audio and ``manifest.json``. The build is deterministic and **refuses to
-write** if any leak rule in ``provider_capture.find_leaks`` fires or any env secret or
-raw identifier survives. It prints counts only, never a raw value.
+responses, the audio and ``manifest.json``. ElevenLabs also needs Cartesia credentials
+from ``--env`` if its digest-named caller WAV must be generated. The build is deterministic
+and **refuses to write** if any leak rule in ``provider_capture.find_leaks`` fires or an
+environment secret or raw identifier survives. It prints counts only, never a raw value.
 
 Identifiers are replaced by format-valid placeholders (same prefix and length, body of
 zeros plus a counter) in first-seen order, everywhere they occur: fields, URIs and
@@ -27,6 +28,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import struct
@@ -35,6 +37,7 @@ import sys
 import tempfile
 import wave
 from array import array
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -46,14 +49,20 @@ from provider_capture import (
     ROOT,
     env_secret_values,
     find_leaks,
+    load_keys,
     secret_variants,
     sha256_prefixes,
 )
 
+sys.path.insert(0, str(ROOT / "examples" / "pipecat_otlp"))
+
+from make_caller_audio import load_caller_wav_and_metadata
+
 FIXTURES = ROOT / "fixtures" / "captured"
 SYNTHETIC_SOURCE = ROOT / "fixtures" / "captured" / "pipecat-otlp-1.5" / "audio" / "user.wav"
 ENV_FILES = [ROOT / ".env", DEFAULT_ENV]
-CAPTURED_ON = "2026-10-19"
+ELEVENLABS_CAPTURED_ON = "2026-11-07"
+TWILIO_CAPTURED_ON = "2026-10-19"
 VAD_WINDOW_S, VAD_RMS, VAD_HANG = 0.05, 200.0, 6
 # MPEG-2 Layer III (ISO/IEC 13818-3): bitrate index -> kbps, sample-rate index -> Hz.
 MPEG2_L3_KBPS = (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)
@@ -203,7 +212,16 @@ def _segments(samples: array, rate: int) -> list[tuple[float, float]]:
 
 # --------------------------------------------------------------------------- ElevenLabs
 
-EL_ID_KEYS = {"agent_id", "conversation_id", "branch_id", "version_id", "user_id"}
+EL_ID_KEYS = {
+    "agent_id",
+    "conversation_id",
+    "branch_id",
+    "version_id",
+    "user_id",
+    "traceId",
+    "spanId",
+    "parentSpanId",
+}
 EL_ID_SHAPE = re.compile(r"\b(agent|conv|agtbrch|agtvrsn|user)_[0-9a-z]{20,}\b")
 EL_FIELDS = [
     ("conversation_id", "str", "provider call ID; the session key (`earshot.session.id`)"),
@@ -314,11 +332,8 @@ def _el_audio_onsets(audio: bytes) -> list[tuple[float, float]] | None:
             return _segments(samples, wav.getframerate())
 
 
-def build_elevenlabs() -> None:
+def build_elevenlabs(out: Path) -> tuple[int, int]:
     raw = RAW_ROOT / "elevenlabs" / "conversation-run"
-    out = FIXTURES / "elevenlabs"
-    if out.exists():
-        shutil.rmtree(out)
     out.mkdir(parents=True)
     names = Pseudonyms()
     raw_values = _el_identifiers(raw, names)
@@ -334,7 +349,7 @@ def build_elevenlabs() -> None:
     segments = _el_audio_onsets(audio)
     run = json.loads((raw / "run.json").read_text())
     events = json.loads((raw / "ws_events.json").read_text())
-    caller = json.loads((ROOT / ".earshot" / "pipecat_otlp" / "caller.json").read_text())
+    _, caller = load_caller_wav_and_metadata()
     import capture_elevenlabs as capture
 
     metadata = conversation["metadata"]
@@ -348,7 +363,7 @@ def build_elevenlabs() -> None:
             "and `start_only` transcript tests."
         ),
         "provenance": {
-            "captured_on": CAPTURED_ON,
+            "captured_on": ELEVENLABS_CAPTURED_ON,
             "source_kind": "real_capture_scrubbed",
             "capture_driver": "scripts/capture_elevenlabs.py",
             "capture_driver_sha256": _script_digest("capture_elevenlabs.py"),
@@ -403,6 +418,8 @@ def build_elevenlabs() -> None:
             "agent_id, conversation_id, branch_id, version_id, user_id and system__*_id dynamic "
             "variables, plus any agent_/conv_/agtbrch_/agtvrsn_/user_ ID found by shape: "
             "same prefix and length, body = zeros + first-seen counter",
+            "OTel traceId, spanId and parentSpanId fields: zero-padded hex placeholders of the "
+            "same length; repeated references and parent links remain consistent",
             "voice_id (turn metrics, charging.tts_usage, OTel elevenlabs.voice_id): "
             "`voice` + zeros + counter, same length",
             "replacement is applied to the whole text, so IDs inside URIs, OTel attributes "
@@ -449,10 +466,9 @@ def build_elevenlabs() -> None:
                 else "not measured (afconvert unavailable)"
             ),
             "observed": (
-                "user turns are floor(speech onset) in all 4 cases (5.15->5, 12.8->12, "
-                "14.55->14, 21.55->21); agent turns start at or up to 1.05 s before the "
-                "audible onset (16 vs 17.05). Audio t=0 = start_time [inferred: turn 0 at 0 "
-                "is audible from 0.25 s]."
+                "Transcript timestamps are provider-reported whole-second start-only values; "
+                "detected audio speech onsets, when available, are listed separately in "
+                "audio_speech_segments_s."
             ),
         },
         "audio": {
@@ -480,7 +496,7 @@ def build_elevenlabs() -> None:
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     _prettier([out / "manifest.json"])
     _guard(out, raw_values)
-    print(f"elevenlabs: {len(names.mapping)} replacements, {len(manifest['files'])} files")
+    return len(names.mapping), len(manifest["files"])
 
 
 # ------------------------------------------------------------------------------ Twilio
@@ -661,11 +677,8 @@ def _regenerate_twilio_audio(raw: Path, out: Path) -> dict[str, Any]:
     }
 
 
-def build_twilio() -> None:
+def build_twilio(out: Path) -> tuple[int, int]:
     raw = RAW_ROOT / "twilio" / "call-run"
-    out = FIXTURES / "twilio"
-    if out.exists():
-        shutil.rmtree(out)
     out.mkdir(parents=True)
     names = Pseudonyms()
     raw_values = _twilio_identifiers(raw, names)
@@ -685,7 +698,7 @@ def build_twilio() -> None:
             "recordings regenerated. Used by the recording poll/import and fetch tests."
         ),
         "provenance": {
-            "captured_on": CAPTURED_ON,
+            "captured_on": TWILIO_CAPTURED_ON,
             "source_kind": "real_capture_scrubbed",
             "capture_driver": "scripts/capture_twilio.py",
             "capture_driver_sha256": _script_digest("capture_twilio.py"),
@@ -808,17 +821,61 @@ def build_twilio() -> None:
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     _prettier([out / "manifest.json"])
     _guard(out, raw_values)
-    print(f"twilio: {len(names.mapping)} replacements, {len(files)} files")
+    return len(names.mapping), len(files)
+
+
+def _build_fixture_atomically(provider: str, build: Callable[[Path], tuple[int, int]]) -> None:
+    """Build and guard beside the destination, then replace it with rollback protection."""
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+    destination = FIXTURES / provider
+    with tempfile.TemporaryDirectory(prefix=f".{provider}-", dir=FIXTURES) as temporary:
+        temporary_path = Path(temporary)
+        staged = temporary_path / "fixture"
+        replacements, file_count = build(staged)
+
+        previous = FIXTURES / f"{temporary_path.name}.previous"
+        try:
+            if destination.exists():
+                os.replace(destination, previous)
+            if os.path.lexists(destination):
+                raise FileExistsError(f"{provider} fixture destination appeared during install")
+            os.replace(staged, destination)
+        except BaseException as error:
+            if previous.exists() and not destination.exists():
+                try:
+                    os.replace(previous, destination)
+                except OSError as rollback_error:
+                    error.add_note(
+                        f"could not restore the previous fixture; it is preserved at {previous}: "
+                        f"{rollback_error}"
+                    )
+            elif previous.exists() and destination.exists():
+                error.add_note(
+                    f"previous fixture preserved at {previous}; destination changed during install"
+                )
+            raise
+        else:
+            if previous.exists():
+                shutil.rmtree(previous)
+    print(f"{provider}: {replacements} replacements, {file_count} files")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("provider", choices=["elevenlabs", "twilio"])
+    parser.add_argument("--env", type=Path, default=DEFAULT_ENV)
     args = parser.parse_args()
+    env_file = args.env.expanduser().resolve()
+    if env_file not in {path.resolve() for path in ENV_FILES}:
+        ENV_FILES.append(env_file)
     if args.provider == "elevenlabs":
-        build_elevenlabs()
+        caller_keys = ("CARTESIA_API_KEY", "CARTESIA_VOICE_ID")
+        missing = [name for name in caller_keys if not os.environ.get(name)]
+        if missing:
+            os.environ.update(load_keys(args.env, missing))
+        _build_fixture_atomically(args.provider, build_elevenlabs)
     else:
-        build_twilio()
+        _build_fixture_atomically(args.provider, build_twilio)
 
 
 if __name__ == "__main__":
