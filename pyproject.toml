@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
   "pydantic>=2.9,<3",
-  "protobuf>=6.33.5,<7",
+  "protobuf>=6.33.5,<8",
   "rfc8785==0.1.4",
 ]
 
