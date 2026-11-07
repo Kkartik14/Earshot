@@ -1,5 +1,8 @@
 # Earshot
 
+[![CI](https://github.com/Kkartik14/Earshot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Kkartik14/Earshot/actions/workflows/ci.yml) [![GitHub release](https://img.shields.io/github/v/release/Kkartik14/Earshot)](https://github.com/Kkartik14/Earshot/releases/latest) [![PyPI](https://img.shields.io/pypi/v/earshot-observability)](https://pypi.org/project/earshot-observability/)
+[![npm](https://img.shields.io/npm/v/earshot-observability)](https://www.npmjs.com/package/earshot-observability) [![Python versions](https://img.shields.io/pypi/pyversions/earshot-observability)](https://pypi.org/project/earshot-observability/) [![Node.js version](https://img.shields.io/node/v/earshot-observability)](https://www.npmjs.com/package/earshot-observability) [![License](https://img.shields.io/github/license/Kkartik14/Earshot)](LICENSE)
+
 **See every call your voice agent makes.**
 
 Earshot is a self-hosted server for voice-agent observability. Your agent sends its
