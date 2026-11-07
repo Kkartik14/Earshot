@@ -157,7 +157,7 @@ authorization mode:
 
 ```json
 {
-  "package_version": "0.4.0",
+  "package_version": "0.5.0",
   "api_version": "0.17.0",
   "contract_version": "0.2.0",
   "semantic_profile_version": "0.2.0",

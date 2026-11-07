@@ -79,11 +79,11 @@ One tag publishes four things:
 ## After publishing
 
 ```bash
-version=0.4.0   # replace with the released version
+version=0.5.0   # replace with the released version
 npm deprecate earshot-observability@0.0.1 \
-  "Placeholder version; use earshot-observability@0.4.0 or later."
+  "Placeholder version; use earshot-observability@$version or later."
 npm deprecate earshot-observability@0.0.0-stage \
-  "Placeholder version; use earshot-observability@0.4.0 or later."
+  "Placeholder version; use earshot-observability@$version or later."
 npm view "earshot-observability@$version" dist.attestations --json
 gh attestation verify "oci://ghcr.io/kkartik14/earshot:$version" --repo Kkartik14/Earshot
 docker run --rm -p 127.0.0.1:4319:4319 -e EARSHOT_HOST=0.0.0.0 \
@@ -94,7 +94,7 @@ curl --fail http://127.0.0.1:4319/readyz   # from a second terminal
 An npm package version cannot be reused. PyPI may accept additional files for an existing
 version, but the supported recovery is a same-run retry of the inspected files described
 above; do not add or replace release files manually. Version-specific GHCR tags (for
-example, `0.4.0`) must not be retargeted. The workflow's `major.minor` alias (for
-example, `0.4`) and `latest` tag intentionally advance on stable releases; prereleases
+example, `0.5.0`) must not be retargeted. The workflow's `major.minor` alias (for
+example, `0.5`) and `latest` tag intentionally advance on stable releases; prereleases
 do not move those aliases. If published version-specific bytes are wrong, fix them and
 release a new version.

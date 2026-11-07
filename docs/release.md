@@ -142,7 +142,7 @@ analyses recordings for the call view. It carries OCI labels, with the version f
 `EARSHOT_VERSION` build argument:
 
 ```bash
-docker build -t earshot:local --build-arg EARSHOT_VERSION=0.4.0-local .
+docker build -t earshot:local --build-arg EARSHOT_VERSION=0.5.0-local .
 sh scripts/smoke-container.sh
 ```
 
@@ -257,15 +257,12 @@ Node package's `repository`, `homepage`, and `bugs` metadata before the next rel
 [`release-checklist.md`](./release-checklist.md) is the owner's step-by-step list: the
 one-time npm and GitHub environment setup, the release versions to set, the
 generated `uv.lock` entry, the `CHANGELOG.md` entry, and the checks after publishing.
-The 0.4.0 release identity remains unchanged from #46 through #71, so
-`check_release.py --tag v0.4.0` must pass at every head in that range. `main` moves past
-0.4.0 as later changes merge; create its tag at the planned #57 merge commit, not at the
-current `main` head. After CI and the `coverage` job pass, set the target to the exact
-merge-commit SHA and verify it from a detached worktree at that commit:
+For 0.5.0, tag the exact #72 merge commit (`M72`), not the later `main` head. Run the
+release check and create the annotated tag from a detached worktree at that SHA:
 
 ```bash
-tag=v0.4.0
-target_sha="<the exact #57 merge-commit SHA>"
+tag=v0.5.0
+target_sha="<the exact #72 merge-commit SHA>"
 git worktree add --detach ../earshot-release "$target_sha"
 cd ../earshot-release
 python scripts/check_release.py --tag "$tag" --repository Kkartik14/Earshot
@@ -276,11 +273,11 @@ git push origin "$tag"
 The first GHCR package may require one visibility check in the package settings. It must
 be linked to this public repository and public before documenting anonymous `docker pull`
 support. Released PyPI and npm versions and version-specific GHCR tags (for example,
-`0.4.0`) are treated as immutable release policy; never retarget those tags or delete and
+`0.5.0`) are treated as immutable release policy; never retarget those tags or delete and
 recreate a release version. The workflow checks existing version tags and retries by
 digest, but GHCR permits any package writer to overwrite a tag, so keep package write
 access limited to the release maintainers and audited workflow. Git tag rulesets do not
-protect GHCR tags. The workflow's `major.minor` GHCR alias (for example, `0.4`) and
+protect GHCR tags. The workflow's `major.minor` GHCR alias (for example, `0.5`) and
 `latest` tag intentionally advance on stable releases; prereleases do not move those
 aliases. Fix incorrect version-specific bytes and publish a new release version.
 

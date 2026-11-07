@@ -129,7 +129,7 @@ incidents. The project's capture preset applies to hosted Calls exactly as to an
 under `metadata_only` no transcript text or Recording is kept. A token with
 `earshot:calls:read` can read the call view and stream stored audio, waveform peaks and a
 generated stereo rendition from its signed Project; Earshot returns no blob-store URL.
-Raw span attributes and transcript upload stay closed in hosted mode. Hosted Incident
+Raw span attributes and the standalone transcript-upload API stay closed in hosted mode. Hosted Incident
 ingest keeps its closed metadata-only profile, which rejects media and raw OTLP; see
 [the backend API](./backend-api.md).
 

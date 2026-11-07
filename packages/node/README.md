@@ -18,7 +18,7 @@ OpenAPI spec.
 Install the package with its OpenTelemetry peers:
 
 ```sh
-npm install earshot-observability@^0.4.0 @opentelemetry/api @opentelemetry/sdk-trace-node \
+npm install earshot-observability@^0.5.0 @opentelemetry/api @opentelemetry/sdk-trace-node \
   @opentelemetry/exporter-trace-otlp-proto
 ```
 

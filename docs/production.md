@@ -1,6 +1,6 @@
 # Production notes
 
-These are the operational rules for running Earshot 0.4.0 for a team: Postgres for the
+These are the operational rules for running Earshot 0.5.0 for a team: Postgres for the
 catalog, S3-compatible storage for recordings and derived analysis artifacts, and a
 Collector in front. [Storage and blobs](./storage-and-blobs.md) explains the backends, and
 [server configuration](./configuration.md) lists every variable.
