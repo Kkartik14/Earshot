@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 ROOT = Path(__file__).resolve().parents[3]
 SCRUBBER = ROOT / "scripts" / "scrub_provider_capture.py"
 
@@ -101,6 +103,14 @@ def test_guard_scans_process_environment_credentials(tmp_path, monkeypatch) -> N
         (
             'CARTESIA_API_KEY="selected-env-key-87654321 # part of value"',
             "selected-env-key-87654321 # part of value",
+        ),
+        (
+            r'CARTESIA_API_KEY="selected-env-key-87654321\"quoted"',
+            'selected-env-key-87654321"quoted',
+        ),
+        (
+            r"CARTESIA_API_KEY='selected-env-key-87654321\'quoted'",
+            "selected-env-key-87654321'quoted",
         ),
         ("CARTESIA_API_KEY=selected-env-key-87654321#suffix", "selected-env-key-87654321#suffix"),
     ],

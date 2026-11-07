@@ -26,6 +26,20 @@ RAW_ROOT = ROOT / ".earshot" / "raw-captures"
 DEFAULT_ENV = ROOT.parent / "TVIC" / ".env"
 USER_AGENT = "earshot-capture/0.1"
 _ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+_SINGLE_QUOTED_ESCAPES = re.compile(r"\\([\\'])")
+_DOUBLE_QUOTED_ESCAPES = re.compile(r'\\([\\\'"abfnrtv])')
+_ENV_ESCAPE_VALUES = {
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "a": "\a",
+    "b": "\b",
+    "f": "\f",
+    "n": "\n",
+    "r": "\r",
+    "t": "\t",
+    "v": "\v",
+}
 
 
 def load_keys(env_file: Path, names: list[str]) -> dict[str, str]:
@@ -44,7 +58,7 @@ def load_keys(env_file: Path, names: list[str]) -> dict[str, str]:
 
 
 def _parse_env_value(raw: str) -> str:
-    """Strip dotenv-style comments outside quotes and remove a matching quote pair."""
+    """Parse one dotenv-style value, including its supported quoted escapes."""
     value = raw.strip()
     if not value:
         return value
@@ -55,11 +69,13 @@ def _parse_env_value(raw: str) -> str:
             character = value[index]
             if character == quote and not escaped:
                 suffix = value[index + 1 :].lstrip()
-                if not suffix or suffix.startswith("#"):
-                    return value[1:index]
-                break
-            escaped = quote == '"' and character == "\\" and not escaped
-        return value
+                if suffix and not suffix.startswith("#"):
+                    raise ValueError("invalid text after quoted env-file value")
+                content = value[1:index]
+                escapes = _SINGLE_QUOTED_ESCAPES if quote == "'" else _DOUBLE_QUOTED_ESCAPES
+                return escapes.sub(lambda match: _ENV_ESCAPE_VALUES[match.group(1)], content)
+            escaped = character == "\\" and not escaped
+        raise ValueError("unterminated quoted env-file value")
     return re.sub(r"\s+#.*$", "", value).strip()
 
 
