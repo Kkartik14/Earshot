@@ -144,3 +144,19 @@ def test_e8_fixture_is_received_closed_and_projected(tmp_path: Path, name: str) 
         if attribute["key"] == "earshot.turn.id"
     }
     assert projected_turn_ids == source_turn_ids, name
+
+    projected_by_id = {
+        turn["turn_id"]: turn
+        for turn in projection["detail"]["turns"]
+        if turn["turn_id"] is not None
+    }
+    for turn_id, facts in source_facts.items():
+        # Call turns expose stage-span statuses, while root-turn ERROR contributes
+        # to the call outcome above rather than a separate turn lifecycle field.
+        projected_stage_statuses = {
+            span["name"]: span["status"] for span in projected_by_id[turn_id]["spans"]
+        }
+        expected_stage_statuses = {
+            stage_name: stage["status"] for stage_name, stage in facts.get("stages", {}).items()
+        }
+        assert projected_stage_statuses == expected_stage_statuses, name
