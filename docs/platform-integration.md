@@ -143,8 +143,7 @@ favor of the generic summary route. It remains available through 0.5.x; removal 
 planned for 0.6.0 ([#77](https://github.com/Kkartik14/Earshot/issues/77)). No calendar removal date has been set, so Earshot does not send a
 `Sunset` header. The route's `Link` response header points here on every GET response,
 including authentication failures. The RFC 9745 `Deprecation` header is
-`@1794528000` (2026-11-13T00:00:00Z), the proposed 0.5.0 release date. Earshot
-does not send a `Sunset` header until the 0.6.0 unavailability date is set.
+`@1794528000` (2026-11-13T00:00:00Z), the proposed 0.5.0 release date.
 
 ## Keep ownership boundaries clear
 
