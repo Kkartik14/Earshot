@@ -187,8 +187,8 @@ and the viewer retries every two seconds. Other 4xx responses stop retries and r
 polling.
 
 **Local capacity measurement (2026-11-07).** On SQLite, each Call held 300 or 1,000
-synthetic turns. For 12 seconds, an emitter accepted one additional unprojected child
-span per second while 16 or 32 viewers polled every two seconds, with poll start times
+synthetic turns. For 12 seconds, an emitter accepted one additional unprojected six-span
+turn per second while 16 or 32 viewers polled every two seconds, with poll start times
 staggered evenly across each two-second interval. Route latency is the HTTP request
 through reading the full 200 body. Emitter latency starts immediately before the
 loopback `/v1/traces` POST and ends after reading its response body, so it includes
